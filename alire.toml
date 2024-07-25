@@ -1,0 +1,10 @@
+name = "akernel"
+description = ""
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+maintainers-logins = ["robdaemon"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+website = ""
+tags = []
