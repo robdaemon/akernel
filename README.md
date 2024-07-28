@@ -60,5 +60,5 @@ $ gprbuild --target=aarch64-elf
 You can run via qemu:
 
 ```console
-$ qemu-system-aarch64 -M raspi3b -m 1G -kernel bin/akernel -serial null -serial mon:stdio -nographic
+$ qemu-system-aarch64 -M raspi3b -m 1G -kernel bin/akernel.elf -serial null -serial mon:stdio -nographic
 ```

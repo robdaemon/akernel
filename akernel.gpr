@@ -47,6 +47,10 @@ project Akernel is
            ,"-gnatW8" -- UTF-8 encoding for wide characters
           );
 
+   package Builder is
+      for Executable ("akernel.adb") use "akernel.elf";
+   end Builder;
+
    package Compiler is
       for Default_Switches ("Ada") use Ada_Compiler_Switches;
    end Compiler;
