@@ -49,25 +49,16 @@ Select or unselect the following compiler (or "s" to save):
 
 Hit `s` to save, then you can build.
 
-You will need [alire](https://alire.ada.dev/) at first:
-
-```console
-$ alr toolchain --select
-```
-
-You can choose the `gnat_native=14.1.3` toolchain, and `gprbuild=22.0.1` toolchains, but you won't actually
-use them.
-
-Run a build *once* so that it sets up the local config:
-
-```console
-$ alr build
-$ alr clean
-```
-
-Now, you can do the real build:
+Now, you can do the build:
 
 ```console
 $ gprbuild --target=aarch64-elf
 ```
 
+## Running
+
+You can run via qemu:
+
+```console
+$ qemu-system-aarch64 -M raspi3b -m 1G -kernel bin/akernel -serial null -serial mon:stdio -nographic
+```
