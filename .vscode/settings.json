@@ -1,0 +1,9 @@
+{
+    "ada.projectFile": "akernel.gpr",
+    "ada.scenarioVariables": {
+        "GPR_CONFIG": "aarch64-elf.cgpr"
+    },
+    "ada.defaultCharset": "utf-8",
+    "ada.enableDiagnostics": false,
+    "ada.renameInComments": false
+}

@@ -2,13 +2,25 @@ project Akernel is
    type Build_Profile_Kind is ("release", "validation", "development");
    Build_Profile : Build_Profile_Kind := "development";
 
+   type CPU_Type is ("aarch64");
+   CPU : CPU_Type := external ("CPU", "aarch64");
+
+   type Board_Type is ("rpi3");
+   Board : Board_Type := external ("BOARD", "rpi3");
+
    for Source_Dirs use ("src/");
    for Object_Dir use "obj/" & Build_Profile;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
    for Main use ("akernel.adb");
 
---   for Target use "aarch64-elf";
+   case CPU is
+      when "aarch64" =>
+         for Target use "aarch64-elf";
+      when others =>
+         null;
+   end case;
+   
 --   for Runtime ("Ada") use "rts/light-rpi3/";
 
    Ada_Compiler_Switches := External_As_List ("ADAFLAGS", " ");
