@@ -25,4 +25,12 @@ package Kernel.Processes is
       Grant_Mask  : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle);
+
+   procedure Spawn_Boot_Path
+     (Parent      : Kernel.Tasks.Task_Access;
+      Path_Offset : U64;
+      Path_Length : U64;
+      Grant_Mask  : U64;
+      Result      : out Status;
+      Process_Cap : out Kernel.Capabilities.Handle);
 end Kernel.Processes;

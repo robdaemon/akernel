@@ -60,6 +60,23 @@ procedure Init is
       return Value;
    end Parse_U64;
 
+   procedure Skip_Spaces
+     (Line_End : Akernel_User.Syscalls.U64;
+      Pos      : in out Akernel_User.Syscalls.U64)
+   is
+      Raw : Akernel_User.Syscalls.U64;
+      C   : Character;
+   begin
+      while Pos < Line_End loop
+         Raw := Akernel_User.Syscalls.Boot_Read_Byte
+           (Manifest_File, Pos);
+         exit when Raw > 255;
+         C := Character'Val (Natural (Raw));
+         exit when not Is_Space (C);
+         Pos := Pos + 1;
+      end loop;
+   end Skip_Spaces;
+
    procedure Next_Token
      (Line_End  : Akernel_User.Syscalls.U64;
       Pos       : in out Akernel_User.Syscalls.U64;
@@ -114,8 +131,10 @@ procedure Init is
       Have_Token : Boolean;
       Valid_Id   : Boolean;
       Program_Id : Akernel_User.Syscalls.U64;
-      Grant_Mask : Akernel_User.Syscalls.U64 := 0;
-      Result     : Akernel_User.Syscalls.U64;
+      Grant_Mask  : Akernel_User.Syscalls.U64 := 0;
+      Path_Offset : Akernel_User.Syscalls.U64;
+      Path_Length : Akernel_User.Syscalls.U64;
+      Result      : Akernel_User.Syscalls.U64;
    begin
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token or else Token (1) = '#' then
@@ -136,11 +155,13 @@ procedure Init is
          return;
       end if;
 
-      --  Path token. Kernel still resolves id->path for now.
+      Skip_Spaces (Line_End, Pos);
+      Path_Offset := Pos;
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token then
          return;
       end if;
+      Path_Length := Akernel_User.Syscalls.U64 (Length);
 
       loop
          Next_Token (Line_End, Pos, Token, Length, Have_Token);
@@ -155,8 +176,8 @@ procedure Init is
          end if;
       end loop;
 
-      Result := Akernel_User.Syscalls.Spawn_Program
-        (Program_Id, Grant_Mask);
+      Result := Akernel_User.Syscalls.Spawn_Boot_Path
+        (Path_Offset, Path_Length, Grant_Mask);
 
       if Result /= 0 then
          Spawned_Count := Spawned_Count + 1;

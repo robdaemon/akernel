@@ -40,4 +40,10 @@ package Kernel.Program_Loader is
      (Program_Id : U64;
       Result     : out Status;
       Manifest   : out Program_Manifest);
+
+   procedure Find_By_Manifest_Path
+     (Path_Offset : U64;
+      Path_Length : U64;
+      Result      : out Status;
+      Image       : out Program_Image);
 end Kernel.Program_Loader;

@@ -29,6 +29,12 @@ package body Akernel_User.Syscalls is
       Grant_Mask : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_spawn_program";
 
+   function Raw_Spawn_Boot_Path
+     (Path_Offset : U64;
+      Path_Length : U64;
+      Grant_Mask  : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_spawn_boot_path";
+
    function Raw_Boot_File_Size (File_Id : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_boot_file_size";
 
@@ -70,6 +76,15 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Spawn_Program (Program_Id, Grant_Mask);
    end Spawn_Program;
+
+   function Spawn_Boot_Path
+     (Path_Offset : U64;
+      Path_Length : U64;
+      Grant_Mask  : U64) return U64
+   is
+   begin
+      return Raw_Spawn_Boot_Path (Path_Offset, Path_Length, Grant_Mask);
+   end Spawn_Boot_Path;
 
    function Boot_File_Size (File_Id : U64) return U64 is
    begin

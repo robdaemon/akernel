@@ -163,9 +163,10 @@ Current syscalls:
 2 map_mmio(a0 = cap, a1 = va, a2 = offset, a3 = length, a4 = flags)
 3 irq_wait(a0 = irq_cap)
 4 irq_ack(a0 = irq_cap)
-5 spawn_program(a0 = program_id, a1 = grant_mask) -> process/thread cap handle, 0 on failure
+5 spawn_program(a0 = program_id, a1 = grant_mask) -> process/thread cap handle, 0 on failure (legacy)
 6 boot_file_size(a0 = file_id) -> byte length, U64'Last on failure
 7 boot_read_byte(a0 = file_id, a1 = offset) -> byte 0..255, 256 EOF, U64'Last failure
+8 spawn_boot_path(a0 = manifest path offset, a1 = path length, a2 = grant_mask) -> process/thread cap handle, 0 on failure
 ```
 
 Return convention for resource syscalls:
@@ -281,7 +282,7 @@ Drivers/Serial
 program 1 Drivers/Serial uart_mmio uart_irq
 ```
 
-Kernel boots `System/Init`. Init can now query boot files through syscalls. Current boot file id 1 is `System/Manifest`; init verifies it is visible. Init parses `System/Manifest`, builds grant masks, then calls `spawn_program(program_id, grant_mask)` for program entries. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` for program id 1. Loader maps id 1 to boot program `Drivers/Serial` from initrd and returns image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Initrd is hidden behind boot-file/program-loader abstractions; launch/resource policy is moving toward init.
+Kernel boots `System/Init`. Init can query boot files through syscalls. Current boot file id 1 is `System/Manifest`; init verifies it is visible. Init parses `System/Manifest`, builds grant masks, then calls `spawn_boot_path(path_offset, path_length, grant_mask)` for program entries. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` to resolve that path slice from manifest to initrd image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Launch/resource policy now lives mostly in init; kernel still has initrd boot-loader backend.
 
 ## ELF loader
 
@@ -350,7 +351,7 @@ Debug_Put_Line ("launching manifest programs");
 Parse_Manifest;
 for each `program <id> <path> [grants...]` line:
   build grant mask from tokens
-  Spawn_Program (id, grant_mask)
+  Spawn_Boot_Path (path_offset, path_length, grant_mask)
 prints "serial spawned" for id 1 on nonzero process/thread cap handle
 Yield;
 prints "init resumed"
@@ -427,12 +428,10 @@ src/kernel/kernel-program_loader.ads/.adb
 ```
 
 Current backend:
-- reads `System/Manifest` from initrd
-- current line format still allows: `program <id> <path> [grants...]`
-- program id 1 maps to `Drivers/Serial`
+- `Find_By_Manifest_Path` resolves path slice from `System/Manifest` to initrd image bytes
+- legacy `Find(program_id)` still parses `System/Manifest` for old syscall 5
+- current line format: `program <id> <path> [grants...]`
 - executable bytes come from initrd for now
-- interface returns `Program_Manifest` with image `(Base, Size)`
-- grant tokens are parsed into manifest but process creation now uses caller grant mask
 - later backend can use VFS/package server without changing process creation path
 
 Processes:
@@ -441,9 +440,9 @@ Processes:
 src/kernel/kernel-processes.ads/.adb
 ```
 
-`Kernel.Processes.Spawn_Program` currently:
-- accepts program id and explicit grant mask from caller
-- requests executable image from `Kernel.Program_Loader`
+`Kernel.Processes.Spawn_Boot_Path` currently:
+- accepts manifest path offset/length and explicit grant mask from caller
+- requests executable image from `Kernel.Program_Loader.Find_By_Manifest_Path`
 - creates address space + stack
 - initializes TCB context
 - grants caller-requested caps to child only if parent has matching resource caps
@@ -565,9 +564,9 @@ QEMU virt RAM base:     0x80000000
 1. Move launch policy toward init/program-manager:
    - init now treats unreadable `System/Manifest` as fatal and enters yield loop; this is not kernel panic/shutdown
    - init parses `System/Manifest` and decides program ids/grants
-   - kernel still parses `System/Manifest` in program loader to resolve id->image; remove once spawn takes executable/source cap
+   - syscall 8 now spawns by boot manifest path slice; syscall 5 id path is legacy
    - kernel should expose bootinfo/resource caps to init
-   - spawn should accept executable/source cap plus explicit grant/cap list, not global program id
+   - future spawn should accept executable/source cap plus explicit grant/cap list, not manifest path slice
    - keep initrd as one program-loader backend; later add VFS/package backend
    - distinguish process/thread/address-space objects instead of using `Thread_Object` placeholder
    - add user-visible error/status convention for failed spawn

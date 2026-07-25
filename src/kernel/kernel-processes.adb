@@ -140,16 +140,14 @@ package body Kernel.Processes is
       end if;
    end Grant_Requested_Caps;
 
-   procedure Spawn_Program
+   procedure Spawn_Image
      (Parent      : Kernel.Tasks.Task_Access;
-      Program_Id  : U64;
+      Image       : Kernel.Program_Loader.Program_Image;
       Grant_Mask  : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
    is
-      Loader_Result : Kernel.Program_Loader.Status;
-      Manifest      : Kernel.Program_Loader.Program_Manifest;
-      ELF_Result    : Kernel.ELF.Status;
+      ELF_Result   : Kernel.ELF.Status;
       PMM_Result   : Kernel.Physical_Memory.Status;
       MMU_Result   : Arch.MMU.Status;
       Cap_Result   : Kernel.Capabilities.Status;
@@ -181,19 +179,6 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Kernel.Program_Loader.Find
-        (Program_Id => Program_Id,
-         Result     => Loader_Result,
-         Manifest   => Manifest);
-
-      if Loader_Result = Kernel.Program_Loader.Invalid_Program then
-         Result := Invalid_Program;
-         return;
-      elsif Loader_Result /= Kernel.Program_Loader.Ok then
-         Result := Load_Failed;
-         return;
-      end if;
-
       Arch.MMU.New_User_Address_Space (MMU_Result, Root);
       if MMU_Result /= Arch.MMU.Ok then
          Result := Load_Failed;
@@ -219,8 +204,8 @@ package body Kernel.Processes is
       end if;
 
       Kernel.ELF.Load_Into_Address_Space
-        (Image_Base  => Manifest.Image.Base,
-         Image_Size  => Manifest.Image.Size,
+        (Image_Base  => Image.Base,
+         Image_Size  => Image.Size,
          Root        => Root,
          Result      => ELF_Result,
          Entry_Point => Start_PC);
@@ -270,5 +255,63 @@ package body Kernel.Processes is
       end if;
 
       Result := Ok;
+   end Spawn_Image;
+
+   procedure Spawn_Program
+     (Parent      : Kernel.Tasks.Task_Access;
+      Program_Id  : U64;
+      Grant_Mask  : U64;
+      Result      : out Status;
+      Process_Cap : out Kernel.Capabilities.Handle)
+   is
+      Loader_Result : Kernel.Program_Loader.Status;
+      Manifest      : Kernel.Program_Loader.Program_Manifest;
+   begin
+      Kernel.Program_Loader.Find
+        (Program_Id => Program_Id,
+         Result     => Loader_Result,
+         Manifest   => Manifest);
+
+      if Loader_Result = Kernel.Program_Loader.Invalid_Program then
+         Result := Invalid_Program;
+         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         return;
+      elsif Loader_Result /= Kernel.Program_Loader.Ok then
+         Result := Load_Failed;
+         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         return;
+      end if;
+
+      Spawn_Image (Parent, Manifest.Image, Grant_Mask, Result, Process_Cap);
    end Spawn_Program;
+
+   procedure Spawn_Boot_Path
+     (Parent      : Kernel.Tasks.Task_Access;
+      Path_Offset : U64;
+      Path_Length : U64;
+      Grant_Mask  : U64;
+      Result      : out Status;
+      Process_Cap : out Kernel.Capabilities.Handle)
+   is
+      Loader_Result : Kernel.Program_Loader.Status;
+      Image         : Kernel.Program_Loader.Program_Image;
+   begin
+      Kernel.Program_Loader.Find_By_Manifest_Path
+        (Path_Offset => Path_Offset,
+         Path_Length => Path_Length,
+         Result      => Loader_Result,
+         Image       => Image);
+
+      if Loader_Result = Kernel.Program_Loader.Invalid_Program then
+         Result := Invalid_Program;
+         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         return;
+      elsif Loader_Result /= Kernel.Program_Loader.Ok then
+         Result := Load_Failed;
+         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         return;
+      end if;
+
+      Spawn_Image (Parent, Image, Grant_Mask, Result, Process_Cap);
+   end Spawn_Boot_Path;
 end Kernel.Processes;

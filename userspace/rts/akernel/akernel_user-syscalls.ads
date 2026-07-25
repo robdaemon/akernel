@@ -21,6 +21,10 @@ package Akernel_User.Syscalls is
    function Spawn_Program
      (Program_Id : U64;
       Grant_Mask : U64) return U64;
+   function Spawn_Boot_Path
+     (Path_Offset : U64;
+      Path_Length : U64;
+      Grant_Mask  : U64) return U64;
    function Boot_File_Size (File_Id : U64) return U64;
    function Boot_Read_Byte
      (File_Id : U64;

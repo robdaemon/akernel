@@ -38,6 +38,7 @@ package body Arch.Traps is
    Sys_Spawn_Program     : constant U64 := 5;
    Sys_Boot_File_Size    : constant U64 := 6;
    Sys_Boot_Read_Byte    : constant U64 := 7;
+   Sys_Spawn_Boot_Path   : constant U64 := 8;
 
    Tick_Count : U64 := 0;
 
@@ -335,6 +336,30 @@ package body Arch.Traps is
       end if;
    end Handle_Spawn_Program;
 
+   procedure Handle_Spawn_Boot_Path (Frame : System.Address) is
+      Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Grant_Mask  : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Current     : constant Kernel.Tasks.Task_Access :=
+        Kernel.Scheduler.Current;
+      Result      : Kernel.Processes.Status;
+      Process_Cap : Kernel.Capabilities.Handle;
+   begin
+      Kernel.Processes.Spawn_Boot_Path
+        (Parent      => Current,
+         Path_Offset => Path_Offset,
+         Path_Length => Path_Length,
+         Grant_Mask  => Grant_Mask,
+         Result      => Result,
+         Process_Cap => Process_Cap);
+
+      if Result = Kernel.Processes.Ok then
+         Trap_Frame_Set_A0 (Frame, U64 (Process_Cap));
+      else
+         Trap_Frame_Set_A0 (Frame, 0);
+      end if;
+   end Handle_Spawn_Boot_Path;
+
    procedure Handle_Boot_File_Size (Frame : System.Address) is
       use type Kernel.Boot_Files.Status;
 
@@ -427,6 +452,8 @@ package body Arch.Traps is
          Handle_Boot_File_Size (Frame);
       elsif Number = Sys_Boot_Read_Byte then
          Handle_Boot_Read_Byte (Frame);
+      elsif Number = Sys_Spawn_Boot_Path then
+         Handle_Spawn_Boot_Path (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

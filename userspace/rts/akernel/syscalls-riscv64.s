@@ -56,6 +56,14 @@ akernel_sys_boot_read_byte:
     ret
 .size akernel_sys_boot_read_byte, . - akernel_sys_boot_read_byte
 
+.global akernel_sys_spawn_boot_path
+.type akernel_sys_spawn_boot_path, @function
+akernel_sys_spawn_boot_path:
+    li a7, 8
+    ecall
+    ret
+.size akernel_sys_spawn_boot_path, . - akernel_sys_spawn_boot_path
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

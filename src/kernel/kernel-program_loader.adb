@@ -218,6 +218,65 @@ package body Kernel.Program_Loader is
       Matched := True;
    end Parse_Line;
 
+   procedure Find_By_Manifest_Path
+     (Path_Offset : U64;
+      Path_Length : U64;
+      Result      : out Status;
+      Image       : out Program_Image)
+   is
+      Init_Result   : Kernel.Initrd.Status;
+      Manifest_Base : U64;
+      Manifest_Size : U64;
+      Path          : Token_String;
+   begin
+      Image := (Base => 0, Size => 0);
+
+      if Path_Length = 0 or else Path_Length > Max_Token_Length then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      Kernel.Initrd.Find
+        (Name   => Manifest_Path,
+         Result => Init_Result,
+         Base   => Manifest_Base,
+         Size   => Manifest_Size);
+
+      if Init_Result = Kernel.Initrd.Not_Found then
+         Result := Not_Found;
+         return;
+      elsif Init_Result /= Kernel.Initrd.Ok then
+         Result := Bad_Image;
+         return;
+      end if;
+
+      if Path_Offset + Path_Length > Manifest_Size then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      Path := (others => Character'Val (0));
+      for Index in U64 range 0 .. Path_Length - 1 loop
+         Path (Natural (Index) + 1) := Character'Val
+           (Natural (Byte_At (Manifest_Base, Path_Offset + Index)));
+      end loop;
+
+      Kernel.Initrd.Find
+        (Name   => Path (1 .. Natural (Path_Length)),
+         Result => Init_Result,
+         Base   => Image.Base,
+         Size   => Image.Size);
+
+      case Init_Result is
+         when Kernel.Initrd.Ok =>
+            Result := Ok;
+         when Kernel.Initrd.Not_Found =>
+            Result := Not_Found;
+         when others =>
+            Result := Bad_Image;
+      end case;
+   end Find_By_Manifest_Path;
+
    procedure Find
      (Program_Id : U64;
       Result     : out Status;
