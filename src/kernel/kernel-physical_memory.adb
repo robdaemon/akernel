@@ -51,6 +51,26 @@ package body Kernel.Physical_Memory is
       Result := Ok;
    end Allocate_Frame;
 
+   function Mark return U64 is
+   begin
+      return Next_Frame;
+   end Mark;
+
+   procedure Rewind
+     (To     : U64;
+      Result : out Status)
+   is
+   begin
+      if not Is_Ready then
+         Result := Not_Initialized;
+      elsif To > Next_Frame or else To mod Page_Size /= 0 then
+         Result := Invalid_Range;
+      else
+         Next_Frame := To;
+         Result := Ok;
+      end if;
+   end Rewind;
+
    function Free_Bytes return U64 is
    begin
       if not Is_Ready or else Next_Frame >= Limit then

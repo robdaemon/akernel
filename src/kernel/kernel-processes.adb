@@ -140,6 +140,14 @@ package body Kernel.Processes is
       end if;
    end Grant_Requested_Caps;
 
+   procedure Rewind_To
+     (Mark : U64)
+   is
+      PMM_Result : Kernel.Physical_Memory.Status;
+   begin
+      Kernel.Physical_Memory.Rewind (Mark, PMM_Result);
+   end Rewind_To;
+
    procedure Spawn_Image
      (Parent      : Kernel.Tasks.Task_Access;
       Image       : Kernel.Program_Loader.Program_Image;
@@ -158,6 +166,7 @@ package body Kernel.Processes is
       Root         : U64;
       Stack_Frame  : U64;
       Start_PC     : U64;
+      Memory_Mark  : U64;
    begin
       Process_Cap := Kernel.Capabilities.Invalid_Handle;
 
@@ -179,15 +188,19 @@ package body Kernel.Processes is
          return;
       end if;
 
+      Memory_Mark := Kernel.Physical_Memory.Mark;
+
       Arch.MMU.New_User_Address_Space (MMU_Result, Root);
       if MMU_Result /= Arch.MMU.Ok then
          Result := Load_Failed;
+         Rewind_To (Memory_Mark);
          return;
       end if;
 
       Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Stack_Frame);
       if PMM_Result /= Kernel.Physical_Memory.Ok then
          Result := Load_Failed;
+         Rewind_To (Memory_Mark);
          return;
       end if;
 
@@ -200,6 +213,7 @@ package body Kernel.Processes is
 
       if MMU_Result /= Arch.MMU.Ok then
          Result := Load_Failed;
+         Rewind_To (Memory_Mark);
          return;
       end if;
 
@@ -212,6 +226,7 @@ package body Kernel.Processes is
 
       if ELF_Result /= Kernel.ELF.Ok then
          Result := Load_Failed;
+         Rewind_To (Memory_Mark);
          return;
       end if;
 
@@ -225,19 +240,9 @@ package body Kernel.Processes is
 
       Grant_Requested_Caps (Parent, Tasks (Slot), Grant_Mask, Result);
       if Result /= Ok then
+         Rewind_To (Memory_Mark);
          return;
       end if;
-
-      Kernel.Scheduler.Add_Task
-        (TCB    => Tasks (Slot)'Unchecked_Access,
-         Result => Sched_Result);
-
-      if Sched_Result /= Kernel.Scheduler.Ok then
-         Result := Scheduler_Failed;
-         return;
-      end if;
-
-      Used (Slot) := True;
 
       Kernel.Tasks.Insert_Cap
         (TCB    => Parent.all,
@@ -251,9 +256,23 @@ package body Kernel.Processes is
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         Rewind_To (Memory_Mark);
          return;
       end if;
 
+      Kernel.Scheduler.Add_Task
+        (TCB    => Tasks (Slot)'Unchecked_Access,
+         Result => Sched_Result);
+
+      if Sched_Result /= Kernel.Scheduler.Ok then
+         Kernel.Tasks.Close_Cap (Parent.all, Process_Cap, Cap_Result);
+         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+         Result := Scheduler_Failed;
+         Rewind_To (Memory_Mark);
+         return;
+      end if;
+
+      Used (Slot) := True;
       Result := Ok;
    end Spawn_Image;
 

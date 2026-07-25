@@ -137,4 +137,16 @@ package body Kernel.Tasks is
          Result    => Result,
          Out_Entry => Out_Entry);
    end Lookup_Cap;
+
+   procedure Close_Cap
+     (TCB    : in out Task_Control_Block;
+      Cap    : Kernel.Capabilities.Handle;
+      Result : out Kernel.Capabilities.Status)
+   is
+   begin
+      Kernel.Capabilities.Close
+        (Table  => TCB.Caps,
+         Cap    => Cap,
+         Result => Result);
+   end Close_Cap;
 end Kernel.Tasks;

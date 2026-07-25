@@ -74,6 +74,11 @@ package Kernel.Tasks is
       Result    : out Kernel.Capabilities.Status;
       Out_Entry : out Kernel.Capabilities.Cap_Entry);
 
+   procedure Close_Cap
+     (TCB    : in out Task_Control_Block;
+      Cap    : Kernel.Capabilities.Handle;
+      Result : out Kernel.Capabilities.Status);
+
 private
    type Register_Array is array (Natural range 0 .. 30)
      of Kernel.Capabilities.U64;

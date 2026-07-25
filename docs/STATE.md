@@ -197,7 +197,7 @@ Physical allocator:
 src/kernel/kernel-physical_memory.ads/.adb
 ```
 
-Current allocator: simple bump frame allocator. Initialized from linker `_end` to RAM end from DTB.
+Current allocator: simple bump frame allocator. Initialized from linker `_end` to RAM end from DTB. Supports mark/rewind for failed all-or-nothing allocations during early process spawn; no general free/reuse yet.
 
 Device tree parser:
 
@@ -375,26 +375,7 @@ Capabilities:
 src/kernel/kernel-capabilities.ads/.adb
 ```
 
-Flat per-task cap table, 256 entries. Handle 0 invalid.
-
-Cap entry:
-- valid
-- kind
-- object address
-- rights
-- badge
-
-Rights:
-- Read
-- Write
-- Execute
-- Map
-- Send
-- Receive
-- Wait
-- Ack
-- Transfer
-- Manage
+Flat per-task cap table, 256 entries. Handle 0 invalid. Entries carry kind, object address, rights, and badge.
 
 Tasks:
 
@@ -444,11 +425,13 @@ src/kernel/kernel-processes.ads/.adb
 `Kernel.Processes.Spawn_Boot_Path` currently:
 - accepts manifest path offset/length and explicit grant mask from caller
 - requests executable image from `Kernel.Program_Loader.Find_By_Manifest_Path`
+- marks PMM bump pointer before process allocations
 - creates address space + stack
-- initializes TCB context
+- loads ELF and initializes TCB context
 - grants caller-requested caps to child only if parent has matching resource caps
-- queues child in scheduler
-- inserts `Thread_Object` cap into parent and returns cap handle
+- inserts `Thread_Object` cap into parent
+- queues child in scheduler only after all prior steps succeed
+- rewinds PMM mark on failure before child becomes visible
 
 Scheduler:
 
@@ -556,7 +539,7 @@ QEMU virt RAM base:     0x80000000
 
 ## Temporary limitations / hacks
 
-- PMM is bump-only, no free/reuse.
+- PMM is bump-only with mark/rewind for failed spawn; no general free/reuse.
 - Kernel supervisor mappings are broad identity mappings copied into user roots.
 - No high-half kernel yet.
 - Context switch works only as rough cooperative saved trap-frame switching.
@@ -585,7 +568,8 @@ QEMU virt RAM base:     0x80000000
    - trap context save/schedule/restore helper exists for yield and IRQ wait
    - blocked-current/empty-ready idle path now uses `wfi` instead of reviving blocked task
    - IRQ single-waiter state transitions hardened
-   - continue hardening task lifecycle/failure cleanup
+   - failed spawn rewinds PMM before child becomes visible
+   - continue hardening task lifecycle after successful spawn/exit
    - add per-task kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
 
