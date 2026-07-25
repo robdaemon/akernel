@@ -117,6 +117,41 @@ package body Arch.Traps is
       return Value mod Arch.MMU.Page_Size = 0;
    end Is_Page_Aligned;
 
+   procedure Save_Current_Context (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Task_Access := Kernel.Scheduler.Current;
+   begin
+      if Current /= null then
+         Trap_Frame_Save_Context
+           (Frame,
+            Kernel.Tasks.Context_Address (Current.all));
+      end if;
+   end Save_Current_Context;
+
+   procedure Restore_Scheduled_Context
+     (Frame  : System.Address;
+      Result : Kernel.Scheduler.Status)
+   is
+      Current : constant Kernel.Tasks.Task_Access := Kernel.Scheduler.Current;
+   begin
+      if Result = Kernel.Scheduler.Ok and then Current /= null then
+         Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
+         Trap_Frame_Load_Context
+           (Frame,
+            Kernel.Tasks.Context_Address (Current.all));
+      elsif Result /= Kernel.Scheduler.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+   end Restore_Scheduled_Context;
+
+   procedure Schedule_Saved_Context
+     (Frame  : System.Address;
+      Result : out Kernel.Scheduler.Status)
+   is
+   begin
+      Kernel.Scheduler.Yield (Result);
+      Restore_Scheduled_Context (Frame, Result);
+   end Schedule_Saved_Context;
+
    procedure Handle_Map_MMIO (Frame : System.Address) is
       use type Kernel.Capabilities.Object_Kind;
       use type Kernel.Capabilities.Status;
@@ -238,23 +273,9 @@ package body Arch.Traps is
       elsif IRQ_Result = Kernel.Interrupts.Would_Block then
          Advance_SEPC;
          Trap_Frame_Set_A0 (Frame, 0);
-         Trap_Frame_Save_Context
-           (Frame,
-            Kernel.Tasks.Context_Address (Current.all));
+         Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_IRQ);
-         Kernel.Scheduler.Yield (Scheduler_Result);
-
-         if Scheduler_Result = Kernel.Scheduler.Ok
-           and then Kernel.Scheduler.Current /= null
-         then
-            Arch.MMU.Activate
-              (Kernel.Tasks.Address_Space_Root
-                 (Kernel.Scheduler.Current.all));
-            Trap_Frame_Load_Context
-              (Frame,
-               Kernel.Tasks.Context_Address
-                 (Kernel.Scheduler.Current.all));
-         end if;
+         Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       else
          Trap_Frame_Set_A0 (Frame, 1);
@@ -404,35 +425,14 @@ package body Arch.Traps is
 
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
-      Arg0             : constant U64 := Trap_Frame_Get_A0 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
-      pragma Unreferenced (Arg0);
    begin
       if Number = Sys_Yield then
          Advance_SEPC;
          Trap_Frame_Set_A0 (Frame, 0);
 
-         if Kernel.Scheduler.Current /= null then
-            Trap_Frame_Save_Context
-              (Frame,
-               Kernel.Tasks.Context_Address
-                 (Kernel.Scheduler.Current.all));
-         end if;
-
-         Kernel.Scheduler.Yield (Scheduler_Result);
-         if Scheduler_Result = Kernel.Scheduler.Ok
-           and then Kernel.Scheduler.Current /= null
-         then
-            Arch.MMU.Activate
-              (Kernel.Tasks.Address_Space_Root
-                 (Kernel.Scheduler.Current.all));
-            Trap_Frame_Load_Context
-              (Frame,
-               Kernel.Tasks.Context_Address
-                 (Kernel.Scheduler.Current.all));
-         elsif Scheduler_Result /= Kernel.Scheduler.Ok then
-            Trap_Frame_Set_A0 (Frame, U64'Last);
-         end if;
+         Save_Current_Context (Frame);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       elsif Number = Sys_Debug_Putchar then
          Board.UART.Put
