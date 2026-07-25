@@ -14,19 +14,21 @@ Done recently:
 - Init and spawned user threads have per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread stack top before returning to user.
 - Spawn/reap cleanup frees spawned thread kernel stack frames.
 - `Arch.Context` owns RISC-V trap-frame layout and saved `sepc`; `Kernel.Tasks` stores opaque `Arch.Context.Thread_Context` and calls arch context save/restore APIs.
+- Legacy id-based spawn syscall 5 removed; userspace only exposes `spawn_boot_path` syscall 8.
+- Legacy `Kernel.Program_Loader.Find(program_id)` and manifest grant parser backend removed; loader now only resolves manifest path slices to initrd images.
 - `Arch.User_Mode.Enter_User_Mode` no longer resets `sscratch`; caller/trap restore controls kernel trap stack.
 - `make all` and timeout boot run pass with expected boot output.
 
 Continue with:
-1. Decide return caps: process cap now returned; add main thread cap only if needed.
-2. Add object refcounts/close hooks if new shared kernel objects need ownership semantics beyond endpoint/IRQ waiter cleanup.
-3. Add stronger PMM/page-table stress tests once test harness exists.
-4. Move remaining VM syscalls toward explicit address-space cap arguments instead of implicit fixed self cap.
-5. Add user-visible error/status convention for failed spawn.
+1. Add user-visible error/status convention for failed spawn.
+2. Decide return caps: process cap now returned; add main thread cap only if needed.
+3. Add object refcounts/close hooks if new shared kernel objects need ownership semantics beyond endpoint/IRQ waiter cleanup.
+4. Add stronger PMM/page-table stress tests once test harness exists.
+5. Move remaining VM syscalls toward explicit address-space cap arguments instead of implicit fixed self cap.
 
 Start by reading:
 - `docs/STATE.md`
-- `src/kernel/kernel-tasks.ads/.adb`
-- `src/arch/riscv64/arch-context.ads/.adb`
-- `src/arch/riscv64/arch-traps.adb`
+- `src/kernel/kernel-program_loader.ads/.adb`
 - `src/kernel/kernel-processes.ads/.adb`
+- `src/arch/riscv64/arch-traps.adb`
+- `userspace/rts/akernel/akernel_user-syscalls.ads/.adb`

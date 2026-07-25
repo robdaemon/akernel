@@ -24,11 +24,6 @@ package body Akernel_User.Syscalls is
    function Raw_IRQ_Ack (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_irq_ack";
 
-   function Raw_Spawn_Program
-     (Program_Id : U64;
-      Grant_Mask : U64) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_spawn_program";
-
    function Raw_Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
@@ -75,14 +70,6 @@ package body Akernel_User.Syscalls is
       return Raw_IRQ_Ack (Cap);
    end IRQ_Ack;
 
-   function Spawn_Program
-     (Program_Id : U64;
-      Grant_Mask : U64) return U64
-   is
-   begin
-      return Raw_Spawn_Program (Program_Id, Grant_Mask);
-   end Spawn_Program;
-
    function Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
@@ -114,12 +101,6 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Reap_Process (Process_Cap);
    end Reap_Process;
-
-   function Exec_Serial return U64 is
-   begin
-      return Spawn_Program
-        (1, UART_MMIO_Grant_Bit or UART_IRQ_Grant_Bit);
-   end Exec_Serial;
 
    procedure Debug_Put (S : String) is
    begin

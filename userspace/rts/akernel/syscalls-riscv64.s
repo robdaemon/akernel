@@ -32,14 +32,6 @@ akernel_sys_irq_ack:
     ret
 .size akernel_sys_irq_ack, . - akernel_sys_irq_ack
 
-.global akernel_sys_spawn_program
-.type akernel_sys_spawn_program, @function
-akernel_sys_spawn_program:
-    li a7, 5
-    ecall
-    ret
-.size akernel_sys_spawn_program, . - akernel_sys_spawn_program
-
 .global akernel_sys_boot_file_size
 .type akernel_sys_boot_file_size, @function
 akernel_sys_boot_file_size:

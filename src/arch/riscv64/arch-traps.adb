@@ -33,7 +33,6 @@ package body Arch.Traps is
    Sys_Map_MMIO          : constant U64 := 2;
    Sys_IRQ_Wait          : constant U64 := 3;
    Sys_IRQ_Ack           : constant U64 := 4;
-   Sys_Spawn_Program     : constant U64 := 5;
    Sys_Boot_File_Size    : constant U64 := 6;
    Sys_Boot_Read_Byte    : constant U64 := 7;
    Sys_Spawn_Boot_Path   : constant U64 := 8;
@@ -350,28 +349,6 @@ package body Arch.Traps is
       end if;
    end Handle_IRQ_Ack;
 
-   procedure Handle_Spawn_Program (Frame : System.Address) is
-      Program_Id  : constant U64 := Trap_Frame_Get_A0 (Frame);
-      Grant_Mask  : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Current     : constant Kernel.Tasks.Thread_Access :=
-        Kernel.Scheduler.Current;
-      Result      : Kernel.Processes.Status;
-      Process_Cap : Kernel.Capabilities.Handle;
-   begin
-      Kernel.Processes.Spawn_Program
-        (Parent      => Current,
-         Program_Id  => Program_Id,
-         Grant_Mask  => Grant_Mask,
-         Result      => Result,
-         Process_Cap => Process_Cap);
-
-      if Result = Kernel.Processes.Ok then
-         Trap_Frame_Set_A0 (Frame, U64 (Process_Cap));
-      else
-         Trap_Frame_Set_A0 (Frame, 0);
-      end if;
-   end Handle_Spawn_Program;
-
    procedure Handle_Spawn_Boot_Path (Frame : System.Address) is
       Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
       Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
@@ -504,8 +481,6 @@ package body Arch.Traps is
          return;
       elsif Number = Sys_IRQ_Ack then
          Handle_IRQ_Ack (Frame);
-      elsif Number = Sys_Spawn_Program then
-         Handle_Spawn_Program (Frame);
       elsif Number = Sys_Boot_File_Size then
          Handle_Boot_File_Size (Frame);
       elsif Number = Sys_Boot_Read_Byte then

@@ -341,34 +341,6 @@ package body Kernel.Processes is
       Result := Ok;
    end Spawn_Image;
 
-   procedure Spawn_Program
-     (Parent      : Kernel.Tasks.Thread_Access;
-      Program_Id  : U64;
-      Grant_Mask  : U64;
-      Result      : out Status;
-      Process_Cap : out Kernel.Capabilities.Handle)
-   is
-      Loader_Result : Kernel.Program_Loader.Status;
-      Manifest      : Kernel.Program_Loader.Program_Manifest;
-   begin
-      Kernel.Program_Loader.Find
-        (Program_Id => Program_Id,
-         Result     => Loader_Result,
-         Manifest   => Manifest);
-
-      if Loader_Result = Kernel.Program_Loader.Invalid_Program then
-         Result := Invalid_Program;
-         Process_Cap := Kernel.Capabilities.Invalid_Handle;
-         return;
-      elsif Loader_Result /= Kernel.Program_Loader.Ok then
-         Result := Load_Failed;
-         Process_Cap := Kernel.Capabilities.Invalid_Handle;
-         return;
-      end if;
-
-      Spawn_Image (Parent, Manifest.Image, Grant_Mask, Result, Process_Cap);
-   end Spawn_Program;
-
    procedure Spawn_Boot_Path
      (Parent      : Kernel.Tasks.Thread_Access;
       Path_Offset : U64;
