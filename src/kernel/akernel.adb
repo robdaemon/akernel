@@ -131,6 +131,55 @@ procedure Akernel is
       Ack      => True,
       Transfer => False,
       Manage   => False);
+
+   procedure PMM_Self_Test is
+      Before  : Interfaces.Unsigned_64;
+      After   : Interfaces.Unsigned_64;
+      Frame_A : Interfaces.Unsigned_64;
+      Frame_B : Interfaces.Unsigned_64;
+      Frame_C : Interfaces.Unsigned_64;
+      Status  : Kernel.Physical_Memory.Status;
+      Passed  : Boolean := False;
+   begin
+      if not Kernel.Physical_Memory.Initialized then
+         return;
+      end if;
+
+      Before := Kernel.Physical_Memory.Free_Frame_Count;
+      Kernel.Physical_Memory.Allocate_Frame (Status, Frame_A);
+      if Status /= Kernel.Physical_Memory.Ok then
+         return;
+      end if;
+
+      Kernel.Physical_Memory.Allocate_Frame (Status, Frame_B);
+      if Status /= Kernel.Physical_Memory.Ok then
+         Kernel.Physical_Memory.Deallocate_Frame (Frame_A, Status);
+         return;
+      end if;
+
+      Kernel.Physical_Memory.Deallocate_Frame (Frame_A, Status);
+      if Status = Kernel.Physical_Memory.Ok then
+         Kernel.Physical_Memory.Allocate_Frame (Status, Frame_C);
+         if Status = Kernel.Physical_Memory.Ok and then Frame_C = Frame_A then
+            Kernel.Physical_Memory.Deallocate_Frame (Frame_C, Status);
+            if Status = Kernel.Physical_Memory.Ok then
+               Kernel.Physical_Memory.Deallocate_Frame (Frame_B, Status);
+               if Status = Kernel.Physical_Memory.Ok then
+                  Kernel.Physical_Memory.Deallocate_Frame (Frame_C, Status);
+                  After := Kernel.Physical_Memory.Free_Frame_Count;
+                  Passed := Status = Kernel.Physical_Memory.Invalid_Range
+                    and then After = Before;
+               end if;
+            end if;
+         end if;
+      end if;
+
+      if Passed then
+         Board.UART.Put_Line ("pmm selftest online");
+      else
+         Board.UART.Put_Line ("pmm selftest failed");
+      end if;
+   end PMM_Self_Test;
 begin
    Board.UART.Put_Line ("Hello world!");
 
@@ -178,6 +227,7 @@ begin
       Board.UART.Put ("ram MiB: ");
       Board.UART.Put_Decimal (Natural (Memory_Size / (1024 * 1024)));
       Board.UART.Put_Line ("");
+      PMM_Self_Test;
    end if;
 
    Kernel.Tasks.Initialize_Process (Bootstrap_Process, 1);

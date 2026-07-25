@@ -44,6 +44,7 @@ Important lines:
 Hello world!
 memory manager online
 ram MiB: 4096
+pmm selftest online
 cap table online
 ipc online
 scheduler online
@@ -203,7 +204,7 @@ Physical allocator:
 src/kernel/kernel-physical_memory.ads/.adb
 ```
 
-Current allocator: bump frame allocator plus singly-linked free list stored in freed frames. Initialized from linker `_end` to RAM end from DTB. `Allocate_Frame` reuses free-list frames before bumping. `Deallocate_Frame` validates managed/aligned/currently allocated frames, rejects double-free entries already in free list, shrinks bump pointer for most-recent frame, otherwise pushes frame onto free list. `Free_Bytes` includes bump space plus free-list frames. Mark/rewind remains for early code but process spawn now uses explicit cleanup instead of relying on rewind.
+Current allocator: bump frame allocator plus singly-linked free list stored in freed frames. Initialized from linker `_end` to RAM end from DTB. `Allocate_Frame` reuses free-list frames before bumping. `Deallocate_Frame` validates managed/aligned/currently allocated frames, rejects double-free entries already in free list, shrinks bump pointer for most-recent frame, otherwise pushes frame onto free list. `Free_Bytes` includes bump space plus free-list frames. `Free_Frame_Count` exposes frame count diagnostics. Mark/rewind remains for early code but process spawn now uses explicit cleanup instead of relying on rewind. Boot-time PMM selftest checks free-list reuse, free-count restore, and double-free rejection, then prints `pmm selftest online`.
 
 Device tree parser:
 
@@ -594,8 +595,9 @@ QEMU virt RAM base:     0x80000000
    - process/thread split started in data model and spawn path
    - process lifecycle states exist; failed unpublished spawn cleanup exists
    - exit syscall exists and marks current thread/process dead
-   - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, and frees dead spawned slot for reuse
-   - add real cap table cleanup on exit and after published process failure
+   - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, clears child cap table, and frees dead spawned slot for reuse
+   - PMM boot selftest checks reuse/free-count/double-free rejection
+   - add richer cap/object cleanup on exit and after published process failure
    - continue hardening process/thread lifecycle after successful spawn/exit
    - add per-thread kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
