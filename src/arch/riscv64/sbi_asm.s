@@ -182,6 +182,13 @@ riscv_reset_trap_stack:
     ret
 .size riscv_reset_trap_stack, . - riscv_reset_trap_stack
 
+.global riscv_set_trap_stack
+.type riscv_set_trap_stack, @function
+riscv_set_trap_stack:
+    csrw sscratch, a0
+    ret
+.size riscv_set_trap_stack, . - riscv_set_trap_stack
+
 .global riscv_enter_user_mode
 .type riscv_enter_user_mode, @function
 riscv_enter_user_mode:

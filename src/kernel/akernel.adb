@@ -51,9 +51,10 @@ procedure Akernel is
    MMU_Result       : Arch.MMU.Status := Arch.MMU.Allocation_Failed;
    Memory_Base      : Interfaces.Unsigned_64 := 0;
    Memory_Size      : Interfaces.Unsigned_64 := 0;
-   First_Frame      : Interfaces.Unsigned_64 := 0;
-   User_Stack_Frame : Interfaces.Unsigned_64 := 0;
-   Root_Table       : Interfaces.Unsigned_64 := 0;
+   First_Frame             : Interfaces.Unsigned_64 := 0;
+   User_Stack_Frame        : Interfaces.Unsigned_64 := 0;
+   Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
+   Root_Table              : Interfaces.Unsigned_64 := 0;
    User_Root_Table  : Interfaces.Unsigned_64 := 0;
    User_Stack_Top   : constant Interfaces.Unsigned_64 := 16#7000_0000#;
    Init_Image_Base  : Interfaces.Unsigned_64 := 0;
@@ -223,6 +224,13 @@ begin
    if PMM_Result = Kernel.Physical_Memory.Ok
      and then MMU_Result = Arch.MMU.Ok
    then
+      Kernel.Physical_Memory.Allocate_Frame
+        (PMM_Result, Init_Kernel_Stack_Frame);
+   end if;
+
+   if PMM_Result = Kernel.Physical_Memory.Ok
+     and then MMU_Result = Arch.MMU.Ok
+   then
       Board.UART.Put_Line ("memory manager online");
       Board.UART.Put ("ram MiB: ");
       Board.UART.Put_Decimal (Natural (Memory_Size / (1024 * 1024)));
@@ -378,6 +386,13 @@ begin
      (TCB     => Init_Task,
       Id      => 3,
       Process => Init_Process'Unchecked_Access);
+   if Init_Kernel_Stack_Frame /= 0 then
+      Kernel.Tasks.Set_Kernel_Stack_Top
+        (TCB       => Init_Task,
+         Stack_Top => Init_Kernel_Stack_Frame
+           + Kernel.Physical_Memory.Page_Size);
+   end if;
+
    Kernel.Tasks.Insert_Cap_At
      (TCB    => Init_Task,
       Cap    => 1,
@@ -413,6 +428,10 @@ begin
      and then ELF_Result = Kernel.ELF.Ok
    then
       Board.UART.Put_Line ("entering initrd init");
+      if Kernel.Tasks.Kernel_Stack_Top (Init_Task) /= 0 then
+         Arch.Traps.Set_Kernel_Trap_Stack
+           (Kernel.Tasks.Kernel_Stack_Top (Init_Task));
+      end if;
       Arch.MMU.Activate (User_Root_Table);
       Arch.User_Mode.Enter_User_Mode
         (Entry_Point => Init_Entry,

@@ -75,6 +75,13 @@ package Kernel.Tasks is
    function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address;
 
+   procedure Set_Kernel_Stack_Top
+     (TCB       : in out Thread_Control_Block;
+      Stack_Top : Kernel.Capabilities.U64);
+
+   function Kernel_Stack_Top
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
+
    procedure Initialize_Context
      (TCB   : in out Thread_Control_Block;
       PC    : Kernel.Capabilities.U64;
@@ -174,8 +181,9 @@ private
    type Thread_Control_Block is record
       Identifier : Thread_Id;
       Status     : Thread_State;
-      Process    : Process_Access;
-      Context    : aliased Task_Context;
-      Queued     : Boolean;
+      Process          : Process_Access;
+      Kernel_Stack_Top : Kernel.Capabilities.U64;
+      Context          : aliased Task_Context;
+      Queued           : Boolean;
    end record;
 end Kernel.Tasks;

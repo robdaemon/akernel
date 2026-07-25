@@ -150,7 +150,7 @@ Trap handler:
 src/arch/riscv64/arch-traps.adb
 ```
 
-Trap entry uses `sscratch` to switch from user stack to kernel trap stack. It passes trap-frame pointer to Ada handler.
+Trap entry uses `sscratch` to switch from user stack to kernel trap stack. Init and spawned user threads now own per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread before returning to user. It passes trap-frame pointer to Ada handler. Trap-frame contents are still saved/restored through raw frame copy helpers into thread context.
 
 Syscall ABI:
 
@@ -449,7 +449,7 @@ src/kernel/kernel-processes.ads/.adb
 Process/thread split decision:
 - kernel-visible threads are scheduled by kernel, with optional user-level fibers later
 - process owns address space, cap table, resource/lifecycle state
-- thread owns saved registers/context, scheduler state, future per-thread kernel stack/trap frame
+- thread owns saved registers/context, scheduler state, per-thread kernel stack top; future work moves full trap-frame storage into thread object
 - spawn creates process plus main kernel thread, returning process cap (main thread cap can be added later)
 - kernel-visible threads chosen because blocking IPC/IRQ waits should block one thread, not whole address space/runtime
 - user-level threading can still be M:N/fibers later above kernel threads
@@ -604,8 +604,8 @@ QEMU virt RAM base:     0x80000000
    - endpoint/IRQ cap cleanup hooks run on exit/reap
    - add richer object cleanup/refcounts as object model grows
    - continue hardening process/thread lifecycle after successful spawn/exit
-   - add per-thread kernel stacks/trap frames
-   - avoid copying raw trap frames in arch-neutral task code
+   - per-thread kernel stacks exist for init/spawned user threads
+   - add per-thread trap-frame storage and avoid copying raw trap frames in arch-neutral task code
 
 3. Improve blocking IRQ waits:
    - single-waiter IRQ wait/wakeup implemented
@@ -624,5 +624,5 @@ QEMU virt RAM base:     0x80000000
 
 5. Improve VM isolation:
    - proper kernel virtual map instead of broad identity
-   - per-task kernel stacks/trap frames
+   - per-thread kernel stacks exist; add per-thread trap-frame storage
    - scheduler context switch switches `satp`

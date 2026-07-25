@@ -161,7 +161,17 @@ package body Kernel.Processes is
    procedure Discard_Slot
      (Slot : Process_Index)
    is
+      Stack_Top  : constant U64 :=
+        Kernel.Tasks.Kernel_Stack_Top (Threads (Slot));
+      PMM_Result : Kernel.Physical_Memory.Status;
    begin
+      if Stack_Top /= 0 then
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => Stack_Top - Kernel.Physical_Memory.Page_Size,
+            Result => PMM_Result);
+         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (Slot), 0);
+      end if;
+
       Kernel.Tasks.Set_State (Threads (Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (Slot), False);
       Kernel.Tasks.Reset_Process_Caps (Processes (Slot));
@@ -187,9 +197,10 @@ package body Kernel.Processes is
       Found_Slot   : Boolean := False;
       New_Process_Id : Kernel.Tasks.Process_Id;
       New_Thread_Id  : Kernel.Tasks.Thread_Id;
-      Root         : U64 := 0;
-      Stack_Frame  : U64 := 0;
-      Start_PC     : U64;
+      Root               : U64 := 0;
+      Stack_Frame        : U64 := 0;
+      Kernel_Stack_Frame : U64 := 0;
+      Start_PC           : U64;
    begin
       Process_Cap := Kernel.Capabilities.Invalid_Handle;
 
@@ -238,6 +249,14 @@ package body Kernel.Processes is
          return;
       end if;
 
+      Kernel.Physical_Memory.Allocate_Frame
+        (PMM_Result, Kernel_Stack_Frame);
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         Result := Load_Failed;
+         Destroy_Address_Space (Root);
+         return;
+      end if;
+
       Kernel.ELF.Load_Into_Address_Space
         (Image_Base  => Image.Base,
          Image_Size  => Image.Size,
@@ -247,6 +266,8 @@ package body Kernel.Processes is
 
       if ELF_Result /= Kernel.ELF.Ok then
          Result := Load_Failed;
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Kernel_Stack_Frame, PMM_Result);
          Destroy_Address_Space (Root);
          return;
       end if;
@@ -267,6 +288,9 @@ package body Kernel.Processes is
         (TCB     => Threads (Slot),
          Id      => New_Thread_Id,
          Process => Processes (Slot)'Unchecked_Access);
+      Kernel.Tasks.Set_Kernel_Stack_Top
+        (TCB       => Threads (Slot),
+         Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
       Kernel.Tasks.Initialize_Context
         (TCB   => Threads (Slot),
          PC    => Start_PC,

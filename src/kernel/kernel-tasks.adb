@@ -51,6 +51,7 @@ package body Kernel.Tasks is
       TCB.Identifier := Id;
       TCB.Status := Ready;
       TCB.Process := Process;
+      TCB.Kernel_Stack_Top := 0;
       TCB.Context.Registers := (others => 0);
       TCB.Context.PC := 0;
       TCB.Context.Valid := False;
@@ -179,6 +180,21 @@ package body Kernel.Tasks is
    begin
       return TCB.Context'Address;
    end Context_Address;
+
+   procedure Set_Kernel_Stack_Top
+     (TCB       : in out Thread_Control_Block;
+      Stack_Top : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.Kernel_Stack_Top := Stack_Top;
+   end Set_Kernel_Stack_Top;
+
+   function Kernel_Stack_Top
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.Kernel_Stack_Top;
+   end Kernel_Stack_Top;
 
    procedure Initialize_Context
      (TCB   : in out Thread_Control_Block;

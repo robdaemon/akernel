@@ -1,4 +1,3 @@
-with Interfaces;
 with System;
 with Ada.Unchecked_Conversion;
 with Arch.MMU;
@@ -21,7 +20,6 @@ package body Arch.Traps is
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
    use type Kernel.Tasks.Thread_Access;
-   subtype U64 is Interfaces.Unsigned_64;
 
    Timer_Ticks_Per_Second : constant U64 := 10_000_000;
    Timer_Interval        : constant U64 := Timer_Ticks_Per_Second;
@@ -75,8 +73,16 @@ package body Arch.Traps is
       Context : System.Address)
      with Import, Convention => C, External_Name => "trap_frame_load_context";
 
+   procedure Raw_Set_Trap_Stack (Stack_Top : U64)
+     with Import, Convention => C, External_Name => "riscv_set_trap_stack";
+
    procedure Advance_SEPC
      with Import, Convention => C, External_Name => "riscv_advance_sepc";
+
+   procedure Set_Kernel_Trap_Stack (Stack_Top : U64) is
+   begin
+      Raw_Set_Trap_Stack (Stack_Top);
+   end Set_Kernel_Trap_Stack;
 
    function Hex_Digit (Nibble : U64) return Character is
       Hex : constant String := "0123456789abcdef";
@@ -138,6 +144,11 @@ package body Arch.Traps is
         Kernel.Scheduler.Current;
    begin
       if Result = Kernel.Scheduler.Ok and then Current /= null then
+         if Kernel.Tasks.Kernel_Stack_Top (Current.all) /= 0 then
+            Set_Kernel_Trap_Stack
+              (Kernel.Tasks.Kernel_Stack_Top (Current.all));
+         end if;
+
          Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
          Trap_Frame_Load_Context
            (Frame,
