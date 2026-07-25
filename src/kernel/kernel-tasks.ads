@@ -159,11 +159,6 @@ package Kernel.Tasks is
       Cap    : Kernel.Capabilities.Handle;
       Result : out Kernel.Capabilities.Status);
 
-   procedure Close_Process_Cap
-     (PCB    : in out Process_Control_Block;
-      Cap    : Kernel.Capabilities.Handle;
-      Result : out Kernel.Capabilities.Status);
-
    procedure Reset_Process_Caps (PCB : in out Process_Control_Block);
 
    function Process_Cap_Count (PCB : Process_Control_Block) return Natural;

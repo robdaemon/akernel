@@ -368,18 +368,6 @@ package body Kernel.Tasks is
          Out_Entry => Out_Entry);
    end Lookup_Cap;
 
-   procedure Close_Process_Cap
-     (PCB    : in out Process_Control_Block;
-      Cap    : Kernel.Capabilities.Handle;
-      Result : out Kernel.Capabilities.Status)
-   is
-   begin
-      Kernel.Capabilities.Close
-        (Table  => PCB.Caps,
-         Cap    => Cap,
-         Result => Result);
-   end Close_Process_Cap;
-
    procedure Close_Cap
      (Thread : not null Thread_Access;
       Cap    : Kernel.Capabilities.Handle;
@@ -402,7 +390,10 @@ package body Kernel.Tasks is
       end if;
 
       Kernel.Objects.Cleanup_Thread_Cap_Object (Thread, Cap_Info);
-      Close_Process_Cap (Thread.Process.all, Cap, Result);
+      Kernel.Capabilities.Close
+        (Table  => Thread.Process.Caps,
+         Cap    => Cap,
+         Result => Result);
    end Close_Cap;
 
    procedure Reset_Process_Caps (PCB : in out Process_Control_Block) is

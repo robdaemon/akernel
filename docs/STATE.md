@@ -478,7 +478,7 @@ IPC:
 src/kernel/kernel-ipc.ads/.adb
 ```
 
-Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage. `Kernel.Objects.Cleanup_Thread_Cap_Object` dispatches endpoint cleanup for process exit/reap and thread cap close, clearing matching waiting sender/receiver slots before cap table reset.
+Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage. `Kernel.Objects.Cleanup_Thread_Cap_Object` dispatches endpoint cleanup for process exit/reap and thread cap close, clearing matching waiting sender/receiver slots before cap table reset. Public process-only cap close was removed; thread-affine cap close must go through `Kernel.Tasks.Close_Cap (Thread_Access, ...)` so cleanup owner is known.
 
 ## Resource objects
 
@@ -612,6 +612,7 @@ QEMU virt RAM base:     0x80000000
    - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, clears child cap table, and frees dead spawned slot for reuse
    - PMM boot selftest checks reuse/free-count/double-free rejection
    - endpoint/IRQ cap cleanup hooks run through generic object cleanup dispatcher on exit/reap and thread cap close
+   - public process-only cap close removed to avoid bypassing thread-affine cleanup
    - add richer object cleanup/refcounts as object model grows
    - continue hardening process/thread lifecycle after successful spawn/exit
    - per-thread kernel stacks and opaque arch context exist for init/spawned user threads

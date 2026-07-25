@@ -11,7 +11,8 @@ Done recently:
 - `Kernel.Objects.Cleanup_Thread_Cap_Object` is generic object cleanup dispatcher for thread-owned cap references.
 - Endpoint cleanup hook clears matching waiting sender/receiver slots for exiting/reaped/closing thread cap.
 - IRQ cleanup hook clears matching waiter slot for exiting/reaped/closing thread cap.
-- `Kernel.Tasks.Close_Cap` now takes `Thread_Access`, runs object cleanup for target cap, then closes cap table slot.
+- `Kernel.Tasks.Close_Cap` takes `Thread_Access`, runs object cleanup for target cap, then closes cap table slot.
+- Public `Close_Process_Cap` removed so callers cannot close thread-affine caps without cleanup owner context.
 - Fixed cap handle 255 is reserved as process self `Address_Space_Object` cap.
 - `map_mmio` takes explicit address-space cap in `a0`, MMIO cap in `a1`, VA/offset/length/flags in `a2..a5`; old implicit address-space authority ABI removed.
 - Init and spawned user threads have per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread stack top before returning to user.
