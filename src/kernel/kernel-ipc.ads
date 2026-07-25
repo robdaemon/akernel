@@ -1,4 +1,5 @@
 with Interfaces;
+with System;
 with Kernel.Capabilities;
 with Kernel.Tasks;
 
@@ -55,6 +56,10 @@ package Kernel.IPC is
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Result       : out Status;
       Payload      : out Message);
+
+   procedure Cleanup_Thread_Cap
+     (Thread : Kernel.Tasks.Thread_Access;
+      Object : System.Address);
 
 private
    type Endpoint is record

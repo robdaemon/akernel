@@ -398,8 +398,8 @@ Process/thread split started in `Kernel.Tasks`:
 - bootstrap/static tasks now have explicit process + thread objects
 - spawn path creates separate process slot plus main thread slot and marks process alive before publishing cap
 - failed spawn after process/thread initialization discards slot, marks process dead/thread dead, closes published cap if needed, and rewinds PMM mark
-- syscall 9 `exit` marks current thread dead and owning process dead, then schedules next ready thread or idles
-- syscall 10 `reap_process` lets parent holding a managed `Process_Object` cap close that cap, destroy child user address space, free mapped user frames/page tables through PMM, and free dead spawned slot for reuse; live child returns status 2
+- syscall 9 `exit` runs cap/object cleanup hooks for current process caps, marks current thread dead and owning process dead, then schedules next ready thread or idles
+- syscall 10 `reap_process` lets parent holding a managed `Process_Object` cap close that cap, run cap/object cleanup hooks again, destroy child user address space, free mapped user frames/page tables through PMM, reset child cap table, and free dead spawned slot for reuse; live child returns status 2
 
 Boot files:
 
@@ -466,7 +466,7 @@ IPC:
 src/kernel/kernel-ipc.ads/.adb
 ```
 
-Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage.
+Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage. Process exit/reap walks owned caps and applies endpoint cleanup hooks to clear matching waiting sender/receiver slots before cap table reset.
 
 ## Resource objects
 
@@ -514,6 +514,7 @@ Rights Wait|Ack
 IRQ state rules currently:
 - one waiter per IRQ line
 - dead waiter is cleared before installing/checking another waiter
+- process exit/reap walks owned caps and applies IRQ cleanup hooks to clear matching waiter slots
 - `irq_wait` returns immediately only when `Pending and In_Flight`
 - if no IRQ pending, waiter is registered and task blocks
 - second different waiter gets `Already_Waiting` internally and syscall returns invalid/denied
@@ -597,7 +598,8 @@ QEMU virt RAM base:     0x80000000
    - exit syscall exists and marks current thread/process dead
    - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, clears child cap table, and frees dead spawned slot for reuse
    - PMM boot selftest checks reuse/free-count/double-free rejection
-   - add richer cap/object cleanup on exit and after published process failure
+   - endpoint/IRQ cap cleanup hooks run on exit/reap
+   - add richer object cleanup/refcounts as object model grows
    - continue hardening process/thread lifecycle after successful spawn/exit
    - add per-thread kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code

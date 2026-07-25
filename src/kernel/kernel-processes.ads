@@ -39,4 +39,6 @@ package Kernel.Processes is
      (Parent      : Kernel.Tasks.Thread_Access;
       Process_Cap : Kernel.Capabilities.Handle;
       Result      : out Status);
+
+   procedure Mark_Exited (Thread : Kernel.Tasks.Thread_Access);
 end Kernel.Processes;

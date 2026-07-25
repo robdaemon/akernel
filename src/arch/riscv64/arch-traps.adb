@@ -20,7 +20,6 @@ package body Arch.Traps is
    use type Kernel.Processes.Status;
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
-   use type Kernel.Tasks.Process_Access;
    use type Kernel.Tasks.Thread_Access;
    subtype U64 is Interfaces.Unsigned_64;
 
@@ -459,7 +458,6 @@ package body Arch.Traps is
    procedure Handle_Exit (Frame : System.Address) is
       Current          : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
-      Process          : Kernel.Tasks.Process_Access;
       Exit_Result      : Kernel.Scheduler.Status;
       Scheduler_Result : Kernel.Scheduler.Status;
    begin
@@ -468,13 +466,7 @@ package body Arch.Traps is
          return;
       end if;
 
-      Process := Kernel.Tasks.Owning_Process (Current.all);
-      if Process /= null then
-         Kernel.Tasks.Set_Process_State
-           (PCB       => Process.all,
-            New_State => Kernel.Tasks.Process_Dead);
-      end if;
-
+      Kernel.Processes.Mark_Exited (Current);
       Advance_SEPC;
       Kernel.Scheduler.Exit_Current (Exit_Result);
       if Exit_Result /= Kernel.Scheduler.Ok then

@@ -1,6 +1,8 @@
 with System;
 with Arch.MMU;
 with Kernel.ELF;
+with Kernel.IPC;
+with Kernel.Interrupts;
 with Kernel.Physical_Memory;
 with Kernel.Program_Loader;
 with Kernel.Scheduler;
@@ -14,6 +16,7 @@ package body Kernel.Processes is
    use type Kernel.Physical_Memory.Status;
    use type Kernel.Program_Loader.Status;
    use type Kernel.Scheduler.Status;
+   use type Kernel.Tasks.Process_Access;
    use type Kernel.Tasks.Process_State;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
@@ -364,6 +367,58 @@ package body Kernel.Processes is
       Spawn_Image (Parent, Image, Grant_Mask, Result, Process_Cap);
    end Spawn_Boot_Path;
 
+   procedure Cleanup_Cap_Refs (Thread : Kernel.Tasks.Thread_Access) is
+      use type Kernel.Capabilities.Object_Kind;
+
+      Process    : Kernel.Tasks.Process_Access;
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+   begin
+      if Thread = null then
+         return;
+      end if;
+
+      Process := Kernel.Tasks.Owning_Process (Thread.all);
+      if Process = null then
+         return;
+      end if;
+
+      for Cap in Kernel.Capabilities.Handle'Succ
+        (Kernel.Capabilities.Invalid_Handle) ..
+          Kernel.Capabilities.Handle'Last
+      loop
+         Kernel.Tasks.Lookup_Process_Cap
+           (PCB       => Process.all,
+            Cap       => Cap,
+            Result    => Cap_Result,
+            Out_Entry => Cap_Info);
+
+         if Cap_Result = Kernel.Capabilities.Ok then
+            if Cap_Info.Kind = Kernel.Capabilities.Endpoint_Object then
+               Kernel.IPC.Cleanup_Thread_Cap (Thread, Cap_Info.Object);
+            elsif Cap_Info.Kind = Kernel.Capabilities.IRQ_Object then
+               Kernel.Interrupts.Cleanup_Thread_Cap (Thread, Cap_Info.Object);
+            end if;
+         end if;
+      end loop;
+   end Cleanup_Cap_Refs;
+
+   procedure Mark_Exited (Thread : Kernel.Tasks.Thread_Access) is
+      Process : Kernel.Tasks.Process_Access;
+   begin
+      if Thread = null then
+         return;
+      end if;
+
+      Cleanup_Cap_Refs (Thread);
+      Process := Kernel.Tasks.Owning_Process (Thread.all);
+      if Process /= null then
+         Kernel.Tasks.Set_Process_State
+           (PCB       => Process.all,
+            New_State => Kernel.Tasks.Process_Dead);
+      end if;
+   end Mark_Exited;
+
    procedure Reap_Process
      (Parent      : Kernel.Tasks.Thread_Access;
       Process_Cap : Kernel.Capabilities.Handle;
@@ -424,6 +479,7 @@ package body Kernel.Processes is
          return;
       end if;
 
+      Cleanup_Cap_Refs (Threads (Slot)'Unchecked_Access);
       Destroy_Address_Space
         (Kernel.Tasks.Process_Address_Space_Root (Processes (Slot)));
       Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), 0);

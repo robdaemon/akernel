@@ -1,4 +1,5 @@
 with Interfaces;
+with System;
 with Kernel.Objects;
 with Kernel.Tasks;
 
@@ -31,4 +32,8 @@ package Kernel.Interrupts is
      (Line            : not null Kernel.Objects.IRQ_Line_Access;
       Result          : out Status;
       Complete_Source : out U64);
+
+   procedure Cleanup_Thread_Cap
+     (Thread : Kernel.Tasks.Thread_Access;
+      Object : System.Address);
 end Kernel.Interrupts;

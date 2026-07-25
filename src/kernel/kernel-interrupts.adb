@@ -1,3 +1,4 @@
+with Ada.Unchecked_Conversion;
 with Kernel.Scheduler;
 
 package body Kernel.Interrupts is
@@ -12,12 +13,31 @@ package body Kernel.Interrupts is
 
    Lines : IRQ_Array;
 
+   function To_IRQ_Line is new Ada.Unchecked_Conversion
+     (Source => System.Address,
+      Target => Kernel.Objects.IRQ_Line_Access);
+
    procedure Initialize is
    begin
       for I in Lines'Range loop
          Lines (I) := null;
       end loop;
    end Initialize;
+
+   procedure Cleanup_Thread_Cap
+     (Thread : Kernel.Tasks.Thread_Access;
+      Object : System.Address)
+   is
+      Line : constant Kernel.Objects.IRQ_Line_Access := To_IRQ_Line (Object);
+   begin
+      if Thread = null or else Line = null then
+         return;
+      end if;
+
+      if Line.Waiter = Thread then
+         Line.Waiter := null;
+      end if;
+   end Cleanup_Thread_Cap;
 
    procedure Register
      (Line   : not null Kernel.Objects.IRQ_Line_Access;

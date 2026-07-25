@@ -48,6 +48,26 @@ package body Kernel.IPC is
       Object.Waiting_Receiver := null;
    end Initialize;
 
+   procedure Cleanup_Thread_Cap
+     (Thread : Kernel.Tasks.Thread_Access;
+      Object : System.Address)
+   is
+      Endpoint_Object : constant Endpoint_Access := To_Endpoint (Object);
+   begin
+      if Thread = null or else Endpoint_Object = null then
+         return;
+      end if;
+
+      if Endpoint_Object.Waiting_Sender = Thread then
+         Endpoint_Object.Waiting_Sender := null;
+         Endpoint_Object.Sender_Message := Empty_Message;
+      end if;
+
+      if Endpoint_Object.Waiting_Receiver = Thread then
+         Endpoint_Object.Waiting_Receiver := null;
+      end if;
+   end Cleanup_Thread_Cap;
+
    function Is_Dead (Thread : Kernel.Tasks.Thread_Access) return Boolean is
    begin
       return Thread = null
