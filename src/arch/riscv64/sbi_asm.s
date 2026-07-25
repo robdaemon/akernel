@@ -130,6 +130,13 @@ trap_frame_set_a0:
     ret
 .size trap_frame_set_a0, . - trap_frame_set_a0
 
+.global trap_frame_set_a1
+.type trap_frame_set_a1, @function
+trap_frame_set_a1:
+    sd a1, 80(a0)
+    ret
+.size trap_frame_set_a1, . - trap_frame_set_a1
+
 .global trap_frame_save_context
 .type trap_frame_save_context, @function
 trap_frame_save_context:

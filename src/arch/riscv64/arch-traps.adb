@@ -62,6 +62,9 @@ package body Arch.Traps is
    procedure Trap_Frame_Set_A0 (Frame : System.Address; Value : U64)
      with Import, Convention => C, External_Name => "trap_frame_set_a0";
 
+   procedure Trap_Frame_Set_A1 (Frame : System.Address; Value : U64)
+     with Import, Convention => C, External_Name => "trap_frame_set_a1";
+
    procedure Raw_Set_Trap_Stack (Stack_Top : U64)
      with Import, Convention => C, External_Name => "riscv_set_trap_stack";
 
@@ -349,6 +352,13 @@ package body Arch.Traps is
       end if;
    end Handle_IRQ_Ack;
 
+   function Process_Status_Code
+     (Result : Kernel.Processes.Status) return U64
+   is
+   begin
+      return Kernel.Processes.Status'Pos (Result);
+   end Process_Status_Code;
+
    procedure Handle_Spawn_Boot_Path (Frame : System.Address) is
       Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
       Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
@@ -366,10 +376,11 @@ package body Arch.Traps is
          Result      => Result,
          Process_Cap => Process_Cap);
 
+      Trap_Frame_Set_A0 (Frame, Process_Status_Code (Result));
       if Result = Kernel.Processes.Ok then
-         Trap_Frame_Set_A0 (Frame, U64 (Process_Cap));
+         Trap_Frame_Set_A1 (Frame, U64 (Process_Cap));
       else
-         Trap_Frame_Set_A0 (Frame, 0);
+         Trap_Frame_Set_A1 (Frame, 0);
       end if;
    end Handle_Spawn_Boot_Path;
 

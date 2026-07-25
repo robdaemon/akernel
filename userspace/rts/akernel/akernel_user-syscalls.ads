@@ -16,12 +16,21 @@ package Akernel_User.Syscalls is
    Syscall_Failed      : constant U64 := U64'Last;
    Boot_EOF            : constant U64 := 256;
 
+   Spawn_Ok               : constant U64 := 0;
+   Spawn_Invalid_Program  : constant U64 := 1;
+   Spawn_No_Slot          : constant U64 := 2;
+   Spawn_Load_Failed      : constant U64 := 3;
+   Spawn_Cap_Failed       : constant U64 := 4;
+   Spawn_Scheduler_Failed : constant U64 := 5;
+   Spawn_Invalid_Parent   : constant U64 := 6;
+
    function IRQ_Wait (Cap : U64) return U64;
    function IRQ_Ack (Cap : U64) return U64;
    function Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64) return U64;
+      Grant_Mask  : U64;
+      Process_Cap : out U64) return U64;
    function Boot_File_Size (File_Id : U64) return U64;
    function Boot_Read_Byte
      (File_Id : U64;

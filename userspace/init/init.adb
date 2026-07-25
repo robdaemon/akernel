@@ -134,6 +134,7 @@ procedure Init is
       Grant_Mask  : Akernel_User.Syscalls.U64 := 0;
       Path_Offset : Akernel_User.Syscalls.U64;
       Path_Length : Akernel_User.Syscalls.U64;
+      Process_Cap : Akernel_User.Syscalls.U64;
       Result      : Akernel_User.Syscalls.U64;
    begin
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
@@ -177,9 +178,9 @@ procedure Init is
       end loop;
 
       Result := Akernel_User.Syscalls.Spawn_Boot_Path
-        (Path_Offset, Path_Length, Grant_Mask);
+        (Path_Offset, Path_Length, Grant_Mask, Process_Cap);
 
-      if Result /= 0 then
+      if Result = Akernel_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
          Spawned_Count := Spawned_Count + 1;
          if Program_Id = 1 then
             Akernel_User.Syscalls.Debug_Put_Line ("serial spawned");

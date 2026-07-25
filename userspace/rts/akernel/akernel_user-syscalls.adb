@@ -1,4 +1,5 @@
 with Interfaces;
+with System;
 
 package body Akernel_User.Syscalls is
    use type Interfaces.Unsigned_64;
@@ -27,7 +28,8 @@ package body Akernel_User.Syscalls is
    function Raw_Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64) return U64
+      Grant_Mask  : U64;
+      Process_Cap : System.Address) return U64
      with Import, Convention => C, External_Name => "akernel_sys_spawn_boot_path";
 
    function Raw_Boot_File_Size (File_Id : U64) return U64
@@ -73,10 +75,13 @@ package body Akernel_User.Syscalls is
    function Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64) return U64
+      Grant_Mask  : U64;
+      Process_Cap : out U64) return U64
    is
    begin
-      return Raw_Spawn_Boot_Path (Path_Offset, Path_Length, Grant_Mask);
+      Process_Cap := 0;
+      return Raw_Spawn_Boot_Path
+        (Path_Offset, Path_Length, Grant_Mask, Process_Cap'Address);
    end Spawn_Boot_Path;
 
    function Boot_File_Size (File_Id : U64) return U64 is

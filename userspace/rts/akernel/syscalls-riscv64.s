@@ -53,6 +53,7 @@ akernel_sys_boot_read_byte:
 akernel_sys_spawn_boot_path:
     li a7, 8
     ecall
+    sd a1, 0(a3)
     ret
 .size akernel_sys_spawn_boot_path, . - akernel_sys_spawn_boot_path
 
