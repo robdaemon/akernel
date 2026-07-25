@@ -127,9 +127,12 @@ package body Kernel.Scheduler is
 
       Pop (Next, Result);
       if Result = Queue_Empty then
-         if Current_TCB /= null then
-            Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Running);
+         if Current_TCB /= null
+           and then Kernel.Tasks.State (Current_TCB.all) = Kernel.Tasks.Running
+         then
             Result := Ok;
+         else
+            Current_TCB := null;
          end if;
          return;
       elsif Result /= Ok then

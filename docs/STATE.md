@@ -456,7 +456,7 @@ Scheduler:
 src/kernel/kernel-scheduler.ads/.adb
 ```
 
-Simple fixed ready queue and current task pointer. Yield/IRQ-block paths share arch trap helpers that save current trap-frame context, schedule, restore next context, and switch `satp`. Scheduler tracks queue membership to avoid duplicate ready-queue entries and ignores wakeups for already-ready/running tasks. Still rough and cooperative-only.
+Simple fixed ready queue and current task pointer. Yield/IRQ-block paths share arch trap helpers that save current trap-frame context, schedule, restore next context, and switch `satp`. Scheduler tracks queue membership to avoid duplicate ready-queue entries and ignores wakeups for already-ready/running tasks. If current task blocks and ready queue is empty, scheduler leaves no current task instead of reviving blocked task; trap helper idles with `wfi` until a task wakes. Still rough and cooperative-only.
 
 IPC:
 
@@ -575,7 +575,8 @@ QEMU virt RAM base:     0x80000000
 2. Harden scheduler/context switching:
    - ready-queue duplicate protection exists
    - trap context save/schedule/restore helper exists for yield and IRQ wait
-   - fix rough edges around IRQ-blocked tasks and idle path
+   - blocked-current/empty-ready idle path now uses `wfi` instead of reviving blocked task
+   - continue hardening IRQ wait/wakeup and task lifecycle
    - add per-task kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
 

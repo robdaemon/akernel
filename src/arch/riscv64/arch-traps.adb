@@ -148,7 +148,14 @@ package body Arch.Traps is
       Result : out Kernel.Scheduler.Status)
    is
    begin
-      Kernel.Scheduler.Yield (Result);
+      loop
+         Kernel.Scheduler.Yield (Result);
+         exit when Result /= Kernel.Scheduler.Queue_Empty
+           and then (Result /= Kernel.Scheduler.Ok
+                     or else Kernel.Scheduler.Current /= null);
+         Arch.SBI.Wait_For_Interrupt;
+      end loop;
+
       Restore_Scheduled_Context (Frame, Result);
    end Schedule_Saved_Context;
 
