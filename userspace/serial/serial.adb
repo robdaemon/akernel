@@ -45,11 +45,12 @@ procedure Serial is
    end Drain_RX;
 begin
    Result := Akernel_User.Syscalls.Map_MMIO
-     (Cap    => UART_MMIO_Cap,
-      VA     => Akernel_User.Syscalls.U64 (UART_Base),
-      Offset => 0,
-      Length => Page_Size,
-      Flags  => 3);
+     (Address_Space => Akernel_User.Syscalls.Address_Space_Cap,
+      Cap           => UART_MMIO_Cap,
+      VA            => Akernel_User.Syscalls.U64 (UART_Base),
+      Offset        => 0,
+      Length        => Page_Size,
+      Flags         => 3);
 
    if Result = 0 then
       Put_Line ("serial driver online");

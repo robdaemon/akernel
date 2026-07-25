@@ -56,6 +56,9 @@ package body Arch.Traps is
    function Trap_Frame_Get_A4 (Frame : System.Address) return U64
      with Import, Convention => C, External_Name => "trap_frame_get_a4";
 
+   function Trap_Frame_Get_A5 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a5";
+
    function Trap_Frame_Get_A7 (Frame : System.Address) return U64
      with Import, Convention => C, External_Name => "trap_frame_get_a7";
 
@@ -170,12 +173,14 @@ package body Arch.Traps is
       use type Kernel.Capabilities.Object_Kind;
       use type Kernel.Capabilities.Status;
 
-      Cap_Handle : constant Kernel.Capabilities.Handle :=
+      Address_Space_Cap : constant Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      VA         : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Offset     : constant U64 := Trap_Frame_Get_A2 (Frame);
-      Length     : constant U64 := Trap_Frame_Get_A3 (Frame);
-      Flags      : constant U64 := Trap_Frame_Get_A4 (Frame);
+      Cap_Handle        : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A1 (Frame));
+      VA                : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Offset            : constant U64 := Trap_Frame_Get_A3 (Frame);
+      Length            : constant U64 := Trap_Frame_Get_A4 (Frame);
+      Flags             : constant U64 := Trap_Frame_Get_A5 (Frame);
       Current    : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result : Kernel.Capabilities.Status;
@@ -186,7 +191,7 @@ package body Arch.Traps is
    begin
       if Current = null
         or else not Kernel.Tasks.Has_Address_Space_Map_Authority
-          (Current.all)
+          (Current.all, Address_Space_Cap)
       then
          Trap_Frame_Set_A0 (Frame, 1);
          return;

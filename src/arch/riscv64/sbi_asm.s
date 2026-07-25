@@ -116,6 +116,13 @@ trap_frame_get_a4:
     ret
 .size trap_frame_get_a4, . - trap_frame_get_a4
 
+.global trap_frame_get_a5
+.type trap_frame_get_a5, @function
+trap_frame_get_a5:
+    ld a0, 112(a0)
+    ret
+.size trap_frame_get_a5, . - trap_frame_get_a5
+
 .global trap_frame_get_a7
 .type trap_frame_get_a7, @function
 trap_frame_get_a7:

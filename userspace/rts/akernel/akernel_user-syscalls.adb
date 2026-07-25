@@ -12,11 +12,12 @@ package body Akernel_User.Syscalls is
           External_Name => "akernel_sys_debug_putchar";
 
    function Raw_Map_MMIO
-     (Cap    : U64;
-      VA     : U64;
-      Offset : U64;
-      Length : U64;
-      Flags  : U64) return U64
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_map_mmio";
 
    function Raw_IRQ_Wait (Cap : U64) return U64
@@ -52,14 +53,16 @@ package body Akernel_User.Syscalls is
    end Yield;
 
    function Map_MMIO
-     (Cap    : U64;
-      VA     : U64;
-      Offset : U64;
-      Length : U64;
-      Flags  : U64) return U64
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64
    is
    begin
-      return Raw_Map_MMIO (Cap, VA, Offset, Length, Flags);
+      return Raw_Map_MMIO
+        (Address_Space, Cap, VA, Offset, Length, Flags);
    end Map_MMIO;
 
    function IRQ_Wait (Cap : U64) return U64 is

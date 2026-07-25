@@ -165,7 +165,7 @@ Current syscalls:
 ```text
 0 yield
 1 debug_putchar(a0 = char)
-2 map_mmio(a0 = cap, a1 = va, a2 = offset, a3 = length, a4 = flags)
+2 map_mmio(a0 = address_space_cap, a1 = mmio_cap, a2 = va, a3 = offset, a4 = length, a5 = flags)
 3 irq_wait(a0 = irq_cap)
 4 irq_ack(a0 = irq_cap)
 6 boot_file_size(a0 = file_id) -> byte length, U64'Last on failure
@@ -197,7 +197,7 @@ Spawn status for syscall 8:
 
 `map_mmio` checks:
 - current thread exists
-- current process owns fixed self address-space cap handle 255 (`Address_Space_Object`) with `Map`, object root matching current process root
+- caller supplies address-space cap; cap kind is `Address_Space_Object`, has `Map`, and object root matches current process root
 - MMIO cap valid
 - cap kind `MMIO_Object`
 - cap has `Map`
@@ -404,7 +404,7 @@ src/kernel/kernel-tasks.ads/.adb
 
 Process/thread split started in `Kernel.Tasks`:
 - `Process_Control_Block` owns process id, address-space root, cap table, lifecycle state
-- fixed cap handle 255 is reserved as process self `Address_Space_Object` cap; VM syscalls require it for address-space authority
+- fixed cap handle 255 is reserved as process self `Address_Space_Object` cap; VM syscalls take explicit address-space cap arguments for authority
 - `Thread_Control_Block` owns thread id, scheduling state, saved user context snapshot, ready-queue membership, owning process pointer
 - scheduler/IPC/IRQ/trap/process APIs use explicit `Thread_Access`/`Thread_Control_Block` names
 - compatibility `Task_*` aliases/helper removed
@@ -596,7 +596,7 @@ QEMU virt RAM base:     0x80000000
    - keep initrd as one program-loader backend; later add VFS/package backend
    - process/thread split started; explicit thread names now used outside `Kernel.Tasks`
    - compatibility `Task_*` aliases/helper removed; bootstrap code uses explicit process creation
-   - address-space self cap exists and `map_mmio` requires it
+   - address-space self cap exists and `map_mmio` takes it explicitly
    - add main thread caps only if needed
    - user-visible spawn status exists for syscall 8
 

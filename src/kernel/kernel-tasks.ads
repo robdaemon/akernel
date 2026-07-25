@@ -71,7 +71,8 @@ package Kernel.Tasks is
       Result : out Kernel.Capabilities.Status);
 
    function Has_Address_Space_Map_Authority
-     (TCB : Thread_Control_Block) return Boolean;
+     (TCB : Thread_Control_Block;
+      Cap : Kernel.Capabilities.Handle) return Boolean;
 
    procedure Save_Trap_Context
      (TCB   : in out Thread_Control_Block;

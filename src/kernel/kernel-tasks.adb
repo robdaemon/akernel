@@ -150,7 +150,8 @@ package body Kernel.Tasks is
    end Install_Address_Space_Cap;
 
    function Has_Address_Space_Map_Authority
-     (TCB : Thread_Control_Block) return Boolean
+     (TCB : Thread_Control_Block;
+      Cap : Kernel.Capabilities.Handle) return Boolean
    is
       Result         : Kernel.Capabilities.Status;
       Cap_Entry_Info : Kernel.Capabilities.Cap_Entry;
@@ -161,7 +162,7 @@ package body Kernel.Tasks is
 
       Kernel.Capabilities.Lookup
         (Table     => TCB.Process.Caps,
-         Cap       => Address_Space_Cap_Handle,
+         Cap       => Cap,
          Result    => Result,
          Out_Entry => Cap_Entry_Info);
 

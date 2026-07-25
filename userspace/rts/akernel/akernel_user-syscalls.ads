@@ -4,12 +4,15 @@ package Akernel_User.Syscalls is
    subtype U64 is Interfaces.Unsigned_64;
 
    procedure Yield;
+   Address_Space_Cap : constant U64 := 255;
+
    function Map_MMIO
-     (Cap    : U64;
-      VA     : U64;
-      Offset : U64;
-      Length : U64;
-      Flags  : U64) return U64;
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64;
    UART_MMIO_Grant_Bit : constant U64 := 1;
    UART_IRQ_Grant_Bit  : constant U64 := 2;
    Boot_Manifest_File  : constant U64 := 1;
