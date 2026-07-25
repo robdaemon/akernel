@@ -6,7 +6,8 @@ package body Kernel.IPC is
    use type Kernel.Capabilities.Object_Kind;
    use type Kernel.Capabilities.Status;
    use type Kernel.Scheduler.Status;
-   use type Kernel.Tasks.Task_Access;
+   use type Kernel.Tasks.Thread_Access;
+   use type Kernel.Tasks.Thread_State;
 
    type Endpoint_Access is access all Endpoint;
 
@@ -47,8 +48,30 @@ package body Kernel.IPC is
       Object.Waiting_Receiver := null;
    end Initialize;
 
+   function Is_Dead (Thread : Kernel.Tasks.Thread_Access) return Boolean is
+   begin
+      return Thread = null
+        or else Kernel.Tasks.State (Thread.all) = Kernel.Tasks.Dead;
+   end Is_Dead;
+
+   procedure Drop_Dead_Waiters (Object : in out Endpoint) is
+   begin
+      if Object.Waiting_Sender /= null
+        and then Is_Dead (Object.Waiting_Sender)
+      then
+         Object.Waiting_Sender := null;
+         Object.Sender_Message := Empty_Message;
+      end if;
+
+      if Object.Waiting_Receiver /= null
+        and then Is_Dead (Object.Waiting_Receiver)
+      then
+         Object.Waiting_Receiver := null;
+      end if;
+   end Drop_Dead_Waiters;
+
    procedure Resolve_Endpoint
-     (Caller       : Kernel.Tasks.Task_Access;
+     (Caller       : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Needed       : Kernel.Capabilities.Rights;
       Result       : out Status;
@@ -61,7 +84,7 @@ package body Kernel.IPC is
       Object := null;
       Badge := 0;
 
-      if Caller = null then
+      if Is_Dead (Caller) then
          Result := Invalid_Task;
          return;
       end if;
@@ -98,7 +121,7 @@ package body Kernel.IPC is
    end Resolve_Endpoint;
 
    procedure Send
-     (Sender       : Kernel.Tasks.Task_Access;
+     (Sender       : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Payload      : Message;
       Result       : out Status)
@@ -121,6 +144,7 @@ package body Kernel.IPC is
       end if;
 
       Message_To_Store.Badge := Badge;
+      Drop_Dead_Waiters (Object.all);
 
       if Object.Waiting_Receiver /= null then
          Object.Pending := Message_To_Store;
@@ -148,7 +172,7 @@ package body Kernel.IPC is
    end Send;
 
    procedure Receive
-     (Receiver     : Kernel.Tasks.Task_Access;
+     (Receiver     : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Result       : out Status;
       Payload      : out Message)
@@ -170,6 +194,8 @@ package body Kernel.IPC is
       if Result /= Ok then
          return;
       end if;
+
+      Drop_Dead_Waiters (Object.all);
 
       if Object.Has_Message then
          Payload := Object.Pending;

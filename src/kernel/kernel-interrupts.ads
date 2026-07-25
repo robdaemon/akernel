@@ -24,7 +24,7 @@ package Kernel.Interrupts is
 
    procedure Wait
      (Line   : not null Kernel.Objects.IRQ_Line_Access;
-      Waiter : Kernel.Tasks.Task_Access;
+      Waiter : Kernel.Tasks.Thread_Access;
       Result : out Status);
 
    procedure Ack

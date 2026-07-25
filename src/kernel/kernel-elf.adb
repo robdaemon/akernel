@@ -305,6 +305,9 @@ package body Kernel.ELF is
                   Result   => Map_Result);
 
                if Map_Result /= Arch.MMU.Ok then
+                  Kernel.Physical_Memory.Deallocate_Frame
+                    (Frame  => Frame,
+                     Result => Alloc_Result);
                   Result := Bad_Image;
                   return;
                end if;

@@ -4,6 +4,10 @@
 
 Ada bare-metal microkernel for hobby OS. Initial target: RISC-V64 QEMU `virt` under OpenSBI in S-mode. Long-term: multiple architectures/boards, user-mode drivers, capability-based resource management, initrd-loaded userspace.
 
+## Workflow rules
+
+- Git commit between each completed step. Do not batch multiple completed steps without committing.
+
 ## Build/run
 
 From repo root:
@@ -167,9 +171,11 @@ Current syscalls:
 6 boot_file_size(a0 = file_id) -> byte length, U64'Last on failure
 7 boot_read_byte(a0 = file_id, a1 = offset) -> byte 0..255, 256 EOF, U64'Last failure
 8 spawn_boot_path(a0 = manifest path offset, a1 = path length, a2 = grant_mask) -> process/thread cap handle, 0 on failure
+9 exit() -> does not return on success
+10 reap_process(a0 = process_cap) -> 0 ok/reaped, 1 invalid, 2 not exited
 ```
 
-Return convention for resource syscalls:
+Return convention for resource/lifecycle syscalls:
 
 ```text
 0 = ok
@@ -197,7 +203,7 @@ Physical allocator:
 src/kernel/kernel-physical_memory.ads/.adb
 ```
 
-Current allocator: simple bump frame allocator. Initialized from linker `_end` to RAM end from DTB. Supports mark/rewind for failed all-or-nothing allocations during early process spawn; no general free/reuse yet.
+Current allocator: bump frame allocator plus singly-linked free list stored in freed frames. Initialized from linker `_end` to RAM end from DTB. `Allocate_Frame` reuses free-list frames before bumping. `Deallocate_Frame` validates managed/aligned/currently allocated frames, rejects double-free entries already in free list, shrinks bump pointer for most-recent frame, otherwise pushes frame onto free list. `Free_Bytes` includes bump space plus free-list frames. Mark/rewind remains for early code but process spawn now uses explicit cleanup instead of relying on rewind.
 
 Device tree parser:
 
@@ -383,13 +389,16 @@ Tasks:
 src/kernel/kernel-tasks.ads/.adb
 ```
 
-TCB currently has:
-- id
-- state
-- address-space root
-- saved user context snapshot
-- ready-queue membership flag
-- cap table
+Process/thread split started in `Kernel.Tasks`:
+- `Process_Control_Block` owns process id, address-space root, cap table, lifecycle state
+- `Thread_Control_Block` owns thread id, scheduling state, saved user context snapshot, ready-queue membership, owning process pointer
+- scheduler/IPC/IRQ/trap/process APIs use explicit `Thread_Access`/`Thread_Control_Block` names
+- compatibility `Task_*` aliases/helper removed
+- bootstrap/static tasks now have explicit process + thread objects
+- spawn path creates separate process slot plus main thread slot and marks process alive before publishing cap
+- failed spawn after process/thread initialization discards slot, marks process dead/thread dead, closes published cap if needed, and rewinds PMM mark
+- syscall 9 `exit` marks current thread dead and owning process dead, then schedules next ready thread or idles
+- syscall 10 `reap_process` lets parent holding a managed `Process_Object` cap close that cap, destroy child user address space, free mapped user frames/page tables through PMM, and free dead spawned slot for reuse; live child returns status 2
 
 Boot files:
 
@@ -427,18 +436,18 @@ src/kernel/kernel-processes.ads/.adb
 - requests executable image from `Kernel.Program_Loader.Find_By_Manifest_Path`
 - marks PMM bump pointer before process allocations
 - creates address space + stack
-- loads ELF and initializes TCB context
-- grants caller-requested caps to child only if parent has matching resource caps
-- inserts `Thread_Object` cap into parent
-- queues child in scheduler only after all prior steps succeed
+- loads ELF
+- creates process plus main thread and initializes thread context
+- grants caller-requested caps into child process cap table only if parent has matching resource caps
+- inserts `Process_Object` cap into parent
+- queues main thread in scheduler only after all prior steps succeed
 - rewinds PMM mark on failure before child becomes visible
 
 Process/thread split decision:
-- current TCB still combines process and thread concepts
-- target model is kernel-visible threads scheduled by kernel, with optional user-level fibers later
-- process should own address space, cap table, resource/lifecycle state
-- thread should own saved registers/context, scheduler state, per-thread kernel stack/trap frame later
-- spawn should eventually create process plus main kernel thread, returning process cap (and maybe main thread cap later)
+- kernel-visible threads are scheduled by kernel, with optional user-level fibers later
+- process owns address space, cap table, resource/lifecycle state
+- thread owns saved registers/context, scheduler state, future per-thread kernel stack/trap frame
+- spawn creates process plus main kernel thread, returning process cap (main thread cap can be added later)
 - kernel-visible threads chosen because blocking IPC/IRQ waits should block one thread, not whole address space/runtime
 - user-level threading can still be M:N/fibers later above kernel threads
 
@@ -448,7 +457,7 @@ Scheduler:
 src/kernel/kernel-scheduler.ads/.adb
 ```
 
-Simple fixed ready queue and current task pointer. Yield/IRQ-block paths share arch trap helpers that save current trap-frame context, schedule, restore next context, and switch `satp`. Scheduler tracks queue membership to avoid duplicate ready-queue entries and ignores wakeups for already-ready/running tasks. If current task blocks and ready queue is empty, scheduler leaves no current task instead of reviving blocked task; trap helper idles with `wfi` until a task wakes. Still rough and cooperative-only.
+Simple fixed ready queue and current thread pointer. Yield/IRQ-block paths share arch trap helpers that save current trap-frame context, schedule, restore next context, and switch `satp`. Scheduler tracks queue membership to avoid duplicate ready-queue entries and ignores wakeups for already-ready/running threads. Dead threads are rejected on push and skipped on pop. Scheduler also has `Remove_Thread` to purge a thread from ready queue/current pointer during teardown. `exit` marks current thread dead, clears current, marks owning process dead, then schedules another ready thread or idles with `wfi`. If current thread blocks and ready queue is empty, scheduler leaves no current thread instead of reviving blocked thread; trap helper idles with `wfi` until a thread wakes. Still rough and cooperative-only.
 
 IPC:
 
@@ -456,7 +465,7 @@ IPC:
 src/kernel/kernel-ipc.ads/.adb
 ```
 
-Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet.
+Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage.
 
 ## Resource objects
 
@@ -503,6 +512,7 @@ Rights Wait|Ack
 
 IRQ state rules currently:
 - one waiter per IRQ line
+- dead waiter is cleared before installing/checking another waiter
 - `irq_wait` returns immediately only when `Pending and In_Flight`
 - if no IRQ pending, waiter is registered and task blocks
 - second different waiter gets `Already_Waiting` internally and syscall returns invalid/denied
@@ -548,11 +558,12 @@ QEMU virt RAM base:     0x80000000
 
 ## Temporary limitations / hacks
 
-- PMM is bump-only with mark/rewind for failed spawn; no general free/reuse.
+- PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
 - Kernel supervisor mappings are broad identity mappings copied into user roots.
 - No high-half kernel yet.
 - Context switch works only as rough cooperative saved trap-frame switching.
-- Small fixed spawned-task table only; no free/reuse.
+- Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
+- Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
 - Initrd load address fixed at `0x84000000` via QEMU loader device.
 - No DTB-based device capability enumeration yet.
 - IRQ caps/syscalls exist; single-waiter state transitions hardened, but need more testing.
@@ -569,7 +580,9 @@ QEMU virt RAM base:     0x80000000
    - kernel should expose bootinfo/resource caps to init
    - future spawn should accept executable/source cap plus explicit grant/cap list, not manifest path slice
    - keep initrd as one program-loader backend; later add VFS/package backend
-   - distinguish process/thread/address-space objects instead of using `Thread_Object` placeholder
+   - process/thread split started; explicit thread names now used outside `Kernel.Tasks`
+   - compatibility `Task_*` aliases/helper removed; bootstrap code uses explicit process creation
+   - add address-space objects and main thread caps where needed
    - add user-visible error/status convention for failed spawn
 
 2. Harden scheduler/context switching:
@@ -578,8 +591,12 @@ QEMU virt RAM base:     0x80000000
    - blocked-current/empty-ready idle path now uses `wfi` instead of reviving blocked task
    - IRQ single-waiter state transitions hardened
    - failed spawn rewinds PMM before child becomes visible
-   - split current TCB into process-owned address-space/caps and thread-owned schedulable context
-   - continue hardening task lifecycle after successful spawn/exit
+   - process/thread split started in data model and spawn path
+   - process lifecycle states exist; failed unpublished spawn cleanup exists
+   - exit syscall exists and marks current thread/process dead
+   - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, and frees dead spawned slot for reuse
+   - add real cap table cleanup on exit and after published process failure
+   - continue hardening process/thread lifecycle after successful spawn/exit
    - add per-thread kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
 

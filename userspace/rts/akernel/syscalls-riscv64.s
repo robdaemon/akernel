@@ -64,6 +64,22 @@ akernel_sys_spawn_boot_path:
     ret
 .size akernel_sys_spawn_boot_path, . - akernel_sys_spawn_boot_path
 
+.global akernel_sys_exit
+.type akernel_sys_exit, @function
+akernel_sys_exit:
+    li a7, 9
+    ecall
+    ret
+.size akernel_sys_exit, . - akernel_sys_exit
+
+.global akernel_sys_reap_process
+.type akernel_sys_reap_process, @function
+akernel_sys_reap_process:
+    li a7, 10
+    ecall
+    ret
+.size akernel_sys_reap_process, . - akernel_sys_reap_process
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

@@ -29,6 +29,8 @@ package Akernel_User.Syscalls is
    function Boot_Read_Byte
      (File_Id : U64;
       Offset  : U64) return U64;
+   procedure Process_Exit;
+   function Reap_Process (Process_Cap : U64) return U64;
    function Exec_Serial return U64;
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);

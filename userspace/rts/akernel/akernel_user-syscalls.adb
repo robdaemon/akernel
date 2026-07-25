@@ -43,6 +43,12 @@ package body Akernel_User.Syscalls is
       Offset  : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_boot_read_byte";
 
+   procedure Raw_Process_Exit
+     with Import, Convention => C, External_Name => "akernel_sys_exit";
+
+   function Raw_Reap_Process (Process_Cap : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_reap_process";
+
    procedure Yield is
    begin
       Raw_Yield;
@@ -98,6 +104,16 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Boot_Read_Byte (File_Id, Offset);
    end Boot_Read_Byte;
+
+   procedure Process_Exit is
+   begin
+      Raw_Process_Exit;
+   end Process_Exit;
+
+   function Reap_Process (Process_Cap : U64) return U64 is
+   begin
+      return Raw_Reap_Process (Process_Cap);
+   end Reap_Process;
 
    function Exec_Serial return U64 is
    begin

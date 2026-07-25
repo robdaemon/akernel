@@ -13,6 +13,7 @@ package Kernel.Capabilities is
      (Null_Object,
       Frame_Object,
       Address_Space_Object,
+      Process_Object,
       Thread_Object,
       Endpoint_Object,
       IRQ_Object,
@@ -122,6 +123,10 @@ package Kernel.Capabilities is
      (Table  : in out Cap_Table;
       Cap    : Handle;
       Result : out Status);
+
+   procedure Reset (Table : out Cap_Table);
+
+   function Used_Count (Table : Cap_Table) return Natural;
 
 private
    type Cap_Array is array (Handle) of Cap_Entry;

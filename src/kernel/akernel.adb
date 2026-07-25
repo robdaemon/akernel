@@ -29,12 +29,15 @@ procedure Akernel is
    use type Kernel.IPC.Status;
    use type Kernel.Physical_Memory.Status;
    use type Kernel.Scheduler.Status;
-   use type Kernel.Tasks.Task_Access;
-   use type Kernel.Tasks.Task_State;
+   use type Kernel.Tasks.Thread_Access;
+   use type Kernel.Tasks.Thread_State;
 
-   Bootstrap_Task   : aliased Kernel.Tasks.Task_Control_Block;
-   Driver_Task      : aliased Kernel.Tasks.Task_Control_Block;
-   Init_Task        : aliased Kernel.Tasks.Task_Control_Block;
+   Bootstrap_Process : aliased Kernel.Tasks.Process_Control_Block;
+   Driver_Process    : aliased Kernel.Tasks.Process_Control_Block;
+   Init_Process      : aliased Kernel.Tasks.Process_Control_Block;
+   Bootstrap_Task    : aliased Kernel.Tasks.Thread_Control_Block;
+   Driver_Task       : aliased Kernel.Tasks.Thread_Control_Block;
+   Init_Task         : aliased Kernel.Tasks.Thread_Control_Block;
    Result           : Kernel.Capabilities.Status;
    IPC_Result       : Kernel.IPC.Status;
    IRQ_Result       : Kernel.Interrupts.Status;
@@ -177,7 +180,14 @@ begin
       Board.UART.Put_Line ("");
    end if;
 
-   Kernel.Tasks.Initialize (Bootstrap_Task, 1);
+   Kernel.Tasks.Initialize_Process (Bootstrap_Process, 1);
+   Kernel.Tasks.Set_Process_State
+     (PCB       => Bootstrap_Process,
+      New_State => Kernel.Tasks.Process_Alive);
+   Kernel.Tasks.Initialize_Thread
+     (TCB     => Bootstrap_Task,
+      Id      => 1,
+      Process => Bootstrap_Process'Unchecked_Access);
    Kernel.Tasks.Insert_Cap
      (TCB    => Bootstrap_Task,
       Kind   => Kernel.Capabilities.MMIO_Object,
@@ -191,7 +201,14 @@ begin
       Board.UART.Put_Line ("cap table online");
    end if;
 
-   Kernel.Tasks.Initialize (Driver_Task, 2);
+   Kernel.Tasks.Initialize_Process (Driver_Process, 2);
+   Kernel.Tasks.Set_Process_State
+     (PCB       => Driver_Process,
+      New_State => Kernel.Tasks.Process_Alive);
+   Kernel.Tasks.Initialize_Thread
+     (TCB     => Driver_Task,
+      Id      => 2,
+      Process => Driver_Process'Unchecked_Access);
    Kernel.IPC.Initialize (Test_Endpoint);
 
    Kernel.Tasks.Insert_Cap
@@ -297,8 +314,17 @@ begin
          Entry_Point => Init_Entry);
    end if;
 
-   Kernel.Tasks.Initialize (Init_Task, 3);
-   Kernel.Tasks.Set_Address_Space_Root (Init_Task, User_Root_Table);
+   Kernel.Tasks.Initialize_Process (Init_Process, 3);
+   Kernel.Tasks.Set_Process_Address_Space_Root
+     (PCB  => Init_Process,
+      Root => User_Root_Table);
+   Kernel.Tasks.Set_Process_State
+     (PCB       => Init_Process,
+      New_State => Kernel.Tasks.Process_Alive);
+   Kernel.Tasks.Initialize_Thread
+     (TCB     => Init_Task,
+      Id      => 3,
+      Process => Init_Process'Unchecked_Access);
    Kernel.Tasks.Insert_Cap_At
      (TCB    => Init_Task,
       Cap    => 1,

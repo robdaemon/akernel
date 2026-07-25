@@ -51,6 +51,11 @@ package body Arch.MMU is
       return Interfaces.Shift_Right (PTE_Value, 10) * Page_Size;
    end PTE_To_Physical;
 
+   function Is_Leaf (PTE_Value : U64) return Boolean is
+   begin
+      return (PTE_Value and (PTE_R or PTE_W or PTE_X)) /= 0;
+   end Is_Leaf;
+
    function Physical_To_PTE (Physical : U64) return U64 is
    begin
       return Interfaces.Shift_Left (Physical / Page_Size, 10);
@@ -190,4 +195,62 @@ package body Arch.MMU is
       Table (Index) := Physical_To_PTE (Physical) or Leaf_Flags (Flags);
       Result := Ok;
    end Map_Page;
+
+   procedure Destroy_Table
+     (Table_Physical : U64;
+      Level          : Natural)
+   is
+      Table       : constant Page_Table_Access :=
+        To_Table (To_Address (Table_Physical));
+      PTE_Value   : U64;
+      Child_Frame : U64;
+      Free_Result : Kernel.Physical_Memory.Status;
+   begin
+      for Index in Page_Table_Index loop
+         PTE_Value := Table (Index);
+         if (PTE_Value and PTE_V) /= 0 then
+            Child_Frame := PTE_To_Physical (PTE_Value);
+
+            if Is_Leaf (PTE_Value) then
+               if (PTE_Value and PTE_G) = 0 then
+                  Kernel.Physical_Memory.Deallocate_Frame
+                    (Frame  => Child_Frame,
+                     Result => Free_Result);
+               end if;
+            elsif Level > 0 then
+               Destroy_Table (Child_Frame, Level - 1);
+               Kernel.Physical_Memory.Deallocate_Frame
+                 (Frame  => Child_Frame,
+                  Result => Free_Result);
+            end if;
+
+            Table (Index) := 0;
+         end if;
+      end loop;
+   end Destroy_Table;
+
+   procedure Destroy_User_Address_Space
+     (Root   : U64;
+      Result : out Status)
+   is
+      Free_Result : Kernel.Physical_Memory.Status;
+   begin
+      if Root = 0 or else Root mod Page_Size /= 0 then
+         Result := Invalid_Address;
+         return;
+      end if;
+
+      Destroy_Table (Root, 2);
+      Kernel.Physical_Memory.Deallocate_Frame
+        (Frame  => Root,
+         Result => Free_Result);
+
+      if Free_Result = Kernel.Physical_Memory.Ok
+        or else Free_Result = Kernel.Physical_Memory.Invalid_Range
+      then
+         Result := Ok;
+      else
+         Result := Allocation_Failed;
+      end if;
+   end Destroy_User_Address_Space;
 end Arch.MMU;

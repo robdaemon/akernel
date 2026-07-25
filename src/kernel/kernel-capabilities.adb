@@ -155,4 +155,21 @@ package body Kernel.Capabilities is
       Table.Entries (Cap) := Null_Cap;
       Result := Ok;
    end Close;
+
+   procedure Reset (Table : out Cap_Table) is
+   begin
+      Initialize (Table);
+   end Reset;
+
+   function Used_Count (Table : Cap_Table) return Natural is
+      Count : Natural := 0;
+   begin
+      for Cap in Handle loop
+         if Table.Entries (Cap).Valid then
+            Count := Count + 1;
+         end if;
+      end loop;
+
+      return Count;
+   end Used_Count;
 end Kernel.Capabilities;

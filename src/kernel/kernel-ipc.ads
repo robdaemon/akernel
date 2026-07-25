@@ -45,13 +45,13 @@ package Kernel.IPC is
    procedure Initialize (Object : out Endpoint);
 
    procedure Send
-     (Sender       : Kernel.Tasks.Task_Access;
+     (Sender       : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Payload      : Message;
       Result       : out Status);
 
    procedure Receive
-     (Receiver     : Kernel.Tasks.Task_Access;
+     (Receiver     : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Result       : out Status;
       Payload      : out Message);
@@ -60,8 +60,8 @@ private
    type Endpoint is record
       Has_Message      : Boolean;
       Pending          : Message;
-      Waiting_Sender   : Kernel.Tasks.Task_Access;
+      Waiting_Sender   : Kernel.Tasks.Thread_Access;
       Sender_Message   : Message;
-      Waiting_Receiver : Kernel.Tasks.Task_Access;
+      Waiting_Receiver : Kernel.Tasks.Thread_Access;
    end record;
 end Kernel.IPC;

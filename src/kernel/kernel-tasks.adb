@@ -1,45 +1,104 @@
 package body Kernel.Tasks is
-   procedure Initialize
-     (TCB : out Task_Control_Block;
-      Id  : Task_Id)
+   procedure Initialize_Process
+     (PCB : out Process_Control_Block;
+      Id  : Process_Id)
+   is
+   begin
+      PCB.Identifier := Id;
+      PCB.Root := 0;
+      PCB.Status := Process_Initializing;
+      Kernel.Capabilities.Initialize (PCB.Caps);
+   end Initialize_Process;
+
+   procedure Initialize_Thread
+     (TCB     : out Thread_Control_Block;
+      Id      : Thread_Id;
+      Process : not null Process_Access)
    is
    begin
       TCB.Identifier := Id;
       TCB.Status := Ready;
-      TCB.Root := 0;
+      TCB.Process := Process;
       TCB.Context.Registers := (others => 0);
       TCB.Context.PC := 0;
       TCB.Context.Valid := False;
       TCB.Queued := False;
-      Kernel.Capabilities.Initialize (TCB.Caps);
-   end Initialize;
+   end Initialize_Thread;
 
-   function Id (TCB : Task_Control_Block) return Task_Id is
+   function Id (TCB : Thread_Control_Block) return Thread_Id is
    begin
       return TCB.Identifier;
    end Id;
 
-   function State (TCB : Task_Control_Block) return Task_State is
+   function Process_Id_Of (PCB : Process_Control_Block) return Process_Id is
+   begin
+      return PCB.Identifier;
+   end Process_Id_Of;
+
+   function Owning_Process
+     (TCB : Thread_Control_Block) return Process_Access
+   is
+   begin
+      return TCB.Process;
+   end Owning_Process;
+
+   function State (TCB : Thread_Control_Block) return Thread_State is
    begin
       return TCB.Status;
    end State;
 
-   function Address_Space_Root (TCB : Task_Control_Block)
+   function Lifecycle_State
+     (PCB : Process_Control_Block) return Process_State
+   is
+   begin
+      return PCB.Status;
+   end Lifecycle_State;
+
+   procedure Set_Process_State
+     (PCB       : in out Process_Control_Block;
+      New_State : Process_State)
+   is
+   begin
+      PCB.Status := New_State;
+   end Set_Process_State;
+
+   function Process_Address_Space_Root
+     (PCB : Process_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return PCB.Root;
+   end Process_Address_Space_Root;
+
+   function Address_Space_Root (TCB : Thread_Control_Block)
       return Kernel.Capabilities.U64
    is
    begin
-      return TCB.Root;
+      if TCB.Process = null then
+         return 0;
+      end if;
+
+      return Process_Address_Space_Root (TCB.Process.all);
    end Address_Space_Root;
 
    procedure Set_Address_Space_Root
-     (TCB  : in out Task_Control_Block;
+     (TCB  : in out Thread_Control_Block;
       Root : Kernel.Capabilities.U64)
    is
    begin
-      TCB.Root := Root;
+      if TCB.Process /= null then
+         TCB.Process.Root := Root;
+      end if;
    end Set_Address_Space_Root;
 
-   function Context_Address (TCB : in out Task_Control_Block)
+   procedure Set_Process_Address_Space_Root
+     (PCB  : in out Process_Control_Block;
+      Root : Kernel.Capabilities.U64)
+   is
+   begin
+      PCB.Root := Root;
+   end Set_Process_Address_Space_Root;
+
+   function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address
    is
    begin
@@ -47,7 +106,7 @@ package body Kernel.Tasks is
    end Context_Address;
 
    procedure Initialize_Context
-     (TCB   : in out Task_Control_Block;
+     (TCB   : in out Thread_Control_Block;
       PC    : Kernel.Capabilities.U64;
       Stack : Kernel.Capabilities.U64)
    is
@@ -58,18 +117,18 @@ package body Kernel.Tasks is
       TCB.Context.Valid := True;
    end Initialize_Context;
 
-   function Has_Context (TCB : Task_Control_Block) return Boolean is
+   function Has_Context (TCB : Thread_Control_Block) return Boolean is
    begin
       return TCB.Context.Valid;
    end Has_Context;
 
-   function Is_Queued (TCB : Task_Control_Block) return Boolean is
+   function Is_Queued (TCB : Thread_Control_Block) return Boolean is
    begin
       return TCB.Queued;
    end Is_Queued;
 
    procedure Set_Queued
-     (TCB    : in out Task_Control_Block;
+     (TCB    : in out Thread_Control_Block;
       Queued : Boolean)
    is
    begin
@@ -77,15 +136,15 @@ package body Kernel.Tasks is
    end Set_Queued;
 
    procedure Set_State
-     (TCB       : in out Task_Control_Block;
-      New_State : Task_State)
+     (TCB       : in out Thread_Control_Block;
+      New_State : Thread_State)
    is
    begin
       TCB.Status := New_State;
    end Set_State;
 
-   procedure Insert_Cap
-     (TCB    : in out Task_Control_Block;
+   procedure Insert_Process_Cap
+     (PCB    : in out Process_Control_Block;
       Kind   : Kernel.Capabilities.Object_Kind;
       Object : System.Address;
       Rights : Kernel.Capabilities.Rights;
@@ -95,7 +154,33 @@ package body Kernel.Tasks is
    is
    begin
       Kernel.Capabilities.Insert
-        (Table  => TCB.Caps,
+        (Table  => PCB.Caps,
+         Kind   => Kind,
+         Object => Object,
+         Rights => Rights,
+         Badge  => Badge,
+         Result => Result,
+         Cap    => Cap);
+   end Insert_Process_Cap;
+
+   procedure Insert_Cap
+     (TCB    : in out Thread_Control_Block;
+      Kind   : Kernel.Capabilities.Object_Kind;
+      Object : System.Address;
+      Rights : Kernel.Capabilities.Rights;
+      Badge  : Kernel.Capabilities.U64;
+      Result : out Kernel.Capabilities.Status;
+      Cap    : out Kernel.Capabilities.Handle)
+   is
+   begin
+      if TCB.Process = null then
+         Result := Kernel.Capabilities.Invalid_Object;
+         Cap := Kernel.Capabilities.Invalid_Handle;
+         return;
+      end if;
+
+      Insert_Process_Cap
+        (PCB    => TCB.Process.all,
          Kind   => Kind,
          Object => Object,
          Rights => Rights,
@@ -104,8 +189,8 @@ package body Kernel.Tasks is
          Cap    => Cap);
    end Insert_Cap;
 
-   procedure Insert_Cap_At
-     (TCB    : in out Task_Control_Block;
+   procedure Insert_Process_Cap_At
+     (PCB    : in out Process_Control_Block;
       Cap    : Kernel.Capabilities.Handle;
       Kind   : Kernel.Capabilities.Object_Kind;
       Object : System.Address;
@@ -115,7 +200,32 @@ package body Kernel.Tasks is
    is
    begin
       Kernel.Capabilities.Insert_At
-        (Table  => TCB.Caps,
+        (Table  => PCB.Caps,
+         Cap    => Cap,
+         Kind   => Kind,
+         Object => Object,
+         Rights => Rights,
+         Badge  => Badge,
+         Result => Result);
+   end Insert_Process_Cap_At;
+
+   procedure Insert_Cap_At
+     (TCB    : in out Thread_Control_Block;
+      Cap    : Kernel.Capabilities.Handle;
+      Kind   : Kernel.Capabilities.Object_Kind;
+      Object : System.Address;
+      Rights : Kernel.Capabilities.Rights;
+      Badge  : Kernel.Capabilities.U64;
+      Result : out Kernel.Capabilities.Status)
+   is
+   begin
+      if TCB.Process = null then
+         Result := Kernel.Capabilities.Invalid_Object;
+         return;
+      end if;
+
+      Insert_Process_Cap_At
+        (PCB    => TCB.Process.all,
          Cap    => Cap,
          Kind   => Kind,
          Object => Object,
@@ -124,29 +234,73 @@ package body Kernel.Tasks is
          Result => Result);
    end Insert_Cap_At;
 
-   procedure Lookup_Cap
-     (TCB       : Task_Control_Block;
+   procedure Lookup_Process_Cap
+     (PCB       : Process_Control_Block;
       Cap       : Kernel.Capabilities.Handle;
       Result    : out Kernel.Capabilities.Status;
       Out_Entry : out Kernel.Capabilities.Cap_Entry)
    is
    begin
       Kernel.Capabilities.Lookup
-        (Table     => TCB.Caps,
+        (Table     => PCB.Caps,
+         Cap       => Cap,
+         Result    => Result,
+         Out_Entry => Out_Entry);
+   end Lookup_Process_Cap;
+
+   procedure Lookup_Cap
+     (TCB       : Thread_Control_Block;
+      Cap       : Kernel.Capabilities.Handle;
+      Result    : out Kernel.Capabilities.Status;
+      Out_Entry : out Kernel.Capabilities.Cap_Entry)
+   is
+   begin
+      if TCB.Process = null then
+         Result := Kernel.Capabilities.Invalid_Object;
+         Out_Entry := Kernel.Capabilities.Null_Cap;
+         return;
+      end if;
+
+      Lookup_Process_Cap
+        (PCB       => TCB.Process.all,
          Cap       => Cap,
          Result    => Result,
          Out_Entry => Out_Entry);
    end Lookup_Cap;
 
-   procedure Close_Cap
-     (TCB    : in out Task_Control_Block;
+   procedure Close_Process_Cap
+     (PCB    : in out Process_Control_Block;
       Cap    : Kernel.Capabilities.Handle;
       Result : out Kernel.Capabilities.Status)
    is
    begin
       Kernel.Capabilities.Close
-        (Table  => TCB.Caps,
+        (Table  => PCB.Caps,
          Cap    => Cap,
          Result => Result);
+   end Close_Process_Cap;
+
+   procedure Close_Cap
+     (TCB    : in out Thread_Control_Block;
+      Cap    : Kernel.Capabilities.Handle;
+      Result : out Kernel.Capabilities.Status)
+   is
+   begin
+      if TCB.Process = null then
+         Result := Kernel.Capabilities.Invalid_Object;
+         return;
+      end if;
+
+      Close_Process_Cap (TCB.Process.all, Cap, Result);
    end Close_Cap;
+
+   procedure Reset_Process_Caps (PCB : in out Process_Control_Block) is
+   begin
+      Kernel.Capabilities.Reset (PCB.Caps);
+   end Reset_Process_Caps;
+
+   function Process_Cap_Count (PCB : Process_Control_Block) return Natural is
+   begin
+      return Kernel.Capabilities.Used_Count (PCB.Caps);
+   end Process_Cap_Count;
 end Kernel.Tasks;

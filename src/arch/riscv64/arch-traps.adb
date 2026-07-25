@@ -20,7 +20,8 @@ package body Arch.Traps is
    use type Kernel.Processes.Status;
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
-   use type Kernel.Tasks.Task_Access;
+   use type Kernel.Tasks.Process_Access;
+   use type Kernel.Tasks.Thread_Access;
    subtype U64 is Interfaces.Unsigned_64;
 
    Timer_Ticks_Per_Second : constant U64 := 10_000_000;
@@ -39,6 +40,8 @@ package body Arch.Traps is
    Sys_Boot_File_Size    : constant U64 := 6;
    Sys_Boot_Read_Byte    : constant U64 := 7;
    Sys_Spawn_Boot_Path   : constant U64 := 8;
+   Sys_Exit              : constant U64 := 9;
+   Sys_Reap_Process      : constant U64 := 10;
 
    Tick_Count : U64 := 0;
 
@@ -118,7 +121,8 @@ package body Arch.Traps is
    end Is_Page_Aligned;
 
    procedure Save_Current_Context (Frame : System.Address) is
-      Current : constant Kernel.Tasks.Task_Access := Kernel.Scheduler.Current;
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
    begin
       if Current /= null then
          Trap_Frame_Save_Context
@@ -131,7 +135,8 @@ package body Arch.Traps is
      (Frame  : System.Address;
       Result : Kernel.Scheduler.Status)
    is
-      Current : constant Kernel.Tasks.Task_Access := Kernel.Scheduler.Current;
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
    begin
       if Result = Kernel.Scheduler.Ok and then Current /= null then
          Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
@@ -169,7 +174,7 @@ package body Arch.Traps is
       Offset     : constant U64 := Trap_Frame_Get_A2 (Frame);
       Length     : constant U64 := Trap_Frame_Get_A3 (Frame);
       Flags      : constant U64 := Trap_Frame_Get_A4 (Frame);
-      Current    : constant Kernel.Tasks.Task_Access :=
+      Current    : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info   : Kernel.Capabilities.Cap_Entry;
@@ -240,7 +245,7 @@ package body Arch.Traps is
 
       Cap_Handle : constant Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      Current    : constant Kernel.Tasks.Task_Access :=
+      Current    : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info         : Kernel.Capabilities.Cap_Entry;
@@ -298,7 +303,7 @@ package body Arch.Traps is
 
       Cap_Handle      : constant Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      Current         : constant Kernel.Tasks.Task_Access :=
+      Current         : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result      : Kernel.Capabilities.Status;
       Cap_Info        : Kernel.Capabilities.Cap_Entry;
@@ -345,7 +350,7 @@ package body Arch.Traps is
    procedure Handle_Spawn_Program (Frame : System.Address) is
       Program_Id  : constant U64 := Trap_Frame_Get_A0 (Frame);
       Grant_Mask  : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Current     : constant Kernel.Tasks.Task_Access :=
+      Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Result      : Kernel.Processes.Status;
       Process_Cap : Kernel.Capabilities.Handle;
@@ -368,7 +373,7 @@ package body Arch.Traps is
       Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
       Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
       Grant_Mask  : constant U64 := Trap_Frame_Get_A2 (Frame);
-      Current     : constant Kernel.Tasks.Task_Access :=
+      Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Result      : Kernel.Processes.Status;
       Process_Cap : Kernel.Capabilities.Handle;
@@ -430,6 +435,56 @@ package body Arch.Traps is
       end if;
    end Handle_Boot_Read_Byte;
 
+   procedure Handle_Reap_Process (Frame : System.Address) is
+      Process_Cap : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Result      : Kernel.Processes.Status;
+   begin
+      Kernel.Processes.Reap_Process
+        (Parent      => Current,
+         Process_Cap => Process_Cap,
+         Result      => Result);
+
+      if Result = Kernel.Processes.Ok then
+         Trap_Frame_Set_A0 (Frame, 0);
+      elsif Result = Kernel.Processes.Not_Exited then
+         Trap_Frame_Set_A0 (Frame, 2);
+      else
+         Trap_Frame_Set_A0 (Frame, 1);
+      end if;
+   end Handle_Reap_Process;
+
+   procedure Handle_Exit (Frame : System.Address) is
+      Current          : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Process          : Kernel.Tasks.Process_Access;
+      Exit_Result      : Kernel.Scheduler.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Process := Kernel.Tasks.Owning_Process (Current.all);
+      if Process /= null then
+         Kernel.Tasks.Set_Process_State
+           (PCB       => Process.all,
+            New_State => Kernel.Tasks.Process_Dead);
+      end if;
+
+      Advance_SEPC;
+      Kernel.Scheduler.Exit_Current (Exit_Result);
+      if Exit_Result /= Kernel.Scheduler.Ok then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Schedule_Saved_Context (Frame, Scheduler_Result);
+   end Handle_Exit;
+
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
@@ -461,6 +516,11 @@ package body Arch.Traps is
          Handle_Boot_Read_Byte (Frame);
       elsif Number = Sys_Spawn_Boot_Path then
          Handle_Spawn_Boot_Path (Frame);
+      elsif Number = Sys_Exit then
+         Handle_Exit (Frame);
+         return;
+      elsif Number = Sys_Reap_Process then
+         Handle_Reap_Process (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

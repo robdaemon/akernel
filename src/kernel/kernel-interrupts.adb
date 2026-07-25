@@ -2,8 +2,8 @@ with Kernel.Scheduler;
 
 package body Kernel.Interrupts is
    use type Kernel.Objects.IRQ_Line_Access;
-   use type Kernel.Tasks.Task_Access;
-   use type Kernel.Tasks.Task_State;
+   use type Kernel.Tasks.Thread_Access;
+   use type Kernel.Tasks.Thread_State;
 
    Max_Sources : constant := 1024;
 
@@ -64,13 +64,19 @@ package body Kernel.Interrupts is
 
    procedure Wait
      (Line   : not null Kernel.Objects.IRQ_Line_Access;
-      Waiter : Kernel.Tasks.Task_Access;
+      Waiter : Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
    begin
       if Waiter = null then
          Result := Invalid_IRQ;
          return;
+      end if;
+
+      if Line.Waiter /= null
+        and then Kernel.Tasks.State (Line.Waiter.all) = Kernel.Tasks.Dead
+      then
+         Line.Waiter := null;
       end if;
 
       if Line.Pending and then Line.In_Flight then

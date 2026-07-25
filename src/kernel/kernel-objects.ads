@@ -13,7 +13,7 @@ package Kernel.Objects is
       Source    : U64;
       Pending   : Boolean;
       In_Flight : Boolean;
-      Waiter    : Kernel.Tasks.Task_Access;
+      Waiter    : Kernel.Tasks.Thread_Access;
    end record;
 
    type IRQ_Line_Access is access all IRQ_Line;

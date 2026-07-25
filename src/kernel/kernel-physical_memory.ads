@@ -20,6 +20,10 @@ package Kernel.Physical_Memory is
      (Result : out Status;
       Frame  : out U64);
 
+   procedure Deallocate_Frame
+     (Frame  : U64;
+      Result : out Status);
+
    function Mark return U64;
 
    procedure Rewind
@@ -27,6 +31,7 @@ package Kernel.Physical_Memory is
       Result : out Status);
 
    function Free_Bytes return U64;
+   function Free_Frame_Count return U64;
    function Next_Free_Frame return U64;
    function Initialized return Boolean;
 end Kernel.Physical_Memory;

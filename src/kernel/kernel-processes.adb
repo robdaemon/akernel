@@ -1,3 +1,4 @@
+with System;
 with Arch.MMU;
 with Kernel.ELF;
 with Kernel.Physical_Memory;
@@ -6,22 +7,28 @@ with Kernel.Scheduler;
 
 package body Kernel.Processes is
    use type Interfaces.Unsigned_64;
+   use type System.Address;
    use type Arch.MMU.Status;
    use type Kernel.Capabilities.Status;
    use type Kernel.ELF.Status;
    use type Kernel.Physical_Memory.Status;
    use type Kernel.Program_Loader.Status;
    use type Kernel.Scheduler.Status;
-   use type Kernel.Tasks.Task_Access;
+   use type Kernel.Tasks.Process_State;
+   use type Kernel.Tasks.Thread_Access;
+   use type Kernel.Tasks.Thread_State;
 
    Max_Process_Slots : constant := 8;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
-   type Task_Slot_Array is array (Process_Index)
-     of aliased Kernel.Tasks.Task_Control_Block;
+   type Process_Slot_Array is array (Process_Index)
+     of aliased Kernel.Tasks.Process_Control_Block;
+   type Thread_Slot_Array is array (Process_Index)
+     of aliased Kernel.Tasks.Thread_Control_Block;
    type Slot_Used_Array is array (Process_Index) of Boolean;
 
-   Tasks : Task_Slot_Array;
-   Used  : Slot_Used_Array := (others => False);
+   Processes : Process_Slot_Array;
+   Threads   : Thread_Slot_Array;
+   Used      : Slot_Used_Array := (others => False);
 
    Stack_Top : constant U64 := 16#7000_0000#;
 
@@ -67,8 +74,8 @@ package body Kernel.Processes is
    end Initialize;
 
    procedure Grant_Requested_Caps
-     (Parent     : Kernel.Tasks.Task_Access;
-      TCB        : in out Kernel.Tasks.Task_Control_Block;
+     (Parent     : Kernel.Tasks.Thread_Access;
+      PCB        : in out Kernel.Tasks.Process_Control_Block;
       Grant_Mask : U64;
       Result     : out Status)
    is
@@ -94,8 +101,8 @@ package body Kernel.Processes is
             return;
          end if;
 
-         Kernel.Tasks.Insert_Cap_At
-           (TCB    => TCB,
+         Kernel.Tasks.Insert_Process_Cap_At
+           (PCB    => PCB,
             Cap    => 1,
             Kind   => Cap_Info.Kind,
             Object => Cap_Info.Object,
@@ -125,8 +132,8 @@ package body Kernel.Processes is
             return;
          end if;
 
-         Kernel.Tasks.Insert_Cap_At
-           (TCB    => TCB,
+         Kernel.Tasks.Insert_Process_Cap_At
+           (PCB    => PCB,
             Cap    => 2,
             Kind   => Cap_Info.Kind,
             Object => Cap_Info.Object,
@@ -140,16 +147,29 @@ package body Kernel.Processes is
       end if;
    end Grant_Requested_Caps;
 
-   procedure Rewind_To
-     (Mark : U64)
-   is
-      PMM_Result : Kernel.Physical_Memory.Status;
+   procedure Destroy_Address_Space (Root : U64) is
+      Destroy_Result : Arch.MMU.Status;
    begin
-      Kernel.Physical_Memory.Rewind (Mark, PMM_Result);
-   end Rewind_To;
+      if Root /= 0 then
+         Arch.MMU.Destroy_User_Address_Space (Root, Destroy_Result);
+      end if;
+   end Destroy_Address_Space;
+
+   procedure Discard_Slot
+     (Slot : Process_Index)
+   is
+   begin
+      Kernel.Tasks.Set_State (Threads (Slot), Kernel.Tasks.Dead);
+      Kernel.Tasks.Set_Queued (Threads (Slot), False);
+      Kernel.Tasks.Reset_Process_Caps (Processes (Slot));
+      Kernel.Tasks.Set_Process_State
+        (PCB       => Processes (Slot),
+         New_State => Kernel.Tasks.Process_Dead);
+      Used (Slot) := False;
+   end Discard_Slot;
 
    procedure Spawn_Image
-     (Parent      : Kernel.Tasks.Task_Access;
+     (Parent      : Kernel.Tasks.Thread_Access;
       Image       : Kernel.Program_Loader.Program_Image;
       Grant_Mask  : U64;
       Result      : out Status;
@@ -162,11 +182,11 @@ package body Kernel.Processes is
       Sched_Result : Kernel.Scheduler.Status;
       Slot         : Process_Index := Process_Index'First;
       Found_Slot   : Boolean := False;
-      New_Id       : Kernel.Tasks.Task_Id;
-      Root         : U64;
-      Stack_Frame  : U64;
+      New_Process_Id : Kernel.Tasks.Process_Id;
+      New_Thread_Id  : Kernel.Tasks.Thread_Id;
+      Root         : U64 := 0;
+      Stack_Frame  : U64 := 0;
       Start_PC     : U64;
-      Memory_Mark  : U64;
    begin
       Process_Cap := Kernel.Capabilities.Invalid_Handle;
 
@@ -188,19 +208,16 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Memory_Mark := Kernel.Physical_Memory.Mark;
-
       Arch.MMU.New_User_Address_Space (MMU_Result, Root);
       if MMU_Result /= Arch.MMU.Ok then
          Result := Load_Failed;
-         Rewind_To (Memory_Mark);
          return;
       end if;
 
       Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Stack_Frame);
       if PMM_Result /= Kernel.Physical_Memory.Ok then
          Result := Load_Failed;
-         Rewind_To (Memory_Mark);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
@@ -213,7 +230,8 @@ package body Kernel.Processes is
 
       if MMU_Result /= Arch.MMU.Ok then
          Result := Load_Failed;
-         Rewind_To (Memory_Mark);
+         Kernel.Physical_Memory.Deallocate_Frame (Stack_Frame, PMM_Result);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
@@ -226,49 +244,61 @@ package body Kernel.Processes is
 
       if ELF_Result /= Kernel.ELF.Ok then
          Result := Load_Failed;
-         Rewind_To (Memory_Mark);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
-      New_Id := Kernel.Tasks.Task_Id (Natural (Slot) + 4);
-      Kernel.Tasks.Initialize (Tasks (Slot), New_Id);
-      Kernel.Tasks.Set_Address_Space_Root (Tasks (Slot), Root);
+      New_Process_Id := Kernel.Tasks.Process_Id (Natural (Slot) + 4);
+      New_Thread_Id := Kernel.Tasks.Thread_Id (Natural (Slot) + 4);
+      Kernel.Tasks.Initialize_Process (Processes (Slot), New_Process_Id);
+      Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), Root);
+      Kernel.Tasks.Initialize_Thread
+        (TCB     => Threads (Slot),
+         Id      => New_Thread_Id,
+         Process => Processes (Slot)'Unchecked_Access);
       Kernel.Tasks.Initialize_Context
-        (TCB   => Tasks (Slot),
+        (TCB   => Threads (Slot),
          PC    => Start_PC,
          Stack => Stack_Top);
 
-      Grant_Requested_Caps (Parent, Tasks (Slot), Grant_Mask, Result);
+      Grant_Requested_Caps (Parent, Processes (Slot), Grant_Mask, Result);
       if Result /= Ok then
-         Rewind_To (Memory_Mark);
+         Discard_Slot (Slot);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
+      Kernel.Tasks.Set_Process_State
+        (PCB       => Processes (Slot),
+         New_State => Kernel.Tasks.Process_Alive);
+
       Kernel.Tasks.Insert_Cap
         (TCB    => Parent.all,
-         Kind   => Kernel.Capabilities.Thread_Object,
-         Object => Tasks (Slot)'Address,
+         Kind   => Kernel.Capabilities.Process_Object,
+         Object => Processes (Slot)'Address,
          Rights => Process_Rights,
-         Badge  => U64 (New_Id),
+         Badge  => U64 (New_Process_Id),
          Result => Cap_Result,
          Cap    => Process_Cap);
 
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
-         Rewind_To (Memory_Mark);
+         Discard_Slot (Slot);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
       Kernel.Scheduler.Add_Task
-        (TCB    => Tasks (Slot)'Unchecked_Access,
+        (TCB    => Threads (Slot)'Unchecked_Access,
          Result => Sched_Result);
 
       if Sched_Result /= Kernel.Scheduler.Ok then
          Kernel.Tasks.Close_Cap (Parent.all, Process_Cap, Cap_Result);
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
          Result := Scheduler_Failed;
-         Rewind_To (Memory_Mark);
+         Discard_Slot (Slot);
+         Destroy_Address_Space (Root);
          return;
       end if;
 
@@ -277,7 +307,7 @@ package body Kernel.Processes is
    end Spawn_Image;
 
    procedure Spawn_Program
-     (Parent      : Kernel.Tasks.Task_Access;
+     (Parent      : Kernel.Tasks.Thread_Access;
       Program_Id  : U64;
       Grant_Mask  : U64;
       Result      : out Status;
@@ -305,7 +335,7 @@ package body Kernel.Processes is
    end Spawn_Program;
 
    procedure Spawn_Boot_Path
-     (Parent      : Kernel.Tasks.Task_Access;
+     (Parent      : Kernel.Tasks.Thread_Access;
       Path_Offset : U64;
       Path_Length : U64;
       Grant_Mask  : U64;
@@ -333,4 +363,71 @@ package body Kernel.Processes is
 
       Spawn_Image (Parent, Image, Grant_Mask, Result, Process_Cap);
    end Spawn_Boot_Path;
+
+   procedure Reap_Process
+     (Parent      : Kernel.Tasks.Thread_Access;
+      Process_Cap : Kernel.Capabilities.Handle;
+      Result      : out Status)
+   is
+      use type Kernel.Capabilities.Object_Kind;
+
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      Found      : Boolean := False;
+      Slot       : Process_Index := Process_Index'First;
+   begin
+      if Parent = null then
+         Result := Invalid_Parent;
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Parent.all,
+         Cap       => Process_Cap,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Process_Object
+        or else not Cap_Info.Rights.Manage
+      then
+         Result := Cap_Failed;
+         return;
+      end if;
+
+      for Candidate in Process_Index loop
+         if Used (Candidate)
+           and then Cap_Info.Object = Processes (Candidate)'Address
+         then
+            Slot := Candidate;
+            Found := True;
+            exit;
+         end if;
+      end loop;
+
+      if not Found then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      if Kernel.Tasks.Lifecycle_State (Processes (Slot))
+        /= Kernel.Tasks.Process_Dead
+        or else Kernel.Tasks.State (Threads (Slot)) /= Kernel.Tasks.Dead
+      then
+         Result := Not_Exited;
+         return;
+      end if;
+
+      Kernel.Tasks.Close_Cap (Parent.all, Process_Cap, Cap_Result);
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Result := Cap_Failed;
+         return;
+      end if;
+
+      Destroy_Address_Space
+        (Kernel.Tasks.Process_Address_Space_Root (Processes (Slot)));
+      Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), 0);
+      Discard_Slot (Slot);
+      Result := Ok;
+   end Reap_Process;
 end Kernel.Processes;

@@ -51,4 +51,8 @@ package Arch.MMU is
       Physical : U64;
       Flags    : Page_Flags;
       Result   : out Status);
+
+   procedure Destroy_User_Address_Space
+     (Root   : U64;
+      Result : out Status);
 end Arch.MMU;
