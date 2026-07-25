@@ -52,8 +52,7 @@ package body Kernel.Tasks is
       TCB.Status := Ready;
       TCB.Process := Process;
       TCB.Kernel_Stack_Top := 0;
-      TCB.Context.Trap_Frame := (others => 0);
-      TCB.Context.Valid := False;
+      Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
    end Initialize_Thread;
 
@@ -173,19 +172,21 @@ package body Kernel.Tasks is
         and then To_U64 (Cap_Entry_Info.Object) = TCB.Process.Root;
    end Has_Address_Space_Map_Authority;
 
-   function Trap_Frame_Address (TCB : in out Thread_Control_Block)
-      return System.Address
+   procedure Save_Trap_Context
+     (TCB   : in out Thread_Control_Block;
+      Frame : System.Address)
    is
    begin
-      return TCB.Context.Trap_Frame'Address;
-   end Trap_Frame_Address;
+      Arch.Context.Save_From_Trap_Frame (TCB.Context, Frame);
+   end Save_Trap_Context;
 
-   function Context_Address (TCB : in out Thread_Control_Block)
-      return System.Address
+   procedure Restore_Trap_Context
+     (TCB   : Thread_Control_Block;
+      Frame : System.Address)
    is
    begin
-      return Trap_Frame_Address (TCB);
-   end Context_Address;
+      Arch.Context.Restore_To_Trap_Frame (TCB.Context, Frame);
+   end Restore_Trap_Context;
 
    procedure Set_Kernel_Stack_Top
      (TCB       : in out Thread_Control_Block;
@@ -208,15 +209,15 @@ package body Kernel.Tasks is
       Stack : Kernel.Capabilities.U64)
    is
    begin
-      TCB.Context.Trap_Frame := (others => 0);
-      TCB.Context.Trap_Frame (1) := Stack; -- x2/sp
-      TCB.Context.Trap_Frame (Trap_Frame_PC_Index) := PC;
-      TCB.Context.Valid := True;
+      Arch.Context.Initialize_User
+        (Context => TCB.Context,
+         PC      => PC,
+         Stack   => Stack);
    end Initialize_Context;
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean is
    begin
-      return TCB.Context.Valid;
+      return Arch.Context.Valid (TCB.Context);
    end Has_Context;
 
    function Is_Queued (TCB : Thread_Control_Block) return Boolean is

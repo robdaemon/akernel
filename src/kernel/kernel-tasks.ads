@@ -1,3 +1,4 @@
+with Arch.Context;
 with Kernel.Capabilities;
 with System;
 
@@ -72,11 +73,13 @@ package Kernel.Tasks is
    function Has_Address_Space_Map_Authority
      (TCB : Thread_Control_Block) return Boolean;
 
-   function Trap_Frame_Address (TCB : in out Thread_Control_Block)
-      return System.Address;
+   procedure Save_Trap_Context
+     (TCB   : in out Thread_Control_Block;
+      Frame : System.Address);
 
-   function Context_Address (TCB : in out Thread_Control_Block)
-      return System.Address;
+   procedure Restore_Trap_Context
+     (TCB   : Thread_Control_Block;
+      Frame : System.Address);
 
    procedure Set_Kernel_Stack_Top
      (TCB       : in out Thread_Control_Block;
@@ -165,17 +168,6 @@ package Kernel.Tasks is
    function Process_Cap_Count (PCB : Process_Control_Block) return Natural;
 
 private
-   Trap_Frame_Word_Count : constant := 34;
-   Trap_Frame_PC_Index   : constant := Trap_Frame_Word_Count;
-
-   type Trap_Frame_Word_Array is array
-     (Natural range 0 .. Trap_Frame_PC_Index) of Kernel.Capabilities.U64;
-
-   type Task_Context is record
-      Trap_Frame : aliased Trap_Frame_Word_Array;
-      Valid      : Boolean;
-   end record;
-
    type Process_Control_Block is record
       Identifier : Process_Id;
       Root       : Kernel.Capabilities.U64;
@@ -188,7 +180,7 @@ private
       Status     : Thread_State;
       Process          : Process_Access;
       Kernel_Stack_Top : Kernel.Capabilities.U64;
-      Context          : aliased Task_Context;
+      Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
    end record;
 end Kernel.Tasks;

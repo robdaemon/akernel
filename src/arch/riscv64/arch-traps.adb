@@ -63,16 +63,6 @@ package body Arch.Traps is
    procedure Trap_Frame_Set_A0 (Frame : System.Address; Value : U64)
      with Import, Convention => C, External_Name => "trap_frame_set_a0";
 
-   procedure Trap_Frame_Save_Context
-     (Frame   : System.Address;
-      Context : System.Address)
-     with Import, Convention => C, External_Name => "trap_frame_save_context";
-
-   procedure Trap_Frame_Load_Context
-     (Frame   : System.Address;
-      Context : System.Address)
-     with Import, Convention => C, External_Name => "trap_frame_load_context";
-
    procedure Raw_Set_Trap_Stack (Stack_Top : U64)
      with Import, Convention => C, External_Name => "riscv_set_trap_stack";
 
@@ -130,9 +120,9 @@ package body Arch.Traps is
         Kernel.Scheduler.Current;
    begin
       if Current /= null then
-         Trap_Frame_Save_Context
-           (Frame,
-            Kernel.Tasks.Trap_Frame_Address (Current.all));
+         Kernel.Tasks.Save_Trap_Context
+           (TCB   => Current.all,
+            Frame => Frame);
       end if;
    end Save_Current_Context;
 
@@ -150,9 +140,9 @@ package body Arch.Traps is
          end if;
 
          Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
-         Trap_Frame_Load_Context
-           (Frame,
-            Kernel.Tasks.Trap_Frame_Address (Current.all));
+         Kernel.Tasks.Restore_Trap_Context
+           (TCB   => Current.all,
+            Frame => Frame);
       elsif Result /= Kernel.Scheduler.Ok then
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
