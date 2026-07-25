@@ -6,6 +6,11 @@ procedure Init is
    Result : Akernel_User.Syscalls.U64;
 begin
    Akernel_User.Syscalls.Debug_Put_Line ("init online from Ada");
+   Result := Akernel_User.Syscalls.Boot_File_Size
+     (Akernel_User.Syscalls.Boot_Manifest_File);
+   if Result /= Akernel_User.Syscalls.Syscall_Failed then
+      Akernel_User.Syscalls.Debug_Put_Line ("boot manifest visible");
+   end if;
    Akernel_User.Syscalls.Debug_Put_Line ("launching serial driver");
 
    Result := Akernel_User.Syscalls.Spawn_Program

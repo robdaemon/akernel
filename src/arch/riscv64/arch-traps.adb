@@ -6,6 +6,7 @@ with Arch.SBI;
 with Board.Interrupts;
 with Board.PLIC;
 with Board.UART;
+with Kernel.Boot_Files;
 with Kernel.Capabilities;
 with Kernel.Interrupts;
 with Kernel.Objects;
@@ -35,6 +36,8 @@ package body Arch.Traps is
    Sys_IRQ_Wait          : constant U64 := 3;
    Sys_IRQ_Ack           : constant U64 := 4;
    Sys_Spawn_Program     : constant U64 := 5;
+   Sys_Boot_File_Size    : constant U64 := 6;
+   Sys_Boot_Read_Byte    : constant U64 := 7;
 
    Tick_Count : U64 := 0;
 
@@ -332,6 +335,48 @@ package body Arch.Traps is
       end if;
    end Handle_Spawn_Program;
 
+   procedure Handle_Boot_File_Size (Frame : System.Address) is
+      use type Kernel.Boot_Files.Status;
+
+      File_Id : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Result  : Kernel.Boot_Files.Status;
+      Length  : U64;
+   begin
+      Kernel.Boot_Files.Size
+        (File_Id => File_Id,
+         Result  => Result,
+         Length  => Length);
+
+      if Result = Kernel.Boot_Files.Ok then
+         Trap_Frame_Set_A0 (Frame, Length);
+      else
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+   end Handle_Boot_File_Size;
+
+   procedure Handle_Boot_Read_Byte (Frame : System.Address) is
+      use type Kernel.Boot_Files.Status;
+
+      File_Id : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Offset  : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Result  : Kernel.Boot_Files.Status;
+      Value   : U64;
+   begin
+      Kernel.Boot_Files.Read_Byte
+        (File_Id => File_Id,
+         Offset  => Offset,
+         Result  => Result,
+         Value   => Value);
+
+      if Result = Kernel.Boot_Files.Ok then
+         Trap_Frame_Set_A0 (Frame, Value);
+      elsif Result = Kernel.Boot_Files.Out_Of_Range then
+         Trap_Frame_Set_A0 (Frame, 256);
+      else
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+   end Handle_Boot_Read_Byte;
+
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Arg0             : constant U64 := Trap_Frame_Get_A0 (Frame);
@@ -378,6 +423,10 @@ package body Arch.Traps is
          Handle_IRQ_Ack (Frame);
       elsif Number = Sys_Spawn_Program then
          Handle_Spawn_Program (Frame);
+      elsif Number = Sys_Boot_File_Size then
+         Handle_Boot_File_Size (Frame);
+      elsif Number = Sys_Boot_Read_Byte then
+         Handle_Boot_Read_Byte (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

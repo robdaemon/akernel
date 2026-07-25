@@ -40,6 +40,22 @@ akernel_sys_spawn_program:
     ret
 .size akernel_sys_spawn_program, . - akernel_sys_spawn_program
 
+.global akernel_sys_boot_file_size
+.type akernel_sys_boot_file_size, @function
+akernel_sys_boot_file_size:
+    li a7, 6
+    ecall
+    ret
+.size akernel_sys_boot_file_size, . - akernel_sys_boot_file_size
+
+.global akernel_sys_boot_read_byte
+.type akernel_sys_boot_read_byte, @function
+akernel_sys_boot_read_byte:
+    li a7, 7
+    ecall
+    ret
+.size akernel_sys_boot_read_byte, . - akernel_sys_boot_read_byte
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

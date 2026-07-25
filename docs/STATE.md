@@ -45,6 +45,7 @@ ipc online
 scheduler online
 entering initrd init
 init online from Ada
+boot manifest visible
 launching serial driver
 serial spawned
 serial driver online
@@ -163,6 +164,8 @@ Current syscalls:
 3 irq_wait(a0 = irq_cap)
 4 irq_ack(a0 = irq_cap)
 5 spawn_program(a0 = program_id, a1 = grant_mask) -> process/thread cap handle, 0 on failure
+6 boot_file_size(a0 = file_id) -> byte length, U64'Last on failure
+7 boot_read_byte(a0 = file_id, a1 = offset) -> byte 0..255, 256 EOF, U64'Last failure
 ```
 
 Return convention for resource syscalls:
@@ -278,7 +281,7 @@ Drivers/Serial
 program 1 Drivers/Serial uart_mmio uart_irq
 ```
 
-Kernel boots `System/Init`. Init currently calls syscall `spawn_program(1, grant_mask)`. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` for program id 1. Loader maps id 1 to boot program `Drivers/Serial` from initrd and returns image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Initrd is hidden behind program-loader abstraction for spawned programs; launch/resource policy is moving toward init.
+Kernel boots `System/Init`. Init can now query boot files through syscalls. Current boot file id 1 is `System/Manifest`; init verifies it is visible. Init then calls `spawn_program(1, grant_mask)`. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` for program id 1. Loader maps id 1 to boot program `Drivers/Serial` from initrd and returns image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Initrd is hidden behind boot-file/program-loader abstractions; launch/resource policy is moving toward init.
 
 ## ELF loader
 
@@ -340,6 +343,8 @@ User init currently launches serial driver:
 
 ```ada
 Debug_Put_Line ("init online from Ada");
+Boot_File_Size (Boot_Manifest_File);
+prints "boot manifest visible" when readable
 Debug_Put_Line ("launching serial driver");
 Result := Spawn_Program
   (1, UART_MMIO_Grant_Bit or UART_IRQ_Grant_Bit);
@@ -399,6 +404,18 @@ TCB currently has:
 - address-space root
 - saved user context snapshot
 - cap table
+
+Boot files:
+
+```text
+src/kernel/kernel-boot_files.ads/.adb
+```
+
+Current user-visible boot file API:
+- file id 1 = `System/Manifest`
+- `boot_file_size(file_id)` returns byte length or `U64'Last`
+- `boot_read_byte(file_id, offset)` returns byte, 256 EOF, or `U64'Last`
+- byte-at-a-time API avoids user pointer copying for now
 
 Program loader:
 
@@ -543,7 +560,8 @@ QEMU virt RAM base:     0x80000000
 ## Recommended next steps
 
 1. Move launch policy toward init/program-manager:
-   - kernel currently parses `System/Manifest`; long-term init should parse/own launch policy
+   - init can now read `System/Manifest`; next make it parse manifest and decide program ids/grants
+   - kernel still parses `System/Manifest` in program loader; remove once init owns policy
    - kernel should expose bootinfo/resource caps to init
    - spawn should accept executable/source cap plus explicit grant/cap list, not global program id
    - keep initrd as one program-loader backend; later add VFS/package backend

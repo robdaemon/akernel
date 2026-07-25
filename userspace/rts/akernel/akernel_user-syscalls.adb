@@ -29,6 +29,14 @@ package body Akernel_User.Syscalls is
       Grant_Mask : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_spawn_program";
 
+   function Raw_Boot_File_Size (File_Id : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_boot_file_size";
+
+   function Raw_Boot_Read_Byte
+     (File_Id : U64;
+      Offset  : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_boot_read_byte";
+
    procedure Yield is
    begin
       Raw_Yield;
@@ -62,6 +70,19 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Spawn_Program (Program_Id, Grant_Mask);
    end Spawn_Program;
+
+   function Boot_File_Size (File_Id : U64) return U64 is
+   begin
+      return Raw_Boot_File_Size (File_Id);
+   end Boot_File_Size;
+
+   function Boot_Read_Byte
+     (File_Id : U64;
+      Offset  : U64) return U64
+   is
+   begin
+      return Raw_Boot_Read_Byte (File_Id, Offset);
+   end Boot_Read_Byte;
 
    function Exec_Serial return U64 is
    begin

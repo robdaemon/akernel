@@ -12,12 +12,19 @@ package Akernel_User.Syscalls is
       Flags  : U64) return U64;
    UART_MMIO_Grant_Bit : constant U64 := 1;
    UART_IRQ_Grant_Bit  : constant U64 := 2;
+   Boot_Manifest_File  : constant U64 := 1;
+   Syscall_Failed      : constant U64 := U64'Last;
+   Boot_EOF            : constant U64 := 256;
 
    function IRQ_Wait (Cap : U64) return U64;
    function IRQ_Ack (Cap : U64) return U64;
    function Spawn_Program
      (Program_Id : U64;
       Grant_Mask : U64) return U64;
+   function Boot_File_Size (File_Id : U64) return U64;
+   function Boot_Read_Byte
+     (File_Id : U64;
+      Offset  : U64) return U64;
    function Exec_Serial return U64;
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);
