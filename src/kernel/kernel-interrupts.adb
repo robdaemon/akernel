@@ -3,6 +3,7 @@ with Kernel.Scheduler;
 package body Kernel.Interrupts is
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Tasks.Task_Access;
+   use type Kernel.Tasks.Task_State;
 
    Max_Sources : constant := 1024;
 
@@ -42,6 +43,7 @@ package body Kernel.Interrupts is
       Claimed : out Boolean)
    is
       Index : constant Natural := Natural (Source);
+      Wake_Result : Kernel.Scheduler.Status;
    begin
       Claimed := False;
 
@@ -51,14 +53,12 @@ package body Kernel.Interrupts is
 
       Lines (Index).Pending := True;
       Lines (Index).In_Flight := True;
+
       if Lines (Index).Waiter /= null then
-         declare
-            Wake_Result : Kernel.Scheduler.Status;
-         begin
-            Kernel.Scheduler.Wake (Lines (Index).Waiter, Wake_Result);
-            Lines (Index).Waiter := null;
-         end;
+         Kernel.Scheduler.Wake (Lines (Index).Waiter, Wake_Result);
+         Lines (Index).Waiter := null;
       end if;
+
       Claimed := True;
    end Deliver;
 
@@ -68,15 +68,34 @@ package body Kernel.Interrupts is
       Result : out Status)
    is
    begin
+      if Waiter = null then
+         Result := Invalid_IRQ;
+         return;
+      end if;
+
       if Line.Pending and then Line.In_Flight then
          Result := Ok;
-      else
-         if not Line.In_Flight then
-            Line.Pending := False;
-         end if;
-         Line.Waiter := Waiter;
-         Result := Would_Block;
+         return;
       end if;
+
+      if Line.In_Flight and then not Line.Pending then
+         Result := Would_Block;
+         return;
+      end if;
+
+      if Line.Waiter /= null and then Line.Waiter /= Waiter then
+         Result := Already_Waiting;
+         return;
+      end if;
+
+      if Kernel.Tasks.State (Waiter.all) = Kernel.Tasks.Dead then
+         Result := Invalid_IRQ;
+         return;
+      end if;
+
+      Line.Pending := False;
+      Line.Waiter := Waiter;
+      Result := Would_Block;
    end Wait;
 
    procedure Ack
@@ -90,7 +109,7 @@ package body Kernel.Interrupts is
       if not Line.In_Flight then
          Line.Pending := False;
          Line.Waiter := null;
-         Result := Ok;
+         Result := Would_Block;
          return;
       end if;
 

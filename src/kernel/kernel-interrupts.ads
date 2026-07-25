@@ -9,7 +9,8 @@ package Kernel.Interrupts is
      (Ok,
       Invalid_IRQ,
       Would_Block,
-      Already_Registered);
+      Already_Registered,
+      Already_Waiting);
 
    procedure Initialize;
 

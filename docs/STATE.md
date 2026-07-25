@@ -507,7 +507,15 @@ Source 10
 Rights Wait|Ack
 ```
 
-`Board.Interrupts.Handle_External_Interrupt` now claims PLIC source and calls `Kernel.Interrupts.Deliver`. If source is registered, kernel marks IRQ pending/in-flight and does not complete PLIC until user calls `irq_ack`. If source is unregistered, board code logs and completes it.
+`Board.Interrupts.Handle_External_Interrupt` claims PLIC source and calls `Kernel.Interrupts.Deliver`. If source is registered, kernel marks IRQ pending/in-flight and does not complete PLIC until user calls `irq_ack`. If source is unregistered, board code logs and completes it.
+
+IRQ state rules currently:
+- one waiter per IRQ line
+- `irq_wait` returns immediately only when `Pending and In_Flight`
+- if no IRQ pending, waiter is registered and task blocks
+- second different waiter gets `Already_Waiting` internally and syscall returns invalid/denied
+- delivery wakes waiter once and clears waiter slot
+- `irq_ack` clears `Pending`, `In_Flight`, and waiter; no in-flight IRQ returns would-block
 
 ## UART/PLIC/timer
 
@@ -555,7 +563,7 @@ QEMU virt RAM base:     0x80000000
 - Small fixed spawned-task table only; no free/reuse.
 - Initrd load address fixed at `0x84000000` via QEMU loader device.
 - No DTB-based device capability enumeration yet.
-- IRQ caps/syscalls exist but need hardening.
+- IRQ caps/syscalls exist; single-waiter state transitions hardened, but need more testing.
 - No IPC syscalls yet.
 - No cap transfer between processes yet.
 - No IOMMU/DMA isolation.
@@ -576,13 +584,15 @@ QEMU virt RAM base:     0x80000000
    - ready-queue duplicate protection exists
    - trap context save/schedule/restore helper exists for yield and IRQ wait
    - blocked-current/empty-ready idle path now uses `wfi` instead of reviving blocked task
-   - continue hardening IRQ wait/wakeup and task lifecycle
+   - IRQ single-waiter state transitions hardened
+   - continue hardening task lifecycle/failure cleanup
    - add per-task kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
 
 3. Improve blocking IRQ waits:
-   - current `irq_wait` can block task and scheduler can switch, but model is young
-   - `Kernel.Interrupts.Deliver` wakes IRQ waiter
+   - single-waiter IRQ wait/wakeup implemented
+   - add tests/stress for repeated RX, lost wakeups, and waiter contention
+   - move IRQ notification toward IPC/event objects
 
 3. Add IPC syscalls:
    - send/receive endpoint caps
