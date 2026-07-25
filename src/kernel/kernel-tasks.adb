@@ -52,8 +52,7 @@ package body Kernel.Tasks is
       TCB.Status := Ready;
       TCB.Process := Process;
       TCB.Kernel_Stack_Top := 0;
-      TCB.Context.Registers := (others => 0);
-      TCB.Context.PC := 0;
+      TCB.Context.Trap_Frame := (others => 0);
       TCB.Context.Valid := False;
       TCB.Queued := False;
    end Initialize_Thread;
@@ -174,11 +173,18 @@ package body Kernel.Tasks is
         and then To_U64 (Cap_Entry_Info.Object) = TCB.Process.Root;
    end Has_Address_Space_Map_Authority;
 
+   function Trap_Frame_Address (TCB : in out Thread_Control_Block)
+      return System.Address
+   is
+   begin
+      return TCB.Context.Trap_Frame'Address;
+   end Trap_Frame_Address;
+
    function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address
    is
    begin
-      return TCB.Context'Address;
+      return Trap_Frame_Address (TCB);
    end Context_Address;
 
    procedure Set_Kernel_Stack_Top
@@ -202,9 +208,9 @@ package body Kernel.Tasks is
       Stack : Kernel.Capabilities.U64)
    is
    begin
-      TCB.Context.Registers := (others => 0);
-      TCB.Context.Registers (1) := Stack; -- x2/sp
-      TCB.Context.PC := PC;
+      TCB.Context.Trap_Frame := (others => 0);
+      TCB.Context.Trap_Frame (1) := Stack; -- x2/sp
+      TCB.Context.Trap_Frame (Trap_Frame_PC_Index) := PC;
       TCB.Context.Valid := True;
    end Initialize_Context;
 

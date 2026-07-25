@@ -150,7 +150,7 @@ Trap handler:
 src/arch/riscv64/arch-traps.adb
 ```
 
-Trap entry uses `sscratch` to switch from user stack to kernel trap stack. Init and spawned user threads now own per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread before returning to user. It passes trap-frame pointer to Ada handler. Trap-frame contents are still saved/restored through raw frame copy helpers into thread context.
+Trap entry uses `sscratch` to switch from user stack to kernel trap stack. Init and spawned user threads own per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread before returning to user. It passes trap-frame pointer to Ada handler. Full trap-frame words plus saved `sepc` are stored per thread in `Thread_Control_Block` and copied to/from the live stack trap frame on context save/restore.
 
 Syscall ABI:
 
@@ -449,7 +449,7 @@ src/kernel/kernel-processes.ads/.adb
 Process/thread split decision:
 - kernel-visible threads are scheduled by kernel, with optional user-level fibers later
 - process owns address space, cap table, resource/lifecycle state
-- thread owns saved registers/context, scheduler state, per-thread kernel stack top; future work moves full trap-frame storage into thread object
+- thread owns saved trap-frame storage, scheduler state, and per-thread kernel stack top
 - spawn creates process plus main kernel thread, returning process cap (main thread cap can be added later)
 - kernel-visible threads chosen because blocking IPC/IRQ waits should block one thread, not whole address space/runtime
 - user-level threading can still be M:N/fibers later above kernel threads
@@ -565,7 +565,7 @@ QEMU virt RAM base:     0x80000000
 - PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
 - Kernel supervisor mappings are broad identity mappings copied into user roots.
 - No high-half kernel yet.
-- Context switch works only as rough cooperative saved trap-frame switching.
+- Context switch works only as rough cooperative saved per-thread trap-frame switching.
 - Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
 - Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
 - Initrd load address fixed at `0x84000000` via QEMU loader device.
@@ -604,8 +604,8 @@ QEMU virt RAM base:     0x80000000
    - endpoint/IRQ cap cleanup hooks run on exit/reap
    - add richer object cleanup/refcounts as object model grows
    - continue hardening process/thread lifecycle after successful spawn/exit
-   - per-thread kernel stacks exist for init/spawned user threads
-   - add per-thread trap-frame storage and avoid copying raw trap frames in arch-neutral task code
+   - per-thread kernel stacks and trap-frame storage exist for init/spawned user threads
+   - avoid exposing raw trap-frame layout in arch-neutral task code
 
 3. Improve blocking IRQ waits:
    - single-waiter IRQ wait/wakeup implemented
@@ -624,5 +624,5 @@ QEMU virt RAM base:     0x80000000
 
 5. Improve VM isolation:
    - proper kernel virtual map instead of broad identity
-   - per-thread kernel stacks exist; add per-thread trap-frame storage
+   - per-thread kernel stacks/trap-frame storage exist; hide remaining arch-specific layout from `Kernel.Tasks`
    - scheduler context switch switches `satp`

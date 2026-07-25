@@ -133,7 +133,7 @@ trap_frame_set_a0:
 .global trap_frame_save_context
 .type trap_frame_save_context, @function
 trap_frame_save_context:
-    li t0, 31
+    li t0, 34
 1:
     ld t1, 0(a0)
     sd t1, 0(a1)
@@ -150,7 +150,7 @@ trap_frame_save_context:
 .type trap_frame_load_context, @function
 trap_frame_load_context:
     mv t3, a1
-    li t0, 31
+    li t0, 34
 1:
     ld t1, 0(t3)
     sd t1, 0(a0)

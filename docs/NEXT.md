@@ -1,6 +1,6 @@
 # Next step
 
-Continue thread/trap-frame hardening.
+Continue context/object hardening.
 
 Done recently:
 - PMM is bump allocator plus freed-frame singly-linked free list.
@@ -13,11 +13,12 @@ Done recently:
 - Fixed cap handle 255 is reserved as process self `Address_Space_Object` cap; `map_mmio` requires it.
 - Init and spawned user threads have per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread stack top before returning to user.
 - Spawn/reap cleanup frees spawned thread kernel stack frames.
+- Full RISC-V trap-frame words plus saved `sepc` are stored per thread in `Thread_Control_Block`; context save/restore copies live stack trap frame to/from that per-thread storage.
 - `Arch.User_Mode.Enter_User_Mode` no longer resets `sscratch`; caller/trap restore controls kernel trap stack.
 - `make all` and timeout boot run pass with expected boot output.
 
 Continue with:
-1. Add per-thread trap-frame storage; stop depending on global trap stack/raw trap-frame copies.
+1. Hide remaining arch-specific trap-frame layout from `Kernel.Tasks` behind arch-owned context type/API.
 2. Decide return caps: process cap now returned; add main thread cap only if needed.
 3. Add object refcounts/close hooks if new shared kernel objects need ownership semantics beyond endpoint/IRQ waiter cleanup.
 4. Add stronger PMM/page-table stress tests once test harness exists.

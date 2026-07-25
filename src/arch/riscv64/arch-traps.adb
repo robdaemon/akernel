@@ -132,7 +132,7 @@ package body Arch.Traps is
       if Current /= null then
          Trap_Frame_Save_Context
            (Frame,
-            Kernel.Tasks.Context_Address (Current.all));
+            Kernel.Tasks.Trap_Frame_Address (Current.all));
       end if;
    end Save_Current_Context;
 
@@ -152,7 +152,7 @@ package body Arch.Traps is
          Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
          Trap_Frame_Load_Context
            (Frame,
-            Kernel.Tasks.Context_Address (Current.all));
+            Kernel.Tasks.Trap_Frame_Address (Current.all));
       elsif Result /= Kernel.Scheduler.Ok then
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

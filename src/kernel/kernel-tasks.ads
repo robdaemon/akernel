@@ -72,6 +72,9 @@ package Kernel.Tasks is
    function Has_Address_Space_Map_Authority
      (TCB : Thread_Control_Block) return Boolean;
 
+   function Trap_Frame_Address (TCB : in out Thread_Control_Block)
+      return System.Address;
+
    function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address;
 
@@ -162,13 +165,15 @@ package Kernel.Tasks is
    function Process_Cap_Count (PCB : Process_Control_Block) return Natural;
 
 private
-   type Register_Array is array (Natural range 0 .. 30)
-     of Kernel.Capabilities.U64;
+   Trap_Frame_Word_Count : constant := 34;
+   Trap_Frame_PC_Index   : constant := Trap_Frame_Word_Count;
+
+   type Trap_Frame_Word_Array is array
+     (Natural range 0 .. Trap_Frame_PC_Index) of Kernel.Capabilities.U64;
 
    type Task_Context is record
-      Registers : Register_Array;
-      PC        : Kernel.Capabilities.U64;
-      Valid     : Boolean;
+      Trap_Frame : aliased Trap_Frame_Word_Array;
+      Valid      : Boolean;
    end record;
 
    type Process_Control_Block is record
