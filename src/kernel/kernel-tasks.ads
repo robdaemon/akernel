@@ -155,7 +155,7 @@ package Kernel.Tasks is
       Out_Entry : out Kernel.Capabilities.Cap_Entry);
 
    procedure Close_Cap
-     (TCB    : in out Thread_Control_Block;
+     (Thread : not null Thread_Access;
       Cap    : Kernel.Capabilities.Handle;
       Result : out Kernel.Capabilities.Status);
 

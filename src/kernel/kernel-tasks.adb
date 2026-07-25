@@ -1,3 +1,4 @@
+with Kernel.Objects;
 with System.Storage_Elements;
 
 package body Kernel.Tasks is
@@ -380,17 +381,28 @@ package body Kernel.Tasks is
    end Close_Process_Cap;
 
    procedure Close_Cap
-     (TCB    : in out Thread_Control_Block;
+     (Thread : not null Thread_Access;
       Cap    : Kernel.Capabilities.Handle;
       Result : out Kernel.Capabilities.Status)
    is
+      Cap_Info : Kernel.Capabilities.Cap_Entry;
    begin
-      if TCB.Process = null then
+      if Thread.Process = null then
          Result := Kernel.Capabilities.Invalid_Object;
          return;
       end if;
 
-      Close_Process_Cap (TCB.Process.all, Cap, Result);
+      Lookup_Process_Cap
+        (PCB       => Thread.Process.all,
+         Cap       => Cap,
+         Result    => Result,
+         Out_Entry => Cap_Info);
+      if Result /= Kernel.Capabilities.Ok then
+         return;
+      end if;
+
+      Kernel.Objects.Cleanup_Thread_Cap_Object (Thread, Cap_Info);
+      Close_Process_Cap (Thread.Process.all, Cap, Result);
    end Close_Cap;
 
    procedure Reset_Process_Caps (PCB : in out Process_Control_Block) is

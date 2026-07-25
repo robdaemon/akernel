@@ -478,7 +478,7 @@ IPC:
 src/kernel/kernel-ipc.ads/.adb
 ```
 
-Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage. Process exit/reap walks owned caps and applies endpoint cleanup hooks to clear matching waiting sender/receiver slots before cap table reset.
+Endpoint/message scaffold exists. One waiting sender/receiver, badges, caps reserved but no cap transfer yet. Send/receive drop dead waiting sender/receiver slots before matching, avoiding stale dead-thread endpoint blockage. `Kernel.Objects.Cleanup_Thread_Cap_Object` dispatches endpoint cleanup for process exit/reap and thread cap close, clearing matching waiting sender/receiver slots before cap table reset.
 
 ## Resource objects
 
@@ -526,7 +526,7 @@ Rights Wait|Ack
 IRQ state rules currently:
 - one waiter per IRQ line
 - dead waiter is cleared before installing/checking another waiter
-- process exit/reap walks owned caps and applies IRQ cleanup hooks to clear matching waiter slots
+- process exit/reap walks owned caps through `Kernel.Objects.Cleanup_Thread_Cap_Object`; IRQ cleanup clears matching waiter slots
 - `irq_wait` returns immediately only when `Pending and In_Flight`
 - if no IRQ pending, waiter is registered and task blocks
 - second different waiter gets `Already_Waiting` internally and syscall returns invalid/denied
@@ -611,7 +611,7 @@ QEMU virt RAM base:     0x80000000
    - exit syscall exists and marks current thread/process dead
    - reap syscall closes parent process cap, destroys child address space, frees frames/page tables, clears child cap table, and frees dead spawned slot for reuse
    - PMM boot selftest checks reuse/free-count/double-free rejection
-   - endpoint/IRQ cap cleanup hooks run on exit/reap
+   - endpoint/IRQ cap cleanup hooks run through generic object cleanup dispatcher on exit/reap and thread cap close
    - add richer object cleanup/refcounts as object model grows
    - continue hardening process/thread lifecycle after successful spawn/exit
    - per-thread kernel stacks and opaque arch context exist for init/spawned user threads

@@ -1,4 +1,5 @@
 with Interfaces;
+with Kernel.Capabilities;
 with Kernel.Tasks;
 
 package Kernel.Objects is
@@ -17,4 +18,8 @@ package Kernel.Objects is
    end record;
 
    type IRQ_Line_Access is access all IRQ_Line;
+
+   procedure Cleanup_Thread_Cap_Object
+     (Thread : Kernel.Tasks.Thread_Access;
+      Cap    : Kernel.Capabilities.Cap_Entry);
 end Kernel.Objects;

@@ -1,8 +1,7 @@
 with System;
 with Arch.MMU;
 with Kernel.ELF;
-with Kernel.IPC;
-with Kernel.Interrupts;
+with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Program_Loader;
 with Kernel.Scheduler;
@@ -329,7 +328,7 @@ package body Kernel.Processes is
          Result => Sched_Result);
 
       if Sched_Result /= Kernel.Scheduler.Ok then
-         Kernel.Tasks.Close_Cap (Parent.all, Process_Cap, Cap_Result);
+         Kernel.Tasks.Close_Cap (Parent, Process_Cap, Cap_Result);
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
          Result := Scheduler_Failed;
          Discard_Slot (Slot);
@@ -372,8 +371,6 @@ package body Kernel.Processes is
    end Spawn_Boot_Path;
 
    procedure Cleanup_Cap_Refs (Thread : Kernel.Tasks.Thread_Access) is
-      use type Kernel.Capabilities.Object_Kind;
-
       Process    : Kernel.Tasks.Process_Access;
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info   : Kernel.Capabilities.Cap_Entry;
@@ -398,11 +395,7 @@ package body Kernel.Processes is
             Out_Entry => Cap_Info);
 
          if Cap_Result = Kernel.Capabilities.Ok then
-            if Cap_Info.Kind = Kernel.Capabilities.Endpoint_Object then
-               Kernel.IPC.Cleanup_Thread_Cap (Thread, Cap_Info.Object);
-            elsif Cap_Info.Kind = Kernel.Capabilities.IRQ_Object then
-               Kernel.Interrupts.Cleanup_Thread_Cap (Thread, Cap_Info.Object);
-            end if;
+            Kernel.Objects.Cleanup_Thread_Cap_Object (Thread, Cap_Info);
          end if;
       end loop;
    end Cleanup_Cap_Refs;
@@ -477,7 +470,7 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Kernel.Tasks.Close_Cap (Parent.all, Process_Cap, Cap_Result);
+      Kernel.Tasks.Close_Cap (Parent, Process_Cap, Cap_Result);
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;
          return;
