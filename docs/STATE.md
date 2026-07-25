@@ -344,7 +344,7 @@ User init currently launches serial driver:
 ```ada
 Debug_Put_Line ("init online from Ada");
 Boot_File_Size (Boot_Manifest_File);
-panic/yield loop if unavailable
+init-fatal/yield loop if unavailable; not kernel panic
 prints "boot manifest visible" when readable
 Debug_Put_Line ("launching serial driver");
 Result := Spawn_Program
@@ -561,7 +561,7 @@ QEMU virt RAM base:     0x80000000
 ## Recommended next steps
 
 1. Move launch policy toward init/program-manager:
-   - init now treats unreadable `System/Manifest` as fatal and enters panic/yield loop
+   - init now treats unreadable `System/Manifest` as fatal and enters yield loop; this is not kernel panic/shutdown
    - init can now read `System/Manifest`; next make it parse manifest and decide program ids/grants
    - kernel still parses `System/Manifest` in program loader; remove once init owns policy
    - kernel should expose bootinfo/resource caps to init

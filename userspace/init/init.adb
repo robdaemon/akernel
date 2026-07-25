@@ -11,7 +11,7 @@ begin
      (Akernel_User.Syscalls.Boot_Manifest_File);
    if Result = Akernel_User.Syscalls.Syscall_Failed then
       Akernel_User.Syscalls.Debug_Put_Line
-        ("panic: boot manifest unavailable");
+        ("init fatal: boot manifest unavailable");
       loop
          Akernel_User.Syscalls.Yield;
       end loop;
