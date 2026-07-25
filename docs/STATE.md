@@ -46,7 +46,7 @@ scheduler online
 entering initrd init
 init online from Ada
 boot manifest visible
-launching serial driver
+launching manifest programs
 serial spawned
 serial driver online
 init resumed
@@ -281,7 +281,7 @@ Drivers/Serial
 program 1 Drivers/Serial uart_mmio uart_irq
 ```
 
-Kernel boots `System/Init`. Init can now query boot files through syscalls. Current boot file id 1 is `System/Manifest`; init verifies it is visible. Init then calls `spawn_program(1, grant_mask)`. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` for program id 1. Loader maps id 1 to boot program `Drivers/Serial` from initrd and returns image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Initrd is hidden behind boot-file/program-loader abstractions; launch/resource policy is moving toward init.
+Kernel boots `System/Init`. Init can now query boot files through syscalls. Current boot file id 1 is `System/Manifest`; init verifies it is visible. Init parses `System/Manifest`, builds grant masks, then calls `spawn_program(program_id, grant_mask)` for program entries. `Kernel.Processes` owns small spawned-task table and asks `Kernel.Program_Loader` for program id 1. Loader maps id 1 to boot program `Drivers/Serial` from initrd and returns image bytes. Process code loads it into its own user address space, applies caller-requested grants from `grant_mask` after checking parent owns matching resource caps, queues it in scheduler, and returns parent process/thread cap handle. Init remains alive and resumes after yielding. Initrd is hidden behind boot-file/program-loader abstractions; launch/resource policy is moving toward init.
 
 ## ELF loader
 
@@ -346,10 +346,12 @@ Debug_Put_Line ("init online from Ada");
 Boot_File_Size (Boot_Manifest_File);
 init-fatal/yield loop if unavailable; not kernel panic
 prints "boot manifest visible" when readable
-Debug_Put_Line ("launching serial driver");
-Result := Spawn_Program
-  (1, UART_MMIO_Grant_Bit or UART_IRQ_Grant_Bit);
-prints "serial spawned" on nonzero process/thread cap handle
+Debug_Put_Line ("launching manifest programs");
+Parse_Manifest;
+for each `program <id> <path> [grants...]` line:
+  build grant mask from tokens
+  Spawn_Program (id, grant_mask)
+prints "serial spawned" for id 1 on nonzero process/thread cap handle
 Yield;
 prints "init resumed"
 ```
@@ -562,8 +564,8 @@ QEMU virt RAM base:     0x80000000
 
 1. Move launch policy toward init/program-manager:
    - init now treats unreadable `System/Manifest` as fatal and enters yield loop; this is not kernel panic/shutdown
-   - init can now read `System/Manifest`; next make it parse manifest and decide program ids/grants
-   - kernel still parses `System/Manifest` in program loader; remove once init owns policy
+   - init parses `System/Manifest` and decides program ids/grants
+   - kernel still parses `System/Manifest` in program loader to resolve id->image; remove once spawn takes executable/source cap
    - kernel should expose bootinfo/resource caps to init
    - spawn should accept executable/source cap plus explicit grant/cap list, not global program id
    - keep initrd as one program-loader backend; later add VFS/package backend
