@@ -22,12 +22,18 @@ package body Kernel.Scheduler is
          return;
       end if;
 
+      if Kernel.Tasks.Is_Queued (TCB.all) then
+         Result := Ok;
+         return;
+      end if;
+
       if Count = Max_Tasks then
          Result := Queue_Full;
          return;
       end if;
 
       Queue (Tail) := TCB;
+      Kernel.Tasks.Set_Queued (TCB.all, True);
       if Tail = Queue_Index'Last then
          Tail := Queue_Index'First;
       else
@@ -50,6 +56,9 @@ package body Kernel.Scheduler is
 
       TCB := Queue (Head);
       Queue (Head) := null;
+      if TCB /= null then
+         Kernel.Tasks.Set_Queued (TCB.all, False);
+      end if;
       if Head = Queue_Index'Last then
          Head := Queue_Index'First;
       else
@@ -93,6 +102,7 @@ package body Kernel.Scheduler is
       end if;
 
       Current_TCB := TCB;
+      Kernel.Tasks.Set_Queued (Current_TCB.all, False);
       Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Running);
       Result := Ok;
    end Set_Current;
@@ -127,6 +137,7 @@ package body Kernel.Scheduler is
       end if;
 
       Current_TCB := Next;
+      Kernel.Tasks.Set_Queued (Current_TCB.all, False);
       Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Running);
       Result := Ok;
    end Yield;
@@ -158,6 +169,11 @@ package body Kernel.Scheduler is
 
       if Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Dead then
          Result := Invalid_Task;
+         return;
+      elsif Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Running
+        or else Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Ready
+      then
+         Result := Ok;
          return;
       end if;
 

@@ -10,6 +10,7 @@ package body Kernel.Tasks is
       TCB.Context.Registers := (others => 0);
       TCB.Context.PC := 0;
       TCB.Context.Valid := False;
+      TCB.Queued := False;
       Kernel.Capabilities.Initialize (TCB.Caps);
    end Initialize;
 
@@ -61,6 +62,19 @@ package body Kernel.Tasks is
    begin
       return TCB.Context.Valid;
    end Has_Context;
+
+   function Is_Queued (TCB : Task_Control_Block) return Boolean is
+   begin
+      return TCB.Queued;
+   end Is_Queued;
+
+   procedure Set_Queued
+     (TCB    : in out Task_Control_Block;
+      Queued : Boolean)
+   is
+   begin
+      TCB.Queued := Queued;
+   end Set_Queued;
 
    procedure Set_State
      (TCB       : in out Task_Control_Block;

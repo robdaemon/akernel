@@ -40,6 +40,12 @@ package Kernel.Tasks is
 
    function Has_Context (TCB : Task_Control_Block) return Boolean;
 
+   function Is_Queued (TCB : Task_Control_Block) return Boolean;
+
+   procedure Set_Queued
+     (TCB    : in out Task_Control_Block;
+      Queued : Boolean);
+
    procedure Set_State
      (TCB       : in out Task_Control_Block;
       New_State : Task_State);
@@ -83,6 +89,7 @@ private
       Status     : Task_State;
       Root       : Kernel.Capabilities.U64;
       Context    : aliased Task_Context;
+      Queued     : Boolean;
       Caps       : Kernel.Capabilities.Cap_Table;
    end record;
 end Kernel.Tasks;
