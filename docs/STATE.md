@@ -433,6 +433,15 @@ src/kernel/kernel-processes.ads/.adb
 - queues child in scheduler only after all prior steps succeed
 - rewinds PMM mark on failure before child becomes visible
 
+Process/thread split decision:
+- current TCB still combines process and thread concepts
+- target model is kernel-visible threads scheduled by kernel, with optional user-level fibers later
+- process should own address space, cap table, resource/lifecycle state
+- thread should own saved registers/context, scheduler state, per-thread kernel stack/trap frame later
+- spawn should eventually create process plus main kernel thread, returning process cap (and maybe main thread cap later)
+- kernel-visible threads chosen because blocking IPC/IRQ waits should block one thread, not whole address space/runtime
+- user-level threading can still be M:N/fibers later above kernel threads
+
 Scheduler:
 
 ```text
@@ -569,8 +578,9 @@ QEMU virt RAM base:     0x80000000
    - blocked-current/empty-ready idle path now uses `wfi` instead of reviving blocked task
    - IRQ single-waiter state transitions hardened
    - failed spawn rewinds PMM before child becomes visible
+   - split current TCB into process-owned address-space/caps and thread-owned schedulable context
    - continue hardening task lifecycle after successful spawn/exit
-   - add per-task kernel stacks/trap frames
+   - add per-thread kernel stacks/trap frames
    - avoid copying raw trap frames in arch-neutral task code
 
 3. Improve blocking IRQ waits:
