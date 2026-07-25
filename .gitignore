@@ -1,0 +1,36 @@
+# Alire/generated project config
+**/alire/
+**/config/
+
+# Build outputs
+/bin/
+/obj/
+/initrd/root/
+/initrd/out/
+**/bin/
+**/obj/
+
+# Native/bare-metal binaries and objects
+*.elf
+*.o
+*.a
+*.ali
+*.bexch
+*.cswi
+*.map
+*.img
+*.cpio
+*.bin
+*.hex
+*.out
+
+# Build logs / generated binder files
+*.stdout
+*.stderr
+b__*.adb
+b__*.ads
+
+# Editor/OS noise
+*~
+*.swp
+.DS_Store

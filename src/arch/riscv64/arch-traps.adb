@@ -1,0 +1,439 @@
+with Interfaces;
+with System;
+with Ada.Unchecked_Conversion;
+with Arch.MMU;
+with Arch.SBI;
+with Board.Interrupts;
+with Board.PLIC;
+with Board.UART;
+with Kernel.Capabilities;
+with Kernel.Interrupts;
+with Kernel.Objects;
+with Kernel.Processes;
+with Kernel.Scheduler;
+with Kernel.Tasks;
+
+package body Arch.Traps is
+   use type Arch.MMU.Status;
+   use type Interfaces.Unsigned_64;
+   use type Kernel.Processes.Status;
+   use type Kernel.Objects.IRQ_Line_Access;
+   use type Kernel.Scheduler.Status;
+   use type Kernel.Tasks.Task_Access;
+   subtype U64 is Interfaces.Unsigned_64;
+
+   Timer_Ticks_Per_Second : constant U64 := 10_000_000;
+   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second;
+   Interrupt_Bit         : constant U64 := 16#8000_0000_0000_0000#;
+   User_Ecall            : constant U64 := 8;
+   Supervisor_Timer      : constant U64 := 5;
+   Supervisor_External   : constant U64 := 9;
+
+   Sys_Yield             : constant U64 := 0;
+   Sys_Debug_Putchar     : constant U64 := 1;
+   Sys_Map_MMIO          : constant U64 := 2;
+   Sys_IRQ_Wait          : constant U64 := 3;
+   Sys_IRQ_Ack           : constant U64 := 4;
+   Sys_Spawn_Program     : constant U64 := 5;
+
+   Tick_Count : U64 := 0;
+
+   function Trap_Frame_Get_A0 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a0";
+
+   function Trap_Frame_Get_A1 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a1";
+
+   function Trap_Frame_Get_A2 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a2";
+
+   function Trap_Frame_Get_A3 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a3";
+
+   function Trap_Frame_Get_A4 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a4";
+
+   function Trap_Frame_Get_A7 (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_a7";
+
+   procedure Trap_Frame_Set_A0 (Frame : System.Address; Value : U64)
+     with Import, Convention => C, External_Name => "trap_frame_set_a0";
+
+   procedure Trap_Frame_Save_Context
+     (Frame   : System.Address;
+      Context : System.Address)
+     with Import, Convention => C, External_Name => "trap_frame_save_context";
+
+   procedure Trap_Frame_Load_Context
+     (Frame   : System.Address;
+      Context : System.Address)
+     with Import, Convention => C, External_Name => "trap_frame_load_context";
+
+   procedure Advance_SEPC
+     with Import, Convention => C, External_Name => "riscv_advance_sepc";
+
+   function Hex_Digit (Nibble : U64) return Character is
+      Hex : constant String := "0123456789abcdef";
+   begin
+      return Hex (Natural (Nibble) + 1);
+   end Hex_Digit;
+
+   procedure Put_Hex (Value : U64) is
+      Shift : Natural := 60;
+   begin
+      Board.UART.Put ("0x");
+      loop
+         Board.UART.Put
+           ((1 => Hex_Digit
+              (Interfaces.Shift_Right (Value, Shift) and 16#f#)));
+         exit when Shift = 0;
+         Shift := Shift - 4;
+      end loop;
+   end Put_Hex;
+
+   procedure Halt is
+   begin
+      loop
+         null;
+      end loop;
+   end Halt;
+
+   type MMIO_Region_Access is access all Kernel.Objects.MMIO_Region;
+
+   function To_MMIO_Region is new Ada.Unchecked_Conversion
+     (Source => System.Address,
+      Target => MMIO_Region_Access);
+
+   function To_IRQ_Line is new Ada.Unchecked_Conversion
+     (Source => System.Address,
+      Target => Kernel.Objects.IRQ_Line_Access);
+
+   function Is_Page_Aligned (Value : U64) return Boolean is
+   begin
+      return Value mod Arch.MMU.Page_Size = 0;
+   end Is_Page_Aligned;
+
+   procedure Handle_Map_MMIO (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Cap_Handle : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      VA         : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Offset     : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Length     : constant U64 := Trap_Frame_Get_A3 (Frame);
+      Flags      : constant U64 := Trap_Frame_Get_A4 (Frame);
+      Current    : constant Kernel.Tasks.Task_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      Region     : MMIO_Region_Access;
+      Map_Result : Arch.MMU.Status;
+      Page_Count : U64;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.MMIO_Object
+        or else not Cap_Info.Rights.Map
+        or else ((Flags and 1) /= 0 and then not Cap_Info.Rights.Read)
+        or else ((Flags and 2) /= 0 and then not Cap_Info.Rights.Write)
+        or else (Flags and not 3) /= 0
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Region := To_MMIO_Region (Cap_Info.Object);
+      if Region = null
+        or else VA < 16#4000_0000#
+        or else VA + Length > 16#8000_0000#
+        or else Length = 0
+        or else Offset + Length > Region.Length
+        or else not Is_Page_Aligned (VA)
+        or else not Is_Page_Aligned (Offset)
+        or else not Is_Page_Aligned (Length)
+        or else Length /= Arch.MMU.Page_Size
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Page_Count := Length / Arch.MMU.Page_Size;
+      for Page in U64 range 0 .. Page_Count - 1 loop
+         Arch.MMU.Map_Page
+           (Root     => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual  => VA + Page * Arch.MMU.Page_Size,
+            Physical => Region.Physical_Base + Offset
+              + Page * Arch.MMU.Page_Size,
+            Flags    => Arch.MMU.User_RW,
+            Result   => Map_Result);
+
+         if Map_Result /= Arch.MMU.Ok then
+            Trap_Frame_Set_A0 (Frame, 1);
+            return;
+         end if;
+      end loop;
+
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Map_MMIO;
+
+   procedure Handle_IRQ_Wait (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Interrupts.Status;
+
+      Cap_Handle : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      Current    : constant Kernel.Tasks.Task_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info         : Kernel.Capabilities.Cap_Entry;
+      Line             : Kernel.Objects.IRQ_Line_Access;
+      IRQ_Result       : Kernel.Interrupts.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.IRQ_Object
+        or else not Cap_Info.Rights.Wait
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Line := To_IRQ_Line (Cap_Info.Object);
+      if Line = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Interrupts.Wait (Line, Current, IRQ_Result);
+
+      if IRQ_Result = Kernel.Interrupts.Ok then
+         Trap_Frame_Set_A0 (Frame, 0);
+      elsif IRQ_Result = Kernel.Interrupts.Would_Block then
+         Advance_SEPC;
+         Trap_Frame_Set_A0 (Frame, 0);
+         Trap_Frame_Save_Context
+           (Frame,
+            Kernel.Tasks.Context_Address (Current.all));
+         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_IRQ);
+         Kernel.Scheduler.Yield (Scheduler_Result);
+
+         if Scheduler_Result = Kernel.Scheduler.Ok
+           and then Kernel.Scheduler.Current /= null
+         then
+            Arch.MMU.Activate
+              (Kernel.Tasks.Address_Space_Root
+                 (Kernel.Scheduler.Current.all));
+            Trap_Frame_Load_Context
+              (Frame,
+               Kernel.Tasks.Context_Address
+                 (Kernel.Scheduler.Current.all));
+         end if;
+         return;
+      else
+         Trap_Frame_Set_A0 (Frame, 1);
+      end if;
+
+      Advance_SEPC;
+   end Handle_IRQ_Wait;
+
+   procedure Handle_IRQ_Ack (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Interrupts.Status;
+
+      Cap_Handle      : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      Current         : constant Kernel.Tasks.Task_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Result      : Kernel.Capabilities.Status;
+      Cap_Info        : Kernel.Capabilities.Cap_Entry;
+      Line            : Kernel.Objects.IRQ_Line_Access;
+      IRQ_Result      : Kernel.Interrupts.Status;
+      Complete_Source : U64;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.IRQ_Object
+        or else not Cap_Info.Rights.Ack
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Line := To_IRQ_Line (Cap_Info.Object);
+      if Line = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Interrupts.Ack (Line, IRQ_Result, Complete_Source);
+      if IRQ_Result = Kernel.Interrupts.Ok then
+         Board.PLIC.Complete (Board.PLIC.Source_Id (Complete_Source));
+         Trap_Frame_Set_A0 (Frame, 0);
+      elsif IRQ_Result = Kernel.Interrupts.Would_Block then
+         Trap_Frame_Set_A0 (Frame, 2);
+      else
+         Trap_Frame_Set_A0 (Frame, 1);
+      end if;
+   end Handle_IRQ_Ack;
+
+   procedure Handle_Spawn_Program (Frame : System.Address) is
+      Program_Id  : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Grant_Mask  : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Current     : constant Kernel.Tasks.Task_Access :=
+        Kernel.Scheduler.Current;
+      Result      : Kernel.Processes.Status;
+      Process_Cap : Kernel.Capabilities.Handle;
+   begin
+      Kernel.Processes.Spawn_Program
+        (Parent      => Current,
+         Program_Id  => Program_Id,
+         Grant_Mask  => Grant_Mask,
+         Result      => Result,
+         Process_Cap => Process_Cap);
+
+      if Result = Kernel.Processes.Ok then
+         Trap_Frame_Set_A0 (Frame, U64 (Process_Cap));
+      else
+         Trap_Frame_Set_A0 (Frame, 0);
+      end if;
+   end Handle_Spawn_Program;
+
+   procedure Handle_Syscall (Frame : System.Address) is
+      Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
+      Arg0             : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Scheduler_Result : Kernel.Scheduler.Status;
+      pragma Unreferenced (Arg0);
+   begin
+      if Number = Sys_Yield then
+         Advance_SEPC;
+         Trap_Frame_Set_A0 (Frame, 0);
+
+         if Kernel.Scheduler.Current /= null then
+            Trap_Frame_Save_Context
+              (Frame,
+               Kernel.Tasks.Context_Address
+                 (Kernel.Scheduler.Current.all));
+         end if;
+
+         Kernel.Scheduler.Yield (Scheduler_Result);
+         if Scheduler_Result = Kernel.Scheduler.Ok
+           and then Kernel.Scheduler.Current /= null
+         then
+            Arch.MMU.Activate
+              (Kernel.Tasks.Address_Space_Root
+                 (Kernel.Scheduler.Current.all));
+            Trap_Frame_Load_Context
+              (Frame,
+               Kernel.Tasks.Context_Address
+                 (Kernel.Scheduler.Current.all));
+         elsif Scheduler_Result /= Kernel.Scheduler.Ok then
+            Trap_Frame_Set_A0 (Frame, U64'Last);
+         end if;
+         return;
+      elsif Number = Sys_Debug_Putchar then
+         Board.UART.Put
+           ((1 => Character'Val
+              (Natural (Trap_Frame_Get_A0 (Frame) and 16#ff#))));
+         Trap_Frame_Set_A0 (Frame, 0);
+      elsif Number = Sys_Map_MMIO then
+         Handle_Map_MMIO (Frame);
+      elsif Number = Sys_IRQ_Wait then
+         Handle_IRQ_Wait (Frame);
+         return;
+      elsif Number = Sys_IRQ_Ack then
+         Handle_IRQ_Ack (Frame);
+      elsif Number = Sys_Spawn_Program then
+         Handle_Spawn_Program (Frame);
+      else
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+
+      Advance_SEPC;
+   end Handle_Syscall;
+
+   procedure Riscv_Trap_Handler (Frame : System.Address)
+     with Export, Convention => C, External_Name => "riscv_trap_handler";
+
+   procedure Riscv_Trap_Handler (Frame : System.Address) is
+      Cause : constant U64 := Arch.SBI.Scause;
+      Code  : constant U64 := Cause and not Interrupt_Bit;
+   begin
+      if (Cause and Interrupt_Bit) = 0 and then Code = User_Ecall then
+         Handle_Syscall (Frame);
+         return;
+      elsif (Cause and Interrupt_Bit) /= 0
+        and then Code = Supervisor_Timer
+      then
+         Tick_Count := Tick_Count + 1;
+         if Tick_Count = 1 then
+            Board.UART.Put_Line ("timer interrupt online");
+         else
+            Board.UART.Put (".");
+         end if;
+
+         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+         return;
+      elsif (Cause and Interrupt_Bit) /= 0
+        and then Code = Supervisor_External
+      then
+         Board.Interrupts.Handle_External_Interrupt;
+         return;
+      end if;
+
+      Arch.SBI.Disable_Interrupts;
+      Board.UART.Put_Line ("unexpected trap");
+      Board.UART.Put ("  scause = ");
+      Put_Hex (Cause);
+      Board.UART.Put_Line ("");
+
+      Board.UART.Put ("  sepc   = ");
+      Put_Hex (Arch.SBI.Sepc);
+      Board.UART.Put_Line ("");
+
+      Board.UART.Put ("  stval  = ");
+      Put_Hex (Arch.SBI.Stval);
+      Board.UART.Put_Line ("");
+      Halt;
+   end Riscv_Trap_Handler;
+
+   procedure Initialize is
+   begin
+      Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+      Arch.SBI.Enable_Timer_Interrupts;
+      Arch.SBI.Enable_External_Interrupts;
+   end Initialize;
+end Arch.Traps;
