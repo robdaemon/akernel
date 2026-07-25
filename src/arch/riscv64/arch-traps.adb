@@ -120,6 +120,21 @@ package body Arch.Traps is
       return Value mod Arch.MMU.Page_Size = 0;
    end Is_Page_Aligned;
 
+   procedure Decode_Handle
+     (Value : U64;
+      Cap   : out Kernel.Capabilities.Handle;
+      Valid : out Boolean)
+   is
+   begin
+      if Value > U64 (Kernel.Capabilities.Handle'Last) then
+         Cap := Kernel.Capabilities.Invalid_Handle;
+         Valid := False;
+      else
+         Cap := Kernel.Capabilities.Handle (Value);
+         Valid := True;
+      end if;
+   end Decode_Handle;
+
    procedure Save_Current_Context (Frame : System.Address) is
       Current : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
@@ -173,10 +188,11 @@ package body Arch.Traps is
       use type Kernel.Capabilities.Object_Kind;
       use type Kernel.Capabilities.Status;
 
-      Address_Space_Cap : constant Kernel.Capabilities.Handle :=
-        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      Cap_Handle        : constant Kernel.Capabilities.Handle :=
-        Kernel.Capabilities.Handle (Trap_Frame_Get_A1 (Frame));
+      Address_Space_Cap : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Cap_Handle        : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handles_Valid     : Boolean;
       VA                : constant U64 := Trap_Frame_Get_A2 (Frame);
       Offset            : constant U64 := Trap_Frame_Get_A3 (Frame);
       Length            : constant U64 := Trap_Frame_Get_A4 (Frame);
@@ -189,6 +205,19 @@ package body Arch.Traps is
       Map_Result : Arch.MMU.Status;
       Page_Count : U64;
    begin
+      Decode_Handle
+        (Trap_Frame_Get_A0 (Frame), Address_Space_Cap, Handles_Valid);
+      if not Handles_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Decode_Handle (Trap_Frame_Get_A1 (Frame), Cap_Handle, Handles_Valid);
+      if not Handles_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
       if Current = null
         or else not Kernel.Tasks.Has_Address_Space_Map_Authority
           (Current.all, Address_Space_Cap)
@@ -253,9 +282,10 @@ package body Arch.Traps is
       use type Kernel.Capabilities.Status;
       use type Kernel.Interrupts.Status;
 
-      Cap_Handle : constant Kernel.Capabilities.Handle :=
-        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      Current    : constant Kernel.Tasks.Thread_Access :=
+      Cap_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info         : Kernel.Capabilities.Cap_Entry;
@@ -263,7 +293,8 @@ package body Arch.Traps is
       IRQ_Result       : Kernel.Interrupts.Status;
       Scheduler_Result : Kernel.Scheduler.Status;
    begin
-      if Current = null then
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
          Trap_Frame_Set_A0 (Frame, 1);
          return;
       end if;
@@ -311,8 +342,9 @@ package body Arch.Traps is
       use type Kernel.Capabilities.Status;
       use type Kernel.Interrupts.Status;
 
-      Cap_Handle      : constant Kernel.Capabilities.Handle :=
-        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      Cap_Handle      : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid    : Boolean;
       Current         : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Cap_Result      : Kernel.Capabilities.Status;
@@ -321,7 +353,8 @@ package body Arch.Traps is
       IRQ_Result      : Kernel.Interrupts.Status;
       Complete_Source : U64;
    begin
-      if Current = null then
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
          Trap_Frame_Set_A0 (Frame, 1);
          return;
       end if;
@@ -432,12 +465,19 @@ package body Arch.Traps is
    end Handle_Boot_Read_Byte;
 
    procedure Handle_Reap_Process (Frame : System.Address) is
-      Process_Cap : constant Kernel.Capabilities.Handle :=
-        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
-      Current     : constant Kernel.Tasks.Thread_Access :=
+      Process_Cap  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Current      : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Result      : Kernel.Processes.Status;
    begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Process_Cap, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
       Kernel.Processes.Reap_Process
         (Parent      => Current,
          Process_Cap => Process_Cap,

@@ -15,6 +15,7 @@ Done recently:
 - Public `Close_Process_Cap` removed so callers cannot close thread-affine caps without cleanup owner context.
 - Fixed cap handle 255 is reserved as process self `Address_Space_Object` cap.
 - `map_mmio` takes explicit address-space cap in `a0`, MMIO cap in `a1`, VA/offset/length/flags in `a2..a5`; old implicit address-space authority ABI removed.
+- Trap syscall handlers validate user cap-handle integers before converting to `Kernel.Capabilities.Handle`; out-of-range handles now fail cleanly.
 - Init and spawned user threads have per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread stack top before returning to user.
 - Spawn/reap cleanup frees spawned thread kernel stack frames.
 - `Arch.Context` owns RISC-V trap-frame layout and saved `sepc`; `Kernel.Tasks` stores opaque `Arch.Context.Thread_Context` and calls arch context save/restore APIs.
@@ -28,10 +29,11 @@ Continue with:
 2. Add object refcounts if new shared kernel objects need ownership semantics beyond cleanup hooks.
 3. Add stronger PMM/page-table stress tests once test harness exists.
 4. Improve VM isolation beyond explicit address-space caps: proper kernel virtual map instead of broad identity.
+5. Add fuzz-like syscall argument tests once userspace test harness exists.
 
 Start by reading:
 - `docs/STATE.md`
+- `src/arch/riscv64/arch-traps.adb`
 - `src/kernel/kernel-objects.ads/.adb`
 - `src/kernel/kernel-tasks.ads/.adb`
 - `src/kernel/kernel-processes.ads/.adb`
-- `src/kernel/kernel-capabilities.ads/.adb`

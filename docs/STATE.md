@@ -183,6 +183,8 @@ Return convention for resource/lifecycle syscalls:
 2 = would block/no pending IRQ (older/nonblocking paths only)
 ```
 
+Trap syscall handlers validate user-supplied capability handle integers before converting to `Kernel.Capabilities.Handle`; out-of-range handles return invalid/denied instead of raising kernel constraint errors.
+
 Spawn status for syscall 8:
 
 ```text
