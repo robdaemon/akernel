@@ -24,6 +24,9 @@ package Kernel.Tasks is
    type Thread_Control_Block is private;
    type Thread_Access is access all Thread_Control_Block;
 
+   Address_Space_Cap_Handle : constant Kernel.Capabilities.Handle :=
+     Kernel.Capabilities.Handle'Last;
+
    procedure Initialize_Process
      (PCB : out Process_Control_Block;
       Id  : Process_Id);
@@ -61,6 +64,13 @@ package Kernel.Tasks is
    procedure Set_Process_Address_Space_Root
      (PCB  : in out Process_Control_Block;
       Root : Kernel.Capabilities.U64);
+
+   procedure Install_Address_Space_Cap
+     (PCB    : in out Process_Control_Block;
+      Result : out Kernel.Capabilities.Status);
+
+   function Has_Address_Space_Map_Authority
+     (TCB : Thread_Control_Block) return Boolean;
 
    function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address;

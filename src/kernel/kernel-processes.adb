@@ -255,6 +255,14 @@ package body Kernel.Processes is
       New_Thread_Id := Kernel.Tasks.Thread_Id (Natural (Slot) + 4);
       Kernel.Tasks.Initialize_Process (Processes (Slot), New_Process_Id);
       Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), Root);
+      Kernel.Tasks.Install_Address_Space_Cap (Processes (Slot), Cap_Result);
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Result := Cap_Failed;
+         Discard_Slot (Slot);
+         Destroy_Address_Space (Root);
+         return;
+      end if;
+
       Kernel.Tasks.Initialize_Thread
         (TCB     => Threads (Slot),
          Id      => New_Thread_Id,

@@ -368,6 +368,9 @@ begin
    Kernel.Tasks.Set_Process_Address_Space_Root
      (PCB  => Init_Process,
       Root => User_Root_Table);
+   Kernel.Tasks.Install_Address_Space_Cap
+     (PCB    => Init_Process,
+      Result => Result);
    Kernel.Tasks.Set_Process_State
      (PCB       => Init_Process,
       New_State => Kernel.Tasks.Process_Alive);

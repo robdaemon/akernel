@@ -185,8 +185,9 @@ Return convention for resource/lifecycle syscalls:
 ```
 
 `map_mmio` checks:
-- current task exists
-- cap valid
+- current thread exists
+- current process owns fixed self address-space cap handle 255 (`Address_Space_Object`) with `Map`, object root matching current process root
+- MMIO cap valid
 - cap kind `MMIO_Object`
 - cap has `Map`
 - requested R/W flags don't exceed cap rights
@@ -194,7 +195,7 @@ Return convention for resource/lifecycle syscalls:
 - page alignment
 - VA in user range `0x40000000..0x80000000`
 
-Then maps pages into current task address-space root as `User_RW`.
+Then maps pages into current process address-space root as `User_RW`.
 
 ## Memory / MMU
 
@@ -392,6 +393,7 @@ src/kernel/kernel-tasks.ads/.adb
 
 Process/thread split started in `Kernel.Tasks`:
 - `Process_Control_Block` owns process id, address-space root, cap table, lifecycle state
+- fixed cap handle 255 is reserved as process self `Address_Space_Object` cap; VM syscalls require it for address-space authority
 - `Thread_Control_Block` owns thread id, scheduling state, saved user context snapshot, ready-queue membership, owning process pointer
 - scheduler/IPC/IRQ/trap/process APIs use explicit `Thread_Access`/`Thread_Control_Block` names
 - compatibility `Task_*` aliases/helper removed
@@ -584,7 +586,8 @@ QEMU virt RAM base:     0x80000000
    - keep initrd as one program-loader backend; later add VFS/package backend
    - process/thread split started; explicit thread names now used outside `Kernel.Tasks`
    - compatibility `Task_*` aliases/helper removed; bootstrap code uses explicit process creation
-   - add address-space objects and main thread caps where needed
+   - address-space self cap exists and `map_mmio` requires it
+   - add main thread caps only if needed
    - add user-visible error/status convention for failed spawn
 
 2. Harden scheduler/context switching:

@@ -181,7 +181,10 @@ package body Arch.Traps is
       Map_Result : Arch.MMU.Status;
       Page_Count : U64;
    begin
-      if Current = null then
+      if Current = null
+        or else not Kernel.Tasks.Has_Address_Space_Map_Authority
+          (Current.all)
+      then
          Trap_Frame_Set_A0 (Frame, 1);
          return;
       end if;

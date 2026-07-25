@@ -1,4 +1,36 @@
+with System.Storage_Elements;
+
 package body Kernel.Tasks is
+   use type Kernel.Capabilities.Status;
+   use type Kernel.Capabilities.Object_Kind;
+   use type Kernel.Capabilities.U64;
+
+   Address_Space_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => True,
+      Write    => False,
+      Execute  => False,
+      Map      => True,
+      Send     => False,
+      Receive  => False,
+      Wait     => False,
+      Ack      => False,
+      Transfer => False,
+      Manage   => True);
+
+   function To_Address
+     (Value : Kernel.Capabilities.U64) return System.Address
+   is
+   begin
+      return System'To_Address
+        (System.Storage_Elements.Integer_Address (Value));
+   end To_Address;
+
+   function To_U64 (Address : System.Address) return Kernel.Capabilities.U64 is
+   begin
+      return Kernel.Capabilities.U64
+        (System.Storage_Elements.To_Integer (Address));
+   end To_U64;
+
    procedure Initialize_Process
      (PCB : out Process_Control_Block;
       Id  : Process_Id)
@@ -97,6 +129,49 @@ package body Kernel.Tasks is
    begin
       PCB.Root := Root;
    end Set_Process_Address_Space_Root;
+
+   procedure Install_Address_Space_Cap
+     (PCB    : in out Process_Control_Block;
+      Result : out Kernel.Capabilities.Status)
+   is
+   begin
+      if PCB.Root = 0 then
+         Result := Kernel.Capabilities.Invalid_Object;
+         return;
+      end if;
+
+      Kernel.Capabilities.Insert_At
+        (Table  => PCB.Caps,
+         Cap    => Address_Space_Cap_Handle,
+         Kind   => Kernel.Capabilities.Address_Space_Object,
+         Object => To_Address (PCB.Root),
+         Rights => Address_Space_Rights,
+         Badge  => Kernel.Capabilities.U64 (PCB.Identifier),
+         Result => Result);
+   end Install_Address_Space_Cap;
+
+   function Has_Address_Space_Map_Authority
+     (TCB : Thread_Control_Block) return Boolean
+   is
+      Result         : Kernel.Capabilities.Status;
+      Cap_Entry_Info : Kernel.Capabilities.Cap_Entry;
+   begin
+      if TCB.Process = null then
+         return False;
+      end if;
+
+      Kernel.Capabilities.Lookup
+        (Table     => TCB.Process.Caps,
+         Cap       => Address_Space_Cap_Handle,
+         Result    => Result,
+         Out_Entry => Cap_Entry_Info);
+
+      return Result = Kernel.Capabilities.Ok
+        and then Cap_Entry_Info.Kind =
+          Kernel.Capabilities.Address_Space_Object
+        and then Cap_Entry_Info.Rights.Map
+        and then To_U64 (Cap_Entry_Info.Object) = TCB.Process.Root;
+   end Has_Address_Space_Map_Authority;
 
    function Context_Address (TCB : in out Thread_Control_Block)
       return System.Address
