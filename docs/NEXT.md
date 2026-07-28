@@ -44,8 +44,7 @@ Decisions made:
 - No object refcounts yet: shared resource objects (`MMIO_Region`, `IRQ_Line`, endpoints) are kernel-owned statics that are never freed, so cleanup hooks suffice. Add refcounts only when dynamically-owned shared objects appear.
 
 Continue with:
-1. VM isolation endgame: high-half kernel VAs (relocate kernel link + physmap conversions) to shed identity dependence.
-2. Add fuzz-like syscall argument tests once userspace test harness exists.
+1. Add fuzz-like syscall argument tests once userspace test harness exists.
 
 Start by reading:
 - `docs/STATE.md`

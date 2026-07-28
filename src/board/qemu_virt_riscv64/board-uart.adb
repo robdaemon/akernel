@@ -1,3 +1,4 @@
+with Arch;
 with Interfaces;
 
 package body Board.UART is
@@ -7,7 +8,7 @@ package body Board.UART is
    subtype U8 is Interfaces.Unsigned_8;
    subtype U64 is Interfaces.Unsigned_64;
 
-   Base : constant U64 := 16#1000_0000#;
+   Base : constant U64 := Arch.Phys_To_Virt (16#1000_0000#);
 
    RBR : constant U64 := Base + 0; -- receive buffer, read
    THR : constant U64 := Base + 0; -- transmit holding, write
@@ -48,6 +49,22 @@ package body Board.UART is
          Character'Pos
            (Character'Val (Character'Pos ('0') + Value mod 10)));
    end Put_Decimal;
+
+   procedure Put_Hex (Value : U64) is
+      Hex : constant String := "0123456789abcdef";
+      Shift : Natural := 60;
+   begin
+      Put ("0x");
+      loop
+         Mmio_Write8
+           (THR,
+            Character'Pos
+              (Hex (Natural (Interfaces.Shift_Right (Value, Shift)
+                 and 16#f#) + 1)));
+         exit when Shift = 0;
+         Shift := Shift - 4;
+      end loop;
+   end Put_Hex;
 
    procedure Initialize_Interrupts is
    begin

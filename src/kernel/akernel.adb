@@ -51,10 +51,8 @@ procedure Akernel is
    MMU_Result       : Arch.MMU.Status := Arch.MMU.Allocation_Failed;
    Memory_Base      : Interfaces.Unsigned_64 := 0;
    Memory_Size      : Interfaces.Unsigned_64 := 0;
-   First_Frame             : Interfaces.Unsigned_64 := 0;
    User_Stack_Frame        : Interfaces.Unsigned_64 := 0;
    Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
-   Root_Table              : Interfaces.Unsigned_64 := 0;
    User_Root_Table  : Interfaces.Unsigned_64 := 0;
    User_Stack_Top   : constant Interfaces.Unsigned_64 := 16#7000_0000#;
    Init_Image_Base  : Interfaces.Unsigned_64 := 0;
@@ -63,6 +61,9 @@ procedure Akernel is
 
    Kernel_End       : Interfaces.Unsigned_8
      with Import, Convention => C, External_Name => "_end";
+   First_Free       : constant Interfaces.Unsigned_64 :=
+     Arch.Kernel_Virt_To_Phys (Interfaces.Unsigned_64
+       (System.Storage_Elements.To_Integer (Kernel_End'Address)));
    Console_Cap      : Kernel.Capabilities.Handle;
    Sender_Cap       : Kernel.Capabilities.Handle;
    Receiver_Cap     : Kernel.Capabilities.Handle;
@@ -272,8 +273,7 @@ begin
 
    if DTB_Result = Kernel.Device_Tree.Ok then
       Kernel.Physical_Memory.Initialize
-        (First_Free => Interfaces.Unsigned_64
-           (System.Storage_Elements.To_Integer (Kernel_End'Address)),
+        (First_Free => First_Free,
          Last_Byte  => Memory_Base + Memory_Size,
          Result     => PMM_Result);
    end if;
@@ -288,20 +288,6 @@ begin
      and then MMU_Result = Arch.MMU.Ok
    then
       Board.UART.Put_Line ("kernel address space online");
-      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, First_Frame);
-   end if;
-
-   if PMM_Result = Kernel.Physical_Memory.Ok then
-      Arch.MMU.New_Address_Space (MMU_Result, Root_Table);
-   end if;
-
-   if MMU_Result = Arch.MMU.Ok then
-      Arch.MMU.Map_Page
-        (Root     => Root_Table,
-         Virtual  => First_Frame,
-         Physical => First_Frame,
-         Flags    => Arch.MMU.Kernel_RW,
-         Result   => MMU_Result);
    end if;
 
    if PMM_Result = Kernel.Physical_Memory.Ok
@@ -452,13 +438,14 @@ begin
 
    --  Init kernel trap stack must be visible in its own user address
    --  space: the trap trampoline builds frames on it before switching
-   --  satp to the kernel root.
+   --  satp to the kernel root.  Mapped at its physmap VA, matching
+   --  the sscratch invariant (physmap VA of the kernel stack top).
    if Initrd_Result = Kernel.Initrd.Ok
      and then MMU_Result = Arch.MMU.Ok
    then
       Arch.MMU.Map_Page
         (Root     => User_Root_Table,
-         Virtual  => Init_Kernel_Stack_Frame,
+         Virtual  => Arch.Phys_To_Virt (Init_Kernel_Stack_Frame),
          Physical => Init_Kernel_Stack_Frame,
          Flags    => Arch.MMU.Kernel_RW,
          Result   => MMU_Result);
@@ -533,7 +520,7 @@ begin
       Board.UART.Put_Line ("entering initrd init");
       if Kernel.Tasks.Kernel_Stack_Top (Init_Task) /= 0 then
          Arch.Traps.Set_Kernel_Trap_Stack
-           (Kernel.Tasks.Kernel_Stack_Top (Init_Task));
+           (Arch.Phys_To_Virt (Kernel.Tasks.Kernel_Stack_Top (Init_Task)));
       end if;
       Arch.User_Mode.Enter_User_Mode
         (Entry_Point => Init_Entry,

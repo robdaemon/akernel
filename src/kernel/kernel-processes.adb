@@ -258,10 +258,12 @@ package body Kernel.Processes is
 
       --  The trap trampoline builds its frame on this stack before
       --  switching satp, so the kernel stack must be visible in the
-      --  owning user address space (supervisor, global).
+      --  owning user address space (supervisor, global).  It is
+      --  mapped at its physmap VA, matching the sscratch invariant
+      --  (physmap VA of the kernel stack top).
       Arch.MMU.Map_Page
         (Root     => Root,
-         Virtual  => Kernel_Stack_Frame,
+         Virtual  => Arch.Phys_To_Virt (Kernel_Stack_Frame),
          Physical => Kernel_Stack_Frame,
          Flags    => Arch.MMU.Kernel_RW,
          Result   => MMU_Result);

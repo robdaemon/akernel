@@ -1,4 +1,29 @@
-# Debug state: high-half kernel VA bring-up (uncommitted WIP)
+# Debug state: high-half kernel VA bring-up — RESOLVED
+
+Final state: full boot with UART IRQ echo passes; committed. Root
+causes found (in order):
+
+1. Post-satp `la` (PC-relative) resolved to PA while executing at PA,
+   so the high-half jump never happened. Fixed by `lla` + explicit
+   `KERNEL_DELTA` add.
+2. Hand-computed `KERNEL_DELTA` was wrong twice; correct value is
+   `0xFFFFFFFF00000000` (see 3).
+3. THE key bug: kernel VMA gigapage maps VA base -> PA base 1:1, but
+   kernel loads at PA 0x80200000 (not 1 GiB aligned). Gigapages cannot
+   express the +2 MiB offset, so VMA fetch translated to PA
+   0x8000xxxx (OpenSBI region) -> PMP access fault (scause=1) at first
+   high-half fetch. Fixed by moving `Kernel_Virt_Base` to
+   `0xFFFFFFFF80200000` (VA - PA = `0xFFFFFFFF00000000`, a whole
+   gigapage).
+4. Trampoline frame design reworked: `sscratch` now always holds the
+   physmap VA of the current kernel stack top (user roots map their
+   kstack at its physmap VA; kernel VMA only for the boot trap stack),
+   so frames are valid in both roots and no pointer conversion is
+   needed. Callers passing PA stack tops were converted
+   (`akernel.adb`, `arch-traps.adb`, kstack mappings in
+   `akernel.adb`/`kernel-processes.adb`).
+
+## Historical debug notes (kept for tooling reference)
 
 Goal: high-half kernel VAs (KERNEL_VIRT_BASE = 0xFFFFFFFF80000000,
 KERNEL_DELTA = VIRT - 0x80200000, physmap at 0xFFFFFFC000000000 + PA).

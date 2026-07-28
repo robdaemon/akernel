@@ -4,7 +4,6 @@ with System.Storage_Elements;
 with Kernel.Physical_Memory;
 
 package body Arch.MMU is
-   use type Interfaces.Unsigned_64;
    use type Kernel.Physical_Memory.Status;
 
    PTE_V : constant U64 := 16#001#;
@@ -31,6 +30,9 @@ package body Arch.MMU is
    Kernel_Satp_Slot : aliased U64
      with Import, Convention => C, External_Name => "kernel_satp_slot";
 
+   Kernel_End_Sym : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "_end";
+
    Trampoline_Start : Interfaces.Unsigned_8
      with Import, Convention => C, External_Name => "trampoline_start";
    Trampoline_End : Interfaces.Unsigned_8
@@ -47,8 +49,10 @@ package body Arch.MMU is
 
    function To_Address (Value : U64) return System.Address is
    begin
+      --  Page tables are physical frames; reach them through the
+      --  physmap.
       return System'To_Address
-        (System.Storage_Elements.Integer_Address (Value));
+        (System.Storage_Elements.Integer_Address (Arch.Phys_To_Virt (Value)));
    end To_Address;
 
    function Index_For
@@ -136,11 +140,11 @@ package body Arch.MMU is
       Root   : out U64)
    is
       --  Map only the trap trampoline page(s) into user address
-      --  spaces, at their identity (physical) address, supervisor RX,
-      --  global.  The trampoline switches satp to the kernel (early)
-      --  root on trap entry and back on return, so no other kernel or
-      --  device mapping is needed here.  Per-thread kernel stacks are
-      --  mapped separately by the spawn/boot code.
+      --  spaces, at the trampoline's kernel VMA (supervisor RX,
+      --  global).  The trampoline switches satp to the kernel root on
+      --  trap entry and back on return, so no other kernel or device
+      --  mapping is needed here.  Per-thread kernel stacks are mapped
+      --  separately by the spawn/boot code.
       Trampoline_First : constant U64 :=
         U64 (System.Storage_Elements.To_Integer (Trampoline_Start'Address));
       Trampoline_Last : constant U64 :=
@@ -159,7 +163,7 @@ package body Arch.MMU is
          Map_Page
            (Root     => Root,
             Virtual  => Page,
-            Physical => Page,
+            Physical => Arch.Kernel_Virt_To_Phys (Page),
             Flags    => Kernel_RX,
             Result   => Map_Result);
 
@@ -281,25 +285,27 @@ package body Arch.MMU is
      (Ram_Last : U64;
       Result   : out Status)
    is
-      --  QEMU virt device windows the kernel needs after leaving the
-      --  early root: UART console and PLIC priority/enable/context
-      --  banks (context pages 0..3, harts 0..1).
-      UART_Page          : constant U64 := 16#1000_0000#;
-      PLIC_Bank_Base     : constant U64 := 16#0c00_0000#;
-      PLIC_Bank_Pages    : constant U64 := 3;
-      PLIC_Context_Base  : constant U64 := 16#0c20_0000#;
-      PLIC_Context_Pages : constant U64 := 4;
-
+      --  Dedicated high-half kernel address space:
+      --  - kernel image at kernel VAs: text/rodata RX, data/bss RW
+      --  - physmap gigapage leaves for all of PA space up to RAM end,
+      --    RW: page tables, PMM frames, initrd, DTB, MMIO devices
+      --  No identity mappings; the early boot root is abandoned.
       Rx_Start : constant U64 :=
         U64 (System.Storage_Elements.To_Integer (Rx_Start_Sym'Address));
       Rx_End   : constant U64 :=
         U64 (System.Storage_Elements.To_Integer (Rx_End_Sym'Address));
+      Kernel_End : constant U64 :=
+        U64 (System.Storage_Elements.To_Integer (Kernel_End_Sym'Address));
+      Rw_End   : constant U64 :=
+        Kernel_End + (Page_Size - Kernel_End mod Page_Size);
+      Physmap_Last : constant U64 :=
+        Arch.Physmap_Base + Ram_Last
+        + (Gigapage_Size - Ram_Last mod Gigapage_Size);
 
       Root         : U64;
       Map_Result   : Status;
       Destroy_Result : Status;
       Page         : U64;
-      Ram_Rest_End : U64;
       Failed       : Boolean := False;
    begin
       Allocate_Table (Result, Root);
@@ -308,65 +314,33 @@ package body Arch.MMU is
          return;
       end if;
 
-      --  Kernel image text/rodata: read-execute only.
+      --  Kernel image text/rodata at kernel VAs: read-execute only.
       Page := Rx_Start;
       while Page < Rx_End and then not Failed loop
-         Map_Page (Root, Page, Page, Kernel_RX, Map_Result);
+         Map_Page
+           (Root, Page, Arch.Kernel_Virt_To_Phys (Page), Kernel_RX,
+            Map_Result);
          Failed := Map_Result /= Ok;
          Page := Page + Page_Size;
       end loop;
 
-      --  Rest of the kernel gigapage: data/bss/stacks plus all RAM
-      --  frames (page tables, PMM free-list links, initrd, ELF
-      --  staging), read-write, not executable.
-      if Ram_Last < Rx_End + Gigapage_Size then
-         Ram_Rest_End := Ram_Last;
-      else
-         Ram_Rest_End := Rx_Start - Rx_Start mod Gigapage_Size
-           + Gigapage_Size;
-      end if;
-
+      --  Kernel data/bss/stacks: read-write, not executable.
       Page := Rx_End;
-      while Page < Ram_Rest_End and then not Failed loop
-         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
+      while Page < Rw_End and then not Failed loop
+         Map_Page
+           (Root, Page, Arch.Kernel_Virt_To_Phys (Page), Kernel_RW,
+            Map_Result);
          Failed := Map_Result /= Ok;
          Page := Page + Page_Size;
       end loop;
 
-      --  Whole-gigapage RAM above the kernel gigapage: RW leaves.
-      while Page + Gigapage_Size <= Ram_Last and then not Failed loop
-         Map_Gigapage (Root, Page, Page, Kernel_RW, Map_Result);
+      --  Physmap: whole PA space up to RAM end as RW gigapage leaves.
+      Page := Arch.Physmap_Base;
+      while Page < Physmap_Last and then not Failed loop
+         Map_Gigapage
+           (Root, Page, Page - Arch.Physmap_Base, Kernel_RW, Map_Result);
          Failed := Map_Result /= Ok;
          Page := Page + Gigapage_Size;
-      end loop;
-
-      --  Sub-gigapage remainder, if any.
-      while Page < Ram_Last and then not Failed loop
-         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
-         Failed := Map_Result /= Ok;
-         Page := Page + Page_Size;
-      end loop;
-
-      --  Narrow supervisor device windows.
-      if not Failed then
-         Map_Page (Root, UART_Page, UART_Page, Kernel_RW, Map_Result);
-         Failed := Map_Result /= Ok;
-      end if;
-
-      Page := PLIC_Bank_Base;
-      for Count in U64 range 1 .. PLIC_Bank_Pages loop
-         exit when Failed;
-         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
-         Failed := Map_Result /= Ok;
-         Page := Page + Page_Size;
-      end loop;
-
-      Page := PLIC_Context_Base;
-      for Count in U64 range 1 .. PLIC_Context_Pages loop
-         exit when Failed;
-         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
-         Failed := Map_Result /= Ok;
-         Page := Page + Page_Size;
       end loop;
 
       if Failed then
@@ -377,7 +351,8 @@ package body Arch.MMU is
 
       --  Publish for the trap trampoline, then switch.  The slot sits
       --  in the RX trampoline page, so it must be written before the
-      --  new root is active.
+      --  new root is active (the early root maps the kernel gigapage
+      --  RWX).
       Kernel_Satp_Slot := Satp_Value (Root);
       Current_Kernel_Root := Root;
       Raw_Activate (Root);

@@ -15,7 +15,6 @@ with Kernel.Tasks;
 
 package body Arch.Traps is
    use type Arch.MMU.Status;
-   use type Interfaces.Unsigned_64;
    use type Kernel.Processes.Status;
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
@@ -161,13 +160,14 @@ package body Arch.Traps is
             Top : constant U64 := Kernel.Tasks.Kernel_Stack_Top (Current.all);
          begin
             if Top /= 0 then
-               Set_Kernel_Trap_Stack (Top);
+               Set_Kernel_Trap_Stack (Arch.Phys_To_Virt (Top));
                --  Restore context into the newly current thread's own
-               --  kernel stack frame; the exit trampoline finds it via
-               --  sscratch and installs the frame's satp slot.
+               --  kernel stack frame (reached through the physmap);
+               --  the exit trampoline finds it via sscratch and
+               --  installs the frame's satp slot.
                Kernel.Tasks.Restore_Trap_Context
                  (TCB   => Current.all,
-                  Frame => Trap_Frame_For_Stack (Top));
+                  Frame => Trap_Frame_For_Stack (Arch.Phys_To_Virt (Top)));
             end if;
          end;
       elsif Result /= Kernel.Scheduler.Ok then

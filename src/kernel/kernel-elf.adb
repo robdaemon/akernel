@@ -283,7 +283,7 @@ package body Kernel.ELF is
                   return;
                end if;
 
-               Zero_Bytes (Frame, Arch.MMU.Page_Size);
+               Zero_Bytes (Arch.Phys_To_Virt (Frame), Arch.MMU.Page_Size);
                Copy_Start := Max (Page_VA, P_VAddr);
                Copy_End :=
                  Min (Page_VA + Arch.MMU.Page_Size, P_VAddr + P_Filesz);
@@ -291,7 +291,8 @@ package body Kernel.ELF is
                if Copy_End > Copy_Start then
                   Copy_Count := Copy_End - Copy_Start;
                   Copy_Bytes
-                    (Destination => Frame + (Copy_Start - Page_VA),
+                    (Destination =>
+                       Arch.Phys_To_Virt (Frame) + (Copy_Start - Page_VA),
                      Source      =>
                        Image_Base + P_Offset + (Copy_Start - P_VAddr),
                      Count       => Copy_Count);

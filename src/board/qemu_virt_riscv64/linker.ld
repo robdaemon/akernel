@@ -1,55 +1,48 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
-MEMORY
-{
-  RAM (rwx) : ORIGIN = 0x80200000, LENGTH = 126M
-}
-
-PHDRS
-{
-  text PT_LOAD FLAGS(5); /* R + X */
-  data PT_LOAD FLAGS(6); /* R + W */
-}
+KERNEL_VIRT_BASE = 0xFFFFFFFF80200000;
+KERNEL_PHYS_BASE = 0x80200000;
+KERNEL_DELTA     = KERNEL_VIRT_BASE - KERNEL_PHYS_BASE;
 
 SECTIONS
 {
-  . = ORIGIN(RAM);
+  . = KERNEL_VIRT_BASE;
   __rx_start = .;
 
-  .text : ALIGN(4)
+  .text : AT(KERNEL_PHYS_BASE)
   {
     KEEP(*(.text.boot))
     *(.text .text.*)
-  } > RAM :text
+  }
 
   . = ALIGN(4096);
   trampoline_start = .;
-  .trampoline : ALIGN(4096)
+  .trampoline : AT(ADDR(.trampoline) - KERNEL_DELTA)
   {
     *(.trampoline .trampoline.*)
-  } > RAM :text
+  }
   trampoline_end = .;
 
-  .rodata : ALIGN(8)
+  .rodata : AT(ADDR(.rodata) - KERNEL_DELTA)
   {
     *(.rodata .rodata.*)
     *(.srodata .srodata.*)
-  } > RAM :text
+  }
 
   . = ALIGN(4096);
   __rx_end = .;
 
-  .data : ALIGN(4096)
+  .data : AT(ADDR(.data) - KERNEL_DELTA)
   {
     __DATA_BEGIN__ = .;
     *(.sdata .sdata.*)
     *(.data .data.*)
     . = ALIGN(8);
     __global_pointer$ = . + 0x800;
-  } > RAM :data
+  }
 
-  .bss (NOLOAD) : ALIGN(8)
+  .bss (NOLOAD) : AT(ADDR(.bss) - KERNEL_DELTA)
   {
     __bss_start = .;
     *(.sbss .sbss.*)
@@ -57,7 +50,7 @@ SECTIONS
     *(COMMON)
     . = ALIGN(8);
     __BSS_END__ = .;
-  } > RAM :data
+  }
 
   . = ALIGN(16);
   . += 64K;

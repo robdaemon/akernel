@@ -130,23 +130,26 @@ Startup sets:
 Early Sv39 root currently maps (boot transition only, abandoned after `Arch.MMU.Enter_Kernel_Address_Space`):
 
 ```text
-root[0] low MMIO 0x00000000..0x3fffffff, supervisor RWX
-root[2..5] RAM 0x80000000..0x17fffffff, supervisor RWX, up to 4GiB RAM
+root[2..5]    RAM 0x80000000..0x17fffffff identity, supervisor RWX (satp-switch instructions)
+root[0x100]   physmap PA 0x00000000.. (MMIO) at PHYSMAP_BASE, supervisor RW
+root[0x102..5] physmap RAM 0x80000000.. at PHYSMAP_BASE + PA, supervisor RW
+root[0x1FE]   kernel VMA gigapage -> PA 0x80000000, supervisor RWX (temp)
 ```
 
 ## Kernel address space
 
-Shortly after PMM init the kernel builds a dedicated address space (`Arch.MMU.Enter_Kernel_Address_Space`) and switches satp to it, publishing its satp value to `kernel_satp_slot` before activation. VAs stay physical-identity but permissions are least-privilege (W^X):
+The kernel is linked at `Kernel_Virt_Base = 0xFFFFFFFF80200000` (VMA = PA + `0xFFFFFFFF00000000`; the offset is a whole gigapage so the kernel VMA gigapage maps the image 1:1, and the base stays inside the medlow top-2GiB window so the precompiled light runtime still links). All physical memory — PMM free-list links, page tables, MMIO, initrd, DTB, ELF staging — is accessed through the physmap at `Physmap_Base = 0xFFFFFFC000000000` + PA (`Arch.Phys_To_Virt`).
 
-- kernel image `.text`+`.trampoline`+`.rodata` (`__rx_start`..`__rx_end` from linker script): RX 4 KiB pages
-- `.data`/`.bss`/stacks plus all remaining RAM in the kernel gigapage: RW 4 KiB pages (PMM frames, page tables, initrd, ELF staging all live here)
-- whole-gigapage RAM above `0xC0000000` up to DTB RAM end: RW gigapage leaves
-- MMIO narrowed to UART page + PLIC bank pages (3) + PLIC context pages (4), RW
+Shortly after PMM init the kernel builds a dedicated address space (`Arch.MMU.Enter_Kernel_Address_Space`) and switches satp to it, publishing its satp value to `kernel_satp_slot` before activation. It contains no identity mappings; permissions are least-privilege (W^X):
+
+- kernel image `.text`+`.trampoline`+`.rodata` at kernel VAs (`__rx_start`..`__rx_end` from linker script): RX 4 KiB pages
+- `.data`/`.bss`/stacks at kernel VAs: RW 4 KiB pages
+- physmap gigapages (MMIO PA 0 + all RAM) at `Physmap_Base`: RW gigapage leaves
 - no user alias gigapage; the old `user_init` fallback path is removed (initrd init is mandatory)
 
-Kernel root frames are PMM-owned and never freed. `Arch.MMU.Kernel_Root` reports the dedicated root after the switch, the early root before it. High-half kernel VAs remain future work.
+Kernel root frames are PMM-owned and never freed. `Arch.MMU.Kernel_Root` reports the dedicated root after the switch, the early root before it.
 
-User address spaces map only the trap trampoline page (identity address, supervisor RX, global), their own user pages, and their threads' kernel trap stacks (identity address, supervisor RW, global). They no longer copy any early-root gigapages.
+User address spaces map only the trap trampoline page (at its kernel VMA, supervisor RX, global), their own user pages, and their threads' kernel trap stacks (at their physmap VAs, supervisor RW, global). They no longer copy any early-root gigapages.
 
 ## Trap/syscall path
 
@@ -156,10 +159,10 @@ Trap vector:
 src/arch/riscv64/startup.s:trap_vector
 ```
 
-Trap vector lives in the page-aligned `.trampoline` linker section (single page, exports `trampoline_start`/`trampoline_end`). The page is mapped at its identity (physical) address in every user address space so satp switching works, xv6-style. The kernel always runs on the early root, which acts as the kernel address space; its satp value is published in `kernel_satp_slot` inside the trampoline page.
+Trap vector lives in the page-aligned `.trampoline` linker section (single page, exports `trampoline_start`/`trampoline_end`). The page is mapped at its kernel VMA in every user address space so satp switching works, xv6-style. The kernel satp value is published in `kernel_satp_slot` inside the trampoline page.
 
-Trampoline entry (`sscratch` always holds the current thread kernel stack top, in both S-mode and U-mode):
-- switches `sp` to the current thread kernel stack (mapped identity, supervisor RW, global, in the owning user root)
+Trampoline entry (`sscratch` always holds the current thread kernel stack top as a physmap VA — or a kernel VMA for the boot trap stack — in both S-mode and U-mode; every frame address is therefore valid in both the owning user root and the kernel address space, so no pointer conversion is needed around satp switches):
+- switches `sp` to the current thread kernel stack (mapped at its physmap VA, supervisor RW, global, in the owning user root)
 - builds a 272-byte trap frame: x1..x31, `sepc` (offset 248, frame-authoritative), `satp` (offset 256)
 - loads `kernel_satp_slot`, switches satp to the kernel root, calls the Ada handler
 
@@ -598,7 +601,7 @@ QEMU virt RAM base:     0x80000000
 ## Temporary limitations / hacks
 
 - PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
-- Kernel runs on a dedicated least-privilege identity address space (W^X split, narrow MMIO); early broad RWX root abandoned after boot. No high-half kernel VAs yet.
+- Kernel runs at high-half VAs (`0xFFFFFFFF80200000+`) on a dedicated least-privilege address space (W^X split, physmap, no identity mappings); early broad RWX root abandoned after boot.
 - Context switch works only as rough cooperative saved per-thread trap-frame switching.
 - Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
 - Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
@@ -659,7 +662,7 @@ QEMU virt RAM base:     0x80000000
 
 5. Improve VM isolation further:
    - trap trampoline + satp switch done; user roots carry no kernel/device mappings beyond trampoline page and own kernel stacks
-   - dedicated kernel address space done (W^X identity map, narrow MMIO, early root abandoned); high-half kernel VAs remain
+   - high-half kernel VAs done: kernel linked at `0xFFFFFFFF80200000`, physmap at `0xFFFFFFC000000000`, dedicated root carries no identity mappings
    - per-thread kernel stacks/opaque arch context exist
    - per-thread kernel stacks/opaque arch context exist
    - scheduler context switch switches `satp`

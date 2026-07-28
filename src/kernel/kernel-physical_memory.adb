@@ -1,3 +1,4 @@
+with Arch;
 with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
@@ -25,8 +26,10 @@ package body Kernel.Physical_Memory is
 
    function To_Address (Value : U64) return System.Address is
    begin
+      --  Free-list links live in physical frames; reach them through
+      --  the physmap.
       return System'To_Address
-        (System.Storage_Elements.Integer_Address (Value));
+        (System.Storage_Elements.Integer_Address (Arch.Phys_To_Virt (Value)));
    end To_Address;
 
    function Link_At (Frame : U64) return Frame_Link is

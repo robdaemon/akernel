@@ -1,3 +1,22 @@
+/* High-half boot.  The kernel image is linked at KERNEL_VIRT_BASE
+   (0xFFFFFFFF80200000; VA - PA = 0xFFFFFFFF00000000, a whole gigapage,
+   so the kernel VMA gigapage maps the image 1:1) and loaded by QEMU
+   at 0x80200000.  _start runs
+   with the MMU off at physical addresses, so every symbol access
+   before the satp switch must be PC-relative (lla).  After the satp
+   switch the CPU still executes the identity-mapped instructions, so
+   PC-relative addressing still yields PAs; high VAs are formed by
+   adding KERNEL_DELTA to lla results before jumping to main.  The
+   early root is transitional only:
+     root[2..5]    identity RAM gigapages (satp-switch instructions)
+     root[0x100]   physmap gigapage for PA 0x00000000.. (MMIO)
+     root[0x102..5] physmap gigapages for RAM PA 0x80000000..
+     root[0x1FE]   kernel VMA gigapage -> PA 0x80000000 (temp RWX)
+   Ada main runs at high VAs and soon replaces this with the dedicated
+   W^X kernel address space. */
+
+.equ KERNEL_DELTA, 0xFFFFFFFF00000000  /* KERNEL_VIRT_BASE - 0x80200000 */
+
 .section .text.boot, "ax"
 .global _start
 .type _start, @function
@@ -5,16 +24,10 @@ _start:
     /* OpenSBI enters here in S-mode with:
        a0 = hart id, a1 = DTB physical address.
        Run only first hart that reaches kernel. Park all others. */
-    la t0, hart_lottery
+    lla t0, hart_lottery
     li t1, 1
     amoswap.d.aq t2, t1, (t0)
     bnez t2, .Lpark_hart
-
-.option push
-.option norelax
-    la gp, __global_pointer$
-.option pop
-    la sp, __stack_top
 
     /* Keep boot args in callee-saved temporaries while .bss is cleared. */
     mv s0, a0
@@ -23,15 +36,15 @@ _start:
     /* No interrupts until Ada has real handlers. */
     csrw sie, zero
 
-    /* Install S-mode trap vector. Direct mode. */
-    la t0, trap_vector
+    /* Install S-mode trap vector, physical address for now. */
+    lla t0, trap_vector
     csrw stvec, t0
-    la t0, __trap_stack_top
+    lla t0, __trap_stack_top
     csrw sscratch, t0
 
-    /* Clear .bss. */
-    la t0, __bss_start
-    la t1, __BSS_END__
+    /* Clear .bss via physical addresses. */
+    lla t0, __bss_start
+    lla t1, __BSS_END__
 .Lclear_bss:
     bgeu t0, t1, .Lbss_done
     sd zero, 0(t0)
@@ -40,19 +53,15 @@ _start:
 .Lbss_done:
 
     /* Keep boot args for later FDT/SBI work. */
-    la t0, boot_hart_id
+    lla t0, boot_hart_id
     sd s0, 0(t0)
-    la t0, boot_dtb_pa
+    lla t0, boot_dtb_pa
     sd s1, 0(t0)
 
-    /* Build early Sv39 identity map, used only until the dedicated
-       kernel address space replaces it shortly after PMM init.
-       root[0] maps 0x0000_0000..0x3fff_ffff: MMIO, including UART0.
-       root[2..5] maps 0x8000_0000..0x17fff_ffff: up to 4 GiB RAM.
-       1 GiB leaves, flags V/R/W/X/G/A/D. */
-    la t0, early_l2_page_table
-    li t1, 0x000000ef
-    sd t1, 0(t0)
+    /* Build early transitional Sv39 map (see header comment).
+       1 GiB leaves, flags V/R/W/X/G/A/D = 0xef, V/R/W/G/A/D = 0xe7. */
+    lla t0, early_l2_page_table
+    /* identity RAM 0x80000000..0x17fffffff (transition only) */
     li t1, 0x200000ef
     sd t1, 16(t0)
     li t1, 0x300000ef
@@ -61,18 +70,56 @@ _start:
     sd t1, 32(t0)
     li t1, 0x500000ef
     sd t1, 40(t0)
+    /* physmap: PA 0 (MMIO) at PHYSMAP_BASE */
+    li t2, 0x800
+    add t2, t2, t0
+    li t1, 0x000000e7
+    sd t1, 0(t2)
+    /* physmap: RAM 0x80000000.. at PHYSMAP_BASE + PA */
+    li t1, 0x200000e7
+    sd t1, 16(t2)
+    li t1, 0x300000e7
+    sd t1, 24(t2)
+    li t1, 0x400000e7
+    sd t1, 32(t2)
+    li t1, 0x500000e7
+    sd t1, 40(t2)
+    /* kernel VMA gigapage -> PA 0x80000000 */
+    li t2, 0xff0
+    add t2, t2, t0
+    li t1, 0x200000ef
+    sd t1, 0(t2)
 
     /* Enable Sv39. satp = MODE(Sv39=8) | PPN(root). */
     srli t0, t0, 12
     li t1, 0x8000000000000000
     or t0, t0, t1
     /* Publish kernel satp for the trap trampoline. */
-    la t1, kernel_satp_slot
+    lla t1, kernel_satp_slot
     sd t0, 0(t1)
     csrw satp, t0
     sfence.vma zero, zero
 
-    call main
+    /* Identity-mapped from here until the jump below.  PC-relative
+       addressing still yields physical addresses, so form kernel VAs
+       by adding KERNEL_DELTA, then jump to high-half main. */
+    li t2, KERNEL_DELTA
+    lla sp, __stack_top
+    add sp, sp, t2
+.option push
+.option norelax
+    lla gp, __global_pointer$
+    add gp, gp, t2
+.option pop
+    lla t0, trap_vector
+    add t0, t0, t2
+    csrw stvec, t0
+    lla t0, __trap_stack_top
+    add t0, t0, t2
+    csrw sscratch, t0
+    lla t0, main
+    add t0, t0, t2
+    jalr ra, 0(t0)
 
 .Lhalt:
     wfi
@@ -83,16 +130,20 @@ _start:
     j .Lpark_hart
 .size _start, . - _start
 
-/* Trap trampoline.  This page is mapped into every user address space
-   at its identity (physical) address so that satp switching works.
-   Frame layout (272 bytes), built on the per-thread kernel stack which
-   is also mapped into the owning user address space:
+/* Trap trampoline.  This page is mapped at its kernel VMA in every
+   user address space (supervisor RX, global), so satp switching keeps
+   execution valid.  Frame layout (272 bytes), built on the per-thread
+   kernel stack:
      word 0..30  x1..x31 at (reg - 1) * 8   (word 1 = interrupted sp)
      word 31     sepc (offset 248), frame-authoritative
      word 32     satp (offset 256), root to return to
      word 33     pad (offset 264)
    sscratch invariant: always holds the current thread kernel stack
-   top, in both S-mode and U-mode. */
+   top as a physmap VA (PHYSMAP_BASE + PA; user roots map their own
+   kernel stack at that VA) or a kernel VMA for the boot trap stack.
+   Every frame address is therefore valid in both the owning user root
+   and the kernel address space, so no pointer conversion is needed
+   around satp switches. */
 .section .trampoline, "ax"
 .align 3
 .global kernel_satp_slot
@@ -145,7 +196,8 @@ trap_vector:
     csrr  t1, satp
     sd    t1, 256(t0)
 
-    /* Switch to kernel (early root) address space. */
+    /* Switch to kernel address space.  Frame and slot both live at
+       kernel VAs reachable from the current root. */
 .Lkernel_satp_hi:
     auipc t1, %pcrel_hi(kernel_satp_slot)
     ld    t1, %pcrel_lo(.Lkernel_satp_hi)(t1)
@@ -157,14 +209,13 @@ trap_vector:
     call  riscv_trap_handler
 
     /* Exit: use sscratch so a scheduled-away trap returns through the
-       newly current thread kernel stack frame. */
+       newly current thread kernel stack frame.  The frame is valid in
+       the current space and in the space named by its satp slot. */
     csrr  t0, sscratch
     addi  t0, t0, -272
-
     ld    t1, 256(t0)
-    csrw  satp, t1           /* switch to return address space */
+    csrw  satp, t1
     sfence.vma zero, zero
-
     ld    t1, 248(t0)
     csrw  sepc, t1
 
@@ -203,7 +254,8 @@ trap_vector:
 .size trap_vector, . - trap_vector
 
 /* a0 = user entry, a1 = user stack, a2 = user address space satp value.
-   Must run from the trampoline page: it switches satp before sret. */
+   Runs from the trampoline page, which user roots map at this kernel
+   VMA, so execution stays valid across the satp switch. */
 .global riscv_enter_user_mode
 .type riscv_enter_user_mode, @function
 riscv_enter_user_mode:

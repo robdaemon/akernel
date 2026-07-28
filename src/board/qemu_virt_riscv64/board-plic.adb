@@ -1,3 +1,4 @@
+with Arch;
 with Interfaces;
 
 package body Board.PLIC is
@@ -7,7 +8,7 @@ package body Board.PLIC is
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;
 
-   Base               : constant U64 := 16#0c00_0000#;
+   Base               : constant U64 := Arch.Phys_To_Virt (16#0c00_0000#);
    Priority_Base      : constant U64 := Base;
    Enable_Base        : constant U64 := Base + 16#2000#;
    Context_Base       : constant U64 := Base + 16#20_0000#;

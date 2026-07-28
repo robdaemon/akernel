@@ -3,7 +3,7 @@
 .global putchar
 .type putchar, @function
 putchar:
-    li t0, 0x10000000
+    li t0, 0xFFFFFFC010000000  /* UART0 through the physmap */
     sb a0, 0(t0)
     ret
 .size putchar, . - putchar
