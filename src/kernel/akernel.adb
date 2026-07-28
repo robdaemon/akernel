@@ -60,12 +60,9 @@ procedure Akernel is
    Init_Image_Base  : Interfaces.Unsigned_64 := 0;
    Init_Image_Size  : Interfaces.Unsigned_64 := 0;
    Init_Entry       : Interfaces.Unsigned_64 := 0;
-   User_Alias_Delta : constant Interfaces.Unsigned_64 :=
-     Kernel.ELF.User_Alias_Delta;
+
    Kernel_End       : Interfaces.Unsigned_8
      with Import, Convention => C, External_Name => "_end";
-   User_Init        : Interfaces.Unsigned_8
-     with Import, Convention => C, External_Name => "user_init";
    Console_Cap      : Kernel.Capabilities.Handle;
    Sender_Cap       : Kernel.Capabilities.Handle;
    Receiver_Cap     : Kernel.Capabilities.Handle;
@@ -282,6 +279,15 @@ begin
    end if;
 
    if PMM_Result = Kernel.Physical_Memory.Ok then
+      Arch.MMU.Enter_Kernel_Address_Space
+        (Ram_Last => Memory_Base + Memory_Size,
+         Result   => MMU_Result);
+   end if;
+
+   if PMM_Result = Kernel.Physical_Memory.Ok
+     and then MMU_Result = Arch.MMU.Ok
+   then
+      Board.UART.Put_Line ("kernel address space online");
       Kernel.Physical_Memory.Allocate_Frame (PMM_Result, First_Frame);
    end if;
 
@@ -543,15 +549,9 @@ begin
       elsif ELF_Result /= Kernel.ELF.Ok then
          Board.UART.Put_Line ("elf load failed");
       end if;
-      Board.UART.Put_Line ("entering fallback user mode");
-      --  Fallback runs on the kernel (early) root, which keeps the
-      --  temporary broad root[1] user alias for user_init.
-      Arch.User_Mode.Enter_User_Mode
-        (Entry_Point => Interfaces.Unsigned_64
-           (System.Storage_Elements.To_Integer (User_Init'Address))
-           - User_Alias_Delta,
-         Stack       => User_Stack_Frame + Kernel.Physical_Memory.Page_Size
-           - User_Alias_Delta,
-         User_Satp   => Arch.MMU.Satp_Value (Arch.MMU.Kernel_Root));
+      Board.UART.Put_Line ("fatal: no initrd init; halting");
+      loop
+         null;
+      end loop;
    end if;
 end Akernel;

@@ -15,6 +15,7 @@ PHDRS
 SECTIONS
 {
   . = ORIGIN(RAM);
+  __rx_start = .;
 
   .text : ALIGN(4)
   {
@@ -36,7 +37,10 @@ SECTIONS
     *(.srodata .srodata.*)
   } > RAM :text
 
-  .data : ALIGN(8)
+  . = ALIGN(4096);
+  __rx_end = .;
+
+  .data : ALIGN(4096)
   {
     __DATA_BEGIN__ = .;
     *(.sdata .sdata.*)

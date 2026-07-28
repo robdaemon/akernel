@@ -23,10 +23,20 @@ package body Arch.MMU is
    Early_Root : Page_Table
      with Import, Convention => C, External_Name => "early_l2_page_table";
 
+   Rx_Start_Sym : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "__rx_start";
+   Rx_End_Sym : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "__rx_end";
+
+   Kernel_Satp_Slot : aliased U64
+     with Import, Convention => C, External_Name => "kernel_satp_slot";
+
    Trampoline_Start : Interfaces.Unsigned_8
      with Import, Convention => C, External_Name => "trampoline_start";
    Trampoline_End : Interfaces.Unsigned_8
      with Import, Convention => C, External_Name => "trampoline_end";
+
+   Current_Kernel_Root : U64 := 0;
 
    procedure Raw_Activate (Root : U64)
      with Import, Convention => C, External_Name => "riscv_activate_satp";
@@ -174,6 +184,10 @@ package body Arch.MMU is
 
    function Kernel_Root return U64 is
    begin
+      if Current_Kernel_Root /= 0 then
+         return Current_Kernel_Root;
+      end if;
+
       return U64
         (System.Storage_Elements.To_Integer (Early_Root'Address));
    end Kernel_Root;
@@ -235,6 +249,140 @@ package body Arch.MMU is
       Table (Index) := Physical_To_PTE (Physical) or Leaf_Flags (Flags);
       Result := Ok;
    end Map_Page;
+
+   procedure Map_Gigapage
+     (Root     : U64;
+      Virtual  : U64;
+      Physical : U64;
+      Flags    : Page_Flags;
+      Result   : out Status)
+   is
+      Table : constant Page_Table_Access := To_Table (To_Address (Root));
+      Index : constant Page_Table_Index := Index_For (Virtual, 2);
+   begin
+      if Root mod Page_Size /= 0
+        or else Virtual mod Gigapage_Size /= 0
+        or else Physical mod Gigapage_Size /= 0
+      then
+         Result := Invalid_Address;
+         return;
+      end if;
+
+      if (Table (Index) and PTE_V) /= 0 then
+         Result := Already_Mapped;
+         return;
+      end if;
+
+      Table (Index) := Physical_To_PTE (Physical) or Leaf_Flags (Flags);
+      Result := Ok;
+   end Map_Gigapage;
+
+   procedure Enter_Kernel_Address_Space
+     (Ram_Last : U64;
+      Result   : out Status)
+   is
+      --  QEMU virt device windows the kernel needs after leaving the
+      --  early root: UART console and PLIC priority/enable/context
+      --  banks (context pages 0..3, harts 0..1).
+      UART_Page          : constant U64 := 16#1000_0000#;
+      PLIC_Bank_Base     : constant U64 := 16#0c00_0000#;
+      PLIC_Bank_Pages    : constant U64 := 3;
+      PLIC_Context_Base  : constant U64 := 16#0c20_0000#;
+      PLIC_Context_Pages : constant U64 := 4;
+
+      Rx_Start : constant U64 :=
+        U64 (System.Storage_Elements.To_Integer (Rx_Start_Sym'Address));
+      Rx_End   : constant U64 :=
+        U64 (System.Storage_Elements.To_Integer (Rx_End_Sym'Address));
+
+      Root         : U64;
+      Map_Result   : Status;
+      Destroy_Result : Status;
+      Page         : U64;
+      Ram_Rest_End : U64;
+      Failed       : Boolean := False;
+   begin
+      Allocate_Table (Result, Root);
+      if Result /= Ok then
+         Root := 0;
+         return;
+      end if;
+
+      --  Kernel image text/rodata: read-execute only.
+      Page := Rx_Start;
+      while Page < Rx_End and then not Failed loop
+         Map_Page (Root, Page, Page, Kernel_RX, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Page_Size;
+      end loop;
+
+      --  Rest of the kernel gigapage: data/bss/stacks plus all RAM
+      --  frames (page tables, PMM free-list links, initrd, ELF
+      --  staging), read-write, not executable.
+      if Ram_Last < Rx_End + Gigapage_Size then
+         Ram_Rest_End := Ram_Last;
+      else
+         Ram_Rest_End := Rx_Start - Rx_Start mod Gigapage_Size
+           + Gigapage_Size;
+      end if;
+
+      Page := Rx_End;
+      while Page < Ram_Rest_End and then not Failed loop
+         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Page_Size;
+      end loop;
+
+      --  Whole-gigapage RAM above the kernel gigapage: RW leaves.
+      while Page + Gigapage_Size <= Ram_Last and then not Failed loop
+         Map_Gigapage (Root, Page, Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Gigapage_Size;
+      end loop;
+
+      --  Sub-gigapage remainder, if any.
+      while Page < Ram_Last and then not Failed loop
+         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Page_Size;
+      end loop;
+
+      --  Narrow supervisor device windows.
+      if not Failed then
+         Map_Page (Root, UART_Page, UART_Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+      end if;
+
+      Page := PLIC_Bank_Base;
+      for Count in U64 range 1 .. PLIC_Bank_Pages loop
+         exit when Failed;
+         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Page_Size;
+      end loop;
+
+      Page := PLIC_Context_Base;
+      for Count in U64 range 1 .. PLIC_Context_Pages loop
+         exit when Failed;
+         Map_Page (Root, Page, Page, Kernel_RW, Map_Result);
+         Failed := Map_Result /= Ok;
+         Page := Page + Page_Size;
+      end loop;
+
+      if Failed then
+         Destroy_User_Address_Space (Root, Destroy_Result);
+         Result := Allocation_Failed;
+         return;
+      end if;
+
+      --  Publish for the trap trampoline, then switch.  The slot sits
+      --  in the RX trampoline page, so it must be written before the
+      --  new root is active.
+      Kernel_Satp_Slot := Satp_Value (Root);
+      Current_Kernel_Root := Root;
+      Raw_Activate (Root);
+      Result := Ok;
+   end Enter_Kernel_Address_Space;
 
    procedure Destroy_Table
      (Table_Physical : U64;

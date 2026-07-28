@@ -42,6 +42,7 @@ Important lines:
 
 ```text
 Hello world!
+kernel address space online
 memory manager online
 ram MiB: 4096
 pmm selftest online
@@ -126,13 +127,24 @@ Startup sets:
 - enables MMU
 - calls Ada binder `main`
 
-Early Sv39 root currently maps:
+Early Sv39 root currently maps (boot transition only, abandoned after `Arch.MMU.Enter_Kernel_Address_Space`):
 
 ```text
 root[0] low MMIO 0x00000000..0x3fffffff, supervisor RWX
-root[1] temporary broad user alias 0x40000000..0x7fffffff -> PA 0x80000000..0xbfffffff, U/R/W/X
 root[2..5] RAM 0x80000000..0x17fffffff, supervisor RWX, up to 4GiB RAM
 ```
+
+## Kernel address space
+
+Shortly after PMM init the kernel builds a dedicated address space (`Arch.MMU.Enter_Kernel_Address_Space`) and switches satp to it, publishing its satp value to `kernel_satp_slot` before activation. VAs stay physical-identity but permissions are least-privilege (W^X):
+
+- kernel image `.text`+`.trampoline`+`.rodata` (`__rx_start`..`__rx_end` from linker script): RX 4 KiB pages
+- `.data`/`.bss`/stacks plus all remaining RAM in the kernel gigapage: RW 4 KiB pages (PMM frames, page tables, initrd, ELF staging all live here)
+- whole-gigapage RAM above `0xC0000000` up to DTB RAM end: RW gigapage leaves
+- MMIO narrowed to UART page + PLIC bank pages (3) + PLIC context pages (4), RW
+- no user alias gigapage; the old `user_init` fallback path is removed (initrd init is mandatory)
+
+Kernel root frames are PMM-owned and never freed. `Arch.MMU.Kernel_Root` reports the dedicated root after the switch, the early root before it. High-half kernel VAs remain future work.
 
 User address spaces map only the trap trampoline page (identity address, supervisor RX, global), their own user pages, and their threads' kernel trap stacks (identity address, supervisor RW, global). They no longer copy any early-root gigapages.
 
@@ -586,7 +598,7 @@ QEMU virt RAM base:     0x80000000
 ## Temporary limitations / hacks
 
 - PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
-- Kernel (early) root keeps broad identity gigapages and doubles as the kernel address space; user roots are now minimal (trampoline + own pages). No high-half kernel yet.
+- Kernel runs on a dedicated least-privilege identity address space (W^X split, narrow MMIO); early broad RWX root abandoned after boot. No high-half kernel VAs yet.
 - Context switch works only as rough cooperative saved per-thread trap-frame switching.
 - Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
 - Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
@@ -647,7 +659,7 @@ QEMU virt RAM base:     0x80000000
 
 5. Improve VM isolation further:
    - trap trampoline + satp switch done; user roots carry no kernel/device mappings beyond trampoline page and own kernel stacks
-   - kernel still runs on broad identity early root; proper dedicated/high-half kernel map remains
+   - dedicated kernel address space done (W^X identity map, narrow MMIO, early root abandoned); high-half kernel VAs remain
    - per-thread kernel stacks/opaque arch context exist
    - per-thread kernel stacks/opaque arch context exist
    - scheduler context switch switches `satp`

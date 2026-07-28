@@ -4,6 +4,7 @@ package Arch.MMU is
    subtype U64 is Interfaces.Unsigned_64;
 
    Page_Size : constant U64 := 4096;
+   Gigapage_Size : constant U64 := 16#4000_0000#;
 
    type Status is
      (Ok,
@@ -46,9 +47,10 @@ package Arch.MMU is
    --  satp CSR value (Sv39 mode + PPN) for a root page table.
    function Satp_Value (Root : U64) return U64;
 
-   --  Kernel (early) root page table physical address.  The kernel
-   --  always runs on this root; user roots map only the trampoline
-   --  page and their own pages.
+   --  Kernel root page table physical address: the dedicated kernel
+   --  root after Enter_Kernel_Address_Space, the early boot root
+   --  before it.  The kernel always runs on this root; user roots map
+   --  only the trampoline page and their own pages.
    function Kernel_Root return U64;
 
    procedure Activate (Root : U64);
@@ -58,6 +60,24 @@ package Arch.MMU is
       Virtual  : U64;
       Physical : U64;
       Flags    : Page_Flags;
+      Result   : out Status);
+
+   --  Maps a 1 GiB leaf at level 2 of the given root.
+   procedure Map_Gigapage
+     (Root     : U64;
+      Virtual  : U64;
+      Physical : U64;
+      Flags    : Page_Flags;
+      Result   : out Status);
+
+   --  Builds the dedicated kernel address space (identity VAs, W^X:
+   --  kernel image RX, all other managed RAM RW, narrow UART/PLIC
+   --  device pages), publishes its satp value for the trap
+   --  trampoline, and activates it, abandoning the early boot root.
+   --  Ram_Last is the first byte past RAM.  On failure the kernel
+   --  keeps running on the early root.
+   procedure Enter_Kernel_Address_Space
+     (Ram_Last : U64;
       Result   : out Status);
 
    procedure Destroy_User_Address_Space

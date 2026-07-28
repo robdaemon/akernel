@@ -45,15 +45,14 @@ _start:
     la t0, boot_dtb_pa
     sd s1, 0(t0)
 
-    /* Build early Sv39 identity map.
+    /* Build early Sv39 identity map, used only until the dedicated
+       kernel address space replaces it shortly after PMM init.
        root[0] maps 0x0000_0000..0x3fff_ffff: MMIO, including UART0.
        root[2..5] maps 0x8000_0000..0x17fff_ffff: up to 4 GiB RAM.
        1 GiB leaves, flags V/R/W/X/G/A/D. */
     la t0, early_l2_page_table
     li t1, 0x000000ef
     sd t1, 0(t0)
-    li t1, 0x200000df
-    sd t1, 8(t0)
     li t1, 0x200000ef
     sd t1, 16(t0)
     li t1, 0x300000ef

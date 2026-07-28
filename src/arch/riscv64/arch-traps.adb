@@ -153,7 +153,6 @@ package body Arch.Traps is
      (Frame  : System.Address;
       Result : Kernel.Scheduler.Status)
    is
-      pragma Unreferenced (Frame);
       Current : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
    begin
