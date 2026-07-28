@@ -134,7 +134,7 @@ root[1] temporary broad user alias 0x40000000..0x7fffffff -> PA 0x80000000..0xbf
 root[2..5] RAM 0x80000000..0x17fffffff, supervisor RWX, up to 4GiB RAM
 ```
 
-User address spaces do **not** copy root[1]. They copy supervisor mappings only.
+User address spaces do **not** copy root[1]. They copy supervisor RAM identity mappings (root[2..5]) plus narrow supervisor device windows (UART page, PLIC priority/enable pages, PLIC context pages 0..3) instead of the broad root[0] low-MMIO gigapage. Device windows are needed because the trap path runs on the user `satp` (no trampoline/satp switch yet); long-term fix is a proper kernel virtual map with satp switch on trap entry.
 
 ## Trap/syscall path
 
@@ -575,8 +575,8 @@ QEMU virt RAM base:     0x80000000
 ## Temporary limitations / hacks
 
 - PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
-- Kernel supervisor mappings are broad identity mappings copied into user roots.
-- No high-half kernel yet.
+- Kernel supervisor RAM mappings are broad identity mappings copied into user roots; low-MMIO access in user roots is narrowed to UART/PLIC device pages.
+- No high-half kernel yet; trap path still runs on the user `satp`, so kernel text/data/stacks and the device windows must stay mapped in every user root.
 - Context switch works only as rough cooperative saved per-thread trap-frame switching.
 - Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
 - Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
@@ -636,6 +636,6 @@ QEMU virt RAM base:     0x80000000
    - pass bootinfo/resource caps to init
 
 5. Improve VM isolation:
-   - proper kernel virtual map instead of broad identity
+   - low-MMIO gigapage in user roots replaced with narrow UART/PLIC supervisor windows; broad RAM identity map remains until kernel virtual map/trampoline exists
    - per-thread kernel stacks/opaque arch context exist
    - scheduler context switch switches `satp`

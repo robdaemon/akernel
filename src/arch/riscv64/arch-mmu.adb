@@ -121,6 +121,20 @@ package body Arch.MMU is
       Root   : out U64)
    is
       Root_Table : Page_Table_Access;
+
+      --  Narrow supervisor device windows the kernel trap path needs
+      --  while running on a user address space (QEMU virt layout).
+      --  These replace the old broad 1 GiB low-MMIO gigapage copy.
+      --  PLIC context pages cover contexts 0..3 (harts 0..1).
+      UART_Page          : constant U64 := 16#1000_0000#;
+      PLIC_Bank_Base     : constant U64 := 16#0c00_0000#;
+      PLIC_Bank_Pages    : constant U64 := 2;
+      PLIC_Context_Base  : constant U64 := 16#0c20_0000#;
+      PLIC_Context_Pages : constant U64 := 4;
+
+      Map_Result : Status;
+      Destroy_Result : Status;
+      Failed     : Boolean := False;
    begin
       Allocate_Table (Result, Root);
       if Result /= Ok then
@@ -129,13 +143,52 @@ package body Arch.MMU is
 
       Root_Table := To_Table (To_Address (Root));
 
-      --  Keep supervisor mappings shared in every user address space.
-      --  Do not copy early root[1], temporary broad U-mode alias.
-      Root_Table (0) := Early_Root (0); -- low MMIO
+      --  Keep supervisor RAM identity mappings shared in every user
+      --  address space.  Do not copy early root[1], the temporary broad
+      --  U-mode alias, or early root[0], the broad low-MMIO gigapage;
+      --  device access is narrowed to the windows mapped below.
       Root_Table (2) := Early_Root (2); -- RAM 0x8000_0000..0xbfff_ffff
       Root_Table (3) := Early_Root (3);
       Root_Table (4) := Early_Root (4);
       Root_Table (5) := Early_Root (5);
+
+      Map_Page
+        (Root     => Root,
+         Virtual  => UART_Page,
+         Physical => UART_Page,
+         Flags    => Kernel_RW,
+         Result   => Map_Result);
+      Failed := Map_Result /= Ok;
+
+      for Page in U64 range 0 .. PLIC_Bank_Pages - 1 loop
+         exit when Failed;
+         Map_Page
+           (Root     => Root,
+            Virtual  => PLIC_Bank_Base + Page * Page_Size,
+            Physical => PLIC_Bank_Base + Page * Page_Size,
+            Flags    => Kernel_RW,
+            Result   => Map_Result);
+         Failed := Map_Result /= Ok;
+      end loop;
+
+      for Page in U64 range 0 .. PLIC_Context_Pages - 1 loop
+         exit when Failed;
+         Map_Page
+           (Root     => Root,
+            Virtual  => PLIC_Context_Base + Page * Page_Size,
+            Physical => PLIC_Context_Base + Page * Page_Size,
+            Flags    => Kernel_RW,
+            Result   => Map_Result);
+         Failed := Map_Result /= Ok;
+      end loop;
+
+      if Failed then
+         --  Global device leaves are skipped by destroy; intermediate
+         --  page tables and the root are reclaimed.
+         Destroy_User_Address_Space (Root, Destroy_Result);
+         Root := 0;
+         Result := Allocation_Failed;
+      end if;
    end New_User_Address_Space;
 
    procedure Activate (Root : U64) is
