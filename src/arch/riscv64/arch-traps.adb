@@ -303,6 +303,7 @@ package body Arch.Traps is
       Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
       if not Handle_Valid or else Current = null then
          Trap_Frame_Set_A0 (Frame, 1);
+         Advance_SEPC (Frame);
          return;
       end if;
 
@@ -317,12 +318,14 @@ package body Arch.Traps is
         or else not Cap_Info.Rights.Wait
       then
          Trap_Frame_Set_A0 (Frame, 1);
+         Advance_SEPC (Frame);
          return;
       end if;
 
       Line := To_IRQ_Line (Cap_Info.Object);
       if Line = null then
          Trap_Frame_Set_A0 (Frame, 1);
+         Advance_SEPC (Frame);
          return;
       end if;
 
