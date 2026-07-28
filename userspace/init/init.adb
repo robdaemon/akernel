@@ -184,6 +184,8 @@ procedure Init is
          Spawned_Count := Spawned_Count + 1;
          if Program_Id = 1 then
             Akernel_User.Syscalls.Debug_Put_Line ("serial spawned");
+         elsif Program_Id = 2 then
+            Akernel_User.Syscalls.Debug_Put_Line ("fuzz spawned");
          else
             Akernel_User.Syscalls.Debug_Put_Line ("program spawned");
          end if;
