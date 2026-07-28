@@ -42,9 +42,14 @@ Done recently:
 Decisions made:
 - No main thread cap returned from spawn for now: no syscall targets a specific thread (`exit` acts on current thread, `reap_process` uses process cap). Add thread caps only when a thread-targeting syscall appears.
 - No object refcounts yet: shared resource objects (`MMIO_Region`, `IRQ_Line`, endpoints) are kernel-owned statics that are never freed, so cleanup hooks suffice. Add refcounts only when dynamically-owned shared objects appear.
+- Boot-manifest/initrd file access stays as init's bootstrap discovery mechanism; general user path resolution through manifest offsets is transitional until a VFS lands. Users will spawn via shells in the future, so spawn authority is a general user capability, not init-privileged.
+
+Done recently (cont.):
+- Syscall fuzzer `userspace/fuzz` runs as manifest program `Tests/Fuzz` (no grants): directed edge-case probes + 4096 deterministic pseudo-random syscalls via generic ecall stub. Found and fixed: `Handle_IRQ_Wait` error paths skipped `Advance_SEPC` (dispatcher returns right after it), livelocking the caller in an ecall retry loop. Current: 14/14 directed PASS, 0 random-phase failures, kernel alive afterwards, fuzzer exit leaves system running.
 
 Continue with:
-1. Add fuzz-like syscall argument tests once userspace test harness exists.
+1. Extend fuzzer coverage: multi-process fuzz (fuzzer spawns a child that also fuzzes, then reap), valid-handle wrong-rights cases, and IPC/endpoint fuzzing once those syscalls exist in userspace ABI.
+2. VFS path for spawn (replaces boot-manifest path slices for non-init callers).
 
 Start by reading:
 - `docs/STATE.md`

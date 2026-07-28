@@ -68,6 +68,7 @@ src/board/qemu_virt_riscv64/    QEMU virt board/platform code
 userspace/rts/akernel/          current user-mode Ada syscall/RTS scaffold
 userspace/init/                 standalone user init Alire project
 userspace/serial/               standalone user serial driver Alire project
+userspace/fuzz/                 standalone syscall fuzzer Alire project
 initrd/                         generated initrd root/output
 tools/mkinitrd.py               wraps cpio in AKRD header
 Makefile                        top-level build/run
@@ -185,6 +186,12 @@ a7 = syscall number
 a0..a4 = args
 a0 = return/status
 ```
+
+Dispatcher invariant: handlers that `Handle_Syscall` returns from immediately
+(currently `irq_wait`, `exit`) must `Advance_SEPC` themselves on every
+non-scheduling exit path; all other handlers fall through to the dispatcher's
+single advance.  Violating this re-executes the `ecall` forever (found by the
+syscall fuzzer, `irq_wait` invalid-cap case).
 
 Current syscalls:
 
@@ -365,6 +372,10 @@ userspace/init/init.adb
 userspace/serial/alire.toml
 userspace/serial/serial.gpr
 userspace/serial/serial.adb
+userspace/fuzz/alire.toml
+userspace/fuzz/fuzz.gpr
+userspace/fuzz/fuzz.adb
+userspace/fuzz/fuzz-riscv64.s
 ```
 
 Build to:
@@ -372,6 +383,7 @@ Build to:
 ```text
 bin/userspace/init.elf
 bin/userspace/serial.elf
+bin/userspace/fuzz.elf
 ```
 
 Userspace RTS/syscall scaffold:
