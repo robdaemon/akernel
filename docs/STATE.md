@@ -462,7 +462,7 @@ Process/thread split decision:
 - kernel-visible threads are scheduled by kernel, with optional user-level fibers later
 - process owns address space, cap table, resource/lifecycle state
 - thread owns opaque arch context, scheduler state, and per-thread kernel stack top
-- spawn creates process plus main kernel thread, returning process cap (main thread cap can be added later)
+- spawn creates process plus main kernel thread, returning process cap (main thread cap deliberately not returned: no syscall targets a specific thread yet; `exit` acts on current thread, `reap_process` uses process cap; add thread caps only when a thread-targeting syscall appears)
 - kernel-visible threads chosen because blocking IPC/IRQ waits should block one thread, not whole address space/runtime
 - user-level threading can still be M:N/fibers later above kernel threads
 
@@ -599,7 +599,7 @@ QEMU virt RAM base:     0x80000000
    - process/thread split started; explicit thread names now used outside `Kernel.Tasks`
    - compatibility `Task_*` aliases/helper removed; bootstrap code uses explicit process creation
    - address-space self cap exists and `map_mmio` takes it explicitly
-   - add main thread caps only if needed
+   - decision: no main thread cap returned for now (no thread-targeting syscall exists; add when one appears)
    - user-visible spawn status exists for syscall 8
 
 2. Harden scheduler/context switching:
@@ -615,7 +615,7 @@ QEMU virt RAM base:     0x80000000
    - PMM boot selftest checks reuse/free-count/double-free rejection
    - endpoint/IRQ cap cleanup hooks run through generic object cleanup dispatcher on exit/reap and thread cap close
    - public process-only cap close removed to avoid bypassing thread-affine cleanup
-   - add richer object cleanup/refcounts as object model grows
+   - no object refcounts yet by decision: shared resource objects (`MMIO_Region`, `IRQ_Line`, endpoints) are kernel-owned statics that are never freed, so cleanup hooks on cap close/exit/reap suffice; add refcounts only when dynamically-owned shared objects appear
    - continue hardening process/thread lifecycle after successful spawn/exit
    - per-thread kernel stacks and opaque arch context exist for init/spawned user threads
    - raw trap-frame layout is hidden in `Arch.Context`

@@ -24,12 +24,14 @@ Done recently:
 - `spawn_boot_path` returns explicit status in `a0` and process cap in `a1`; userspace wrapper stores cap through out parameter.
 - `make all` and timeout boot run pass with expected boot output.
 
+Decisions made:
+- No main thread cap returned from spawn for now: no syscall targets a specific thread (`exit` acts on current thread, `reap_process` uses process cap). Add thread caps only when a thread-targeting syscall appears.
+- No object refcounts yet: shared resource objects (`MMIO_Region`, `IRQ_Line`, endpoints) are kernel-owned statics that are never freed, so cleanup hooks suffice. Add refcounts only when dynamically-owned shared objects appear.
+
 Continue with:
-1. Decide return caps: process cap now returned; add main thread cap only if needed.
-2. Add object refcounts if new shared kernel objects need ownership semantics beyond cleanup hooks.
-3. Add stronger PMM/page-table stress tests once test harness exists.
-4. Improve VM isolation beyond explicit address-space caps: proper kernel virtual map instead of broad identity.
-5. Add fuzz-like syscall argument tests once userspace test harness exists.
+1. Add stronger PMM/page-table stress: extend boot PMM selftest (harness exists) with interleaved alloc/free patterns.
+2. Improve VM isolation beyond explicit address-space caps: narrow broad identity supervisor mappings in user roots; long-term proper kernel virtual map.
+3. Add fuzz-like syscall argument tests once userspace test harness exists.
 
 Start by reading:
 - `docs/STATE.md`
