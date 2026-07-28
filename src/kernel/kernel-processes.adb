@@ -256,6 +256,24 @@ package body Kernel.Processes is
          return;
       end if;
 
+      --  The trap trampoline builds its frame on this stack before
+      --  switching satp, so the kernel stack must be visible in the
+      --  owning user address space (supervisor, global).
+      Arch.MMU.Map_Page
+        (Root     => Root,
+         Virtual  => Kernel_Stack_Frame,
+         Physical => Kernel_Stack_Frame,
+         Flags    => Arch.MMU.Kernel_RW,
+         Result   => MMU_Result);
+
+      if MMU_Result /= Arch.MMU.Ok then
+         Result := Load_Failed;
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Kernel_Stack_Frame, PMM_Result);
+         Destroy_Address_Space (Root);
+         return;
+      end if;
+
       Kernel.ELF.Load_Into_Address_Space
         (Image_Base  => Image.Base,
          Image_Size  => Image.Size,
@@ -291,9 +309,10 @@ package body Kernel.Processes is
         (TCB       => Threads (Slot),
          Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
       Kernel.Tasks.Initialize_Context
-        (TCB   => Threads (Slot),
-         PC    => Start_PC,
-         Stack => Stack_Top);
+        (TCB       => Threads (Slot),
+         PC        => Start_PC,
+         Stack     => Stack_Top,
+         User_Satp => Arch.MMU.Satp_Value (Root));
 
       Grant_Requested_Caps (Parent, Processes (Slot), Grant_Mask, Result);
       if Result /= Ok then

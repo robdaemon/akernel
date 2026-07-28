@@ -90,9 +90,10 @@ package Kernel.Tasks is
      (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
    procedure Initialize_Context
-     (TCB   : in out Thread_Control_Block;
-      PC    : Kernel.Capabilities.U64;
-      Stack : Kernel.Capabilities.U64);
+     (TCB       : in out Thread_Control_Block;
+      PC        : Kernel.Capabilities.U64;
+      Stack     : Kernel.Capabilities.U64;
+      User_Satp : Kernel.Capabilities.U64);
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean;
 

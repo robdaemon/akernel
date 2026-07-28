@@ -9,9 +9,10 @@ package Arch.Context is
    procedure Initialize (Context : out Thread_Context);
 
    procedure Initialize_User
-     (Context : out Thread_Context;
-      PC      : U64;
-      Stack   : U64);
+     (Context   : out Thread_Context;
+      PC        : U64;
+      Stack     : U64;
+      User_Satp : U64);
 
    function Valid (Context : Thread_Context) return Boolean;
 
@@ -24,11 +25,15 @@ package Arch.Context is
       Frame   : System.Address);
 
 private
+   --  Frame words 0..30 hold x1..x31, word 31 sepc, word 32 satp,
+   --  word 33 pad.  Matches the trampoline frame in startup.s.
    Trap_Frame_Word_Count : constant := 34;
-   Trap_Frame_PC_Index   : constant := Trap_Frame_Word_Count;
+   Trap_Frame_PC_Index   : constant := 31;
+   Trap_Frame_Satp_Index : constant := 32;
+   Trap_Frame_Last_Index : constant := Trap_Frame_Word_Count - 1;
 
    type Trap_Frame_Word_Array is array
-     (Natural range 0 .. Trap_Frame_PC_Index) of U64;
+     (Natural range 0 .. Trap_Frame_Last_Index) of U64;
 
    type Thread_Context is record
       Trap_Frame : aliased Trap_Frame_Word_Array;

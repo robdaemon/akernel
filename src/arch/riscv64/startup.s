@@ -67,6 +67,9 @@ _start:
     srli t0, t0, 12
     li t1, 0x8000000000000000
     or t0, t0, t1
+    /* Publish kernel satp for the trap trampoline. */
+    la t1, kernel_satp_slot
+    sd t0, 0(t1)
     csrw satp, t0
     sfence.vma zero, zero
 
@@ -81,94 +84,142 @@ _start:
     j .Lpark_hart
 .size _start, . - _start
 
+/* Trap trampoline.  This page is mapped into every user address space
+   at its identity (physical) address so that satp switching works.
+   Frame layout (272 bytes), built on the per-thread kernel stack which
+   is also mapped into the owning user address space:
+     word 0..30  x1..x31 at (reg - 1) * 8   (word 1 = interrupted sp)
+     word 31     sepc (offset 248), frame-authoritative
+     word 32     satp (offset 256), root to return to
+     word 33     pad (offset 264)
+   sscratch invariant: always holds the current thread kernel stack
+   top, in both S-mode and U-mode. */
+.section .trampoline, "ax"
+.align 3
+.global kernel_satp_slot
+kernel_satp_slot:
+    .skip 8
+
 .global trap_vector
 .type trap_vector, @function
 trap_vector:
-    csrr x5, sstatus
-    andi x5, x5, (1 << 8)      /* SPP: previous mode was S */
-    bnez x5, .Ltrap_from_s
-    csrrw sp, sscratch, sp
-.Ltrap_from_s:
-    addi sp, sp, -272
-    sd x1,    0(sp)
-    sd x5,  248(sp)
-    sd x5,   32(sp)
-    csrr x5, sscratch
-    sd x5,    8(sp)
-    sd x3,   16(sp)
-    sd x4,   24(sp)
-    sd x6,   40(sp)
-    sd x7,   48(sp)
-    sd x8,   56(sp)
-    sd x9,   64(sp)
-    sd x10,  72(sp)
-    sd x11,  80(sp)
-    sd x12,  88(sp)
-    sd x13,  96(sp)
-    sd x14, 104(sp)
-    sd x15, 112(sp)
-    sd x16, 120(sp)
-    sd x17, 128(sp)
-    sd x18, 136(sp)
-    sd x19, 144(sp)
-    sd x20, 152(sp)
-    sd x21, 160(sp)
-    sd x22, 168(sp)
-    sd x23, 176(sp)
-    sd x24, 184(sp)
-    sd x25, 192(sp)
-    sd x26, 200(sp)
-    sd x27, 208(sp)
-    sd x28, 216(sp)
-    sd x29, 224(sp)
-    sd x30, 232(sp)
-    sd x31, 240(sp)
+    csrrw t0, sscratch, t0   /* t0 = kernel stack top, sscratch = user t0 */
+    addi  t0, t0, -272
+    sd    t1, 40(t0)         /* user t1 (x6) */
+    csrr  t1, sscratch       /* user t0 */
+    sd    t1, 32(t0)         /* user t0 (x5) */
+    addi  t1, t0, 272
+    csrw  sscratch, t1       /* sscratch = kernel stack top again */
 
-    mv a0, sp
-    call riscv_trap_handler
+    sd    x1,   0(t0)
+    sd    sp,   8(t0)        /* interrupted sp */
+    sd    x3,  16(t0)
+    sd    x4,  24(t0)
+    sd    x7,  48(t0)
+    sd    x8,  56(t0)
+    sd    x9,  64(t0)
+    sd    x10, 72(t0)
+    sd    x11, 80(t0)
+    sd    x12, 88(t0)
+    sd    x13, 96(t0)
+    sd    x14, 104(t0)
+    sd    x15, 112(t0)
+    sd    x16, 120(t0)
+    sd    x17, 128(t0)
+    sd    x18, 136(t0)
+    sd    x19, 144(t0)
+    sd    x20, 152(t0)
+    sd    x21, 160(t0)
+    sd    x22, 168(t0)
+    sd    x23, 176(t0)
+    sd    x24, 184(t0)
+    sd    x25, 192(t0)
+    sd    x26, 200(t0)
+    sd    x27, 208(t0)
+    sd    x28, 216(t0)
+    sd    x29, 224(t0)
+    sd    x30, 232(t0)
+    sd    x31, 240(t0)
 
-    ld x5,  248(sp)
-    bnez x5, .Ltrap_return_s
-    ld x5,    8(sp)
-    csrw sscratch, x5
-.Ltrap_return_s:
-    ld x1,    0(sp)
-    ld x3,   16(sp)
-    ld x4,   24(sp)
-    ld x5,   32(sp)
-    ld x6,   40(sp)
-    ld x7,   48(sp)
-    ld x8,   56(sp)
-    ld x9,   64(sp)
-    ld x10,  72(sp)
-    ld x11,  80(sp)
-    ld x12,  88(sp)
-    ld x13,  96(sp)
-    ld x14, 104(sp)
-    ld x15, 112(sp)
-    ld x16, 120(sp)
-    ld x17, 128(sp)
-    ld x18, 136(sp)
-    ld x19, 144(sp)
-    ld x20, 152(sp)
-    ld x21, 160(sp)
-    ld x22, 168(sp)
-    ld x23, 176(sp)
-    ld x24, 184(sp)
-    ld x25, 192(sp)
-    ld x26, 200(sp)
-    ld x27, 208(sp)
-    ld x28, 216(sp)
-    ld x29, 224(sp)
-    ld x30, 232(sp)
-    ld x31, 240(sp)
-    ld x5,  248(sp)
-    addi sp, sp, 272
-    bnez x5, .Ltrap_sret
-    csrrw sp, sscratch, sp
-.Ltrap_sret:
+    csrr  t1, sepc
+    sd    t1, 248(t0)
+    csrr  t1, satp
+    sd    t1, 256(t0)
+
+    /* Switch to kernel (early root) address space. */
+.Lkernel_satp_hi:
+    auipc t1, %pcrel_hi(kernel_satp_slot)
+    ld    t1, %pcrel_lo(.Lkernel_satp_hi)(t1)
+    csrw  satp, t1
+    sfence.vma zero, zero
+
+    mv    sp, t0
+    mv    a0, t0
+    call  riscv_trap_handler
+
+    /* Exit: use sscratch so a scheduled-away trap returns through the
+       newly current thread kernel stack frame. */
+    csrr  t0, sscratch
+    addi  t0, t0, -272
+
+    ld    t1, 256(t0)
+    csrw  satp, t1           /* switch to return address space */
+    sfence.vma zero, zero
+
+    ld    t1, 248(t0)
+    csrw  sepc, t1
+
+    ld    x1,   0(t0)
+    ld    x3,  16(t0)
+    ld    x4,  24(t0)
+    ld    x6,  40(t0)
+    ld    x7,  48(t0)
+    ld    x8,  56(t0)
+    ld    x9,  64(t0)
+    ld    x10, 72(t0)
+    ld    x11, 80(t0)
+    ld    x12, 88(t0)
+    ld    x13, 96(t0)
+    ld    x14, 104(t0)
+    ld    x15, 112(t0)
+    ld    x16, 120(t0)
+    ld    x17, 128(t0)
+    ld    x18, 136(t0)
+    ld    x19, 144(t0)
+    ld    x20, 152(t0)
+    ld    x21, 160(t0)
+    ld    x22, 168(t0)
+    ld    x23, 176(t0)
+    ld    x24, 184(t0)
+    ld    x25, 192(t0)
+    ld    x26, 200(t0)
+    ld    x27, 208(t0)
+    ld    x28, 216(t0)
+    ld    x29, 224(t0)
+    ld    x30, 232(t0)
+    ld    x31, 240(t0)
+    ld    sp,   8(t0)        /* interrupted sp; no sp use after this */
+    ld    t0,  32(t0)        /* t0 (x5) last; self-clobbering load */
     sret
 .size trap_vector, . - trap_vector
+
+/* a0 = user entry, a1 = user stack, a2 = user address space satp value.
+   Must run from the trampoline page: it switches satp before sret. */
+.global riscv_enter_user_mode
+.type riscv_enter_user_mode, @function
+riscv_enter_user_mode:
+    csrw  sepc, a0
+    csrr  t0, sstatus
+    li    t1, ~(1 << 8)      /* clear SPP: return to U-mode */
+    and   t0, t0, t1
+    li    t1, (1 << 5)       /* SPIE: interrupts enabled after sret */
+    or    t0, t0, t1
+    csrw  sstatus, t0
+    csrw  satp, a2
+    sfence.vma zero, zero
+    mv    sp, a1
+    sret
+.size riscv_enter_user_mode, . - riscv_enter_user_mode
 
 .section .bss, "aw", @nobits
 .align 12

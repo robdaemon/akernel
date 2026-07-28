@@ -206,15 +206,17 @@ package body Kernel.Tasks is
    end Kernel_Stack_Top;
 
    procedure Initialize_Context
-     (TCB   : in out Thread_Control_Block;
-      PC    : Kernel.Capabilities.U64;
-      Stack : Kernel.Capabilities.U64)
+     (TCB       : in out Thread_Control_Block;
+      PC        : Kernel.Capabilities.U64;
+      Stack     : Kernel.Capabilities.U64;
+      User_Satp : Kernel.Capabilities.U64)
    is
    begin
       Arch.Context.Initialize_User
-        (Context => TCB.Context,
-         PC      => PC,
-         Stack   => Stack);
+        (Context   => TCB.Context,
+         PC        => PC,
+         Stack     => Stack,
+         User_Satp => User_Satp);
    end Initialize_Context;
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean is

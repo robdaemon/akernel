@@ -134,7 +134,7 @@ root[1] temporary broad user alias 0x40000000..0x7fffffff -> PA 0x80000000..0xbf
 root[2..5] RAM 0x80000000..0x17fffffff, supervisor RWX, up to 4GiB RAM
 ```
 
-User address spaces do **not** copy root[1]. They copy supervisor RAM identity mappings (root[2..5]) plus narrow supervisor device windows (UART page, PLIC priority/enable pages, PLIC context pages 0..3) instead of the broad root[0] low-MMIO gigapage. Device windows are needed because the trap path runs on the user `satp` (no trampoline/satp switch yet); long-term fix is a proper kernel virtual map with satp switch on trap entry.
+User address spaces map only the trap trampoline page (identity address, supervisor RX, global), their own user pages, and their threads' kernel trap stacks (identity address, supervisor RW, global). They no longer copy any early-root gigapages.
 
 ## Trap/syscall path
 
@@ -144,13 +144,24 @@ Trap vector:
 src/arch/riscv64/startup.s:trap_vector
 ```
 
-Trap handler:
+Trap vector lives in the page-aligned `.trampoline` linker section (single page, exports `trampoline_start`/`trampoline_end`). The page is mapped at its identity (physical) address in every user address space so satp switching works, xv6-style. The kernel always runs on the early root, which acts as the kernel address space; its satp value is published in `kernel_satp_slot` inside the trampoline page.
+
+Trampoline entry (`sscratch` always holds the current thread kernel stack top, in both S-mode and U-mode):
+- switches `sp` to the current thread kernel stack (mapped identity, supervisor RW, global, in the owning user root)
+- builds a 272-byte trap frame: x1..x31, `sepc` (offset 248, frame-authoritative), `satp` (offset 256)
+- loads `kernel_satp_slot`, switches satp to the kernel root, calls the Ada handler
+
+Trampoline exit locates the frame via `sscratch` (so a scheduled-away trap returns through the newly current thread's own kernel stack frame), installs the frame's satp slot, restores registers, and `sret`s. `sepc` is advanced in the frame (`trap_frame_advance_sepc`), never in the CSR. Scheduler restore writes the saved context into the newly current thread's kernel stack frame (`trap_frame_for_stack`) and updates `sscratch`; `Arch.MMU.Activate` is no longer called on the switch path. Kernel-mode traps (idle `wfi` wakeups, faults) take the same path and are no-ops satp-wise.
+
+`riscv_enter_user_mode` also lives in the trampoline page; it takes entry, stack, and the target root's satp value (`Arch.MMU.Satp_Value`), switches satp, then `sret`s.
+
+Trap handler (runs on the kernel root after trampoline satp switch):
 
 ```text
 src/arch/riscv64/arch-traps.adb
 ```
 
-Trap entry uses `sscratch` to switch from user stack to kernel trap stack. Init and spawned user threads own per-thread kernel stack frames; scheduler restore writes `sscratch` from current thread before returning to user. It passes trap-frame pointer to Ada handler. `Arch.Context` owns RISC-V trap-frame layout and saved `sepc`; `Kernel.Tasks` stores opaque arch thread context and calls arch context save/restore wrappers.
+Trap entry uses `sscratch` to switch from user stack to the per-thread kernel trap stack, builds the frame on it, then switches satp to the kernel root via the trampoline. Init and spawned user threads own per-thread kernel stack frames; scheduler restore writes `sscratch` from the current thread stack top and restores context into that thread's kernel stack frame before returning to user. It passes trap-frame pointer to Ada handler. `Arch.Context` owns RISC-V trap-frame layout and saved `sepc`; `Kernel.Tasks` stores opaque arch thread context and calls arch context save/restore wrappers.
 
 Syscall ABI:
 
@@ -575,8 +586,7 @@ QEMU virt RAM base:     0x80000000
 ## Temporary limitations / hacks
 
 - PMM has a free list and can reclaim frames, but no sophisticated coalescing/accounting beyond page frames.
-- Kernel supervisor RAM mappings are broad identity mappings copied into user roots; low-MMIO access in user roots is narrowed to UART/PLIC device pages.
-- No high-half kernel yet; trap path still runs on the user `satp`, so kernel text/data/stacks and the device windows must stay mapped in every user root.
+- Kernel (early) root keeps broad identity gigapages and doubles as the kernel address space; user roots are now minimal (trampoline + own pages). No high-half kernel yet.
 - Context switch works only as rough cooperative saved per-thread trap-frame switching.
 - Process/thread split is partial; exited process cleanup still requires parent `reap_process`.
 - Small fixed spawned process/thread tables only; failed unpublished spawns discard slot, exited published slots can be reused after `reap_process`, and mapped user frames/page tables are reclaimed by PMM free list.
@@ -635,7 +645,9 @@ QEMU virt RAM base:     0x80000000
    - create resource objects/caps dynamically
    - pass bootinfo/resource caps to init
 
-5. Improve VM isolation:
-   - low-MMIO gigapage in user roots replaced with narrow UART/PLIC supervisor windows; broad RAM identity map remains until kernel virtual map/trampoline exists
+5. Improve VM isolation further:
+   - trap trampoline + satp switch done; user roots carry no kernel/device mappings beyond trampoline page and own kernel stacks
+   - kernel still runs on broad identity early root; proper dedicated/high-half kernel map remains
+   - per-thread kernel stacks/opaque arch context exist
    - per-thread kernel stacks/opaque arch context exist
    - scheduler context switch switches `satp`

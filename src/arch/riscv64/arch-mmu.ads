@@ -43,6 +43,14 @@ package Arch.MMU is
      (Result : out Status;
       Root   : out U64);
 
+   --  satp CSR value (Sv39 mode + PPN) for a root page table.
+   function Satp_Value (Root : U64) return U64;
+
+   --  Kernel (early) root page table physical address.  The kernel
+   --  always runs on this root; user roots map only the trampoline
+   --  page and their own pages.
+   function Kernel_Root return U64;
+
    procedure Activate (Root : U64);
 
    procedure Map_Page

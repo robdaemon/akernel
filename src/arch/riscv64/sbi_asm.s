@@ -72,14 +72,23 @@ riscv_read_stval:
     ret
 .size riscv_read_stval, . - riscv_read_stval
 
-.global riscv_advance_sepc
-.type riscv_advance_sepc, @function
-riscv_advance_sepc:
-    csrr t0, sepc
+.global trap_frame_advance_sepc
+.type trap_frame_advance_sepc, @function
+trap_frame_advance_sepc:
+    /* sepc is frame-authoritative; advance the frame slot. */
+    ld t0, 248(a0)
     addi t0, t0, 4
-    csrw sepc, t0
+    sd t0, 248(a0)
     ret
-.size riscv_advance_sepc, . - riscv_advance_sepc
+.size trap_frame_advance_sepc, . - trap_frame_advance_sepc
+
+.global trap_frame_for_stack
+.type trap_frame_for_stack, @function
+trap_frame_for_stack:
+    /* a0 = kernel stack top; returns frame base below it. */
+    addi a0, a0, -272
+    ret
+.size trap_frame_for_stack, . - trap_frame_for_stack
 
 .global trap_frame_get_a0
 .type trap_frame_get_a0, @function
@@ -155,8 +164,6 @@ trap_frame_save_context:
     addi a1, a1, 8
     addi t0, t0, -1
     bnez t0, 1b
-    csrr t1, sepc
-    sd t1, 0(a1)
     ret
 .size trap_frame_save_context, . - trap_frame_save_context
 
@@ -172,8 +179,6 @@ trap_frame_load_context:
     addi t3, t3, 8
     addi t0, t0, -1
     bnez t0, 1b
-    ld t1, 0(t3)
-    csrw sepc, t1
     ret
 .size trap_frame_load_context, . - trap_frame_load_context
 
@@ -203,16 +208,3 @@ riscv_set_trap_stack:
     ret
 .size riscv_set_trap_stack, . - riscv_set_trap_stack
 
-.global riscv_enter_user_mode
-.type riscv_enter_user_mode, @function
-riscv_enter_user_mode:
-    csrw sepc, a0
-    mv sp, a1
-    csrr t0, sstatus
-    li t1, ~(1 << 8)       /* clear SPP: return to U-mode */
-    and t0, t0, t1
-    li t1, (1 << 5)        /* SPIE: interrupts enabled after sret */
-    or t0, t0, t1
-    csrw sstatus, t0
-    sret
-.size riscv_enter_user_mode, . - riscv_enter_user_mode

@@ -22,6 +22,14 @@ SECTIONS
     *(.text .text.*)
   } > RAM :text
 
+  . = ALIGN(4096);
+  trampoline_start = .;
+  .trampoline : ALIGN(4096)
+  {
+    *(.trampoline .trampoline.*)
+  } > RAM :text
+  trampoline_end = .;
+
   .rodata : ALIGN(8)
   {
     *(.rodata .rodata.*)

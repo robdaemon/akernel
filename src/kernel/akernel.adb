@@ -444,6 +444,20 @@ begin
          Result   => MMU_Result);
    end if;
 
+   --  Init kernel trap stack must be visible in its own user address
+   --  space: the trap trampoline builds frames on it before switching
+   --  satp to the kernel root.
+   if Initrd_Result = Kernel.Initrd.Ok
+     and then MMU_Result = Arch.MMU.Ok
+   then
+      Arch.MMU.Map_Page
+        (Root     => User_Root_Table,
+         Virtual  => Init_Kernel_Stack_Frame,
+         Physical => Init_Kernel_Stack_Frame,
+         Flags    => Arch.MMU.Kernel_RW,
+         Result   => MMU_Result);
+   end if;
+
    if Initrd_Result = Kernel.Initrd.Ok
      and then MMU_Result = Arch.MMU.Ok
    then
@@ -515,10 +529,10 @@ begin
          Arch.Traps.Set_Kernel_Trap_Stack
            (Kernel.Tasks.Kernel_Stack_Top (Init_Task));
       end if;
-      Arch.MMU.Activate (User_Root_Table);
       Arch.User_Mode.Enter_User_Mode
         (Entry_Point => Init_Entry,
-         Stack       => User_Stack_Top);
+         Stack       => User_Stack_Top,
+         User_Satp   => Arch.MMU.Satp_Value (User_Root_Table));
    else
       if Initrd_Result = Kernel.Initrd.Bad_Header then
          Board.UART.Put_Line ("initrd bad header");
@@ -530,11 +544,14 @@ begin
          Board.UART.Put_Line ("elf load failed");
       end if;
       Board.UART.Put_Line ("entering fallback user mode");
+      --  Fallback runs on the kernel (early) root, which keeps the
+      --  temporary broad root[1] user alias for user_init.
       Arch.User_Mode.Enter_User_Mode
         (Entry_Point => Interfaces.Unsigned_64
            (System.Storage_Elements.To_Integer (User_Init'Address))
            - User_Alias_Delta,
-         Stack => User_Stack_Frame + Kernel.Physical_Memory.Page_Size
-           - User_Alias_Delta);
+         Stack       => User_Stack_Frame + Kernel.Physical_Memory.Page_Size
+           - User_Alias_Delta,
+         User_Satp   => Arch.MMU.Satp_Value (Arch.MMU.Kernel_Root));
    end if;
 end Akernel;

@@ -25,13 +25,20 @@ Done recently:
 - `make all` and timeout boot run pass with expected boot output.
 - Boot PMM selftest now also runs an interleaved 32-frame stress: allocate batch, free every other frame, reallocate holes from free list, free all; free count must track exactly at each phase.
 - User address spaces no longer copy the broad root[0] low-MMIO gigapage; `Arch.MMU.New_User_Address_Space` maps narrow supervisor-only windows instead (UART page, PLIC priority/enable pages, PLIC context pages 0..3). Trap path still runs on user `satp`, so kernel RAM identity map and device windows must stay mapped until a kernel virtual map/trampoline exists.
+- Trap trampoline + satp switch (xv6-style) now done:
+  - `trap_vector` and `riscv_enter_user_mode` live in page-aligned `.trampoline` section (one page); mapped identity supervisor-RX global in every user root.
+  - Entry builds a 272-byte frame (x1..x31, frame-authoritative `sepc` @248, `satp` @256) on the current thread kernel stack (mapped identity supervisor-RW global in the owning user root), then switches satp to the kernel (early) root via `kernel_satp_slot`.
+  - Exit finds the frame through `sscratch`, installs the frame satp slot, restores, `sret`; scheduling restore writes context into the newly current thread's kernel stack frame (`trap_frame_for_stack`). `Arch.MMU.Activate` removed from switch path.
+  - `riscv_advance_sepc` replaced by frame-based `trap_frame_advance_sepc`; context save/load are pure 34-word frame copies; `Arch.Context` frame gains satp word (PC index 31, satp index 32).
+  - `Arch.MMU.Satp_Value`/`Kernel_Root` added; user roots now map only trampoline + own pages; spawn and boot map each thread kernel stack into its own user root.
+  - `make all` and timeout boot run pass with expected output; UART IRQ wake verified with injected keystrokes.
 
 Decisions made:
 - No main thread cap returned from spawn for now: no syscall targets a specific thread (`exit` acts on current thread, `reap_process` uses process cap). Add thread caps only when a thread-targeting syscall appears.
 - No object refcounts yet: shared resource objects (`MMIO_Region`, `IRQ_Line`, endpoints) are kernel-owned statics that are never freed, so cleanup hooks suffice. Add refcounts only when dynamically-owned shared objects appear.
 
 Continue with:
-1. Improve VM isolation further: proper kernel virtual map + satp switch on trap entry (trampoline page), then drop RAM identity map and device windows from user roots.
+1. Improve VM isolation further: dedicated/high-half kernel address space to replace broad identity early root; then early root[1] user alias can go.
 2. Add fuzz-like syscall argument tests once userspace test harness exists.
 
 Start by reading:

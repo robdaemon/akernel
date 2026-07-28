@@ -71,8 +71,11 @@ package body Arch.Traps is
    procedure Raw_Set_Trap_Stack (Stack_Top : U64)
      with Import, Convention => C, External_Name => "riscv_set_trap_stack";
 
-   procedure Advance_SEPC
-     with Import, Convention => C, External_Name => "riscv_advance_sepc";
+   procedure Advance_SEPC (Frame : System.Address)
+     with Import, Convention => C, External_Name => "trap_frame_advance_sepc";
+
+   function Trap_Frame_For_Stack (Stack_Top : U64) return System.Address
+     with Import, Convention => C, External_Name => "trap_frame_for_stack";
 
    procedure Set_Kernel_Trap_Stack (Stack_Top : U64) is
    begin
@@ -150,19 +153,24 @@ package body Arch.Traps is
      (Frame  : System.Address;
       Result : Kernel.Scheduler.Status)
    is
+      pragma Unreferenced (Frame);
       Current : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
    begin
       if Result = Kernel.Scheduler.Ok and then Current /= null then
-         if Kernel.Tasks.Kernel_Stack_Top (Current.all) /= 0 then
-            Set_Kernel_Trap_Stack
-              (Kernel.Tasks.Kernel_Stack_Top (Current.all));
-         end if;
-
-         Arch.MMU.Activate (Kernel.Tasks.Address_Space_Root (Current.all));
-         Kernel.Tasks.Restore_Trap_Context
-           (TCB   => Current.all,
-            Frame => Frame);
+         declare
+            Top : constant U64 := Kernel.Tasks.Kernel_Stack_Top (Current.all);
+         begin
+            if Top /= 0 then
+               Set_Kernel_Trap_Stack (Top);
+               --  Restore context into the newly current thread's own
+               --  kernel stack frame; the exit trampoline finds it via
+               --  sscratch and installs the frame's satp slot.
+               Kernel.Tasks.Restore_Trap_Context
+                 (TCB   => Current.all,
+                  Frame => Trap_Frame_For_Stack (Top));
+            end if;
+         end;
       elsif Result /= Kernel.Scheduler.Ok then
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
@@ -324,7 +332,7 @@ package body Arch.Traps is
       if IRQ_Result = Kernel.Interrupts.Ok then
          Trap_Frame_Set_A0 (Frame, 0);
       elsif IRQ_Result = Kernel.Interrupts.Would_Block then
-         Advance_SEPC;
+         Advance_SEPC (Frame);
          Trap_Frame_Set_A0 (Frame, 0);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_IRQ);
@@ -334,7 +342,7 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, 1);
       end if;
 
-      Advance_SEPC;
+      Advance_SEPC (Frame);
    end Handle_IRQ_Wait;
 
    procedure Handle_IRQ_Ack (Frame : System.Address) is
@@ -504,7 +512,7 @@ package body Arch.Traps is
       end if;
 
       Kernel.Processes.Mark_Exited (Current);
-      Advance_SEPC;
+      Advance_SEPC (Frame);
       Kernel.Scheduler.Exit_Current (Exit_Result);
       if Exit_Result /= Kernel.Scheduler.Ok then
          Trap_Frame_Set_A0 (Frame, 1);
@@ -519,7 +527,7 @@ package body Arch.Traps is
       Scheduler_Result : Kernel.Scheduler.Status;
    begin
       if Number = Sys_Yield then
-         Advance_SEPC;
+         Advance_SEPC (Frame);
          Trap_Frame_Set_A0 (Frame, 0);
 
          Save_Current_Context (Frame);
@@ -552,7 +560,7 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
 
-      Advance_SEPC;
+      Advance_SEPC (Frame);
    end Handle_Syscall;
 
    procedure Riscv_Trap_Handler (Frame : System.Address)

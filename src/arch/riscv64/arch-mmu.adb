@@ -23,6 +23,11 @@ package body Arch.MMU is
    Early_Root : Page_Table
      with Import, Convention => C, External_Name => "early_l2_page_table";
 
+   Trampoline_Start : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "trampoline_start";
+   Trampoline_End : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "trampoline_end";
+
    procedure Raw_Activate (Root : U64)
      with Import, Convention => C, External_Name => "riscv_activate_satp";
 
@@ -120,76 +125,58 @@ package body Arch.MMU is
      (Result : out Status;
       Root   : out U64)
    is
-      Root_Table : Page_Table_Access;
-
-      --  Narrow supervisor device windows the kernel trap path needs
-      --  while running on a user address space (QEMU virt layout).
-      --  These replace the old broad 1 GiB low-MMIO gigapage copy.
-      --  PLIC context pages cover contexts 0..3 (harts 0..1).
-      UART_Page          : constant U64 := 16#1000_0000#;
-      PLIC_Bank_Base     : constant U64 := 16#0c00_0000#;
-      PLIC_Bank_Pages    : constant U64 := 2;
-      PLIC_Context_Base  : constant U64 := 16#0c20_0000#;
-      PLIC_Context_Pages : constant U64 := 4;
-
+      --  Map only the trap trampoline page(s) into user address
+      --  spaces, at their identity (physical) address, supervisor RX,
+      --  global.  The trampoline switches satp to the kernel (early)
+      --  root on trap entry and back on return, so no other kernel or
+      --  device mapping is needed here.  Per-thread kernel stacks are
+      --  mapped separately by the spawn/boot code.
+      Trampoline_First : constant U64 :=
+        U64 (System.Storage_Elements.To_Integer (Trampoline_Start'Address));
+      Trampoline_Last : constant U64 :=
+        U64 (System.Storage_Elements.To_Integer (Trampoline_End'Address));
       Map_Result : Status;
       Destroy_Result : Status;
-      Failed     : Boolean := False;
+      Page : U64;
    begin
       Allocate_Table (Result, Root);
       if Result /= Ok then
          return;
       end if;
 
-      Root_Table := To_Table (To_Address (Root));
-
-      --  Keep supervisor RAM identity mappings shared in every user
-      --  address space.  Do not copy early root[1], the temporary broad
-      --  U-mode alias, or early root[0], the broad low-MMIO gigapage;
-      --  device access is narrowed to the windows mapped below.
-      Root_Table (2) := Early_Root (2); -- RAM 0x8000_0000..0xbfff_ffff
-      Root_Table (3) := Early_Root (3);
-      Root_Table (4) := Early_Root (4);
-      Root_Table (5) := Early_Root (5);
-
-      Map_Page
-        (Root     => Root,
-         Virtual  => UART_Page,
-         Physical => UART_Page,
-         Flags    => Kernel_RW,
-         Result   => Map_Result);
-      Failed := Map_Result /= Ok;
-
-      for Page in U64 range 0 .. PLIC_Bank_Pages - 1 loop
-         exit when Failed;
+      Page := Trampoline_First - Trampoline_First mod Page_Size;
+      while Page < Trampoline_Last loop
          Map_Page
            (Root     => Root,
-            Virtual  => PLIC_Bank_Base + Page * Page_Size,
-            Physical => PLIC_Bank_Base + Page * Page_Size,
-            Flags    => Kernel_RW,
+            Virtual  => Page,
+            Physical => Page,
+            Flags    => Kernel_RX,
             Result   => Map_Result);
-         Failed := Map_Result /= Ok;
-      end loop;
 
-      for Page in U64 range 0 .. PLIC_Context_Pages - 1 loop
-         exit when Failed;
-         Map_Page
-           (Root     => Root,
-            Virtual  => PLIC_Context_Base + Page * Page_Size,
-            Physical => PLIC_Context_Base + Page * Page_Size,
-            Flags    => Kernel_RW,
-            Result   => Map_Result);
-         Failed := Map_Result /= Ok;
-      end loop;
+         if Map_Result /= Ok then
+            --  Global trampoline leaves are skipped by destroy; the
+            --  root and intermediate tables are reclaimed.
+            Destroy_User_Address_Space (Root, Destroy_Result);
+            Root := 0;
+            Result := Allocation_Failed;
+            return;
+         end if;
 
-      if Failed then
-         --  Global device leaves are skipped by destroy; intermediate
-         --  page tables and the root are reclaimed.
-         Destroy_User_Address_Space (Root, Destroy_Result);
-         Root := 0;
-         Result := Allocation_Failed;
-      end if;
+         Page := Page + Page_Size;
+      end loop;
    end New_User_Address_Space;
+
+   function Satp_Value (Root : U64) return U64 is
+      Mode_Sv39 : constant U64 := 16#8000_0000_0000_0000#;
+   begin
+      return Mode_Sv39 or (Root / Page_Size);
+   end Satp_Value;
+
+   function Kernel_Root return U64 is
+   begin
+      return U64
+        (System.Storage_Elements.To_Integer (Early_Root'Address));
+   end Kernel_Root;
 
    procedure Activate (Root : U64) is
    begin

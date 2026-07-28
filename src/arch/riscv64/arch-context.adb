@@ -16,14 +16,16 @@ package body Arch.Context is
    end Initialize;
 
    procedure Initialize_User
-     (Context : out Thread_Context;
-      PC      : U64;
-      Stack   : U64)
+     (Context   : out Thread_Context;
+      PC        : U64;
+      Stack     : U64;
+      User_Satp : U64)
    is
    begin
       Context.Trap_Frame := (others => 0);
       Context.Trap_Frame (1) := Stack; -- x2/sp
       Context.Trap_Frame (Trap_Frame_PC_Index) := PC;
+      Context.Trap_Frame (Trap_Frame_Satp_Index) := User_Satp;
       Context.Is_Valid := True;
    end Initialize_User;
 
