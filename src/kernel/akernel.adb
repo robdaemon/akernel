@@ -133,6 +133,10 @@ procedure Akernel is
       Transfer => False,
       Manage   => False);
 
+   Stress_Frame_Count : constant := 32;
+   type Stress_Frame_Array is
+     array (0 .. Stress_Frame_Count - 1) of Interfaces.Unsigned_64;
+
    procedure PMM_Self_Test is
       Before  : Interfaces.Unsigned_64;
       After   : Interfaces.Unsigned_64;
@@ -173,6 +177,85 @@ procedure Akernel is
                end if;
             end if;
          end if;
+      end if;
+
+      --  Interleaved stress: allocate batch, free every other frame,
+      --  reallocate the holes, then free all; free count must track
+      --  exactly through each phase.
+      if Passed then
+         declare
+            Stress_Before : constant Interfaces.Unsigned_64 :=
+              Kernel.Physical_Memory.Free_Frame_Count;
+            Frames : Stress_Frame_Array := (others => 0);
+            Ok_Alloc : Boolean := True;
+         begin
+            for I in Frames'Range loop
+               Kernel.Physical_Memory.Allocate_Frame (Status, Frames (I));
+               if Status /= Kernel.Physical_Memory.Ok then
+                  Ok_Alloc := False;
+                  for J in Frames'First .. I - 1 loop
+                     Kernel.Physical_Memory.Deallocate_Frame
+                       (Frames (J), Status);
+                  end loop;
+                  exit;
+               end if;
+            end loop;
+
+            Passed := Ok_Alloc
+              and then Kernel.Physical_Memory.Free_Frame_Count
+                = Stress_Before - Stress_Frame_Count;
+
+            --  Free every other frame; holes go to free list except
+            --  the topmost bump frame, which shrinks the bump pointer.
+            if Passed then
+               for I in Frames'Range loop
+                  if I mod 2 = 1 then
+                     Kernel.Physical_Memory.Deallocate_Frame
+                       (Frames (I), Status);
+                     Passed := Status = Kernel.Physical_Memory.Ok;
+                     exit when not Passed;
+                     Frames (I) := 0;
+                  end if;
+               end loop;
+
+               Passed := Passed
+                 and then Kernel.Physical_Memory.Free_Frame_Count
+                   = Stress_Before - Stress_Frame_Count / 2;
+            end if;
+
+            --  Reallocate the holes; free-list reuse must satisfy them.
+            if Passed then
+               for I in Frames'Range loop
+                  if Frames (I) = 0 then
+                     Kernel.Physical_Memory.Allocate_Frame
+                       (Status, Frames (I));
+                     Passed := Status = Kernel.Physical_Memory.Ok
+                       and then Frames (I) /= 0;
+                     exit when not Passed;
+                  end if;
+               end loop;
+
+               Passed := Passed
+                 and then Kernel.Physical_Memory.Free_Frame_Count
+                   = Stress_Before - Stress_Frame_Count;
+            end if;
+
+            --  Free everything; free count must return to baseline.
+            if Ok_Alloc then
+               for I in Frames'Range loop
+                  if Frames (I) /= 0 then
+                     Kernel.Physical_Memory.Deallocate_Frame
+                       (Frames (I), Status);
+                     Passed := Passed
+                       and then Status = Kernel.Physical_Memory.Ok;
+                  end if;
+               end loop;
+
+               Passed := Passed
+                 and then Kernel.Physical_Memory.Free_Frame_Count
+                   = Stress_Before;
+            end if;
+         end;
       end if;
 
       if Passed then
