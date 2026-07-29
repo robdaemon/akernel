@@ -3,8 +3,9 @@
 Status: core implemented (ep_create, call/recv/reply, cap transfer,
 reply cap, endpoint slab, FIFO caller queue, grant-list spawn with
 rights-subset enforcement + badges, Boot_File_Object image caps,
-bootinfo page). Remaining designed-but-unbuilt: RTS wrappers, init
-namespace composition. Deferred items at bottom.
+bootinfo page, Akernel_User.IPC typed wrappers, init namespace
+composition via bootinfo-name grant tokens). Remaining
+designed-but-unbuilt: Akernel.Streams. Deferred items at bottom.
 
 ## Principles
 
@@ -251,9 +252,9 @@ namespace mechanism.
 
 ## RTS implications
 
-- `Akernel.IPC`: typed wrappers over call/recv/reply, generic over
-  payload records marshalled into the 6-word area (larger payloads via
-  memory caps).
+- `Akernel_User.IPC` (implemented): typed wrappers over
+  call/recv/reply, generic over request/response payload records
+  marshalled into the 6-word area (larger payloads via memory caps).
 - `Akernel.Streams`: `Root_Stream_Type` over endpoint caps becomes the
   fundamental I/O substrate; file protocol (9P-ish, simplified) layers
   on top.

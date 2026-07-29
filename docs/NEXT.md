@@ -48,8 +48,18 @@ kernel cap tables.
    cap-based (a0 = boot file cap with Read). Init resolves manifest
    program paths to image caps via bootinfo names; fuzzer spawns echo
    from a granted image cap; 40/40 directed PASS.
-7. RTS core: `Akernel.IPC` typed wrappers; init migrated to namespace
-   composition (manifest becomes data for grant lists only).
+7. ~~RTS core~~ — done: `Akernel_User.IPC` typed wrappers (generic
+   over request/response payload records marshalled into the message's
+   6-word area, 48-byte limit); echo server migrated (wire protocol
+   unchanged, raw-ecall fuzzer still validates it); `Boot_Cap` /
+   `Boot_Cap_Rights` bootinfo lookup in the RTS; init composes child
+   namespaces from manifest tokens that are plain bootinfo entry
+   names (kernel-assigned rights), only `ipc_test` stays a special
+   badged-endpoint token. 40/40 directed PASS.
+8. RTS streams: `Akernel_User.Streams` — `Root_Stream_Type` over
+   endpoint caps as the I/O substrate; console output path as first
+   consumer (replaces debug_putchar for normal programs); file
+   protocol (9P-ish, simplified) layers on top later.
 
 Commit between each milestone.
 

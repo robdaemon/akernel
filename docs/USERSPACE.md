@@ -49,8 +49,7 @@ nonblocking paths only).
 cap valid + Map right; R/W flags within cap rights; offset/len in object;
 page alignment; VA in `0x40000000..0x80000000`; maps as `User_RW`.
 
-Planned additions (docs/IPC.md): 11 ep_create, 12 call, 13 recv,
-14 reply; spawn v2 by image cap + grant list.
+Planned additions (docs/IPC.md): Akernel.Streams over endpoints.
 
 ## RTS scaffold
 
@@ -58,7 +57,13 @@ Planned additions (docs/IPC.md): 11 ep_create, 12 call, 13 recv,
 `light-rv64imafdc` plus syscall wrappers/stubs:
 
 ```text
-akernel_user*.ads/.adb    syscall wrappers, MMIO helpers
+akernel_user-syscalls.*   raw syscall wrappers, IPC buffer/message
+                          overlays, spawn grant lists, bootinfo page
+                          overlay + Boot_Cap/Boot_Cap_Rights lookup
+akernel_user-ipc.*        typed RPC wrappers (generic over request/
+                          response payload records marshalled into
+                          the message's 6-word area, 48-byte limit)
+akernel_user-mmio.*       MMIO helpers
 syscalls-riscv64.s        ecall stubs (incl. generic stub for fuzzer)
 start-riscv64.s           entry
 runtime_stubs-riscv64.s   runtime stubs
@@ -66,8 +71,8 @@ linker-riscv64.ld         link script
 ```
 
 Plan: real non-tasking runtime core first (exceptions, secondary stack,
-heap, `Akernel.IPC` typed wrappers, streams over endpoints); tasking
-runtime later (Ada rendezvous maps onto call/recv/reply). See docs/IPC.md.
+heap, streams over endpoints); tasking runtime later (Ada rendezvous
+maps onto call/recv/reply). See docs/IPC.md.
 
 ## Programs
 
