@@ -12,6 +12,12 @@ procedure Init is
    Manifest_Size : Akernel_User.Syscalls.U64;
    Spawned_Count : Akernel_User.Syscalls.U64 := 0;
 
+   --  Endpoint minted at boot and granted (badged) to the fuzzer via
+   --  the ipc_test manifest token: exercises the session-manager
+   --  badge pattern. Init cap handles: 1 = UART MMIO, 2 = UART IRQ.
+   IPC_Test_EP    : Akernel_User.Syscalls.U64 := 0;
+   IPC_Test_Badge : constant Akernel_User.Syscalls.U64 := 16#EC40#;
+
    function Is_Space (C : Character) return Boolean is
    begin
       return C = ' ' or else C = Character'Val (9);
@@ -131,7 +137,7 @@ procedure Init is
       Have_Token : Boolean;
       Valid_Id   : Boolean;
       Program_Id : Akernel_User.Syscalls.U64;
-      Grant_Mask  : Akernel_User.Syscalls.U64 := 0;
+      Grant_Count : Akernel_User.Syscalls.U64 := 0;
       Path_Offset : Akernel_User.Syscalls.U64;
       Path_Length : Akernel_User.Syscalls.U64;
       Process_Cap : Akernel_User.Syscalls.U64;
@@ -169,16 +175,39 @@ procedure Init is
          exit when not Have_Token;
 
          if Token_Equals (Token, Length, "uart_mmio") then
-            Grant_Mask := Grant_Mask
-              or Akernel_User.Syscalls.UART_MMIO_Grant_Bit;
+            Akernel_User.Syscalls.Set_Grant
+              (Index       => Grant_Count,
+               Source_Cap  => 1,
+               Rights_Mask => Akernel_User.Syscalls.Right_Map
+                 + Akernel_User.Syscalls.Right_Read
+                 + Akernel_User.Syscalls.Right_Write,
+               Badge       => 0);
+            Grant_Count := Grant_Count + 1;
          elsif Token_Equals (Token, Length, "uart_irq") then
-            Grant_Mask := Grant_Mask
-              or Akernel_User.Syscalls.UART_IRQ_Grant_Bit;
+            Akernel_User.Syscalls.Set_Grant
+              (Index       => Grant_Count,
+               Source_Cap  => 2,
+               Rights_Mask => Akernel_User.Syscalls.Right_Wait
+                 + Akernel_User.Syscalls.Right_Ack,
+               Badge       => 0);
+            Grant_Count := Grant_Count + 1;
+         elsif Token_Equals (Token, Length, "ipc_test")
+           and then IPC_Test_EP /= 0
+         then
+            Akernel_User.Syscalls.Set_Grant
+              (Index       => Grant_Count,
+               Source_Cap  => IPC_Test_EP,
+               Rights_Mask => Akernel_User.Syscalls.Right_Send
+                 + Akernel_User.Syscalls.Right_Receive
+                 + Akernel_User.Syscalls.Right_Transfer
+                 + Akernel_User.Syscalls.Right_Manage,
+               Badge       => IPC_Test_Badge);
+            Grant_Count := Grant_Count + 1;
          end if;
       end loop;
 
       Result := Akernel_User.Syscalls.Spawn_Boot_Path
-        (Path_Offset, Path_Length, Grant_Mask, Process_Cap);
+        (Path_Offset, Path_Length, Grant_Count, Process_Cap);
 
       if Result = Akernel_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
          Spawned_Count := Spawned_Count + 1;
@@ -238,6 +267,9 @@ begin
 
    Akernel_User.Syscalls.Debug_Put_Line ("boot manifest visible");
    Akernel_User.Syscalls.Debug_Put_Line ("launching manifest programs");
+
+   IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
+
    Parse_Manifest;
 
    Akernel_User.Syscalls.Yield;

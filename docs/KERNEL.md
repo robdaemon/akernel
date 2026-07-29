@@ -147,12 +147,18 @@ cases so far).
 `src/kernel/kernel-processes.*`, `kernel-program_loader.*`,
 `kernel-boot_files.*`
 
-`Spawn_Boot_Path` (syscall 8): manifest path slice + grant mask ->
+`Spawn_Boot_Path` (syscall 8): manifest path slice + grant count ->
 `Find_By_Manifest_Path` resolves slice to initrd image bytes -> PMM mark
 -> address space + stack -> ELF load -> process + main thread + context
--> grant requested caps if parent holds matching resource caps ->
-`Process_Object` cap into parent -> queue thread last; rewind PMM mark
-on any failure before child visible.
+-> `Grant_List_Caps` mints the parent's grant list (in the parent's IPC
+buffer at offset 128, up to 32 entries of handle/rights-mask/badge)
+into the child at handles 1..N; each entry must be open in the parent,
+not a reply cap, mask within `Valid_Rights_Mask`, rights a subset of
+the parent entry's (monotonically decreasing; mask encoding via
+`Kernel.Capabilities.To_Rights`/`To_Mask`) -> `Process_Object` cap into
+parent -> queue thread last; failure paths discard the slot (caps
+closed through the dispatcher once the thread exists, so partial
+grants release refcounts).
 
 Spawn status: 0 ok (a1 = process cap), 1 invalid program/path,
 2 no slot, 3 load failed, 4 cap grant failed, 5 scheduler failed,

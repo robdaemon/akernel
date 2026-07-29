@@ -59,6 +59,15 @@ package Kernel.Capabilities is
       Transfer => True,
       Manage   => True);
 
+   --  Userspace rights-mask encoding (spawn grant lists, docs/IPC.md):
+   --  bits 0..9 in Rights declaration order (Read = bit 0 ..
+   --  Manage = bit 9). Masks with bits outside Valid_Rights_Mask are
+   --  rejected by the kernel.
+   Valid_Rights_Mask : constant U64 := 16#3FF#;
+
+   function To_Rights (Mask : U64) return Rights;
+   function To_Mask (R : Rights) return U64;
+
    type Cap_Entry is record
       Valid  : Boolean;
       Kind   : Object_Kind;

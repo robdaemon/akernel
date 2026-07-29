@@ -1,5 +1,6 @@
 with System;
 with System.Storage_Elements;
+with Arch;
 with Arch.MMU;
 with Kernel.ELF;
 with Kernel.Physical_Memory;
@@ -34,30 +35,6 @@ package body Kernel.Processes is
 
    Stack_Top : constant U64 := 16#7000_0000#;
 
-   MMIO_Map_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => True,
-      Write    => True,
-      Execute  => False,
-      Map      => True,
-      Send     => False,
-      Receive  => False,
-      Wait     => False,
-      Ack      => False,
-      Transfer => False,
-      Manage   => False);
-
-   IRQ_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => False,
-      Write    => False,
-      Execute  => False,
-      Map      => False,
-      Send     => False,
-      Receive  => False,
-      Wait     => True,
-      Ack      => True,
-      Transfer => False,
-      Manage   => False);
-
    Process_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => True,
       Write    => False,
@@ -75,79 +52,105 @@ package body Kernel.Processes is
       Used := (others => False);
    end Initialize;
 
-   procedure Grant_Requested_Caps
-     (Parent     : Kernel.Tasks.Thread_Access;
-      PCB        : in out Kernel.Tasks.Process_Control_Block;
-      Grant_Mask : U64;
-      Result     : out Status)
+   --  Mint the parent's grant-list entries (in the parent's IPC
+   --  buffer page) into the child's cap table at handles 1..N.
+   --  Rights are monotonically decreasing: the requested mask must
+   --  be a subset of the parent entry's rights.
+   procedure Grant_List_Caps
+     (Parent      : Kernel.Tasks.Thread_Access;
+      PCB         : in out Kernel.Tasks.Process_Control_Block;
+      Grant_Count : U64;
+      Result      : out Status)
    is
       use type Kernel.Capabilities.Object_Kind;
+      use System.Storage_Elements;
 
-      Cap_Result : Kernel.Capabilities.Status;
-      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      type Grant_Entry is record
+         Source_Handle : U64;
+         Rights_Mask   : U64;
+         Badge         : U64;
+      end record;
+
+      type Grant_Array is array (0 .. Max_Grants - 1) of Grant_Entry;
+
+      Parent_Buffer_PA : U64;
+      Cap_Result       : Kernel.Capabilities.Status;
+      Cap_Info         : Kernel.Capabilities.Cap_Entry;
+      Requested        : Kernel.Capabilities.Rights;
    begin
       Result := Ok;
 
-      if (Grant_Mask and UART_MMIO_Grant_Bit) /= 0 then
-         Kernel.Tasks.Lookup_Cap
-           (TCB       => Parent.all,
-            Cap       => 1,
-            Result    => Cap_Result,
-            Out_Entry => Cap_Info);
-
-         if Cap_Result /= Kernel.Capabilities.Ok
-           or else Cap_Info.Kind /= Kernel.Capabilities.MMIO_Object
-           or else not Cap_Info.Rights.Map
-         then
-            Result := Cap_Failed;
-            return;
-         end if;
-
-         Kernel.Tasks.Insert_Process_Cap_At
-           (PCB    => PCB,
-            Cap    => 1,
-            Kind   => Cap_Info.Kind,
-            Object => Cap_Info.Object,
-            Rights => MMIO_Map_Rights,
-            Badge  => Cap_Info.Badge,
-            Result => Cap_Result);
-
-         if Cap_Result /= Kernel.Capabilities.Ok then
-            Result := Cap_Failed;
-            return;
-         end if;
+      if Grant_Count = 0 then
+         return;
       end if;
 
-      if (Grant_Mask and UART_IRQ_Grant_Bit) /= 0 then
-         Kernel.Tasks.Lookup_Cap
-           (TCB       => Parent.all,
-            Cap       => 2,
-            Result    => Cap_Result,
-            Out_Entry => Cap_Info);
-
-         if Cap_Result /= Kernel.Capabilities.Ok
-           or else Cap_Info.Kind /= Kernel.Capabilities.IRQ_Object
-           or else not Cap_Info.Rights.Wait
-           or else not Cap_Info.Rights.Ack
-         then
-            Result := Cap_Failed;
-            return;
-         end if;
-
-         Kernel.Tasks.Insert_Process_Cap_At
-           (PCB    => PCB,
-            Cap    => 2,
-            Kind   => Cap_Info.Kind,
-            Object => Cap_Info.Object,
-            Rights => IRQ_Rights,
-            Badge  => Cap_Info.Badge,
-            Result => Cap_Result);
-
-         if Cap_Result /= Kernel.Capabilities.Ok then
-            Result := Cap_Failed;
-         end if;
+      if Grant_Count > U64 (Max_Grants) or else Parent = null then
+         Result := Cap_Failed;
+         return;
       end if;
-   end Grant_Requested_Caps;
+
+      Parent_Buffer_PA := Kernel.Tasks.IPC_Buffer_PA (Parent.all);
+      if Parent_Buffer_PA = 0 then
+         Result := Cap_Failed;
+         return;
+      end if;
+
+      declare
+         Grants : Grant_Array
+           with Address => System'To_Address
+             (Integer_Address (Arch.Phys_To_Virt (Parent_Buffer_PA))
+              + Integer_Address (Grant_List_Offset));
+      begin
+         for Index in 0 .. Natural (Grant_Count) - 1 loop
+            if Grants (Index).Source_Handle >
+              U64 (Kernel.Capabilities.Handle'Last)
+            then
+               Result := Cap_Failed;
+               return;
+            end if;
+
+            Kernel.Tasks.Lookup_Cap
+              (TCB       => Parent.all,
+               Cap       => Kernel.Capabilities.Handle
+                 (Grants (Index).Source_Handle),
+               Result    => Cap_Result,
+               Out_Entry => Cap_Info);
+
+            if Cap_Result /= Kernel.Capabilities.Ok
+              or else Cap_Info.Kind = Kernel.Capabilities.Reply_Object
+              or else (Grants (Index).Rights_Mask
+                       and not Kernel.Capabilities.Valid_Rights_Mask) /= 0
+            then
+               Result := Cap_Failed;
+               return;
+            end if;
+
+            Requested := Kernel.Capabilities.To_Rights
+              (Grants (Index).Rights_Mask);
+
+            if not Kernel.Capabilities.Has_Rights
+              (Cap_Info.Rights, Requested)
+            then
+               Result := Cap_Failed;
+               return;
+            end if;
+
+            Kernel.Tasks.Insert_Process_Cap_At
+              (PCB    => PCB,
+               Cap    => Kernel.Capabilities.Handle (Index + 1),
+               Kind   => Cap_Info.Kind,
+               Object => Cap_Info.Object,
+               Rights => Requested,
+               Badge  => Grants (Index).Badge,
+               Result => Cap_Result);
+
+            if Cap_Result /= Kernel.Capabilities.Ok then
+               Result := Cap_Failed;
+               return;
+            end if;
+         end loop;
+      end;
+   end Grant_List_Caps;
 
    procedure Destroy_Address_Space (Root : U64) is
       Destroy_Result : Arch.MMU.Status;
@@ -157,12 +160,19 @@ package body Kernel.Processes is
       end if;
    end Destroy_Address_Space;
 
+   --  Close_Caps must be True only once the slot's thread is
+   --  initialized (grant minting and later): caps are then closed
+   --  through the dispatcher so cleanup hooks/refcount releases run.
+   --  Earlier failures use a raw table reset (only the pinned
+   --  address-space cap can be present).
    procedure Discard_Slot
-     (Slot : Process_Index)
+     (Slot       : Process_Index;
+      Close_Caps : Boolean)
    is
       Stack_Top  : constant U64 :=
         Kernel.Tasks.Kernel_Stack_Top (Threads (Slot));
       PMM_Result : Kernel.Physical_Memory.Status;
+      Cap_Result : Kernel.Capabilities.Status;
    begin
       if Stack_Top /= 0 then
          Kernel.Physical_Memory.Deallocate_Frame
@@ -173,7 +183,14 @@ package body Kernel.Processes is
 
       Kernel.Tasks.Set_State (Threads (Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (Slot), False);
-      Kernel.Tasks.Reset_Process_Caps (Processes (Slot));
+      if Close_Caps then
+         for Cap in Kernel.Capabilities.Handle loop
+            Kernel.Tasks.Close_Cap
+              (Threads (Slot)'Unchecked_Access, Cap, Cap_Result);
+         end loop;
+      else
+         Kernel.Tasks.Reset_Process_Caps (Processes (Slot));
+      end if;
       Kernel.Tasks.Set_Process_State
         (PCB       => Processes (Slot),
          New_State => Kernel.Tasks.Process_Dead);
@@ -183,7 +200,7 @@ package body Kernel.Processes is
    procedure Spawn_Image
      (Parent      : Kernel.Tasks.Thread_Access;
       Image       : Kernel.Program_Loader.Program_Image;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
    is
@@ -335,7 +352,7 @@ package body Kernel.Processes is
       Kernel.Tasks.Install_Address_Space_Cap (Processes (Slot), Cap_Result);
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;
-         Discard_Slot (Slot);
+         Discard_Slot (Slot, Close_Caps => False);
          Destroy_Address_Space (Root);
          return;
       end if;
@@ -356,9 +373,9 @@ package body Kernel.Processes is
          Stack     => Stack_Top,
          User_Satp => Arch.MMU.Satp_Value (Root));
 
-      Grant_Requested_Caps (Parent, Processes (Slot), Grant_Mask, Result);
+      Grant_List_Caps (Parent, Processes (Slot), Grant_Count, Result);
       if Result /= Ok then
-         Discard_Slot (Slot);
+         Discard_Slot (Slot, Close_Caps => True);
          Destroy_Address_Space (Root);
          return;
       end if;
@@ -379,7 +396,7 @@ package body Kernel.Processes is
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
-         Discard_Slot (Slot);
+         Discard_Slot (Slot, Close_Caps => True);
          Destroy_Address_Space (Root);
          return;
       end if;
@@ -392,7 +409,7 @@ package body Kernel.Processes is
          Kernel.Tasks.Close_Cap (Parent, Process_Cap, Cap_Result);
          Process_Cap := Kernel.Capabilities.Invalid_Handle;
          Result := Scheduler_Failed;
-         Discard_Slot (Slot);
+         Discard_Slot (Slot, Close_Caps => True);
          Destroy_Address_Space (Root);
          return;
       end if;
@@ -405,7 +422,7 @@ package body Kernel.Processes is
      (Parent      : Kernel.Tasks.Thread_Access;
       Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
    is
@@ -428,7 +445,7 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Spawn_Image (Parent, Image, Grant_Mask, Result, Process_Cap);
+      Spawn_Image (Parent, Image, Grant_Count, Result, Process_Cap);
    end Spawn_Boot_Path;
 
    --  Runs cleanup hooks and closes every cap in the owning process's
@@ -536,7 +553,7 @@ package body Kernel.Processes is
       Destroy_Address_Space
         (Kernel.Tasks.Process_Address_Space_Root (Processes (Slot)));
       Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), 0);
-      Discard_Slot (Slot);
+      Discard_Slot (Slot, Close_Caps => False);
       Result := Ok;
    end Reap_Process;
 end Kernel.Processes;

@@ -1,5 +1,6 @@
 with Interfaces;
 with System;
+with System.Storage_Elements;
 
 package body Akernel_User.Syscalls is
    use type Interfaces.Unsigned_64;
@@ -29,7 +30,7 @@ package body Akernel_User.Syscalls is
    function Raw_Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Process_Cap : System.Address) return U64
      with Import, Convention => C, External_Name => "akernel_sys_spawn_boot_path";
 
@@ -90,13 +91,13 @@ package body Akernel_User.Syscalls is
    function Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Process_Cap : out U64) return U64
    is
    begin
       Process_Cap := 0;
       return Raw_Spawn_Boot_Path
-        (Path_Offset, Path_Length, Grant_Mask, Process_Cap'Address);
+        (Path_Offset, Path_Length, Grant_Count, Process_Cap'Address);
    end Spawn_Boot_Path;
 
    function Boot_File_Size (File_Id : U64) return U64 is
@@ -141,6 +142,38 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_IPC_Reply (Reply_Cap_Handle);
    end IPC_Reply;
+
+   procedure Set_Grant
+     (Index       : U64;
+      Source_Cap  : U64;
+      Rights_Mask : U64;
+      Badge       : U64)
+   is
+      use System.Storage_Elements;
+
+      type Grant_Entry is record
+         Source_Handle : U64;
+         Rights_Mask   : U64;
+         Badge         : U64;
+      end record;
+
+      type Grant_Array is array (U64 range 0 .. Max_Grants - 1)
+        of Grant_Entry;
+
+      Grants : Grant_Array
+        with Volatile, Address => System'To_Address
+          (Integer_Address (IPC_Buffer_VA)
+           + Integer_Address (Grant_List_Offset));
+   begin
+      if Index >= Max_Grants then
+         return;
+      end if;
+
+      Grants (Index) :=
+        (Source_Handle => Source_Cap,
+         Rights_Mask   => Rights_Mask,
+         Badge         => Badge);
+   end Set_Grant;
 
    procedure Debug_Put (S : String) is
    begin

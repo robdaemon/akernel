@@ -1,4 +1,6 @@
 with Interfaces;
+with System;
+with System.Storage_Elements;
 
 package Akernel_User.Syscalls is
    subtype U64 is Interfaces.Unsigned_64;
@@ -19,6 +21,19 @@ package Akernel_User.Syscalls is
    Syscall_Failed      : constant U64 := U64'Last;
    Boot_EOF            : constant U64 := 256;
 
+   --  Rights-mask bits for spawn grant lists (kernel encoding:
+   --  Read = bit 0 .. Manage = bit 9).
+   Right_Read     : constant U64 := 1;
+   Right_Write    : constant U64 := 2;
+   Right_Execute  : constant U64 := 4;
+   Right_Map      : constant U64 := 8;
+   Right_Send     : constant U64 := 16;
+   Right_Receive  : constant U64 := 32;
+   Right_Wait     : constant U64 := 64;
+   Right_Ack      : constant U64 := 128;
+   Right_Transfer : constant U64 := 256;
+   Right_Manage   : constant U64 := 512;
+
    Spawn_Ok               : constant U64 := 0;
    Spawn_Invalid_Program  : constant U64 := 1;
    Spawn_No_Slot          : constant U64 := 2;
@@ -32,7 +47,7 @@ package Akernel_User.Syscalls is
    function Spawn_Boot_Path
      (Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Process_Cap : out U64) return U64;
    function Boot_File_Size (File_Id : U64) return U64;
    function Boot_Read_Byte
@@ -52,6 +67,34 @@ package Akernel_User.Syscalls is
    IPC_Transfer_Failed : constant U64 := 2;
    IPC_Endpoint_Gone   : constant U64 := 3;
    IPC_Reply_Gone      : constant U64 := 4;
+
+   --  96-byte IPC message in this thread's buffer page.
+   type IPC_Word_Array is array (0 .. 5) of U64;
+   type IPC_Cap_Array is array (0 .. 3) of U64;
+   type IPC_Message is record
+      Label : U64;
+      Words : IPC_Word_Array;
+      Caps  : IPC_Cap_Array;
+      Badge : U64;
+   end record;
+
+   Message : IPC_Message
+     with Volatile, Address =>
+       System'To_Address (System.Storage_Elements.Integer_Address
+         (IPC_Buffer_VA));
+
+   --  Spawn grant list: up to Max_Grants entries of (source handle,
+   --  rights mask, badge) written into this thread's buffer page at
+   --  Grant_List_Offset before calling Spawn_Boot_Path. The child
+   --  receives the caps at handles 1..Grant_Count in list order.
+   Grant_List_Offset : constant U64 := 128;
+   Max_Grants        : constant U64 := 32;
+   procedure Set_Grant
+     (Index       : U64;
+      Source_Cap  : U64;
+      Rights_Mask : U64;
+      Badge       : U64);
+
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);
 end Akernel_User.Syscalls;

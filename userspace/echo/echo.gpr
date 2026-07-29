@@ -1,0 +1,18 @@
+project Echo is
+   for Source_Dirs use (".", "../rts/akernel");
+   for Object_Dir use "../../obj/userspace/echo";
+   for Create_Missing_Dirs use "True";
+   for Exec_Dir use "../../bin/userspace";
+   for Languages use ("Ada", "Asm");
+   for Main use ("echo.adb");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "light-rv64imafdc";
+
+   package Builder is
+      for Executable ("echo.adb") use "echo.elf";
+   end Builder;
+
+   package Linker is
+      for Switches ("Ada") use ("-T", Project'Project_Dir & "../rts/akernel/linker-riscv64.ld");
+   end Linker;
+end Echo;

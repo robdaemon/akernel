@@ -1,7 +1,10 @@
 # IPC design
 
-Status: agreed design, not yet implemented. Decisions taken in design
-discussion; see "Deferred" at bottom for explicitly postponed items.
+Status: core implemented (ep_create, call/recv/reply, cap transfer,
+reply cap, endpoint slab, FIFO caller queue, grant-list spawn with
+rights-subset enforcement + badges). Remaining designed-but-unbuilt:
+image caps + bootinfo page for spawn, RTS wrappers, init namespace
+composition. Deferred items at bottom.
 
 ## Principles
 
@@ -53,6 +56,23 @@ allocated instead.
 
 Rationale: full message is 96 bytes; syscall registers (a0..a5) cannot
 carry it on send or return it on recv. Buffer is the canonical ABI.
+
+## Rendezvous and blocking
+
+Callers block in a per-endpoint FIFO queue (TCB-linked; blocked callers
+are not in the ready queue, so there is no membership conflict). A
+receiver takes the head caller's message; the caller stays blocked
+until the receiver replies (or the reply fails). One waiting receiver
+per endpoint (single-receiver discipline, same as IRQ lines). Endpoint
+finalization fails every queued caller and the waiting receiver with
+`endpoint gone` (3).
+
+Wake-with-status: the waker writes the result code into the blocked
+thread's saved trap-frame a0 in its TCB context
+(`Kernel.Tasks.Set_Saved_Result`) before `Scheduler.Wake`.
+
+Userspace result codes (a0): 0 ok, 1 invalid, 2 transfer failed,
+3 endpoint gone, 4 reply gone.
 
 ## Syscalls
 
@@ -152,25 +172,29 @@ reads, shared buffers) moves through `Memory_Object` caps:
 Namespace = per-process set of caps, Plan 9 style. Kernel moves caps;
 names are userspace metadata, never parsed by the kernel.
 
-### Spawn ABI v2 (replaces grant_mask and manifest path slices)
+### Spawn ABI (grant lists implemented; image caps pending)
 
 ```text
-spawn(a0 = image_cap, a1 = grant_count)
-  grant entries in IPC buffer, each 24 bytes:
+spawn_boot_path(a0 = path_off, a1 = path_len, a2 = grant_count)
+  grant entries in spawner's IPC buffer at offset 128, max 32,
+  each 24 bytes:
     u64 parent_handle
-    u64 rights_mask      (bit encoding of Rights record, TBD in impl)
+    u64 rights_mask      (bit 0 Read .. bit 9 Manage, Rights record order)
     u64 badge
 ```
 
-Kernel mints each entry (`Duplicate` semantics: rights must be subset of
-parent's) into the child cap table at sequential handles 1..N. Child's
-namespace is exactly what the parent grants. Reserved handles 254
-(reply) and 255 (self AS) are kernel-managed.
+Kernel mints each entry into the child cap table at sequential handles
+1..N. Validation: handle open in parent, not a reply cap, mask within
+the valid 10 bits, requested rights a subset of the parent entry's
+(monotonically decreasing). Child's namespace is exactly what the
+parent grants. Reserved handles 254 (reply) and 255 (self AS) are
+kernel-managed.
 
-Image cap kinds accepted: `Boot_File_Object` (initrd) or
-`Memory_Object` (ELF staged by a file server). Uniform spawn regardless
-of backend; kills the "VFS path for spawn" item — a file server hands
-the spawner a memory cap containing the ELF.
+Still pending from the v2 design: image cap in place of the manifest
+path slice — `Boot_File_Object` (initrd) or `Memory_Object` (ELF
+staged by a file server) — and the bootinfo page. Uniform spawn
+regardless of backend; kills the "VFS path for spawn" item — a file
+server hands the spawner a memory cap containing the ELF.
 
 ### Boot file caps
 

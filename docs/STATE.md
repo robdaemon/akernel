@@ -94,7 +94,8 @@ QEMU virt RAM base:     0x80000000
 - Preemptive scheduler (100 ms user-thread timeslice); kernel itself
   non-preemptible; small fixed process/thread tables; single hart.
 - No IPC syscalls yet (design agreed, see docs/IPC.md).
-- Spawn uses manifest path slices + grant mask; namespace grant-list ABI
-  designed but not implemented.
+- Spawn resolves images by manifest path slice; caps passed via
+  grant list in spawner's IPC buffer (rights-subset enforced). Image
+  caps + bootinfo page designed, not yet implemented.
 - No DTB-based device enumeration; initrd load address fixed.
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime + stubs).

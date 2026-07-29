@@ -1,4 +1,5 @@
 with Interfaces;
+with Akernel_User.Syscalls;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
@@ -150,6 +151,17 @@ procedure Fuzz is
    Number   : U64;
    A0, A1, A2, A3, A4, A5 : U64;
 
+   --  End-to-end IPC state.
+   EP, EP2       : U64;
+   Echo_Offset   : U64;
+   Echo_Process  : U64;
+   Manifest_Size : U64;
+   Match         : Natural;
+   Reaped        : Boolean;
+   Ignore        : U64;
+
+   Echo_Path : constant String := "Tests/Echo";
+
    Iterations : constant U64 := 4096;
 begin
    Put_Line ("fuzz online");
@@ -209,6 +221,135 @@ begin
    Check (Status /= 0, "spawn past-eof path rejected");
    Status := Raw_Ecall (Sys_Spawn, 10, 12, 3, 0, 0, 0);
    Check (Status /= 0, "spawn truncated path rejected");
+
+   ----------------------------------------------------------------
+   --  End-to-end IPC: spawn the echo server with a granted
+   --  endpoint, ping-pong three rounds (badge, round-trip, one-shot
+   --  reply cap, cap transfer), then reap the exited child.
+   ----------------------------------------------------------------
+
+   --  Locate "Tests/Echo" inside the boot manifest file.
+   Manifest_Size := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
+   Echo_Offset := Failed;
+   if Manifest_Size /= Failed
+     and then Manifest_Size >= U64 (Echo_Path'Length)
+   then
+      A0 := 0;
+      while A0 + U64 (Echo_Path'Length) <= Manifest_Size loop
+         Match := 0;
+         for J in Echo_Path'Range loop
+            A1 := Raw_Ecall
+              (Sys_Boot_Read_Byte, 1,
+               A0 + U64 (J - Echo_Path'First), 0, 0, 0, 0);
+            exit when A1 > 255
+              or else Character'Val (Natural (A1)) /= Echo_Path (J);
+            Match := Match + 1;
+         end loop;
+         if Match = Echo_Path'Length then
+            Echo_Offset := A0;
+            exit;
+         end if;
+         A0 := A0 + 1;
+      end loop;
+   end if;
+   Check (Echo_Offset /= Failed, "echo path found in manifest");
+
+   --  Endpoint granted by init at handle 1 with badge 0xEC40
+   --  (session-manager badge pattern); messages sent through it
+   --  arrive at echo stamped with that badge.
+   EP := 1;
+
+   --  Grant-list validation: unopened source handle.
+   Akernel_User.Syscalls.Set_Grant (0, 250, 0, 0);
+   Status := Raw_Ecall
+     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Check (Status = 4, "spawn grant of unopened cap rejected");
+
+   --  Rights escalation: endpoints carry no Read right.
+   Akernel_User.Syscalls.Set_Grant
+     (0, EP, Akernel_User.Syscalls.Right_Read, 0);
+   Status := Raw_Ecall
+     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Check (Status = 4, "spawn grant rights escalation rejected");
+
+   --  Rights mask bits outside the valid set.
+   Akernel_User.Syscalls.Set_Grant (0, EP, 16#400#, 0);
+   Status := Raw_Ecall
+     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Check (Status = 4, "spawn grant unknown rights bits rejected");
+
+   --  Grant count above the ABI limit.
+   Status := Raw_Ecall
+     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 33, 0, 0, 0);
+   Check (Status = 4, "spawn grant count over limit rejected");
+
+   --  Valid grant: endpoint with Send+Receive (badged cap stays
+   --  with the fuzzer; echo's own badge is irrelevant).
+   Akernel_User.Syscalls.Set_Grant
+     (0, EP,
+      Akernel_User.Syscalls.Right_Send + Akernel_User.Syscalls.Right_Receive,
+      0);
+   Status := Raw_Ecall
+     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   --  fuzz_last_a1 is rewritten by every ecall: capture the process
+   --  cap before Check (or anything else) makes another syscall.
+   Echo_Process := Last_A1;
+   Check (Status = 0 and then Echo_Process /= 0,
+          "echo spawned with granted endpoint");
+
+   --  Round 1: badge + round-trip + first double-reply marker.
+   Akernel_User.Syscalls.Message.Label := 16#AB#;
+   Akernel_User.Syscalls.Message.Words := (1, 2, 3, 4, 5, 6);
+   Akernel_User.Syscalls.Message.Caps := (others => 0);
+   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Check (Status = 0, "echo call round 1 returned ok");
+   Check (Akernel_User.Syscalls.Message.Label = 16#AB#,
+          "echo round 1 label round-trips");
+   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#,
+          "echo round 1 badge delivered");
+   Check (Akernel_User.Syscalls.Message.Words (1) = 1
+          and then Akernel_User.Syscalls.Message.Words (4) = 4,
+          "echo round 1 words round-trip");
+   Check (Akernel_User.Syscalls.Message.Words (5) = 0,
+          "echo round 1 first-reply marker");
+
+   --  Round 2: word 5 must carry the failed double-reply code (1).
+   Akernel_User.Syscalls.Message.Label := 16#CD#;
+   Akernel_User.Syscalls.Message.Words := (6, 5, 4, 3, 2, 1);
+   Akernel_User.Syscalls.Message.Caps := (others => 0);
+   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Check (Status = 0, "echo call round 2 returned ok");
+   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#
+          and then Akernel_User.Syscalls.Message.Words (1) = 6,
+          "echo round 2 payload");
+   Check (Akernel_User.Syscalls.Message.Words (5) = 1,
+          "echo double reply rejected (one-shot cap)");
+
+   --  Round 3: cap transfer. EP2's handle is rewritten into echo's
+   --  table (first free handle there = 2); echo reports it.
+   EP2 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   Check (EP2 < 256 and then EP2 /= EP, "second endpoint created");
+   Akernel_User.Syscalls.Message.Label := 16#EF#;
+   Akernel_User.Syscalls.Message.Words := (others => 0);
+   Akernel_User.Syscalls.Message.Caps := (EP2, 0, 0, 0);
+   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Check (Status = 0, "echo call round 3 returned ok");
+   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#,
+          "echo round 3 badge delivered");
+   Check (Akernel_User.Syscalls.Message.Words (1) = 2,
+          "cap transferred and rewritten to echo handle 2");
+
+   --  Echo exits after three rounds; reap it once it has exited.
+   Reaped := False;
+   for Try in 1 .. 128 loop
+      Status := Raw_Ecall (Sys_Reap, Echo_Process, 0, 0, 0, 0, 0);
+      if Status = 0 then
+         Reaped := True;
+         exit;
+      end if;
+      Ignore := Raw_Ecall (Sys_Yield, 0, 0, 0, 0, 0, 0);
+   end loop;
+   Check (Reaped, "echo reaped after exit");
 
    --  Random phase: every syscall except exit (9).  Spawn path length
    --  forced to 0 so no resolvable path can form.  debug_putchar bytes

@@ -436,7 +436,7 @@ package body Arch.Traps is
    procedure Handle_Spawn_Boot_Path (Frame : System.Address) is
       Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
       Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Grant_Mask  : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Grant_Count : constant U64 := Trap_Frame_Get_A2 (Frame);
       Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Result      : Kernel.Processes.Status;
@@ -446,7 +446,7 @@ package body Arch.Traps is
         (Parent      => Current,
          Path_Offset => Path_Offset,
          Path_Length => Path_Length,
-         Grant_Mask  => Grant_Mask,
+         Grant_Count => Grant_Count,
          Result      => Result,
          Process_Cap => Process_Cap);
 

@@ -17,14 +17,21 @@ package Kernel.Processes is
 
    procedure Initialize;
 
-   UART_MMIO_Grant_Bit : constant U64 := 1;
-   UART_IRQ_Grant_Bit  : constant U64 := 2;
+   --  Spawn grant-list ABI (docs/IPC.md): the parent lays out up to
+   --  Max_Grants entries of 24 bytes (handle u64, rights mask u64,
+   --  badge u64) in its IPC buffer page at Grant_List_Offset. The
+   --  kernel validates each (handle open in parent, not a reply cap,
+   --  rights a subset of the parent's, mask within Valid_Rights_Mask)
+   --  and mints the caps into the child's table at handles 1..N in
+   --  list order. Rights-mask encoding: Kernel.Capabilities.To_Rights.
+   Max_Grants        : constant := 32;
+   Grant_List_Offset : constant U64 := 128;
 
    procedure Spawn_Boot_Path
      (Parent      : Kernel.Tasks.Thread_Access;
       Path_Offset : U64;
       Path_Length : U64;
-      Grant_Mask  : U64;
+      Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle);
 

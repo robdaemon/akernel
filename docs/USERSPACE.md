@@ -12,9 +12,15 @@
 4  irq_ack(a0 = irq_cap)
 6  boot_file_size(a0 = file_id) -> len, U64'Last fail
 7  boot_read_byte(a0 = file_id, a1 = offset) -> 0..255, 256 EOF, U64'Last fail
-8  spawn_boot_path(a0 = path_off, a1 = path_len, a2 = grant_mask)
+8  spawn_boot_path(a0 = path_off, a1 = path_len, a2 = grant_count)
    -> a0 status (0 ok, 1 invalid, 2 no slot, 3 load fail, 4 cap fail,
       5 sched fail, 6 invalid parent), a1 = process cap on ok
+   grant list: up to 32 entries of 24 bytes (source handle u64,
+   rights mask u64, badge u64) in the spawner's IPC buffer page at
+   offset 128; child receives caps at handles 1..N in list order.
+   Rights mask bits: 0 Read, 1 Write, 2 Execute, 3 Map, 4 Send,
+   5 Receive, 6 Wait, 7 Ack, 8 Transfer, 9 Manage; must be a subset
+   of the source cap's rights.
 9  exit() -> does not return
 10 reap_process(a0 = process_cap) -> 0 ok, 1 invalid, 2 not exited
 11 ep_create() -> endpoint cap handle, U64'Last fail
@@ -60,15 +66,23 @@ runtime later (Ada rendezvous maps onto call/recv/reply). See docs/IPC.md.
 Standalone Alire projects building to `bin/userspace/*.elf`:
 
 - `userspace/init/` — verifies manifest readable (fatal yield loop if
-  not; not kernel panic), parses manifest, spawns each `program` line
-  with grant mask, prints `serial spawned` for id 1, yields, resumes.
+  not; not kernel panic), parses manifest, builds a grant list per
+  `program` line (uart_mmio/uart_irq/ipc_test tokens), spawns, yields,
+  resumes. Mints the badged ipc_test endpoint granted to the fuzzer
+  (session-manager badge pattern).
 - `userspace/serial/` — maps UART MMIO (cap 1) at VA 0x50000000, prints
   `serial driver online`, loops `IRQ_Wait`/`IRQ_Ack` (cap 2) draining RX.
-- `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, no grants): directed
-  edge cases + 4096 deterministic pseudo-random syscalls. Found the
-  `irq_wait` missing-`Advance_SEPC` livelock. Directed PASS incl.
-  ep_create and non-blocking IPC validation; random phase skips the
-  blocking IPC trio. End-to-end IPC fuzzing is a separate milestone.
+- `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted the badged
+  ipc_test endpoint at cap 1): directed edge cases + end-to-end IPC
+  (spawns echo with a granted endpoint, three ping-pong rounds: badge
+  stamping, label/word round-trip, one-shot reply cap, cap transfer
+  with handle rewrite, then reap) + grant-list validation cases +
+  4096 deterministic pseudo-random syscalls. Found the `irq_wait`
+  missing-`Advance_SEPC` livelock. 40/40 directed PASS.
+- `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
+  fuzzer with an endpoint cap at handle 1: recv/reply rounds reporting
+  badge, words, double-reply failure, transferred cap handle; exits
+  after three rounds.
 - `userspace/spin/` — preemption canary (`Tests/Spin`, no grants): prints
   `spin online` then busy-loops forever; boot continuing afterwards
   proves timer preemption.
@@ -81,10 +95,13 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 program <id> <path> [grants...]
 ```
 
-Current: `program 1 Drivers/Serial uart_mmio uart_irq` and a fuzzer
-entry. Boot-launch mechanism for initrd contents only (Amiga-ish
-startup-sequence role); not a general namespace mechanism — see
-docs/IPC.md for namespace/session design.
+Current: serial with `uart_mmio uart_irq`, fuzzer with `ipc_test`,
+spinner, plus a `# file Tests/Echo` comment line (skipped by init;
+keeps the path resolvable for the fuzzer's spawn). Boot-launch
+mechanism for initrd contents only (Amiga-ish startup-sequence
+role); not a general namespace mechanism — see docs/IPC.md for
+namespace/session design.
 
-Grant mask bits (userspace ABI): bit 0 = UART MMIO, bit 1 = UART IRQ.
-Transitional until spawn v2 grant lists.
+Grant tokens map to grant-list entries: `uart_mmio` -> cap 1
+(Map+Read+Write), `uart_irq` -> cap 2 (Wait+Ack), `ipc_test` -> init's
+endpoint with full rights and badge 0xEC40.

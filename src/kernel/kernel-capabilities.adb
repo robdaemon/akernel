@@ -1,4 +1,5 @@
 package body Kernel.Capabilities is
+   use type Interfaces.Unsigned_64;
    use type System.Address;
    procedure Initialize (Table : out Cap_Table) is
    begin
@@ -21,6 +22,37 @@ package body Kernel.Capabilities is
         (not Need.Transfer or else Have.Transfer) and then
         (not Need.Manage   or else Have.Manage);
    end Has_Rights;
+
+   function To_Rights (Mask : U64) return Rights is
+   begin
+      return
+        (Read     => (Mask and 1) /= 0,
+         Write    => (Mask and 2) /= 0,
+         Execute  => (Mask and 4) /= 0,
+         Map      => (Mask and 8) /= 0,
+         Send     => (Mask and 16) /= 0,
+         Receive  => (Mask and 32) /= 0,
+         Wait     => (Mask and 64) /= 0,
+         Ack      => (Mask and 128) /= 0,
+         Transfer => (Mask and 256) /= 0,
+         Manage   => (Mask and 512) /= 0);
+   end To_Rights;
+
+   function To_Mask (R : Rights) return U64 is
+      Mask : U64 := 0;
+   begin
+      if R.Read     then Mask := Mask or 1;   end if;
+      if R.Write    then Mask := Mask or 2;   end if;
+      if R.Execute  then Mask := Mask or 4;   end if;
+      if R.Map      then Mask := Mask or 8;   end if;
+      if R.Send     then Mask := Mask or 16;  end if;
+      if R.Receive  then Mask := Mask or 32;  end if;
+      if R.Wait     then Mask := Mask or 64;  end if;
+      if R.Ack      then Mask := Mask or 128; end if;
+      if R.Transfer then Mask := Mask or 256; end if;
+      if R.Manage   then Mask := Mask or 512; end if;
+      return Mask;
+   end To_Mask;
 
    procedure Insert
      (Table  : in out Cap_Table;

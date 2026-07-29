@@ -32,13 +32,18 @@ kernel cap tables.
     forever-spinner no longer hangs the system. SMP deferred: per-hart
     ready queues or shared queue + lock, IPIs, per-hart timers, cap
     table locking.
-5. Fuzzer: IPC/endpoint directed cases (all reply-cap lifecycle rows in
-   docs/IPC.md) + random phase with endpoints; multi-process fuzz
-   (spawn child that fuzzes, then reap); valid-handle/wrong-rights cases.
-6. Spawn ABI v2: image cap + grant list via IPC buffer;
-   `Boot_File_Object` caps for initrd files handed to init; bootinfo
-   page for init bootstrap; retire grant_mask, manifest path slices,
-   and boot_read_byte once migrated.
+5. ~~Fuzzer~~ — done: grant-list spawn replaced grant_mask outright
+   (syscall 8 a2 = grant count; entries in spawner's IPC buffer,
+   rights-subset enforced); end-to-end echo (badge stamping,
+   round-trip, one-shot reply cap, cap transfer + handle rewrite,
+   reap), grant validation cases (unopened handle, escalation,
+   unknown bits, count limit); 40/40 directed PASS. Session-manager
+   badge pattern exercised: init mints badged endpoint to fuzzer.
+6. Spawn ABI v2 remainder: image cap instead of path slice
+   (`Boot_File_Object` caps for initrd files handed to init); bootinfo
+   page for init bootstrap; retire manifest path slices and
+   boot_read_byte once migrated. Grant-list mechanism already in
+   place from milestone 5.
 7. RTS core: `Akernel.IPC` typed wrappers; init migrated to namespace
    composition (manifest becomes data for grant lists only).
 
