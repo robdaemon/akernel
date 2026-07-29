@@ -37,7 +37,7 @@ package body Arch.Traps is
    Sys_IRQ_Ack           : constant U64 := 4;
    Sys_Boot_File_Size    : constant U64 := 6;
    Sys_Boot_Read_Byte    : constant U64 := 7;
-   Sys_Spawn_Boot_Path   : constant U64 := 8;
+   Sys_Spawn             : constant U64 := 8;
    Sys_Exit              : constant U64 := 9;
    Sys_Reap_Process      : constant U64 := 10;
    Sys_EP_Create         : constant U64 := 11;
@@ -433,19 +433,28 @@ package body Arch.Traps is
       return Kernel.Processes.Status'Pos (Result);
    end Process_Status_Code;
 
-   procedure Handle_Spawn_Boot_Path (Frame : System.Address) is
-      Path_Offset : constant U64 := Trap_Frame_Get_A0 (Frame);
-      Path_Length : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Grant_Count : constant U64 := Trap_Frame_Get_A2 (Frame);
+   --  Spawn ABI v2: a0 = Boot_File_Object image cap (Read+Execute),
+   --  a1 = grant count; grant entries in the caller's IPC buffer.
+   procedure Handle_Spawn (Frame : System.Address) is
+      Image_Cap   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Grant_Count : constant U64 := Trap_Frame_Get_A1 (Frame);
       Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       Result      : Kernel.Processes.Status;
       Process_Cap : Kernel.Capabilities.Handle;
    begin
-      Kernel.Processes.Spawn_Boot_Path
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Image_Cap, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         Trap_Frame_Set_A1 (Frame, 0);
+         return;
+      end if;
+
+      Kernel.Processes.Spawn_Boot_Image
         (Parent      => Current,
-         Path_Offset => Path_Offset,
-         Path_Length => Path_Length,
+         Image_Cap   => Image_Cap,
          Grant_Count => Grant_Count,
          Result      => Result,
          Process_Cap => Process_Cap);
@@ -456,17 +465,59 @@ package body Arch.Traps is
       else
          Trap_Frame_Set_A1 (Frame, 0);
       end if;
-   end Handle_Spawn_Boot_Path;
+   end Handle_Spawn;
+
+   --  Boot byte API (cap-based): a0 = Boot_File_Object cap with the
+   --  Read right. Used by init to parse the manifest; the kernel
+   --  never parses a path.
+   procedure Lookup_Boot_File_Cap
+     (Frame    : System.Address;
+      Current  : Kernel.Tasks.Thread_Access;
+      Cap_Info : out Kernel.Capabilities.Cap_Entry;
+      Valid    : out Boolean)
+   is
+      use type Kernel.Capabilities.Status;
+
+      Cap_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+   begin
+      Valid := False;
+      Cap_Info := Kernel.Capabilities.Null_Cap;
+
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      Valid := Cap_Result = Kernel.Capabilities.Ok;
+   end Lookup_Boot_File_Cap;
 
    procedure Handle_Boot_File_Size (Frame : System.Address) is
       use type Kernel.Boot_Files.Status;
 
-      File_Id : constant U64 := Trap_Frame_Get_A0 (Frame);
-      Result  : Kernel.Boot_Files.Status;
-      Length  : U64;
+      Current  : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Info : Kernel.Capabilities.Cap_Entry;
+      Valid    : Boolean;
+      Result   : Kernel.Boot_Files.Status;
+      Length   : U64;
    begin
+      Lookup_Boot_File_Cap (Frame, Current, Cap_Info, Valid);
+      if not Valid then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
       Kernel.Boot_Files.Size
-        (File_Id => File_Id,
+        (Cap     => Cap_Info,
          Result  => Result,
          Length  => Length);
 
@@ -480,13 +531,22 @@ package body Arch.Traps is
    procedure Handle_Boot_Read_Byte (Frame : System.Address) is
       use type Kernel.Boot_Files.Status;
 
-      File_Id : constant U64 := Trap_Frame_Get_A0 (Frame);
-      Offset  : constant U64 := Trap_Frame_Get_A1 (Frame);
-      Result  : Kernel.Boot_Files.Status;
-      Value   : U64;
+      Offset   : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Current  : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Info : Kernel.Capabilities.Cap_Entry;
+      Valid    : Boolean;
+      Result   : Kernel.Boot_Files.Status;
+      Value    : U64;
    begin
+      Lookup_Boot_File_Cap (Frame, Current, Cap_Info, Valid);
+      if not Valid then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
       Kernel.Boot_Files.Read_Byte
-        (File_Id => File_Id,
+        (Cap     => Cap_Info,
          Offset  => Offset,
          Result  => Result,
          Value   => Value);
@@ -715,8 +775,8 @@ package body Arch.Traps is
          Handle_Boot_File_Size (Frame);
       elsif Number = Sys_Boot_Read_Byte then
          Handle_Boot_Read_Byte (Frame);
-      elsif Number = Sys_Spawn_Boot_Path then
-         Handle_Spawn_Boot_Path (Frame);
+      elsif Number = Sys_Spawn then
+         Handle_Spawn (Frame);
       elsif Number = Sys_Exit then
          Handle_Exit (Frame);
          return;

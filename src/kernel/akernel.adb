@@ -7,7 +7,9 @@ with Arch.User_Mode;
 with Board.Device_Tree;
 with Board.Interrupts;
 with Board.UART;
+with Kernel.Boot_Files;
 with Kernel.Boot_Resources;
+with Kernel.Bootinfo;
 with Kernel.Capabilities;
 with Kernel.Device_Tree;
 with Kernel.ELF;
@@ -22,6 +24,8 @@ with Kernel.Tasks;
 procedure Akernel is
    use type Interfaces.Unsigned_64;
    use type Kernel.Capabilities.Status;
+   use type Kernel.Boot_Files.Status;
+   use type Kernel.Bootinfo.Status;
    use type Kernel.Device_Tree.Status;
    use type Arch.MMU.Status;
    use type Kernel.ELF.Status;
@@ -106,6 +110,20 @@ procedure Akernel is
       Wait     => True,
       Ack      => True,
       Transfer => False,
+      Manage   => False);
+
+   --  Image caps handed to init: spawn consumes them (Read+Execute);
+   --  Transfer lets init re-grant images to delegate spawners.
+   Boot_File_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => True,
+      Write    => False,
+      Execute  => True,
+      Map      => False,
+      Send     => False,
+      Receive  => False,
+      Wait     => False,
+      Ack      => False,
+      Transfer => True,
       Manage   => False);
 
    Stress_Frame_Count : constant := 32;
@@ -405,6 +423,22 @@ begin
       Base   => Init_Image_Base,
       Size   => Init_Image_Size);
 
+   --  Boot-file image caps: enumerate every initrd file into the
+   --  static Boot_File_Object table before caps are minted below.
+   if Initrd_Result = Kernel.Initrd.Ok then
+      declare
+         Files_Result : Kernel.Boot_Files.Status;
+         Files_Count  : Natural;
+      begin
+         Kernel.Boot_Files.Enumerate
+           (Result => Files_Result,
+            Count  => Files_Count);
+         if Files_Result /= Kernel.Boot_Files.Ok then
+            Board.UART.Put_Line ("boot file enumeration failed");
+         end if;
+      end;
+   end if;
+
    if Initrd_Result = Kernel.Initrd.Ok then
       Arch.MMU.New_User_Address_Space
         (Result => MMU_Result,
@@ -521,6 +555,74 @@ begin
       Rights => IRQ_Wait_Ack_Rights,
       Badge  => 0,
       Result => Result);
+
+   --  Bootinfo page + boot-file image caps (docs/IPC.md): init's
+   --  namespace is one cap per initrd file at handles 3..N, listed
+   --  by name in the read-only bootinfo page alongside the device
+   --  caps at handles 1..2, so init hardcodes no handle numbers.
+   if User_Root_Table /= 0 then
+      declare
+         Bootinfo_Result : Kernel.Bootinfo.Status;
+         Bootinfo_Broken : Boolean := False;
+
+         procedure Add_Bootinfo
+           (Handle : Kernel.Capabilities.U64;
+            Kind   : Kernel.Capabilities.Object_Kind;
+            Rights : Kernel.Capabilities.Rights;
+            Name   : String)
+         is
+         begin
+            if not Bootinfo_Broken then
+               Kernel.Bootinfo.Add
+                 (Handle      => Handle,
+                  Kind        =>
+                    Kernel.Capabilities.U64
+                      (Kernel.Capabilities.Object_Kind'Pos (Kind)),
+                  Rights_Mask => Kernel.Capabilities.To_Mask (Rights),
+                  Name        => Name,
+                  Result      => Bootinfo_Result);
+               Bootinfo_Broken := Bootinfo_Result /= Kernel.Bootinfo.Ok;
+            end if;
+         end Add_Bootinfo;
+      begin
+         Kernel.Bootinfo.Install
+           (Root   => User_Root_Table,
+            Result => Bootinfo_Result);
+
+         if Bootinfo_Result = Kernel.Bootinfo.Ok then
+            Add_Bootinfo (1, Kernel.Capabilities.MMIO_Object,
+                          MMIO_Map_Rights, "uart/mmio");
+            Add_Bootinfo (2, Kernel.Capabilities.IRQ_Object,
+                          IRQ_Wait_Ack_Rights, "uart/irq");
+
+            for Index in 1 .. Kernel.Boot_Files.File_Count loop
+               Kernel.Tasks.Insert_Cap_At
+                 (TCB    => Init_Task,
+                  Cap    => Kernel.Capabilities.Handle (Index + 2),
+                  Kind   => Kernel.Capabilities.Boot_File_Object,
+                  Object => Kernel.Boot_Files.File_Object (Index),
+                  Rights => Boot_File_Rights,
+                  Badge  => 0,
+                  Result => Result);
+               exit when Result /= Kernel.Capabilities.Ok;
+               Add_Bootinfo (Kernel.Capabilities.U64 (Index + 2),
+                             Kernel.Capabilities.Boot_File_Object,
+                             Boot_File_Rights,
+                             Kernel.Boot_Files.File_Name (Index));
+            end loop;
+
+            if not Bootinfo_Broken
+              and then Result = Kernel.Capabilities.Ok
+            then
+               Board.UART.Put_Line ("bootinfo online");
+            else
+               Board.UART.Put_Line ("bootinfo incomplete");
+            end if;
+         else
+            Board.UART.Put_Line ("bootinfo install failed");
+         end if;
+      end;
+   end if;
 
    Kernel.Interrupts.Initialize;
    Kernel.Processes.Initialize;

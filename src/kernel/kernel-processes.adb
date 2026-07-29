@@ -1,10 +1,11 @@
 with System;
 with System.Storage_Elements;
+with Ada.Unchecked_Conversion;
 with Arch;
 with Arch.MMU;
 with Kernel.ELF;
+with Kernel.Objects;
 with Kernel.Physical_Memory;
-with Kernel.Program_Loader;
 with Kernel.Scheduler;
 
 package body Kernel.Processes is
@@ -14,7 +15,6 @@ package body Kernel.Processes is
    use type Kernel.Capabilities.Status;
    use type Kernel.ELF.Status;
    use type Kernel.Physical_Memory.Status;
-   use type Kernel.Program_Loader.Status;
    use type Kernel.Scheduler.Status;
    use type Kernel.Tasks.Process_Access;
    use type Kernel.Tasks.Process_State;
@@ -34,6 +34,12 @@ package body Kernel.Processes is
    Used      : Slot_Used_Array := (others => False);
 
    Stack_Top : constant U64 := 16#7000_0000#;
+
+   --  ELF image slice handed to the loader: physmap base + size.
+   type Program_Image is record
+      Base : U64;
+      Size : U64;
+   end record;
 
    Process_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => True,
@@ -199,7 +205,7 @@ package body Kernel.Processes is
 
    procedure Spawn_Image
      (Parent      : Kernel.Tasks.Thread_Access;
-      Image       : Kernel.Program_Loader.Program_Image;
+      Image       : Program_Image;
       Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
@@ -418,35 +424,61 @@ package body Kernel.Processes is
       Result := Ok;
    end Spawn_Image;
 
-   procedure Spawn_Boot_Path
+   --  Spawn ABI v2 (docs/IPC.md): the image is a Boot_File_Object
+   --  cap held by the parent, not a manifest path slice. The cap
+   --  must carry Read + Execute rights; the kernel never sees a
+   --  path.
+   procedure Spawn_Boot_Image
      (Parent      : Kernel.Tasks.Thread_Access;
-      Path_Offset : U64;
-      Path_Length : U64;
+      Image_Cap   : Kernel.Capabilities.Handle;
       Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
    is
-      Loader_Result : Kernel.Program_Loader.Status;
-      Image         : Kernel.Program_Loader.Program_Image;
-   begin
-      Kernel.Program_Loader.Find_By_Manifest_Path
-        (Path_Offset => Path_Offset,
-         Path_Length => Path_Length,
-         Result      => Loader_Result,
-         Image       => Image);
+      use type Kernel.Capabilities.Object_Kind;
 
-      if Loader_Result = Kernel.Program_Loader.Invalid_Program then
-         Result := Invalid_Program;
-         Process_Cap := Kernel.Capabilities.Invalid_Handle;
-         return;
-      elsif Loader_Result /= Kernel.Program_Loader.Ok then
-         Result := Load_Failed;
-         Process_Cap := Kernel.Capabilities.Invalid_Handle;
+      type Boot_File_Access is access all Kernel.Objects.Boot_File;
+
+      function To_Boot_File is new Ada.Unchecked_Conversion
+        (Source => System.Address,
+         Target => Boot_File_Access);
+
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      File       : Boot_File_Access;
+      Image      : Program_Image;
+   begin
+      Process_Cap := Kernel.Capabilities.Invalid_Handle;
+
+      if Parent = null then
+         Result := Invalid_Parent;
          return;
       end if;
 
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Parent.all,
+         Cap       => Image_Cap,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Boot_File_Object
+        or else not Cap_Info.Rights.Read
+        or else not Cap_Info.Rights.Execute
+      then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      File := To_Boot_File (Cap_Info.Object);
+      if File = null or else File.Length = 0 then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      Image := (Base => File.Base, Size => File.Length);
       Spawn_Image (Parent, Image, Grant_Count, Result, Process_Cap);
-   end Spawn_Boot_Path;
+   end Spawn_Boot_Image;
 
    --  Runs cleanup hooks and closes every cap in the owning process's
    --  table. Runs at exit and again at reap; closing each cap makes

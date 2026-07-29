@@ -1,22 +1,62 @@
 with Akernel_User.Syscalls;
 
+--  Init composes its namespace from the kernel-provided bootinfo
+--  page: every cap it owns (device caps, one Boot_File_Object image
+--  cap per initrd file) is listed there by name, so no handle number
+--  is hardcoded. The manifest stays boot-launch data only: program
+--  path tokens are resolved to image caps via the bootinfo table and
+--  handed to the spawn syscall.
+
 procedure Init is
    use type Akernel_User.Syscalls.U64;
 
    Max_Token_Length : constant := 64;
    subtype Token_String is String (1 .. Max_Token_Length);
 
-   Manifest_File : constant Akernel_User.Syscalls.U64 :=
-     Akernel_User.Syscalls.Boot_Manifest_File;
+   Manifest_Cap   : Akernel_User.Syscalls.U64 := 0;
+   UART_MMIO_Cap  : Akernel_User.Syscalls.U64 := 0;
+   UART_IRQ_Cap   : Akernel_User.Syscalls.U64 := 0;
+   Echo_Image_Cap : Akernel_User.Syscalls.U64 := 0;
 
    Manifest_Size : Akernel_User.Syscalls.U64;
    Spawned_Count : Akernel_User.Syscalls.U64 := 0;
 
    --  Endpoint minted at boot and granted (badged) to the fuzzer via
    --  the ipc_test manifest token: exercises the session-manager
-   --  badge pattern. Init cap handles: 1 = UART MMIO, 2 = UART IRQ.
+   --  badge pattern.
    IPC_Test_EP    : Akernel_User.Syscalls.U64 := 0;
    IPC_Test_Badge : constant Akernel_User.Syscalls.U64 := 16#EC40#;
+
+   --  Resolve a bootinfo entry name to its cap handle; 0 when absent.
+   function Find_Boot_Cap (Name : String) return Akernel_User.Syscalls.U64 is
+      use Akernel_User.Syscalls;
+      Match : Boolean;
+   begin
+      if Bootinfo.Magic /= Bootinfo_Magic then
+         return 0;
+      end if;
+
+      for Index in Bootinfo.Entries'Range loop
+         exit when U64 (Index) >= Bootinfo.Count;
+         if Bootinfo.Entries (Index).Name_Length = U64 (Name'Length) then
+            Match := True;
+            for J in Name'Range loop
+               if Bootinfo.Entries (Index).Name (J - Name'First + 1)
+                 /= Name (J)
+               then
+                  Match := False;
+                  exit;
+               end if;
+            end loop;
+
+            if Match then
+               return Bootinfo.Entries (Index).Handle;
+            end if;
+         end if;
+      end loop;
+
+      return 0;
+   end Find_Boot_Cap;
 
    function Is_Space (C : Character) return Boolean is
    begin
@@ -66,23 +106,6 @@ procedure Init is
       return Value;
    end Parse_U64;
 
-   procedure Skip_Spaces
-     (Line_End : Akernel_User.Syscalls.U64;
-      Pos      : in out Akernel_User.Syscalls.U64)
-   is
-      Raw : Akernel_User.Syscalls.U64;
-      C   : Character;
-   begin
-      while Pos < Line_End loop
-         Raw := Akernel_User.Syscalls.Boot_Read_Byte
-           (Manifest_File, Pos);
-         exit when Raw > 255;
-         C := Character'Val (Natural (Raw));
-         exit when not Is_Space (C);
-         Pos := Pos + 1;
-      end loop;
-   end Skip_Spaces;
-
    procedure Next_Token
      (Line_End  : Akernel_User.Syscalls.U64;
       Pos       : in out Akernel_User.Syscalls.U64;
@@ -98,8 +121,7 @@ procedure Init is
       Available := False;
 
       while Pos < Line_End loop
-         Raw := Akernel_User.Syscalls.Boot_Read_Byte
-           (Manifest_File, Pos);
+         Raw := Akernel_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
          exit when Raw > 255;
          C := Character'Val (Natural (Raw));
          exit when not Is_Space (C);
@@ -112,8 +134,7 @@ procedure Init is
 
       Available := True;
       while Pos < Line_End loop
-         Raw := Akernel_User.Syscalls.Boot_Read_Byte
-           (Manifest_File, Pos);
+         Raw := Akernel_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
          exit when Raw > 255;
          C := Character'Val (Natural (Raw));
          exit when Is_Space (C);
@@ -131,17 +152,32 @@ procedure Init is
      (Line_Start : Akernel_User.Syscalls.U64;
       Line_End   : Akernel_User.Syscalls.U64)
    is
-      Pos        : Akernel_User.Syscalls.U64 := Line_Start;
-      Token      : Token_String;
-      Length     : Natural;
-      Have_Token : Boolean;
-      Valid_Id   : Boolean;
-      Program_Id : Akernel_User.Syscalls.U64;
+      Pos         : Akernel_User.Syscalls.U64 := Line_Start;
+      Token       : Token_String;
+      Length      : Natural;
+      Have_Token  : Boolean;
+      Valid_Id    : Boolean;
+      Program_Id  : Akernel_User.Syscalls.U64;
       Grant_Count : Akernel_User.Syscalls.U64 := 0;
-      Path_Offset : Akernel_User.Syscalls.U64;
-      Path_Length : Akernel_User.Syscalls.U64;
+      Image_Cap   : Akernel_User.Syscalls.U64;
       Process_Cap : Akernel_User.Syscalls.U64;
       Result      : Akernel_User.Syscalls.U64;
+
+      procedure Grant
+        (Source_Cap  : Akernel_User.Syscalls.U64;
+         Rights_Mask : Akernel_User.Syscalls.U64;
+         Badge       : Akernel_User.Syscalls.U64)
+      is
+      begin
+         if Source_Cap /= 0 then
+            Akernel_User.Syscalls.Set_Grant
+              (Index       => Grant_Count,
+               Source_Cap  => Source_Cap,
+               Rights_Mask => Rights_Mask,
+               Badge       => Badge);
+            Grant_Count := Grant_Count + 1;
+         end if;
+      end Grant;
    begin
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token or else Token (1) = '#' then
@@ -162,52 +198,51 @@ procedure Init is
          return;
       end if;
 
-      Skip_Spaces (Line_End, Pos);
-      Path_Offset := Pos;
+      --  The path token is a bootinfo entry name: resolve it to the
+      --  image cap the kernel handed init for that initrd file.
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token then
          return;
       end if;
-      Path_Length := Akernel_User.Syscalls.U64 (Length);
+
+      Image_Cap := Find_Boot_Cap (Token (1 .. Length));
+      if Image_Cap = 0 then
+         Akernel_User.Syscalls.Debug_Put_Line ("program image unknown");
+         return;
+      end if;
 
       loop
          Next_Token (Line_End, Pos, Token, Length, Have_Token);
          exit when not Have_Token;
 
          if Token_Equals (Token, Length, "uart_mmio") then
-            Akernel_User.Syscalls.Set_Grant
-              (Index       => Grant_Count,
-               Source_Cap  => 1,
-               Rights_Mask => Akernel_User.Syscalls.Right_Map
-                 + Akernel_User.Syscalls.Right_Read
-                 + Akernel_User.Syscalls.Right_Write,
-               Badge       => 0);
-            Grant_Count := Grant_Count + 1;
+            Grant (UART_MMIO_Cap,
+                   Akernel_User.Syscalls.Right_Map
+                     + Akernel_User.Syscalls.Right_Read
+                     + Akernel_User.Syscalls.Right_Write,
+                   0);
          elsif Token_Equals (Token, Length, "uart_irq") then
-            Akernel_User.Syscalls.Set_Grant
-              (Index       => Grant_Count,
-               Source_Cap  => 2,
-               Rights_Mask => Akernel_User.Syscalls.Right_Wait
-                 + Akernel_User.Syscalls.Right_Ack,
-               Badge       => 0);
-            Grant_Count := Grant_Count + 1;
-         elsif Token_Equals (Token, Length, "ipc_test")
-           and then IPC_Test_EP /= 0
-         then
-            Akernel_User.Syscalls.Set_Grant
-              (Index       => Grant_Count,
-               Source_Cap  => IPC_Test_EP,
-               Rights_Mask => Akernel_User.Syscalls.Right_Send
-                 + Akernel_User.Syscalls.Right_Receive
-                 + Akernel_User.Syscalls.Right_Transfer
-                 + Akernel_User.Syscalls.Right_Manage,
-               Badge       => IPC_Test_Badge);
-            Grant_Count := Grant_Count + 1;
+            Grant (UART_IRQ_Cap,
+                   Akernel_User.Syscalls.Right_Wait
+                     + Akernel_User.Syscalls.Right_Ack,
+                   0);
+         elsif Token_Equals (Token, Length, "ipc_test") then
+            Grant (IPC_Test_EP,
+                   Akernel_User.Syscalls.Right_Send
+                     + Akernel_User.Syscalls.Right_Receive
+                     + Akernel_User.Syscalls.Right_Transfer
+                     + Akernel_User.Syscalls.Right_Manage,
+                   IPC_Test_Badge);
+         elsif Token_Equals (Token, Length, "echo_image") then
+            Grant (Echo_Image_Cap,
+                   Akernel_User.Syscalls.Right_Read
+                     + Akernel_User.Syscalls.Right_Execute,
+                   0);
          end if;
       end loop;
 
-      Result := Akernel_User.Syscalls.Spawn_Boot_Path
-        (Path_Offset, Path_Length, Grant_Count, Process_Cap);
+      Result := Akernel_User.Syscalls.Spawn
+        (Image_Cap, Grant_Count, Process_Cap);
 
       if Result = Akernel_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
          Spawned_Count := Spawned_Count + 1;
@@ -233,7 +268,7 @@ procedure Init is
          Line_End := Line_Start;
          while Line_End < Manifest_Size loop
             Raw := Akernel_User.Syscalls.Boot_Read_Byte
-              (Manifest_File, Line_End);
+              (Manifest_Cap, Line_End);
             exit when Raw > 255;
             C := Character'Val (Natural (Raw));
             exit when C = Character'Val (10) or else C = Character'Val (13);
@@ -245,7 +280,7 @@ procedure Init is
          Line_Start := Line_End + 1;
          while Line_Start < Manifest_Size loop
             Raw := Akernel_User.Syscalls.Boot_Read_Byte
-              (Manifest_File, Line_Start);
+              (Manifest_Cap, Line_Start);
             exit when Raw > 255;
             C := Character'Val (Natural (Raw));
             exit when C /= Character'Val (10) and then C /= Character'Val (13);
@@ -256,7 +291,20 @@ procedure Init is
 begin
    Akernel_User.Syscalls.Debug_Put_Line ("init online from Ada");
 
-   Manifest_Size := Akernel_User.Syscalls.Boot_File_Size (Manifest_File);
+   Manifest_Cap := Find_Boot_Cap ("System/Manifest");
+   UART_MMIO_Cap := Find_Boot_Cap ("uart/mmio");
+   UART_IRQ_Cap := Find_Boot_Cap ("uart/irq");
+   Echo_Image_Cap := Find_Boot_Cap ("Tests/Echo");
+
+   if Manifest_Cap = 0 then
+      Akernel_User.Syscalls.Debug_Put_Line
+        ("init fatal: bootinfo has no manifest cap");
+      loop
+         Akernel_User.Syscalls.Yield;
+      end loop;
+   end if;
+
+   Manifest_Size := Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap);
    if Manifest_Size = Akernel_User.Syscalls.Syscall_Failed then
       Akernel_User.Syscalls.Debug_Put_Line
         ("init fatal: boot manifest unavailable");

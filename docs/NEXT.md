@@ -39,11 +39,15 @@ kernel cap tables.
    reap), grant validation cases (unopened handle, escalation,
    unknown bits, count limit); 40/40 directed PASS. Session-manager
    badge pattern exercised: init mints badged endpoint to fuzzer.
-6. Spawn ABI v2 remainder: image cap instead of path slice
-   (`Boot_File_Object` caps for initrd files handed to init); bootinfo
-   page for init bootstrap; retire manifest path slices and
-   boot_read_byte once migrated. Grant-list mechanism already in
-   place from milestone 5.
+6. ~~Spawn ABI v2 remainder~~ — done: `Boot_File_Object` image caps
+   (one pinned static per initrd file, enumerated at boot), syscall 8
+   now `spawn(a0 = image_cap, a1 = grant_count)` (path slices and
+   `Kernel.Program_Loader` retired), read-only bootinfo page at
+   `0x6FFE0000` lists init's caps as (handle, kind, rights, name)
+   entries (init hardcodes no handle numbers), boot byte API is
+   cap-based (a0 = boot file cap with Read). Init resolves manifest
+   program paths to image caps via bootinfo names; fuzzer spawns echo
+   from a granted image cap; 40/40 directed PASS.
 7. RTS core: `Akernel.IPC` typed wrappers; init migrated to namespace
    composition (manifest becomes data for grant lists only).
 

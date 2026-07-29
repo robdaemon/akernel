@@ -17,7 +17,6 @@ package Akernel_User.Syscalls is
       Flags         : U64) return U64;
    UART_MMIO_Grant_Bit : constant U64 := 1;
    UART_IRQ_Grant_Bit  : constant U64 := 2;
-   Boot_Manifest_File  : constant U64 := 1;
    Syscall_Failed      : constant U64 := U64'Last;
    Boot_EOF            : constant U64 := 256;
 
@@ -44,14 +43,17 @@ package Akernel_User.Syscalls is
 
    function IRQ_Wait (Cap : U64) return U64;
    function IRQ_Ack (Cap : U64) return U64;
-   function Spawn_Boot_Path
-     (Path_Offset : U64;
-      Path_Length : U64;
+   --  Spawn ABI v2: Image_Cap is a Boot_File_Object cap (Read +
+   --  Execute rights); grant entries are in the IPC buffer.
+   function Spawn
+     (Image_Cap   : U64;
       Grant_Count : U64;
       Process_Cap : out U64) return U64;
-   function Boot_File_Size (File_Id : U64) return U64;
+   --  Cap-based boot byte API: Cap must be a Boot_File_Object cap
+   --  with the Read right.
+   function Boot_File_Size (Cap : U64) return U64;
    function Boot_Read_Byte
-     (File_Id : U64;
+     (Cap     : U64;
       Offset  : U64) return U64;
    procedure Process_Exit;
    function Reap_Process (Process_Cap : U64) return U64;
@@ -94,6 +96,41 @@ package Akernel_User.Syscalls is
       Source_Cap  : U64;
       Rights_Mask : U64;
       Badge       : U64);
+
+   --  Bootinfo page (init only): read-only kernel-written table of
+   --  (handle, kind, rights mask, name) entries for every cap the
+   --  kernel handed init at boot. Kind values match the kernel
+   --  Object_Kind enumeration positions.
+   Bootinfo_VA    : constant U64 := 16#6FFE_0000#;
+   Bootinfo_Magic : constant U64 := 16#4B41_494E_464F_3031#;
+
+   Kind_IRQ       : constant U64 := 7;
+   Kind_MMIO      : constant U64 := 8;
+   Kind_Boot_File : constant U64 := 11;
+
+   Bootinfo_Max_Name : constant := 32;
+   type Bootinfo_Name is array (1 .. Bootinfo_Max_Name) of Character;
+
+   type Bootinfo_Entry is record
+      Handle      : U64;
+      Kind        : U64;
+      Rights_Mask : U64;
+      Name_Length : U64;
+      Name        : Bootinfo_Name;
+   end record;
+
+   type Bootinfo_Entry_Array is array (0 .. 62) of Bootinfo_Entry;
+
+   type Bootinfo_Page is record
+      Magic   : U64;
+      Count   : U64;
+      Entries : Bootinfo_Entry_Array;
+   end record;
+
+   Bootinfo : Bootinfo_Page
+     with Volatile, Address =>
+       System'To_Address (System.Storage_Elements.Integer_Address
+         (Bootinfo_VA));
 
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);

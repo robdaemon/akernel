@@ -10,11 +10,13 @@
 2  map_mmio(a0 = as_cap, a1 = mmio_cap, a2 = va, a3 = offset, a4 = len, a5 = flags)
 3  irq_wait(a0 = irq_cap)
 4  irq_ack(a0 = irq_cap)
-6  boot_file_size(a0 = file_id) -> len, U64'Last fail
-7  boot_read_byte(a0 = file_id, a1 = offset) -> 0..255, 256 EOF, U64'Last fail
-8  spawn_boot_path(a0 = path_off, a1 = path_len, a2 = grant_count)
+6  boot_file_size(a0 = boot_file_cap) -> len, U64'Last fail
+7  boot_read_byte(a0 = boot_file_cap, a1 = offset) -> 0..255, 256 EOF, U64'Last fail
+   (cap must be a Boot_File_Object with the Read right)
+8  spawn(a0 = image_cap, a1 = grant_count)
    -> a0 status (0 ok, 1 invalid, 2 no slot, 3 load fail, 4 cap fail,
       5 sched fail, 6 invalid parent), a1 = process cap on ok
+   image_cap: Boot_File_Object cap with Read + Execute rights.
    grant list: up to 32 entries of 24 bytes (source handle u64,
    rights mask u64, badge u64) in the spawner's IPC buffer page at
    offset 128; child receives caps at handles 1..N in list order.
@@ -33,6 +35,12 @@ IPC result codes: 0 ok, 1 invalid, 2 transfer failed, 3 endpoint gone,
 4 reply gone. Messages are 96 bytes in the thread's IPC buffer page at
 VA `0x6FFF0000`: label@0, 6 words@8, 4 cap handles@56 (0 = none),
 badge@88 (recv only).
+
+Init also gets a read-only bootinfo page at VA `0x6FFE0000`: magic
+`AKINFO01`@0, entry count@8, then 64-byte entries (handle@0, kind@8,
+rights mask@16, name length@24, name bytes@32, max 32 chars) listing
+every kernel-granted cap by name (uart/mmio, uart/irq, one
+Boot_File_Object per initrd file).
 
 Return convention: 0 ok, 1 invalid/denied, 2 would-block (older
 nonblocking paths only).

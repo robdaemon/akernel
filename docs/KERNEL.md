@@ -142,13 +142,13 @@ growth/reuse and pinned no-release; blocking paths and end-to-end
 echo are exercised by the userspace fuzzer (directed, non-blocking
 cases so far).
 
-## Processes / program loader / boot files
+## Processes / spawn / boot files
 
-`src/kernel/kernel-processes.*`, `kernel-program_loader.*`,
-`kernel-boot_files.*`
+`src/kernel/kernel-processes.*`, `kernel-boot_files.*`,
+`kernel-bootinfo.*`
 
-`Spawn_Boot_Path` (syscall 8): manifest path slice + grant count ->
-`Find_By_Manifest_Path` resolves slice to initrd image bytes -> PMM mark
+`Spawn_Boot_Image` (syscall 8): parent's `Boot_File_Object` image cap
+(Read + Execute) + grant count -> PMM mark
 -> address space + stack -> ELF load -> process + main thread + context
 -> `Grant_List_Caps` mints the parent's grant list (in the parent's IPC
 buffer at offset 128, up to 32 entries of handle/rights-mask/badge)
@@ -160,7 +160,7 @@ parent -> queue thread last; failure paths discard the slot (caps
 closed through the dispatcher once the thread exists, so partial
 grants release refcounts).
 
-Spawn status: 0 ok (a1 = process cap), 1 invalid program/path,
+Spawn status: 0 ok (a1 = process cap), 1 invalid program/image cap,
 2 no slot, 3 load failed, 4 cap grant failed, 5 scheduler failed,
 6 invalid parent.
 
@@ -172,13 +172,22 @@ closes it, reruns cleanup hooks, destroys child user address space,
 frees frames/page tables, resets child cap table, frees slot. Live child
 -> status 2. Statuses: 0 ok, 1 invalid, 2 not exited.
 
-Boot files: file id 1 = `System/Manifest`; `boot_file_size`,
-`boot_read_byte` (byte API, U64'Last failure, 256 EOF). Transitional;
-replaced by `Boot_File_Object` caps + image-cap spawn per docs/IPC.md.
+Boot files: `Kernel.Boot_Files.Enumerate` walks the initrd at boot
+(`Kernel.Initrd.Next` iteration) into a static table of pinned
+`Boot_File_Object`s (physmap base + length, one per non-empty file).
+Init gets one cap per file at handles 3..N (Read + Execute +
+Transfer). `boot_file_size`/`boot_read_byte` are cap-based (a0 = boot
+file cap with Read); transitional, retired once memory-object
+mapping lets init map files directly.
 
-Program loader backend: initrd only, manifest path slices. Later: image
-caps (`Boot_File_Object` or `Memory_Object`) make backend irrelevant to
-spawn.
+Bootinfo page (`Kernel.Bootinfo`): read-only page at `0x6FFE0000` in
+init's address space; kernel writes (handle, kind, rights mask, name)
+entries via the physmap before init enters user mode, covering the
+device caps and every boot file cap.
+
+Spawn image backend: initrd `Boot_File_Object` only. Later:
+`Memory_Object` image caps (file server stages the ELF) make the
+backend irrelevant to spawn.
 
 ## Lifecycle/cleanup decisions
 

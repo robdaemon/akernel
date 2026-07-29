@@ -43,7 +43,7 @@ pmm selftest online
 cap table online
 objects selftest online
 ipc online
-scheduler online
+bootinfo online
 entering initrd init
 init online from Ada
 boot manifest visible
@@ -93,9 +93,9 @@ QEMU virt RAM base:     0x80000000
 
 - Preemptive scheduler (100 ms user-thread timeslice); kernel itself
   non-preemptible; small fixed process/thread tables; single hart.
-- No IPC syscalls yet (design agreed, see docs/IPC.md).
-- Spawn resolves images by manifest path slice; caps passed via
-  grant list in spawner's IPC buffer (rights-subset enforced). Image
-  caps + bootinfo page designed, not yet implemented.
+- Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
+  spawner's IPC buffer, rights-subset enforced); init discovers its
+  caps by name in the read-only bootinfo page. Boot byte API is
+  cap-based; retires once memory-object mapping lands.
 - No DTB-based device enumeration; initrd load address fixed.
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime + stubs).

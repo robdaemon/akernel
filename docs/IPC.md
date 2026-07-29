@@ -2,9 +2,9 @@
 
 Status: core implemented (ep_create, call/recv/reply, cap transfer,
 reply cap, endpoint slab, FIFO caller queue, grant-list spawn with
-rights-subset enforcement + badges). Remaining designed-but-unbuilt:
-image caps + bootinfo page for spawn, RTS wrappers, init namespace
-composition. Deferred items at bottom.
+rights-subset enforcement + badges, Boot_File_Object image caps,
+bootinfo page). Remaining designed-but-unbuilt: RTS wrappers, init
+namespace composition. Deferred items at bottom.
 
 ## Principles
 
@@ -172,12 +172,13 @@ reads, shared buffers) moves through `Memory_Object` caps:
 Namespace = per-process set of caps, Plan 9 style. Kernel moves caps;
 names are userspace metadata, never parsed by the kernel.
 
-### Spawn ABI (grant lists implemented; image caps pending)
+### Spawn ABI (v2 implemented)
 
 ```text
-spawn_boot_path(a0 = path_off, a1 = path_len, a2 = grant_count)
-  grant entries in spawner's IPC buffer at offset 128, max 32,
-  each 24 bytes:
+spawn(a0 = image_cap, a1 = grant_count)
+  image_cap: Boot_File_Object cap with Read + Execute rights held by
+  the spawner (kernel never sees a path). Grant entries in the
+  spawner's IPC buffer at offset 128, max 32, each 24 bytes:
     u64 parent_handle
     u64 rights_mask      (bit 0 Read .. bit 9 Manage, Rights record order)
     u64 badge
@@ -190,27 +191,32 @@ the valid 10 bits, requested rights a subset of the parent entry's
 parent grants. Reserved handles 254 (reply) and 255 (self AS) are
 kernel-managed.
 
-Still pending from the v2 design: image cap in place of the manifest
-path slice — `Boot_File_Object` (initrd) or `Memory_Object` (ELF
-staged by a file server) — and the bootinfo page. Uniform spawn
-regardless of backend; kills the "VFS path for spawn" item — a file
-server hands the spawner a memory cap containing the ELF.
+Uniform spawn regardless of backend: a `Boot_File_Object` (initrd)
+or later a `Memory_Object` (ELF staged by a file server) — a file
+server hands the spawner a memory cap containing the ELF, killing
+the "VFS path for spawn" item.
 
 ### Boot file caps
 
 Kernel hands init one `Boot_File_Object` cap per initrd file at boot
-(replaces `boot_file_size`/`boot_read_byte` once spawn consumes them;
-byte API retired when init no longer needs it). `Boot_File_Object` =
-offset/length into initrd image, refcount-pinned statics.
+(handles 3..N, Read + Execute + Transfer). `Boot_File_Object` =
+physmap base + length into the initrd image, refcount-pinned statics
+enumerated at boot (`Kernel.Boot_Files.Enumerate`). The boot byte
+API (`boot_file_size`/`boot_read_byte`) is cap-based: a0 = boot file
+cap with the Read right; it exists only so init can parse the
+manifest and is retired once memory-object mapping lets init map
+files directly.
 
 ### Names as data
 
 - Child discovers names by convention: handle order = grant list order;
   parent may send a `(handle -> name)` table as first message on a
   well-known endpoint cap placed at handle 1 by convention.
-- Init gets its bootstrap table from a kernel-provided read-only
-  bootinfo page: (handle, kind, name) entries, so init stops hardcoding
-  handle numbers.
+- Init gets its bootstrap table from the kernel-provided read-only
+  bootinfo page at `0x6FFE0000` (implemented): magic + count header,
+  then 64-byte (handle, kind, rights mask, name) entries covering
+  the device caps (uart/mmio, uart/irq) and every boot file cap,
+  so init hardcodes no handle numbers.
 
 ### Manifest stays boot-launch only
 

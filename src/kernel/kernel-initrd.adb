@@ -147,4 +147,83 @@ package body Kernel.Initrd is
 
       Result := Not_Found;
    end Find;
+
+   Iteration_Cursor : U64 := 0;
+   Iteration_Active : Boolean := False;
+
+   procedure Reset_Iteration is
+   begin
+      Iteration_Cursor := 0;
+      Iteration_Active := False;
+   end Reset_Iteration;
+
+   procedure Next
+     (Result      : out Status;
+      Name        : out String;
+      Name_Length : out Natural;
+      Base        : out U64;
+      Size        : out U64)
+   is
+      CPIO_Size : U64;
+      End_Addr  : U64;
+      File_Size : U64;
+      Name_Size : U64;
+      Name_Addr : U64;
+      Data_Addr : U64;
+   begin
+      Base := 0;
+      Size := 0;
+      Name_Length := 0;
+
+      if not Iteration_Active then
+         if not Bytes_Equal (Initrd_Base, "AKRD")
+           or else Read_LE32 (Initrd_Base + 4) /= 1
+         then
+            Result := Bad_Header;
+            return;
+         end if;
+
+         Iteration_Cursor := Initrd_Base + Header_Size;
+         Iteration_Active := True;
+      end if;
+
+      CPIO_Size := Read_LE64 (Initrd_Base + 8);
+      End_Addr := Initrd_Base + Header_Size + CPIO_Size;
+
+      if Iteration_Cursor + CPIO_Header_Size > End_Addr then
+         Iteration_Active := False;
+         Result := Not_Found;
+         return;
+      end if;
+
+      if not Bytes_Equal (Iteration_Cursor, "070701") then
+         Iteration_Active := False;
+         Result := Bad_CPIO;
+         return;
+      end if;
+
+      File_Size := U64 (Read_Hex8 (Iteration_Cursor + 54));
+      Name_Size := U64 (Read_Hex8 (Iteration_Cursor + 94));
+      Name_Addr := Iteration_Cursor + CPIO_Header_Size;
+      Data_Addr := Align_4 (Name_Addr + Name_Size);
+      Iteration_Cursor := Align_4 (Data_Addr + File_Size);
+
+      if CPIO_Name_Equals (Name_Addr, Name_Size, "TRAILER!!!") then
+         Iteration_Active := False;
+         Result := Not_Found;
+         return;
+      end if;
+
+      if Name_Size > 0 then
+         Name_Length := Natural'Min (Natural (Name_Size) - 1, Name'Length);
+         for Index in 1 .. Name_Length loop
+            Name (Index) := Character'Val
+              (Natural (Mmio_Read8 (Name_Addr + U64 (Index - 1))));
+         end loop;
+      end if;
+
+      Base := Data_Addr;
+      Size := File_Size;
+      Result := Ok;
+   end Next;
 end Kernel.Initrd;

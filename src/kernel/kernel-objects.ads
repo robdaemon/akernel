@@ -17,6 +17,15 @@ package Kernel.Objects is
       Waiter    : Kernel.Tasks.Thread_Access;
    end record;
 
+   --  Boot file: a slice of the initrd image (physmap VA + length).
+   --  Pinned statics: one per initrd file, created at boot by
+   --  Kernel.Boot_Files.Enumerate, never destroyed. Consumed by the
+   --  spawn image-cap path and the cap-based boot byte API.
+   type Boot_File is record
+      Base   : U64;
+      Length : U64;
+   end record;
+
    type IRQ_Line_Access is access all IRQ_Line;
 
    --  Refcounting: dynamically-owned shared objects (endpoints, later

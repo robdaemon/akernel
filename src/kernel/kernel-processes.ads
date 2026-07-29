@@ -27,10 +27,9 @@ package Kernel.Processes is
    Max_Grants        : constant := 32;
    Grant_List_Offset : constant U64 := 128;
 
-   procedure Spawn_Boot_Path
+   procedure Spawn_Boot_Image
      (Parent      : Kernel.Tasks.Thread_Access;
-      Path_Offset : U64;
-      Path_Length : U64;
+      Image_Cap   : Kernel.Capabilities.Handle;
       Grant_Count : U64;
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle);

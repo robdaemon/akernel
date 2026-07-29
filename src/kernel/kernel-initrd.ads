@@ -19,4 +19,17 @@ package Kernel.Initrd is
       Result : out Status;
       Base   : out U64;
       Size   : out U64);
+
+   --  Sequential iteration over all archive entries (boot-file
+   --  enumeration). Reset_Iteration rewinds; Next returns Ok per
+   --  entry and Not_Found at the end. Names longer than the caller's
+   --  buffer are truncated (Name_Length = characters copied).
+   procedure Reset_Iteration;
+
+   procedure Next
+     (Result      : out Status;
+      Name        : out String;
+      Name_Length : out Natural;
+      Base        : out U64;
+      Size        : out U64);
 end Kernel.Initrd;

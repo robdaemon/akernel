@@ -27,18 +27,17 @@ package body Akernel_User.Syscalls is
    function Raw_IRQ_Ack (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_irq_ack";
 
-   function Raw_Spawn_Boot_Path
-     (Path_Offset : U64;
-      Path_Length : U64;
+   function Raw_Spawn
+     (Image_Cap   : U64;
       Grant_Count : U64;
       Process_Cap : System.Address) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_spawn_boot_path";
+     with Import, Convention => C, External_Name => "akernel_sys_spawn";
 
-   function Raw_Boot_File_Size (File_Id : U64) return U64
+   function Raw_Boot_File_Size (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_boot_file_size";
 
    function Raw_Boot_Read_Byte
-     (File_Id : U64;
+     (Cap     : U64;
       Offset  : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_boot_read_byte";
 
@@ -88,29 +87,28 @@ package body Akernel_User.Syscalls is
       return Raw_IRQ_Ack (Cap);
    end IRQ_Ack;
 
-   function Spawn_Boot_Path
-     (Path_Offset : U64;
-      Path_Length : U64;
+   function Spawn
+     (Image_Cap   : U64;
       Grant_Count : U64;
       Process_Cap : out U64) return U64
    is
    begin
       Process_Cap := 0;
-      return Raw_Spawn_Boot_Path
-        (Path_Offset, Path_Length, Grant_Count, Process_Cap'Address);
-   end Spawn_Boot_Path;
+      return Raw_Spawn
+        (Image_Cap, Grant_Count, Process_Cap'Address);
+   end Spawn;
 
-   function Boot_File_Size (File_Id : U64) return U64 is
+   function Boot_File_Size (Cap : U64) return U64 is
    begin
-      return Raw_Boot_File_Size (File_Id);
+      return Raw_Boot_File_Size (Cap);
    end Boot_File_Size;
 
    function Boot_Read_Byte
-     (File_Id : U64;
+     (Cap     : U64;
       Offset  : U64) return U64
    is
    begin
-      return Raw_Boot_Read_Byte (File_Id, Offset);
+      return Raw_Boot_Read_Byte (Cap, Offset);
    end Boot_Read_Byte;
 
    procedure Process_Exit is

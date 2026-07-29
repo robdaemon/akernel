@@ -36,6 +36,10 @@ package Arch.MMU is
      (Read => True, Write => False, Execute => True, User => True,
       Global => False);
 
+   User_RO : constant Page_Flags :=
+     (Read => True, Write => False, Execute => False, User => True,
+      Global => False);
+
    procedure New_Address_Space
      (Result : out Status;
       Root   : out U64);

@@ -4,12 +4,12 @@ with Akernel_User.Syscalls;
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
 --  keeps returning clean status codes.  Runs as a manifest-spawned user
---  process with no grants.
+--  process granted the ipc_test endpoint (handle 1, badge 0xEC40) and
+--  the Tests/Echo Boot_File_Object image cap (handle 2).
 --
---  NOTE: spawn_boot_path/boot_file_* target the temporary boot-manifest
---  ABI; both go away when the VFS lands.  The fuzzer deliberately never
---  forms a resolvable boot path (random-phase path length is forced to
---  0) so it cannot recursively spawn itself.
+--  NOTE: spawn consumes Boot_File_Object image caps (spawn ABI v2).
+--  The fuzzer deliberately never forms a valid image cap in the
+--  random phase (a0 forced to 0) so it cannot recursively spawn.
 
 procedure Fuzz is
    subtype U64 is Interfaces.Unsigned_64;
@@ -153,14 +153,12 @@ procedure Fuzz is
 
    --  End-to-end IPC state.
    EP, EP2       : U64;
-   Echo_Offset   : U64;
    Echo_Process  : U64;
-   Manifest_Size : U64;
-   Match         : Natural;
    Reaped        : Boolean;
    Ignore        : U64;
 
-   Echo_Path : constant String := "Tests/Echo";
+   --  Tests/Echo image cap granted by init at handle 2.
+   Echo_Image : constant U64 := 2;
 
    Iterations : constant U64 := 4096;
 begin
@@ -192,13 +190,17 @@ begin
    Status := Raw_Ecall (Sys_IPC_Reply, 200, 0, 0, 0, 0, 0);
    Check (Status = 1, "ipc_reply wrong handle rejected");
 
-   --  Boot file probes: valid file, past-EOF and huge offsets.
-   Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
-   Check (Status /= Failed, "manifest size query works");
-   Status := Raw_Ecall (Sys_Boot_Read_Byte, 1, U64'Last, 0, 0, 0, 0);
+   --  Boot byte API probes: valid image cap, huge offset, invalid
+   --  handle, wrong-kind cap (handle 1 is the granted endpoint).
+   Status := Raw_Ecall (Sys_Boot_File_Size, Echo_Image, 0, 0, 0, 0, 0);
+   Check (Status /= Failed, "image cap size query works");
+   Status := Raw_Ecall
+     (Sys_Boot_Read_Byte, Echo_Image, U64'Last, 0, 0, 0, 0);
    Check (Status = 256 or else Status = Failed, "huge read offset safe");
    Status := Raw_Ecall (Sys_Boot_File_Size, U64'Last, 0, 0, 0, 0, 0);
-   Check (Status = Failed, "invalid file id rejected");
+   Check (Status = Failed, "invalid boot cap rejected");
+   Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
+   Check (Status = Failed, "boot byte api wrong-kind cap rejected");
 
    --  Invalid cap handles on cap-taking syscalls.
    Status := Raw_Ecall (Sys_IRQ_Wait, 16#100#, 0, 0, 0, 0, 0);
@@ -214,45 +216,19 @@ begin
      (Sys_Map_MMIO, 16#100#, 1, 0, 0, 16#1000#, 3);
    Check (Status /= 0, "map_mmio invalid as cap rejected");
 
-   --  Spawn with unresolvable boot paths (bootstrap ABI).
+   --  Spawn with invalid image caps (spawn ABI v2: a0 = image cap).
    Status := Raw_Ecall (Sys_Spawn, 0, 0, 0, 0, 0, 0);
-   Check (Status /= 0, "spawn empty path rejected");
-   Status := Raw_Ecall (Sys_Spawn, U64'Last - 8, 16, 0, 0, 0, 0);
-   Check (Status /= 0, "spawn past-eof path rejected");
-   Status := Raw_Ecall (Sys_Spawn, 10, 12, 3, 0, 0, 0);
-   Check (Status /= 0, "spawn truncated path rejected");
+   Check (Status /= 0, "spawn null image cap rejected");
+   Status := Raw_Ecall (Sys_Spawn, U64'Last, 0, 0, 0, 0, 0);
+   Check (Status /= 0, "spawn huge image cap rejected");
+   Status := Raw_Ecall (Sys_Spawn, 1, 0, 0, 0, 0, 0);
+   Check (Status /= 0, "spawn wrong-kind image cap rejected");
 
    ----------------------------------------------------------------
    --  End-to-end IPC: spawn the echo server with a granted
    --  endpoint, ping-pong three rounds (badge, round-trip, one-shot
    --  reply cap, cap transfer), then reap the exited child.
    ----------------------------------------------------------------
-
-   --  Locate "Tests/Echo" inside the boot manifest file.
-   Manifest_Size := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
-   Echo_Offset := Failed;
-   if Manifest_Size /= Failed
-     and then Manifest_Size >= U64 (Echo_Path'Length)
-   then
-      A0 := 0;
-      while A0 + U64 (Echo_Path'Length) <= Manifest_Size loop
-         Match := 0;
-         for J in Echo_Path'Range loop
-            A1 := Raw_Ecall
-              (Sys_Boot_Read_Byte, 1,
-               A0 + U64 (J - Echo_Path'First), 0, 0, 0, 0);
-            exit when A1 > 255
-              or else Character'Val (Natural (A1)) /= Echo_Path (J);
-            Match := Match + 1;
-         end loop;
-         if Match = Echo_Path'Length then
-            Echo_Offset := A0;
-            exit;
-         end if;
-         A0 := A0 + 1;
-      end loop;
-   end if;
-   Check (Echo_Offset /= Failed, "echo path found in manifest");
 
    --  Endpoint granted by init at handle 1 with badge 0xEC40
    --  (session-manager badge pattern); messages sent through it
@@ -261,26 +237,22 @@ begin
 
    --  Grant-list validation: unopened source handle.
    Akernel_User.Syscalls.Set_Grant (0, 250, 0, 0);
-   Status := Raw_Ecall
-     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
    Check (Status = 4, "spawn grant of unopened cap rejected");
 
    --  Rights escalation: endpoints carry no Read right.
    Akernel_User.Syscalls.Set_Grant
      (0, EP, Akernel_User.Syscalls.Right_Read, 0);
-   Status := Raw_Ecall
-     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
    Check (Status = 4, "spawn grant rights escalation rejected");
 
    --  Rights mask bits outside the valid set.
    Akernel_User.Syscalls.Set_Grant (0, EP, 16#400#, 0);
-   Status := Raw_Ecall
-     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
    Check (Status = 4, "spawn grant unknown rights bits rejected");
 
    --  Grant count above the ABI limit.
-   Status := Raw_Ecall
-     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 33, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 33, 0, 0, 0, 0);
    Check (Status = 4, "spawn grant count over limit rejected");
 
    --  Valid grant: endpoint with Send+Receive (badged cap stays
@@ -289,8 +261,7 @@ begin
      (0, EP,
       Akernel_User.Syscalls.Right_Send + Akernel_User.Syscalls.Right_Receive,
       0);
-   Status := Raw_Ecall
-     (Sys_Spawn, Echo_Offset, U64 (Echo_Path'Length), 1, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
    --  fuzz_last_a1 is rewritten by every ecall: capture the process
    --  cap before Check (or anything else) makes another syscall.
    Echo_Process := Last_A1;
@@ -351,8 +322,8 @@ begin
    end loop;
    Check (Reaped, "echo reaped after exit");
 
-   --  Random phase: every syscall except exit (9).  Spawn path length
-   --  forced to 0 so no resolvable path can form.  debug_putchar bytes
+   --  Random phase: every syscall except exit (9).  Spawn's image
+   --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
    --  constrained to printable to keep the log readable.
    while Total_Calls < Iterations loop
       Number := Next_Random mod 16;
@@ -378,7 +349,7 @@ begin
          if Number = Sys_Debug_Putchar then
             A0 := 16#20# + (A0 mod 16#5F#);
          elsif Number = Sys_Spawn then
-            A1 := 0;
+            A0 := 0;
          end if;
 
          Status := Raw_Ecall (Number, A0, A1, A2, A3, A4, A5);
@@ -396,7 +367,7 @@ begin
    end loop;
 
    --  Kernel still answers correctly after the random phase.
-   Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Sys_Boot_File_Size, Echo_Image, 0, 0, 0, 0, 0);
    Check (Status /= Failed, "kernel alive after random phase");
 
    Put ("fuzz complete: calls=");

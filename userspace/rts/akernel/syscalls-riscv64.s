@@ -48,14 +48,14 @@ akernel_sys_boot_read_byte:
     ret
 .size akernel_sys_boot_read_byte, . - akernel_sys_boot_read_byte
 
-.global akernel_sys_spawn_boot_path
-.type akernel_sys_spawn_boot_path, @function
-akernel_sys_spawn_boot_path:
+.global akernel_sys_spawn
+.type akernel_sys_spawn, @function
+akernel_sys_spawn:
     li a7, 8
     ecall
-    sd a1, 0(a3)
+    sd a1, 0(a2)
     ret
-.size akernel_sys_spawn_boot_path, . - akernel_sys_spawn_boot_path
+.size akernel_sys_spawn, . - akernel_sys_spawn
 
 .global akernel_sys_exit
 .type akernel_sys_exit, @function
