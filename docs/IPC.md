@@ -101,10 +101,11 @@ Caller thread is flagged waiting-for-reply.
 
 | Event | Result |
 |---|---|
-| `reply(254)` | Reply words copied to caller buffer; caller wakes with status; cap destroyed. Second `reply` -> invalid. |
-| Server exits/is reaped with pending reply cap | Cleanup hook wakes caller with error status. |
-| Caller exits while blocked in `call` | Server's later `reply` -> invalid. |
-| Server `recv`s again without replying | Cap at 254 overwritten; previous caller wakes with error status. Servers must reply before re-receiving (single-waiter discipline, same as IRQ lines). |
+| `reply(254)` | Reply words copied to caller buffer; caller wakes with 0; cap consumed. Second `reply` -> invalid (1). |
+| Server exits/is reaped with pending reply cap | Cleanup hook wakes caller with `reply gone` (4). |
+| Caller exits while blocked in `call` | Unlinked from endpoint queue; server's later `reply` -> invalid. |
+| Server `recv`s again without replying | Cap at 254 overwritten; previous caller wakes with `reply gone` (4). Servers must reply before re-receiving (one outstanding reply per server thread). |
+| Endpoint destroyed with queued callers | Each queued caller wakes with `endpoint gone` (3); waiting receiver likewise. |
 
 Properties: server can reply once, to the actual caller only; cannot
 stockpile a channel back to the client; no per-client reply endpoints;

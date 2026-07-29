@@ -54,6 +54,9 @@ package body Kernel.Tasks is
       TCB.Process := Process;
       TCB.Kernel_Stack_Top := 0;
       TCB.IPC_Buffer := 0;
+      TCB.Awaiting_Reply := False;
+      TCB.Queue_Next := null;
+      TCB.Call_Badge := 0;
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
    end Initialize_Thread;
@@ -261,6 +264,57 @@ package body Kernel.Tasks is
       TCB.Status := New_State;
    end Set_State;
 
+   procedure Set_Awaiting_Reply
+     (TCB      : in out Thread_Control_Block;
+      Awaiting : Boolean)
+   is
+   begin
+      TCB.Awaiting_Reply := Awaiting;
+   end Set_Awaiting_Reply;
+
+   function Is_Awaiting_Reply (TCB : Thread_Control_Block) return Boolean is
+   begin
+      return TCB.Awaiting_Reply;
+   end Is_Awaiting_Reply;
+
+   procedure Set_Endpoint_Queue_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access)
+   is
+   begin
+      TCB.Queue_Next := Next;
+   end Set_Endpoint_Queue_Next;
+
+   function Endpoint_Queue_Next
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Queue_Next;
+   end Endpoint_Queue_Next;
+
+   procedure Set_IPC_Badge
+     (TCB   : in out Thread_Control_Block;
+      Badge : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.Call_Badge := Badge;
+   end Set_IPC_Badge;
+
+   function IPC_Badge
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.Call_Badge;
+   end IPC_Badge;
+
+   procedure Set_Saved_Result
+     (TCB   : in out Thread_Control_Block;
+      Value : Kernel.Capabilities.U64)
+   is
+   begin
+      Arch.Context.Set_Saved_Result (TCB.Context, Value);
+   end Set_Saved_Result;
+
    procedure Insert_Process_Cap
      (PCB    : in out Process_Control_Block;
       Kind   : Kernel.Capabilities.Object_Kind;
@@ -431,6 +485,23 @@ package body Kernel.Tasks is
          Cap    => Cap,
          Result => Result);
    end Close_Cap;
+
+   procedure Forget_Cap
+     (Thread : not null Thread_Access;
+      Cap    : Kernel.Capabilities.Handle;
+      Result : out Kernel.Capabilities.Status)
+   is
+   begin
+      if Thread.Process = null then
+         Result := Kernel.Capabilities.Invalid_Object;
+         return;
+      end if;
+
+      Kernel.Capabilities.Close
+        (Table  => Thread.Process.Caps,
+         Cap    => Cap,
+         Result => Result);
+   end Forget_Cap;
 
    procedure Reset_Process_Caps (PCB : in out Process_Control_Block) is
    begin

@@ -35,6 +35,8 @@ package body Kernel.Objects is
             if Kernel.IPC.Release (Cap.Object) then
                null;
             end if;
+         when Kernel.Capabilities.Reply_Object =>
+            Kernel.IPC.Fail_Reply_Target (Cap.Object);
          when Kernel.Capabilities.IRQ_Object =>
             Kernel.Interrupts.Cleanup_Thread_Cap (Thread, Cap.Object);
          when others =>

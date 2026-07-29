@@ -34,6 +34,13 @@ package body Arch.Context is
       return Context.Is_Valid;
    end Valid;
 
+   procedure Set_Saved_Result
+     (Context : in out Thread_Context; Value : U64)
+   is
+   begin
+      Context.Trap_Frame (Trap_Frame_A0_Index) := Value;
+   end Set_Saved_Result;
+
    procedure Save_From_Trap_Frame
      (Context : in out Thread_Context;
       Frame   : System.Address)

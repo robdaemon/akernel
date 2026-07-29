@@ -21,9 +21,11 @@ kernel cap tables.
    + zeroed + mapped at spawn (init + children), PA in TCB, kernel
    access via physmap; freed by AS teardown. One buffer per AS while
    single-threaded.
-4. `call`/`recv`/`reply` (syscalls 12-14): rendezvous, badge stamping,
-   cap transfer (Transfer right required, duplicate into receiver table,
-     rewrite buffer slots), reply cap minting/one-shot/lifecycle edges.
+4. ~~`call`/`recv`/`reply`~~ — done (4b): FIFO blocked-caller queue
+   per endpoint (not single-waiter), rendezvous transfer buffer->
+   buffer, badge stamping, cap transfer with rollback, reply cap at
+   254 with full lifecycle (consumed/failed/overwrite/endpoint-gone),
+   wake-with-status via saved-context a0.
 5. Fuzzer: IPC/endpoint directed cases (all reply-cap lifecycle rows in
    docs/IPC.md) + random phase with endpoints; multi-process fuzz
    (spawn child that fuzzes, then reap); valid-handle/wrong-rights cases.

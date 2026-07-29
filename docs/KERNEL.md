@@ -103,25 +103,40 @@ waiter once and clears slot; second different waiter -> invalid/denied;
 `Board.Interrupts.Handle_External_Interrupt` claims PLIC source,
 `Kernel.Interrupts.Deliver`; unregistered sources logged + completed.
 
-## IPC scaffold
+## IPC
 
-`src/kernel/kernel-ipc.*`. Endpoint/message scaffold: label + 6 words +
-4 caps + badge; one waiting sender/receiver; drops dead waiters before
-matching. Endpoints carry `Object_Header` refcount (boot test endpoint
-pinned); `Retain`/`Release`/`Initialize (Pinned)` implemented.
+`src/kernel/kernel-ipc.*`. Synchronous rendezvous (docs/IPC.md).
+96-byte messages live in per-thread IPC buffer pages; transfer is one
+copy sender buffer -> receiver buffer via physmap overlays
+(`Buffer_Of`). Callers block in a per-endpoint FIFO queue (TCB
+`Queue_Next` link); receiver dequeues head, transfers, mints one-shot
+reply cap at handle 254 (`Reply_Object` pointing at caller TCB);
+caller stays blocked (`Awaiting_Reply` flag) until reply. Replies
+carry label+words only. Caller badge recorded in TCB at call time.
 
-Dynamic endpoints: PMM-backed slab — pool grows one physical frame at
-a time (RAM-limited, no fixed cap), freed slots recycle via intrusive
-free list, frames never returned to PMM (high-water mark). Refcount
-convention: Count = number of referencing caps; fresh endpoint starts
-at 0, first cap insert retains to 1; `Discard` rolls back a
-never-capped endpoint. Last release finalizes: wakes both waiters,
-clears state, frees slot. `ep_create` syscall (11) returns a cap with
-`Endpoint_Full_Rights`. Boot selftest covers retain/release cycle,
-slab growth across frames (2x create-100/discard), pinned no-release.
+Cap transfer: up to 4 buffer cap slots (0 = none); each must be valid
+with Transfer right; duplicated full-rights into receiver table;
+receiver buffer slots rewritten to new handles; rollback closes
+partial inserts (no partial delivery).
 
-No cap transfer, no call/recv/reply syscalls yet. Agreed design:
-docs/IPC.md.
+Wake-with-status: waker writes result code into blocked thread's saved
+a0 (`Kernel.Tasks.Set_Saved_Result` -> `Arch.Context.Set_Saved_Result`,
+frame word 9) then `Scheduler.Wake`. Userspace codes: 0 ok, 1 invalid,
+2 transfer failed, 3 endpoint gone, 4 reply gone.
+
+Reply cap lifecycle: consumed by `Reply` via `Tasks.Forget_Cap` (raw
+close, no hooks); failed via dispatcher `Reply_Object` case ->
+`Fail_Reply_Target` on server exit/reap or re-receive overwrite.
+Endpoint finalizer fails all queued callers + waiting receiver with
+endpoint-gone.
+
+Endpoints: PMM-backed slab (grows per frame, free-list reuse, frames
+never returned). Refcount = referencing caps; fresh endpoint 0, first
+insert retains; `Discard` for create-then-fail. `ep_create` (11),
+`call` (12), `recv` (13), `reply` (14). Boot selftest covers slab
+growth/reuse and pinned no-release; blocking paths and end-to-end
+echo are exercised by the userspace fuzzer (directed, non-blocking
+cases so far).
 
 ## Processes / program loader / boot files
 

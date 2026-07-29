@@ -41,6 +41,17 @@ package Akernel_User.Syscalls is
    procedure Process_Exit;
    function Reap_Process (Process_Cap : U64) return U64;
    function EP_Create return U64;
+   function IPC_Call (Cap : U64) return U64;
+   function IPC_Recv (Cap : U64) return U64;
+   function IPC_Reply return U64;
+
+   Reply_Cap_Handle : constant U64 := 254;
+   IPC_Buffer_VA    : constant U64 := 16#6FFF_0000#;
+   IPC_Ok              : constant U64 := 0;
+   IPC_Invalid         : constant U64 := 1;
+   IPC_Transfer_Failed : constant U64 := 2;
+   IPC_Endpoint_Gone   : constant U64 := 3;
+   IPC_Reply_Gone      : constant U64 := 4;
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);
 end Akernel_User.Syscalls;

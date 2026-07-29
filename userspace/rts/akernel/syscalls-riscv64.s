@@ -81,6 +81,30 @@ akernel_sys_ep_create:
     ret
 .size akernel_sys_ep_create, . - akernel_sys_ep_create
 
+.global akernel_sys_ipc_call
+.type akernel_sys_ipc_call, @function
+akernel_sys_ipc_call:
+    li a7, 12
+    ecall
+    ret
+.size akernel_sys_ipc_call, . - akernel_sys_ipc_call
+
+.global akernel_sys_ipc_recv
+.type akernel_sys_ipc_recv, @function
+akernel_sys_ipc_recv:
+    li a7, 13
+    ecall
+    ret
+.size akernel_sys_ipc_recv, . - akernel_sys_ipc_recv
+
+.global akernel_sys_ipc_reply
+.type akernel_sys_ipc_reply, @function
+akernel_sys_ipc_reply:
+    li a7, 14
+    ecall
+    ret
+.size akernel_sys_ipc_reply, . - akernel_sys_ipc_reply
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

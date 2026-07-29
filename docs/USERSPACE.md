@@ -18,7 +18,15 @@
 9  exit() -> does not return
 10 reap_process(a0 = process_cap) -> 0 ok, 1 invalid, 2 not exited
 11 ep_create() -> endpoint cap handle, U64'Last fail
+12 ipc_call(a0 = ep_cap) -> IPC result code; blocks until reply
+13 ipc_recv(a0 = ep_cap) -> IPC result code; blocks until caller arrives
+14 ipc_reply(a0 = 254) -> IPC result code; one-shot reply
 ```
+
+IPC result codes: 0 ok, 1 invalid, 2 transfer failed, 3 endpoint gone,
+4 reply gone. Messages are 96 bytes in the thread's IPC buffer page at
+VA `0x6FFF0000`: label@0, 6 words@8, 4 cap handles@56 (0 = none),
+badge@88 (recv only).
 
 Return convention: 0 ok, 1 invalid/denied, 2 would-block (older
 nonblocking paths only).
@@ -58,8 +66,9 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   `serial driver online`, loops `IRQ_Wait`/`IRQ_Ack` (cap 2) draining RX.
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, no grants): directed
   edge cases + 4096 deterministic pseudo-random syscalls. Found the
-  `irq_wait` missing-`Advance_SEPC` livelock. 16/16 directed PASS
-  (incl. ep_create handle/distinctness), kernel alive after exit.
+  `irq_wait` missing-`Advance_SEPC` livelock. Directed PASS incl.
+  ep_create and non-blocking IPC validation; random phase skips the
+  blocking IPC trio. End-to-end IPC fuzzing is a separate milestone.
 
 ## Manifest
 

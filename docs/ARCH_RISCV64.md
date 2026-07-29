@@ -99,10 +99,10 @@ satp index 32); context save/load are pure 34-word frame copies.
 ## Syscall dispatcher invariant
 
 Handlers that `Handle_Syscall` returns from immediately (currently
-`irq_wait`, `exit`) must `Advance_SEPC` themselves on every
-non-scheduling exit path; all other handlers fall through to the
-dispatcher single advance. Violating this re-executes the `ecall`
-forever (found by fuzzer, `irq_wait` invalid-cap case).
+`irq_wait`, `exit`, `ipc_call`, `ipc_recv`) must `Advance_SEPC`
+themselves on every non-scheduling exit path; all other handlers fall
+through to the dispatcher single advance. Violating this re-executes
+the `ecall` forever (found by fuzzer, `irq_wait` invalid-cap case).
 
 Trap syscall handlers validate user-supplied cap-handle integers before
 converting to `Kernel.Capabilities.Handle`; out-of-range handles return

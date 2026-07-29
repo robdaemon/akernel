@@ -40,6 +40,9 @@ package body Arch.Traps is
    Sys_Exit              : constant U64 := 9;
    Sys_Reap_Process      : constant U64 := 10;
    Sys_EP_Create         : constant U64 := 11;
+   Sys_IPC_Call          : constant U64 := 12;
+   Sys_IPC_Recv          : constant U64 := 13;
+   Sys_IPC_Reply         : constant U64 := 14;
 
    Tick_Count : U64 := 0;
 
@@ -568,6 +571,103 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
    end Handle_EP_Create;
 
+   --  Map an IPC kernel status to the userspace result code.
+   procedure Set_IPC_Result
+     (Frame  : System.Address;
+      Result : Kernel.IPC.Status)
+   is
+   begin
+      if Result = Kernel.IPC.Ok then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
+      elsif Result = Kernel.IPC.Transfer_Failed then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Transfer_Failed);
+      else
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+      end if;
+   end Set_IPC_Result;
+
+   procedure Handle_IPC_Call (Frame : System.Address) is
+      Cap_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IPC_Result       : Kernel.IPC.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      Kernel.IPC.Call (Current, Cap_Handle, IPC_Result);
+
+      if IPC_Result = Kernel.IPC.Would_Block then
+         --  Caller queued (or delivered and awaiting reply): block
+         --  until a waker writes the result code into the saved
+         --  context. Pre-set invalid as a defensive default.
+         Advance_SEPC (Frame);
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Save_Current_Context (Frame);
+         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
+         return;
+      end if;
+
+      Set_IPC_Result (Frame, IPC_Result);
+      Advance_SEPC (Frame);
+   end Handle_IPC_Call;
+
+   procedure Handle_IPC_Recv (Frame : System.Address) is
+      Cap_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IPC_Result       : Kernel.IPC.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      Kernel.IPC.Receive (Current, Cap_Handle, IPC_Result);
+
+      if IPC_Result = Kernel.IPC.Would_Block then
+         Advance_SEPC (Frame);
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Save_Current_Context (Frame);
+         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Receive);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
+         return;
+      end if;
+
+      Set_IPC_Result (Frame, IPC_Result);
+      Advance_SEPC (Frame);
+   end Handle_IPC_Recv;
+
+   procedure Handle_IPC_Reply (Frame : System.Address) is
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IPC_Result  : Kernel.IPC.Status;
+   begin
+      if Current = null
+        or else Trap_Frame_Get_A0 (Frame) /=
+          U64 (Kernel.IPC.Reply_Cap_Handle)
+      then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         return;
+      end if;
+
+      Kernel.IPC.Reply (Current, IPC_Result);
+      Set_IPC_Result (Frame, IPC_Result);
+   end Handle_IPC_Reply;
+
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
@@ -604,6 +704,14 @@ package body Arch.Traps is
          Handle_Reap_Process (Frame);
       elsif Number = Sys_EP_Create then
          Handle_EP_Create (Frame);
+      elsif Number = Sys_IPC_Call then
+         Handle_IPC_Call (Frame);
+         return;
+      elsif Number = Sys_IPC_Recv then
+         Handle_IPC_Recv (Frame);
+         return;
+      elsif Number = Sys_IPC_Reply then
+         Handle_IPC_Reply (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

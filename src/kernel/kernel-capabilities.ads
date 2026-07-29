@@ -16,6 +16,7 @@ package Kernel.Capabilities is
       Process_Object,
       Thread_Object,
       Endpoint_Object,
+      Reply_Object,
       IRQ_Object,
       MMIO_Object,
       DMA_Object,

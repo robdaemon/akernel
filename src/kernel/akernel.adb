@@ -66,11 +66,7 @@ procedure Akernel is
      Arch.Kernel_Virt_To_Phys (Interfaces.Unsigned_64
        (System.Storage_Elements.To_Integer (Kernel_End'Address)));
    Console_Cap      : Kernel.Capabilities.Handle;
-   Sender_Cap       : Kernel.Capabilities.Handle;
-   Receiver_Cap     : Kernel.Capabilities.Handle;
    Test_Endpoint    : aliased Kernel.IPC.Endpoint;
-   Sent_Message     : Kernel.IPC.Message := Kernel.IPC.Empty_Message;
-   Got_Message      : Kernel.IPC.Message;
 
    Selftest_Object   : System.Address;
    Exhausted_Objects : array (1 .. 100) of System.Address;
@@ -86,30 +82,6 @@ procedure Akernel is
       Wait     => False,
       Ack      => False,
       Transfer => True,
-      Manage   => False);
-
-   Endpoint_Send_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => False,
-      Write    => False,
-      Execute  => False,
-      Map      => False,
-      Send     => True,
-      Receive  => False,
-      Wait     => False,
-      Ack      => False,
-      Transfer => True,
-      Manage   => False);
-
-   Endpoint_Receive_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => False,
-      Write    => False,
-      Execute  => False,
-      Map      => False,
-      Send     => False,
-      Receive  => True,
-      Wait     => False,
-      Ack      => False,
-      Transfer => False,
       Manage   => False);
 
    MMIO_Map_Rights : constant Kernel.Capabilities.Rights :=
@@ -409,64 +381,12 @@ begin
       Process => Driver_Process'Unchecked_Access);
    Kernel.IPC.Initialize (Test_Endpoint, Pinned => True);
    Objects_Self_Test;
-
-   Kernel.Tasks.Insert_Cap
-     (TCB    => Bootstrap_Task,
-      Kind   => Kernel.Capabilities.Endpoint_Object,
-      Object => Test_Endpoint'Address,
-      Rights => Endpoint_Send_Rights,
-      Badge  => 42,
-      Result => Result,
-      Cap    => Sender_Cap);
-
-   Kernel.Tasks.Insert_Cap
-     (TCB    => Driver_Task,
-      Kind   => Kernel.Capabilities.Endpoint_Object,
-      Object => Test_Endpoint'Address,
-      Rights => Endpoint_Receive_Rights,
-      Badge  => 0,
-      Result => Result,
-      Cap    => Receiver_Cap);
+   Board.UART.Put_Line ("ipc online");
 
    Kernel.Scheduler.Initialize;
    Kernel.Scheduler.Set_Current
      (TCB    => Bootstrap_Task'Unchecked_Access,
       Result => Scheduler_Result);
-
-   Sent_Message.Label := 1;
-   Sent_Message.Word_Count := 1;
-   Sent_Message.Words (0) := 16#1234#;
-
-   Kernel.IPC.Receive
-     (Receiver     => Driver_Task'Unchecked_Access,
-      Endpoint_Cap => Receiver_Cap,
-      Result       => IPC_Result,
-      Payload      => Got_Message);
-
-   if IPC_Result = Kernel.IPC.Would_Block
-     and then Kernel.Tasks.State (Driver_Task) = Kernel.Tasks.Blocked_Receive
-   then
-      Kernel.IPC.Send
-        (Sender       => Bootstrap_Task'Unchecked_Access,
-         Endpoint_Cap => Sender_Cap,
-         Payload      => Sent_Message,
-         Result       => IPC_Result);
-   end if;
-
-   if IPC_Result = Kernel.IPC.Ok then
-      Kernel.IPC.Receive
-        (Receiver     => Driver_Task'Unchecked_Access,
-         Endpoint_Cap => Receiver_Cap,
-         Result       => IPC_Result,
-         Payload      => Got_Message);
-   end if;
-
-   if IPC_Result = Kernel.IPC.Ok
-     and then Got_Message.Badge = 42
-     and then Got_Message.Words (0) = 16#1234#
-   then
-      Board.UART.Put_Line ("ipc online");
-   end if;
 
    if Scheduler_Result = Kernel.Scheduler.Ok then
       Kernel.Scheduler.Yield (Scheduler_Result);

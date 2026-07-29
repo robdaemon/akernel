@@ -39,8 +39,11 @@ procedure Fuzz is
    Sys_Exit           : constant U64 := 9;
    Sys_Reap           : constant U64 := 10;
    Sys_EP_Create      : constant U64 := 11;
+   Sys_IPC_Call       : constant U64 := 12;
+   Sys_IPC_Recv       : constant U64 := 13;
+   Sys_IPC_Reply      : constant U64 := 14;
 
-   Highest_Known      : constant U64 := 11;
+   Highest_Known      : constant U64 := 14;
 
    Failed : constant U64 := U64'Last;
 
@@ -167,6 +170,16 @@ begin
    A0 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
    Check (A0 /= Failed and then A0 /= Status, "ep_create distinct handles");
 
+   --  IPC syscall argument validation (non-blocking cases only).
+   Status := Raw_Ecall (Sys_IPC_Call, 16#100#, 0, 0, 0, 0, 0);
+   Check (Status = 1, "ipc_call invalid cap rejected");
+   Status := Raw_Ecall (Sys_IPC_Recv, U64'Last, 0, 0, 0, 0, 0);
+   Check (Status = 1, "ipc_recv invalid cap rejected");
+   Status := Raw_Ecall (Sys_IPC_Reply, 254, 0, 0, 0, 0, 0);
+   Check (Status = 1, "ipc_reply without reply cap rejected");
+   Status := Raw_Ecall (Sys_IPC_Reply, 200, 0, 0, 0, 0, 0);
+   Check (Status = 1, "ipc_reply wrong handle rejected");
+
    --  Boot file probes: valid file, past-EOF and huge offsets.
    Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
    Check (Status /= Failed, "manifest size query works");
@@ -206,7 +219,14 @@ begin
          Number := Next_Random;  --  occasionally a huge syscall number
       end if;
 
-      if Number /= Sys_Exit then
+      --  Skip exit (9) and the blocking IPC trio (12-14): a random
+      --  call/recv with no peer would block this thread forever.
+      --  Directed IPC coverage is a separate milestone.
+      if Number /= Sys_Exit
+        and then Number /= Sys_IPC_Call
+        and then Number /= Sys_IPC_Recv
+        and then Number /= Sys_IPC_Reply
+      then
          A0 := Arg_Value;
          A1 := Arg_Value;
          A2 := Arg_Value;

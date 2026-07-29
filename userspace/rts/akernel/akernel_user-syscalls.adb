@@ -50,6 +50,15 @@ package body Akernel_User.Syscalls is
    function Raw_EP_Create return U64
      with Import, Convention => C, External_Name => "akernel_sys_ep_create";
 
+   function Raw_IPC_Call (Cap : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_ipc_call";
+
+   function Raw_IPC_Recv (Cap : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_ipc_recv";
+
+   function Raw_IPC_Reply (Cap : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_ipc_reply";
+
    procedure Yield is
    begin
       Raw_Yield;
@@ -117,6 +126,21 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_EP_Create;
    end EP_Create;
+
+   function IPC_Call (Cap : U64) return U64 is
+   begin
+      return Raw_IPC_Call (Cap);
+   end IPC_Call;
+
+   function IPC_Recv (Cap : U64) return U64 is
+   begin
+      return Raw_IPC_Recv (Cap);
+   end IPC_Recv;
+
+   function IPC_Reply return U64 is
+   begin
+      return Raw_IPC_Reply (Reply_Cap_Handle);
+   end IPC_Reply;
 
    procedure Debug_Put (S : String) is
    begin

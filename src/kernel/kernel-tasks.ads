@@ -121,6 +121,38 @@ package Kernel.Tasks is
      (TCB       : in out Thread_Control_Block;
       New_State : Thread_State);
 
+   --  Reply-cap bookkeeping: set when a caller's message has been
+   --  delivered and it waits for a reply; cleared when the reply
+   --  arrives or fails.
+   procedure Set_Awaiting_Reply
+     (TCB      : in out Thread_Control_Block;
+      Awaiting : Boolean);
+
+   function Is_Awaiting_Reply (TCB : Thread_Control_Block) return Boolean;
+
+   --  Endpoint blocked-caller queue link (FIFO per endpoint).
+   procedure Set_Endpoint_Queue_Next
+     (TCB    : in out Thread_Control_Block;
+      Next   : Thread_Access);
+
+   function Endpoint_Queue_Next
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   --  Badge of the endpoint cap a queued caller called through;
+   --  recorded at Call time, consumed when the message transfers.
+   procedure Set_IPC_Badge
+     (TCB   : in out Thread_Control_Block;
+      Badge : Kernel.Capabilities.U64);
+
+   function IPC_Badge
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
+
+   --  Overwrite the saved a0 of a blocked thread with a syscall
+   --  result status (surfaces when the thread is rescheduled).
+   procedure Set_Saved_Result
+     (TCB   : in out Thread_Control_Block;
+      Value : Kernel.Capabilities.U64);
+
    procedure Insert_Cap
      (TCB    : in out Thread_Control_Block;
       Kind   : Kernel.Capabilities.Object_Kind;
@@ -174,6 +206,14 @@ package Kernel.Tasks is
       Cap    : Kernel.Capabilities.Handle;
       Result : out Kernel.Capabilities.Status);
 
+   --  Raw close with no cleanup hooks: table entry only. Used by the
+   --  IPC reply path to consume a reply cap whose target was already
+   --  satisfied (cleanup would wrongly fail the caller).
+   procedure Forget_Cap
+     (Thread : not null Thread_Access;
+      Cap    : Kernel.Capabilities.Handle;
+      Result : out Kernel.Capabilities.Status);
+
    procedure Reset_Process_Caps (PCB : in out Process_Control_Block);
 
    function Process_Cap_Count (PCB : Process_Control_Block) return Natural;
@@ -192,6 +232,9 @@ private
       Process          : Process_Access;
       Kernel_Stack_Top : Kernel.Capabilities.U64;
       IPC_Buffer       : Kernel.Capabilities.U64;
+      Awaiting_Reply   : Boolean;
+      Queue_Next       : Thread_Access;
+      Call_Badge       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
    end record;
