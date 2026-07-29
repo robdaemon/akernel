@@ -102,9 +102,20 @@ waiter once and clears slot; second different waiter -> invalid/denied;
 `src/kernel/kernel-ipc.*`. Endpoint/message scaffold: label + 6 words +
 4 caps + badge; one waiting sender/receiver; drops dead waiters before
 matching. Endpoints carry `Object_Header` refcount (boot test endpoint
-pinned); `Retain`/`Release`/`Initialize (Pinned)` implemented. No cap
-transfer, no syscalls yet. Agreed design (rendezvous,
-IPC buffer, call/recv/reply, reply cap, dynamic endpoints): docs/IPC.md.
+pinned); `Retain`/`Release`/`Initialize (Pinned)` implemented.
+
+Dynamic endpoints: PMM-backed slab — pool grows one physical frame at
+a time (RAM-limited, no fixed cap), freed slots recycle via intrusive
+free list, frames never returned to PMM (high-water mark). Refcount
+convention: Count = number of referencing caps; fresh endpoint starts
+at 0, first cap insert retains to 1; `Discard` rolls back a
+never-capped endpoint. Last release finalizes: wakes both waiters,
+clears state, frees slot. `ep_create` syscall (11) returns a cap with
+`Endpoint_Full_Rights`. Boot selftest covers retain/release cycle,
+slab growth across frames (2x create-100/discard), pinned no-release.
+
+No cap transfer, no call/recv/reply syscalls yet. Agreed design:
+docs/IPC.md.
 
 ## Processes / program loader / boot files
 

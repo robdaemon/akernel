@@ -73,6 +73,14 @@ akernel_sys_reap_process:
     ret
 .size akernel_sys_reap_process, . - akernel_sys_reap_process
 
+.global akernel_sys_ep_create
+.type akernel_sys_ep_create, @function
+akernel_sys_ep_create:
+    li a7, 11
+    ecall
+    ret
+.size akernel_sys_ep_create, . - akernel_sys_ep_create
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

@@ -71,6 +71,10 @@ procedure Akernel is
    Sent_Message     : Kernel.IPC.Message := Kernel.IPC.Empty_Message;
    Got_Message      : Kernel.IPC.Message;
 
+   Selftest_Object   : System.Address;
+   Exhausted_Objects : array (1 .. 100) of System.Address;
+   Exhausted_Count   : Natural;
+
    Console_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => True,
       Write    => True,
@@ -263,21 +267,46 @@ procedure Akernel is
       end if;
    end PMM_Self_Test;
 
-   Selftest_Endpoint : aliased Kernel.IPC.Endpoint;
-
    procedure Objects_Self_Test is
       Passed : Boolean := True;
    begin
-      --  Dynamic lifecycle: init refcount 1, retain to 2, release to 1
-      --  (not destroyed), release to 0 (destroyed).
-      Kernel.IPC.Initialize (Selftest_Endpoint, Pinned => False);
-      Kernel.IPC.Retain (Selftest_Endpoint'Address);
-      if Kernel.IPC.Release (Selftest_Endpoint'Address) then
+      --  Dynamic lifecycle: create (refcount 0), retain to 2, release
+      --  to 1 (not destroyed), release to 0 (destroyed, slot freed).
+      Kernel.IPC.Create_Endpoint (IPC_Result, Selftest_Object);
+      if IPC_Result /= Kernel.IPC.Ok then
          Passed := False;
+      else
+         Kernel.IPC.Retain (Selftest_Object);
+         Kernel.IPC.Retain (Selftest_Object);
+         if Kernel.IPC.Release (Selftest_Object) then
+            Passed := False;
+         end if;
+         if not Kernel.IPC.Release (Selftest_Object) then
+            Passed := False;
+         end if;
       end if;
-      if not Kernel.IPC.Release (Selftest_Endpoint'Address) then
-         Passed := False;
-      end if;
+
+      --  Pool growth and reuse: create 100 endpoints (forces several
+      --  slab frame allocations), discard all, create 100 again
+      --  (free-list reuse), discard.
+      for Pass in 1 .. 2 loop
+         Exhausted_Count := 0;
+         loop
+            Kernel.IPC.Create_Endpoint (IPC_Result, Selftest_Object);
+            exit when IPC_Result /= Kernel.IPC.Ok
+              or else Exhausted_Count = 100;
+            Exhausted_Count := Exhausted_Count + 1;
+            Exhausted_Objects (Exhausted_Count) := Selftest_Object;
+         end loop;
+
+         if IPC_Result /= Kernel.IPC.Ok or else Exhausted_Count /= 100 then
+            Passed := False;
+         end if;
+
+         for Index in 1 .. Exhausted_Count loop
+            Kernel.IPC.Discard (Exhausted_Objects (Index));
+         end loop;
+      end loop;
 
       --  Pinned objects never release.
       if Kernel.IPC.Release (Test_Endpoint'Address) then

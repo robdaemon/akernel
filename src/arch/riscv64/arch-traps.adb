@@ -8,6 +8,7 @@ with Board.UART;
 with Kernel.Boot_Files;
 with Kernel.Capabilities;
 with Kernel.Interrupts;
+with Kernel.IPC;
 with Kernel.Objects;
 with Kernel.Processes;
 with Kernel.Scheduler;
@@ -15,6 +16,7 @@ with Kernel.Tasks;
 
 package body Arch.Traps is
    use type Arch.MMU.Status;
+   use type Kernel.IPC.Status;
    use type Kernel.Processes.Status;
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
@@ -37,6 +39,7 @@ package body Arch.Traps is
    Sys_Spawn_Boot_Path   : constant U64 := 8;
    Sys_Exit              : constant U64 := 9;
    Sys_Reap_Process      : constant U64 := 10;
+   Sys_EP_Create         : constant U64 := 11;
 
    Tick_Count : U64 := 0;
 
@@ -524,6 +527,47 @@ package body Arch.Traps is
       Schedule_Saved_Context (Frame, Scheduler_Result);
    end Handle_Exit;
 
+   procedure Handle_EP_Create (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IPC_Result : Kernel.IPC.Status;
+      Cap_Result : Kernel.Capabilities.Status;
+      Object     : System.Address;
+      New_Cap    : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.IPC.Create_Endpoint (IPC_Result, Object);
+      if IPC_Result /= Kernel.IPC.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      --  Fresh endpoint has refcount 0; the insert retains it to 1.
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.Endpoint_Object,
+         Object => Object,
+         Rights => Kernel.IPC.Endpoint_Full_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Kernel.IPC.Discard (Object);
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_EP_Create;
+
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
@@ -558,6 +602,8 @@ package body Arch.Traps is
          return;
       elsif Number = Sys_Reap_Process then
          Handle_Reap_Process (Frame);
+      elsif Number = Sys_EP_Create then
+         Handle_EP_Create (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

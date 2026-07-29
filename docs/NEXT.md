@@ -13,8 +13,10 @@ kernel cap tables.
    `Pinned_Refcount` in `Kernel.Objects`, endpoint `Retain`/`Release`,
    `Retain_Cap` in cap-insert wrappers, dispatcher releases once
    (caps closed at exit/reap cleanup).
-2. Dynamic endpoints: `ep_create` (syscall 11), endpoint finalizer
-   (fail blocked caller + waiting receiver on last close).
+2. ~~Dynamic endpoints~~ — done: `ep_create` (syscall 11) +
+   RTS wrapper; PMM-backed slab pool (grows per frame, RAM-limited,
+   free-list reuse, frames never returned); finalizer wakes waiters
+   and frees slot on last release.
 3. Per-thread IPC buffer page at VA `0x6FFF0000`, created/mapped at
    thread spawn; kernel buffer access via user-root walk + physmap.
 4. `call`/`recv`/`reply` (syscalls 12-14): rendezvous, badge stamping,

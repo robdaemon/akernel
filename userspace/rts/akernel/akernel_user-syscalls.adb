@@ -47,6 +47,9 @@ package body Akernel_User.Syscalls is
    function Raw_Reap_Process (Process_Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_reap_process";
 
+   function Raw_EP_Create return U64
+     with Import, Convention => C, External_Name => "akernel_sys_ep_create";
+
    procedure Yield is
    begin
       Raw_Yield;
@@ -109,6 +112,11 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Reap_Process (Process_Cap);
    end Reap_Process;
+
+   function EP_Create return U64 is
+   begin
+      return Raw_EP_Create;
+   end EP_Create;
 
    procedure Debug_Put (S : String) is
    begin

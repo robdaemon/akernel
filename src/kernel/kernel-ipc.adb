@@ -1,9 +1,13 @@
 with Ada.Unchecked_Conversion;
+with System.Storage_Elements;
+with Arch;
+with Kernel.Physical_Memory;
 with Kernel.Scheduler;
 
 package body Kernel.IPC is
    use type Kernel.Capabilities.Object_Kind;
    use type Kernel.Capabilities.Status;
+   use type Kernel.Physical_Memory.Status;
    use type Kernel.Scheduler.Status;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
@@ -38,12 +42,92 @@ package body Kernel.IPC is
       Transfer => False,
       Manage   => False);
 
+   --  Dynamic endpoint storage: PMM-backed slab. Pool grows one
+   --  physical frame at a time, limited by RAM rather than a fixed
+   --  constant. Freed endpoints recycle through the intrusive free
+   --  list (Next_Free valid only while the slot is free). Frames are
+   --  never returned to the PMM (high-water mark; per-frame empty
+   --  tracking is a possible later refinement).
+   Free_Head : System.Address := System.Null_Address;
+
+   procedure Free_Endpoint (Object : Endpoint_Access) is
+   begin
+      Object.Next_Free := Free_Head;
+      Free_Head := Object.all'Address;
+   end Free_Endpoint;
+
+   procedure Grow_Pool (Result : out Status) is
+      use System.Storage_Elements;
+
+      --  Slot size rounded up to 16 bytes; computed at elaboration
+      --  ('Size is not static for record types).
+      Slot_Bytes : constant Storage_Count :=
+        Storage_Count ((Endpoint'Size + 127) / 128 * 16);
+      Slots_Per_Frame : constant Natural :=
+        Natural (Kernel.Physical_Memory.Page_Size) / Natural (Slot_Bytes);
+
+      PMM_Result : Kernel.Physical_Memory.Status;
+      Frame_PA   : Kernel.Capabilities.U64;
+      Base       : System.Address;
+   begin
+      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Frame_PA);
+
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         Result := No_Endpoints;
+         return;
+      end if;
+
+      Base := System'To_Address
+        (Integer_Address (Arch.Phys_To_Virt (Frame_PA)));
+
+      for Slot in 0 .. Slots_Per_Frame - 1 loop
+         Free_Endpoint
+           (To_Endpoint (Base + Storage_Offset (Slot) * Slot_Bytes));
+      end loop;
+
+      Result := Ok;
+   end Grow_Pool;
+
+   procedure Create_Endpoint
+     (Result : out Status;
+      Object : out System.Address)
+   is
+      use type System.Address;
+      Slot : Endpoint_Access;
+   begin
+      Object := System.Null_Address;
+
+      if Free_Head = System.Null_Address then
+         Grow_Pool (Result);
+         if Result /= Ok then
+            return;
+         end if;
+      end if;
+
+      Slot := To_Endpoint (Free_Head);
+      Free_Head := Slot.Next_Free;
+      Slot.Next_Free := System.Null_Address;
+      Initialize (Slot.all, Pinned => False);
+      Object := Slot.all'Address;
+      Result := Ok;
+   end Create_Endpoint;
+
+   procedure Discard (Object : System.Address) is
+      Slot : constant Endpoint_Access := To_Endpoint (Object);
+   begin
+      if Slot = null then
+         return;
+      end if;
+
+      Free_Endpoint (Slot);
+   end Discard;
+
    procedure Initialize (Object : out Endpoint; Pinned : Boolean) is
    begin
       if Pinned then
          Object.Header.Count := Kernel.Objects.Pinned_Refcount;
       else
-         Object.Header.Count := 1;
+         Object.Header.Count := 0;
       end if;
 
       Object.Has_Message := False;
@@ -51,6 +135,7 @@ package body Kernel.IPC is
       Object.Waiting_Sender := null;
       Object.Sender_Message := Empty_Message;
       Object.Waiting_Receiver := null;
+      Object.Next_Free := System.Null_Address;
    end Initialize;
 
    procedure Retain (Object : System.Address) is
@@ -69,6 +154,7 @@ package body Kernel.IPC is
 
    function Release (Object : System.Address) return Boolean is
       Endpoint_Object : constant Endpoint_Access := To_Endpoint (Object);
+      Wake_Result     : Kernel.Scheduler.Status;
       use type Kernel.Objects.Refcount;
    begin
       if Endpoint_Object = null
@@ -85,14 +171,26 @@ package body Kernel.IPC is
          return False;
       end if;
 
-      --  Last reference dropped: fail any remaining waiters, then the
-      --  object is dead. Dynamic endpoint storage reclamation arrives
-      --  with ep_create; static storage needs no free.
+      --  Last reference dropped: wake any remaining waiters (error
+      --  status delivery arrives with the call/recv syscalls; no
+      --  syscall can block on an endpoint before then), clear all
+      --  state, and return the slot to the pool.
+      if Endpoint_Object.Waiting_Sender /= null then
+         Kernel.Scheduler.Wake
+           (Endpoint_Object.Waiting_Sender, Wake_Result);
+      end if;
+
+      if Endpoint_Object.Waiting_Receiver /= null then
+         Kernel.Scheduler.Wake
+           (Endpoint_Object.Waiting_Receiver, Wake_Result);
+      end if;
+
       Endpoint_Object.Has_Message := False;
       Endpoint_Object.Pending := Empty_Message;
       Endpoint_Object.Waiting_Sender := null;
       Endpoint_Object.Sender_Message := Empty_Message;
       Endpoint_Object.Waiting_Receiver := null;
+      Free_Endpoint (Endpoint_Object);
       return True;
    end Release;
 

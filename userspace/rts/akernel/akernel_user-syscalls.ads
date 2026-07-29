@@ -40,6 +40,7 @@ package Akernel_User.Syscalls is
       Offset  : U64) return U64;
    procedure Process_Exit;
    function Reap_Process (Process_Cap : U64) return U64;
+   function EP_Create return U64;
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);
 end Akernel_User.Syscalls;

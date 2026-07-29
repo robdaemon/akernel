@@ -40,7 +40,21 @@ package Kernel.IPC is
       Wrong_Object,
       Rights_Denied,
       Would_Block,
-      Endpoint_Full);
+      Endpoint_Full,
+      No_Endpoints);
+
+   --  Rights granted to the creator of a dynamic endpoint.
+   Endpoint_Full_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => False,
+      Write    => False,
+      Execute  => False,
+      Map      => False,
+      Send     => True,
+      Receive  => True,
+      Wait     => False,
+      Ack      => False,
+      Transfer => True,
+      Manage   => True);
 
    type Endpoint is private;
 
@@ -51,10 +65,24 @@ package Kernel.IPC is
 
    --  Refcount operations on an endpoint object address. Retain adds
    --  one reference; Release drops one and returns True when the last
-   --  reference dropped (object finalized). Both are no-ops on pinned
-   --  endpoints.
+   --  reference dropped (object finalized and returned to the pool).
+   --  Both are no-ops on pinned endpoints. Refcount convention:
+   --  Count = number of caps referencing the object; a fresh dynamic
+   --  endpoint starts at 0 and reaches 1 when its first cap inserts.
    procedure Retain (Object : System.Address);
    function Release (Object : System.Address) return Boolean;
+
+   --  Allocate a dynamic endpoint from the kernel pool. On Ok the
+   --  object has refcount 0; the caller is expected to insert a cap
+   --  (which retains it) or Discard it.
+   procedure Create_Endpoint
+     (Result : out Status;
+      Object : out System.Address);
+
+   --  Return an unreferenced (refcount 0) endpoint to the pool. Only
+   --  valid when no cap references the object (create-then-fail
+   --  rollback).
+   procedure Discard (Object : System.Address);
 
    procedure Send
      (Sender       : Kernel.Tasks.Thread_Access;
@@ -80,5 +108,6 @@ private
       Waiting_Sender   : Kernel.Tasks.Thread_Access;
       Sender_Message   : Message;
       Waiting_Receiver : Kernel.Tasks.Thread_Access;
+      Next_Free        : System.Address;
    end record;
 end Kernel.IPC;

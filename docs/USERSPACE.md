@@ -17,6 +17,7 @@
       5 sched fail, 6 invalid parent), a1 = process cap on ok
 9  exit() -> does not return
 10 reap_process(a0 = process_cap) -> 0 ok, 1 invalid, 2 not exited
+11 ep_create() -> endpoint cap handle, U64'Last fail
 ```
 
 Return convention: 0 ok, 1 invalid/denied, 2 would-block (older
@@ -57,8 +58,8 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   `serial driver online`, loops `IRQ_Wait`/`IRQ_Ack` (cap 2) draining RX.
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, no grants): directed
   edge cases + 4096 deterministic pseudo-random syscalls. Found the
-  `irq_wait` missing-`Advance_SEPC` livelock. 14/14 directed PASS,
-  kernel alive after exit.
+  `irq_wait` missing-`Advance_SEPC` livelock. 16/16 directed PASS
+  (incl. ep_create handle/distinctness), kernel alive after exit.
 
 ## Manifest
 

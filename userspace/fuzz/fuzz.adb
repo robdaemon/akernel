@@ -38,6 +38,9 @@ procedure Fuzz is
    Sys_Spawn          : constant U64 := 8;
    Sys_Exit           : constant U64 := 9;
    Sys_Reap           : constant U64 := 10;
+   Sys_EP_Create      : constant U64 := 11;
+
+   Highest_Known      : constant U64 := 11;
 
    Failed : constant U64 := U64'Last;
 
@@ -151,12 +154,18 @@ begin
    --  Directed cases first.
 
    --  Unknown syscall numbers must return Failed.
-   Status := Raw_Ecall (11, 0, 0, 0, 0, 0, 0);
-   Check (Status = Failed, "unknown syscall 11 rejected");
+   Status := Raw_Ecall (15, 0, 0, 0, 0, 0, 0);
+   Check (Status = Failed, "unknown syscall 15 rejected");
    Status := Raw_Ecall (255, 1, 2, 3, 4, 5, 6);
    Check (Status = Failed, "unknown syscall 255 rejected");
    Status := Raw_Ecall (U64'Last, 0, 0, 0, 0, 0, 0);
    Check (Status = Failed, "unknown syscall max rejected");
+
+   --  ep_create returns fresh distinct endpoint cap handles.
+   Status := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   Check (Status /= Failed and then Status < 256, "ep_create returns handle");
+   A0 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   Check (A0 /= Failed and then A0 /= Status, "ep_create distinct handles");
 
    --  Boot file probes: valid file, past-EOF and huge offsets.
    Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
@@ -213,7 +222,7 @@ begin
 
          Status := Raw_Ecall (Number, A0, A1, A2, A3, A4, A5);
          Total_Calls := Total_Calls + 1;
-         if Number > Sys_Reap and then Status = Failed then
+         if Number > Highest_Known and then Status = Failed then
             Unknown_Count := Unknown_Count + 1;
          end if;
 
