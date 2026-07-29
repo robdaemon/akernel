@@ -82,6 +82,7 @@ physmap base:           0xFFFFFFC000000000
 initrd load PA:         0x84000000
 user stack top:         0x70000000
 IPC buffer VA (design): 0x6FFF0000
+bootinfo page VA:       0x6FFE0000
 user VA range:          0x40000000..0x80000000
 UART PA:                0x10000000
 PLIC PA:                0x0c000000
