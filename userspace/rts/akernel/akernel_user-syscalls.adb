@@ -173,6 +173,64 @@ package body Akernel_User.Syscalls is
          Badge         => Badge);
    end Set_Grant;
 
+   function Boot_Cap (Name : String) return U64 is
+      Match : Boolean;
+   begin
+      if Bootinfo.Magic /= Bootinfo_Magic then
+         return 0;
+      end if;
+
+      for Index in Bootinfo.Entries'Range loop
+         exit when U64 (Index) >= Bootinfo.Count;
+         if Bootinfo.Entries (Index).Name_Length = U64 (Name'Length) then
+            Match := True;
+            for J in Name'Range loop
+               if Bootinfo.Entries (Index).Name (J - Name'First + 1)
+                 /= Name (J)
+               then
+                  Match := False;
+                  exit;
+               end if;
+            end loop;
+
+            if Match then
+               return Bootinfo.Entries (Index).Handle;
+            end if;
+         end if;
+      end loop;
+
+      return 0;
+   end Boot_Cap;
+
+   function Boot_Cap_Rights (Name : String) return U64 is
+      Match : Boolean;
+   begin
+      if Bootinfo.Magic /= Bootinfo_Magic then
+         return 0;
+      end if;
+
+      for Index in Bootinfo.Entries'Range loop
+         exit when U64 (Index) >= Bootinfo.Count;
+         if Bootinfo.Entries (Index).Name_Length = U64 (Name'Length) then
+            Match := True;
+            for J in Name'Range loop
+               if Bootinfo.Entries (Index).Name (J - Name'First + 1)
+                 /= Name (J)
+               then
+                  Match := False;
+                  exit;
+               end if;
+            end loop;
+
+            if Match then
+               return Bootinfo.Entries (Index).Rights_Mask;
+            end if;
+         end if;
+      end loop;
+
+      return 0;
+   end Boot_Cap_Rights;
+
    procedure Debug_Put (S : String) is
    begin
       for C of S loop

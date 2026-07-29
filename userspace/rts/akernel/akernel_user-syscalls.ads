@@ -132,6 +132,15 @@ package Akernel_User.Syscalls is
        System'To_Address (System.Storage_Elements.Integer_Address
          (Bootinfo_VA));
 
+   --  Bootinfo name lookup (init's namespace basis): resolve a
+   --  kernel-assigned entry name (e.g. "uart/mmio", "Tests/Echo")
+   --  to its cap handle; 0 when absent or bootinfo page invalid.
+   function Boot_Cap (Name : String) return U64;
+
+   --  Rights mask of the named entry as granted by the kernel;
+   --  0 when absent. Children can be granted at most these rights.
+   function Boot_Cap_Rights (Name : String) return U64;
+
    procedure Debug_Put (S : String);
    procedure Debug_Put_Line (S : String);
 end Akernel_User.Syscalls;
