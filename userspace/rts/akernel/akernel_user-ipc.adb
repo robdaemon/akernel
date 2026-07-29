@@ -1,5 +1,8 @@
+with Interfaces;
+
 package body Akernel_User.IPC is
    use Akernel_User.Syscalls;
+   use type Interfaces.Unsigned_64;
 
    Max_Payload_Bits : constant := 6 * 64;
 
