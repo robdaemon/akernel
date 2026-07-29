@@ -1,4 +1,5 @@
 with System;
+with System.Storage_Elements;
 with Arch.MMU;
 with Kernel.ELF;
 with Kernel.Physical_Memory;
@@ -198,6 +199,7 @@ package body Kernel.Processes is
       Root               : U64 := 0;
       Stack_Frame        : U64 := 0;
       Kernel_Stack_Frame : U64 := 0;
+      IPC_Buffer_Frame   : U64 := 0;
       Start_PC           : U64;
    begin
       Process_Cap := Kernel.Capabilities.Invalid_Handle;
@@ -246,6 +248,42 @@ package body Kernel.Processes is
          Destroy_Address_Space (Root);
          return;
       end if;
+
+      --  Per-thread IPC buffer page (docs/IPC.md): fixed user VA,
+      --  kernel-allocated, zeroed to avoid cross-process data leaks,
+      --  freed by user-address-space teardown. Physical address is
+      --  recorded in the TCB below.
+      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, IPC_Buffer_Frame);
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         Result := Load_Failed;
+         Destroy_Address_Space (Root);
+         return;
+      end if;
+
+      Arch.MMU.Map_Page
+        (Root     => Root,
+         Virtual  => Kernel.Tasks.IPC_Buffer_VA,
+         Physical => IPC_Buffer_Frame,
+         Flags    => Arch.MMU.User_RW,
+         Result   => MMU_Result);
+
+      if MMU_Result /= Arch.MMU.Ok then
+         Result := Load_Failed;
+         Kernel.Physical_Memory.Deallocate_Frame
+           (IPC_Buffer_Frame, PMM_Result);
+         Destroy_Address_Space (Root);
+         return;
+      end if;
+
+      declare
+         type Page_Words is array (1 .. 512) of U64;
+         Buffer_Page : Page_Words
+           with Address => System'To_Address
+             (System.Storage_Elements.Integer_Address
+               (Arch.Phys_To_Virt (IPC_Buffer_Frame)));
+      begin
+         Buffer_Page := (others => 0);
+      end;
 
       Kernel.Physical_Memory.Allocate_Frame
         (PMM_Result, Kernel_Stack_Frame);
@@ -309,6 +347,9 @@ package body Kernel.Processes is
       Kernel.Tasks.Set_Kernel_Stack_Top
         (TCB       => Threads (Slot),
          Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
+      Kernel.Tasks.Set_IPC_Buffer
+        (TCB      => Threads (Slot),
+         Phys_PA => IPC_Buffer_Frame);
       Kernel.Tasks.Initialize_Context
         (TCB       => Threads (Slot),
          PC        => Start_PC,

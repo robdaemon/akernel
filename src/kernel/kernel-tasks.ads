@@ -28,6 +28,13 @@ package Kernel.Tasks is
    Address_Space_Cap_Handle : constant Kernel.Capabilities.Handle :=
      Kernel.Capabilities.Handle'Last;
 
+   --  Per-thread IPC buffer page user VA (just below user stack top).
+   --  Fixed per address space: one IPC buffer page per process while
+   --  processes have a single thread. The frame is kernel-allocated
+   --  at spawn, mapped User_RW, and freed by user-address-space
+   --  teardown; its physical address is recorded in the TCB.
+   IPC_Buffer_VA : constant Kernel.Capabilities.U64 := 16#6FFF_0000#;
+
    procedure Initialize_Process
      (PCB : out Process_Control_Block;
       Id  : Process_Id);
@@ -87,6 +94,13 @@ package Kernel.Tasks is
       Stack_Top : Kernel.Capabilities.U64);
 
    function Kernel_Stack_Top
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
+
+   procedure Set_IPC_Buffer
+     (TCB     : in out Thread_Control_Block;
+      Phys_PA : Kernel.Capabilities.U64);
+
+   function IPC_Buffer_PA
      (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
    procedure Initialize_Context
@@ -177,6 +191,7 @@ private
       Status     : Thread_State;
       Process          : Process_Access;
       Kernel_Stack_Top : Kernel.Capabilities.U64;
+      IPC_Buffer       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
    end record;

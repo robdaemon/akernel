@@ -17,8 +17,10 @@ kernel cap tables.
    RTS wrapper; PMM-backed slab pool (grows per frame, RAM-limited,
    free-list reuse, frames never returned); finalizer wakes waiters
    and frees slot on last release.
-3. Per-thread IPC buffer page at VA `0x6FFF0000`, created/mapped at
-   thread spawn; kernel buffer access via user-root walk + physmap.
+3. ~~Per-thread IPC buffer page~~ — done: VA `0x6FFF0000`, allocated
+   + zeroed + mapped at spawn (init + children), PA in TCB, kernel
+   access via physmap; freed by AS teardown. One buffer per AS while
+   single-threaded.
 4. `call`/`recv`/`reply` (syscalls 12-14): rendezvous, badge stamping,
    cap transfer (Transfer right required, duplicate into receiver table,
      rewrite buffer slots), reply cap minting/one-shot/lifecycle edges.

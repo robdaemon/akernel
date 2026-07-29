@@ -53,6 +53,7 @@ package body Kernel.Tasks is
       TCB.Status := Ready;
       TCB.Process := Process;
       TCB.Kernel_Stack_Top := 0;
+      TCB.IPC_Buffer := 0;
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
    end Initialize_Thread;
@@ -204,6 +205,21 @@ package body Kernel.Tasks is
    begin
       return TCB.Kernel_Stack_Top;
    end Kernel_Stack_Top;
+
+   procedure Set_IPC_Buffer
+     (TCB     : in out Thread_Control_Block;
+      Phys_PA : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.IPC_Buffer := Phys_PA;
+   end Set_IPC_Buffer;
+
+   function IPC_Buffer_PA
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.IPC_Buffer;
+   end IPC_Buffer_PA;
 
    procedure Initialize_Context
      (TCB       : in out Thread_Control_Block;

@@ -53,6 +53,7 @@ procedure Akernel is
    Memory_Size      : Interfaces.Unsigned_64 := 0;
    User_Stack_Frame        : Interfaces.Unsigned_64 := 0;
    Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
+   Init_IPC_Buffer_Frame   : Interfaces.Unsigned_64 := 0;
    User_Root_Table  : Interfaces.Unsigned_64 := 0;
    User_Stack_Top   : constant Interfaces.Unsigned_64 := 16#7000_0000#;
    Init_Image_Base  : Interfaces.Unsigned_64 := 0;
@@ -363,6 +364,13 @@ begin
    if PMM_Result = Kernel.Physical_Memory.Ok
      and then MMU_Result = Arch.MMU.Ok
    then
+      Kernel.Physical_Memory.Allocate_Frame
+        (PMM_Result, Init_IPC_Buffer_Frame);
+   end if;
+
+   if PMM_Result = Kernel.Physical_Memory.Ok
+     and then MMU_Result = Arch.MMU.Ok
+   then
       Board.UART.Put_Line ("memory manager online");
       Board.UART.Put ("ram MiB: ");
       Board.UART.Put_Decimal (Natural (Memory_Size / (1024 * 1024)));
@@ -494,6 +502,35 @@ begin
          Result   => MMU_Result);
    end if;
 
+   --  Init's IPC buffer page (docs/IPC.md): fixed user VA, zeroed to
+   --  avoid leaking stale frame contents to userspace.
+   if Initrd_Result = Kernel.Initrd.Ok
+     and then MMU_Result = Arch.MMU.Ok
+     and then Init_IPC_Buffer_Frame /= 0
+   then
+      Arch.MMU.Map_Page
+        (Root     => User_Root_Table,
+         Virtual  => Kernel.Tasks.IPC_Buffer_VA,
+         Physical => Init_IPC_Buffer_Frame,
+         Flags    => Arch.MMU.User_RW,
+         Result   => MMU_Result);
+   end if;
+
+   if Initrd_Result = Kernel.Initrd.Ok
+     and then MMU_Result = Arch.MMU.Ok
+     and then Init_IPC_Buffer_Frame /= 0
+   then
+      declare
+         type Page_Words is array (1 .. 512) of Interfaces.Unsigned_64;
+         Buffer_Page : Page_Words
+           with Address => System'To_Address
+             (System.Storage_Elements.Integer_Address
+               (Arch.Phys_To_Virt (Init_IPC_Buffer_Frame)));
+      begin
+         Buffer_Page := (others => 0);
+      end;
+   end if;
+
    --  Init kernel trap stack must be visible in its own user address
    --  space: the trap trampoline builds frames on it before switching
    --  satp to the kernel root.  Mapped at its physmap VA, matching
@@ -539,6 +576,12 @@ begin
         (TCB       => Init_Task,
          Stack_Top => Init_Kernel_Stack_Frame
            + Kernel.Physical_Memory.Page_Size);
+   end if;
+
+   if Init_IPC_Buffer_Frame /= 0 then
+      Kernel.Tasks.Set_IPC_Buffer
+        (TCB      => Init_Task,
+         Phys_PA => Init_IPC_Buffer_Frame);
    end if;
 
    Kernel.Tasks.Insert_Cap_At

@@ -38,10 +38,18 @@ at a fixed user VA:
 IPC_Buffer_VA = 0x6FFF0000   (just below user stack top 0x70000000)
 ```
 
-Kernel accesses it by resolving the VA through the user root and reading/
-writing the frames via the physmap. Always mapped, kernel-created: no
-fault handling needed. Rendezvous transfer is one copy: sender buffer ->
-receiver buffer.
+The frame is kernel-allocated, zeroed at spawn, mapped `User_RW`, and
+freed by user-address-space teardown. Its physical address is recorded
+in the thread's TCB; the kernel accesses the buffer via
+`Phys_To_Virt (TCB.IPC_Buffer_PA)` — no page-table walk at syscall
+time (the page is kernel-created and never unmapped). Always mapped:
+no fault handling needed. Rendezvous transfer is one copy: sender
+buffer -> receiver buffer.
+
+Constraint: the VA is fixed per address space, so there is one IPC
+buffer per process while processes have a single thread. When
+multi-thread processes arrive, per-thread buffer VAs must be
+allocated instead.
 
 Rationale: full message is 96 bytes; syscall registers (a0..a5) cannot
 carry it on send or return it on recv. Buffer is the canonical ABI.
