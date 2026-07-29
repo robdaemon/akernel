@@ -1,0 +1,234 @@
+# IPC design
+
+Status: agreed design, not yet implemented. Decisions taken in design
+discussion; see "Deferred" at bottom for explicitly postponed items.
+
+## Principles
+
+- Synchronous rendezvous in the kernel (seL4-style). No kernel buffering,
+  no in-kernel message queues. Async semantics (Amiga-style message ports)
+  are built in userspace: server thread + shared memory.
+- Kernel mechanism only; protocol lives in userspace. Kernel never parses
+  names, paths, or protocol payloads.
+- Plan 9 model: a file is a channel to a server. VFS is userspace; the
+  kernel gains no file concepts beyond boot-file image caps.
+- Authority is capability possession. Rights are monotonically decreasing:
+  no operation may amplify rights (`Duplicate` must enforce
+  `Has_Rights (Old, New)`).
+
+## Message format
+
+Fixed size, 96 bytes, always copied in full. No count fields.
+
+```text
+offset  0: label   u64        protocol-defined; not interpreted by kernel
+offset  8: words   u64 [6]    payload
+offset 56: caps    u64 [4]    cap handles (sender's table on call,
+                              receiver's table on recv), Invalid_Handle = none
+offset 88: badge   u64        recv only: badge of the endpoint cap the
+                              sender called through (server-chosen cookie)
+```
+
+## IPC buffer
+
+Each thread owns one IPC buffer page, created and mapped at thread spawn
+at a fixed user VA:
+
+```text
+IPC_Buffer_VA = 0x6FFF0000   (just below user stack top 0x70000000)
+```
+
+Kernel accesses it by resolving the VA through the user root and reading/
+writing the frames via the physmap. Always mapped, kernel-created: no
+fault handling needed. Rendezvous transfer is one copy: sender buffer ->
+receiver buffer.
+
+Rationale: full message is 96 bytes; syscall registers (a0..a5) cannot
+carry it on send or return it on recv. Buffer is the canonical ABI.
+
+## Syscalls
+
+```text
+11 ep_create()        -> a0 handle, U64'Last on failure
+12 call(a0 = ep_cap)  -> a0 status; blocks until reply
+13 recv(a0 = ep_cap)  -> a0 status; blocks until a caller arrives
+14 reply(a0 = 254)    -> a0 status; one-shot reply to current caller
+```
+
+Rights checked: `call` requires `Send` on the endpoint cap;
+`recv` requires `Receive`.
+
+### call
+
+Blocks the caller until: a server receives the message AND replies.
+On entry kernel reads message from caller's IPC buffer. On wakeup the
+reply (label + 6 words) is in the caller's buffer; a0 = status.
+
+### recv
+
+Blocks until a caller performs rendezvous. Kernel writes the full
+96-byte message into the receiver's buffer: label/words from the caller,
+badge from the endpoint cap the caller used, cap slots = handles of
+newly installed transferred caps in the receiver's table. Mints reply
+cap at handle 254 (see below).
+
+### Cap transfer in messages
+
+- Sender marks up to 4 cap handles in its buffer cap slots.
+- Each transferred cap must have `Transfer` right.
+- Kernel duplicates each into the receiver's table (full rights copy;
+  sender may pre-reduce with `Duplicate` before sending).
+- Receiver's buffer cap slots are rewritten to the new handles.
+- If any transfer fails (receiver table full), the call fails before
+  rendezvous completes; no partial delivery.
+
+## Reply cap
+
+Reserved handle 254 (alongside self address-space cap at 255). Userspace
+cannot install anything at 254.
+
+Implementation: no allocation. `recv` mints a cap entry at 254 with
+a new `Reply_Object` kind whose object pointer is the caller TCB.
+Caller thread is flagged waiting-for-reply.
+
+| Event | Result |
+|---|---|
+| `reply(254)` | Reply words copied to caller buffer; caller wakes with status; cap destroyed. Second `reply` -> invalid. |
+| Server exits/is reaped with pending reply cap | Cleanup hook wakes caller with error status. |
+| Caller exits while blocked in `call` | Server's later `reply` -> invalid. |
+| Server `recv`s again without replying | Cap at 254 overwritten; previous caller wakes with error status. Servers must reply before re-receiving (single-waiter discipline, same as IRQ lines). |
+
+Properties: server can reply once, to the actual caller only; cannot
+stockpile a channel back to the client; no per-client reply endpoints;
+no leaks on any death path.
+
+Plain `send` (block-until-received, no reply expected) is deferred;
+`call`/`recv`/`reply` covers the RPC pattern.
+
+Deadlock note: A calling B while B calls A blocks forever, undetected
+(kernel does no deadlock detection, same as seL4). Protocol rule:
+servers must never `call` their clients; the only channel back to a
+client is the one-shot reply cap.
+
+## Objects and refcounting
+
+Dynamically-owned shared objects now exist (endpoints, later memory
+objects), so refcounting enters the object model:
+
+- Dynamic objects carry `Refcount`. Insert/duplicate/transfer increments;
+  cap close decrements; zero destroys via kind-specific finalizer.
+- Finalizers: Endpoint — fail/wake any blocked caller and waiting
+  receiver; Memory — return frames to PMM.
+- Existing static objects (boot MMIO region, IRQ lines) are *pinned*:
+  refcount sentinel value, never destroyed. Static allocation stays.
+- `Kernel.Objects.Cleanup_Thread_Cap_Object` becomes the
+  decrement-and-maybe-destroy dispatcher; endpoint/IRQ waiter cleanup
+  stays as part of endpoint/IRQ finalization.
+
+## Memory objects (bulk/DMA)
+
+Raw user pointers never cross IPC. Bulk data (block device DMA, file
+reads, shared buffers) moves through `Memory_Object` caps:
+
+- Object owns a set of physical frames; rights Map/Read/Write.
+- Client allocates (future syscall), maps locally, sends a derived cap
+  plus offset/length in message words.
+- Server maps the same frames, performs I/O (driver programs DMA into
+  them), replies.
+- Refcounted: frames return to PMM when last cap closes.
+- No IOMMU yet: DMA drivers are trusted privileged processes.
+
+## Namespaces and spawn v2
+
+Namespace = per-process set of caps, Plan 9 style. Kernel moves caps;
+names are userspace metadata, never parsed by the kernel.
+
+### Spawn ABI v2 (replaces grant_mask and manifest path slices)
+
+```text
+spawn(a0 = image_cap, a1 = grant_count)
+  grant entries in IPC buffer, each 24 bytes:
+    u64 parent_handle
+    u64 rights_mask      (bit encoding of Rights record, TBD in impl)
+    u64 badge
+```
+
+Kernel mints each entry (`Duplicate` semantics: rights must be subset of
+parent's) into the child cap table at sequential handles 1..N. Child's
+namespace is exactly what the parent grants. Reserved handles 254
+(reply) and 255 (self AS) are kernel-managed.
+
+Image cap kinds accepted: `Boot_File_Object` (initrd) or
+`Memory_Object` (ELF staged by a file server). Uniform spawn regardless
+of backend; kills the "VFS path for spawn" item — a file server hands
+the spawner a memory cap containing the ELF.
+
+### Boot file caps
+
+Kernel hands init one `Boot_File_Object` cap per initrd file at boot
+(replaces `boot_file_size`/`boot_read_byte` once spawn consumes them;
+byte API retired when init no longer needs it). `Boot_File_Object` =
+offset/length into initrd image, refcount-pinned statics.
+
+### Names as data
+
+- Child discovers names by convention: handle order = grant list order;
+  parent may send a `(handle -> name)` table as first message on a
+  well-known endpoint cap placed at handle 1 by convention.
+- Init gets its bootstrap table from a kernel-provided read-only
+  bootinfo page: (handle, kind, name) entries, so init stops hardcoding
+  handle numbers.
+
+### Manifest stays boot-launch only
+
+Manifest remains init's boot-time program/grant list for initrd
+contents (Amiga-ish startup-sequence role). It is not a general
+namespace mechanism.
+
+## Users, sessions, permissions
+
+- Init launches a session manager / getty analog. Login spawns a user
+  shell with a composed namespace *subset*: e.g. no raw UART MMIO cap,
+  only a console channel cap to the console server.
+- Permissions = capability possession. Any process holding an image cap
+  and resource caps may spawn; it can only grant what it holds, with
+  rights no greater than its own. No UID checks in the kernel.
+- User identity where needed = a badge on a session endpoint cap,
+  minted by the session manager. Servers trust badges only from
+  endpoints they minted (same rule as client multiplexing).
+
+## Init state and crash recovery
+
+- Authority lives in kernel cap tables; init's name table is
+  reconstructible convention (deterministic handle order + manifest).
+- Init is a fatal-fault domain for now (halt/reboot on init death): its
+  boot-time caps are kernel-granted and cannot be reacquired.
+- Mitigation: keep init tiny; policy lives in spawned servers that hold
+  their own caps. Init retains parent caps and can restart/re-grant a
+  dead policy server without serialization.
+- Future: kernel introspection syscalls for init to query/reconstruct
+  state (process list, child cap tables) gated on `Manage` right of the
+  process cap. Designed for, not yet scheduled.
+
+## RTS implications
+
+- `Akernel.IPC`: typed wrappers over call/recv/reply, generic over
+  payload records marshalled into the 6-word area (larger payloads via
+  memory caps).
+- `Akernel.Streams`: `Root_Stream_Type` over endpoint caps becomes the
+  fundamental I/O substrate; file protocol (9P-ish, simplified) layers
+  on top.
+- Future tasking runtime: Ada rendezvous maps onto call/recv/reply
+  (entry call = call, accept = recv + reply). Non-tasking core first.
+
+## Deferred
+
+- Plain `send` (notify-style, no reply).
+- Register fast path: `call_small`/`send_small` variants carrying
+  label + 4 words + no caps in registers. Pure optimization, no
+  protocol change; only if profiling justifies.
+- Notification/signal objects (Amiga signals analog); IRQ wait is the
+  current proto-notification.
+- Kernel introspection syscalls for init state reconstruction.
+- IOMMU/DMA isolation.
+- Cap transfer beyond 4 per message.
