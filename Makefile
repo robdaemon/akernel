@@ -48,8 +48,8 @@ $(INITRD_IMG): init serial fuzz spin echo tools/mkinitrd.py
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
 	cp $(ECHO_ELF) $(INITRD_ROOT)/Tests/Echo
-	printf '%s\n' 'program 1 Drivers/Serial uart_mmio uart_irq' > $(INITRD_ROOT)/System/Manifest
-	printf '%s\n' 'program 2 Tests/Fuzz ipc_test echo_image' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 1 Drivers/Serial uart/mmio uart/irq' > $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 2 Tests/Fuzz ipc_test Tests/Echo' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 3 Tests/Spin' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' '# file Tests/Echo' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)

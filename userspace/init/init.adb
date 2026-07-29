@@ -1,11 +1,11 @@
 with Akernel_User.Syscalls;
 
 --  Init composes its namespace from the kernel-provided bootinfo
---  page: every cap it owns (device caps, one Boot_File_Object image
---  cap per initrd file) is listed there by name, so no handle number
---  is hardcoded. The manifest stays boot-launch data only: program
---  path tokens are resolved to image caps via the bootinfo table and
---  handed to the spawn syscall.
+--  page and composes each child's namespace from manifest grant
+--  tokens: any token naming a bootinfo entry grants that cap to
+--  the child with the kernel-assigned rights; the only non-bootinfo
+--  token is ipc_test (a dynamically minted, badged endpoint). The
+--  manifest is boot-launch data only; the kernel never sees a name.
 
 procedure Init is
    use type Akernel_User.Syscalls.U64;
@@ -13,10 +13,7 @@ procedure Init is
    Max_Token_Length : constant := 64;
    subtype Token_String is String (1 .. Max_Token_Length);
 
-   Manifest_Cap   : Akernel_User.Syscalls.U64 := 0;
-   UART_MMIO_Cap  : Akernel_User.Syscalls.U64 := 0;
-   UART_IRQ_Cap   : Akernel_User.Syscalls.U64 := 0;
-   Echo_Image_Cap : Akernel_User.Syscalls.U64 := 0;
+   Manifest_Cap : Akernel_User.Syscalls.U64 := 0;
 
    Manifest_Size : Akernel_User.Syscalls.U64;
    Spawned_Count : Akernel_User.Syscalls.U64 := 0;
@@ -26,37 +23,6 @@ procedure Init is
    --  badge pattern.
    IPC_Test_EP    : Akernel_User.Syscalls.U64 := 0;
    IPC_Test_Badge : constant Akernel_User.Syscalls.U64 := 16#EC40#;
-
-   --  Resolve a bootinfo entry name to its cap handle; 0 when absent.
-   function Find_Boot_Cap (Name : String) return Akernel_User.Syscalls.U64 is
-      use Akernel_User.Syscalls;
-      Match : Boolean;
-   begin
-      if Bootinfo.Magic /= Bootinfo_Magic then
-         return 0;
-      end if;
-
-      for Index in Bootinfo.Entries'Range loop
-         exit when U64 (Index) >= Bootinfo.Count;
-         if Bootinfo.Entries (Index).Name_Length = U64 (Name'Length) then
-            Match := True;
-            for J in Name'Range loop
-               if Bootinfo.Entries (Index).Name (J - Name'First + 1)
-                 /= Name (J)
-               then
-                  Match := False;
-                  exit;
-               end if;
-            end loop;
-
-            if Match then
-               return Bootinfo.Entries (Index).Handle;
-            end if;
-         end if;
-      end loop;
-
-      return 0;
-   end Find_Boot_Cap;
 
    function Is_Space (C : Character) return Boolean is
    begin
@@ -205,7 +171,7 @@ procedure Init is
          return;
       end if;
 
-      Image_Cap := Find_Boot_Cap (Token (1 .. Length));
+      Image_Cap := Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length));
       if Image_Cap = 0 then
          Akernel_User.Syscalls.Debug_Put_Line ("program image unknown");
          return;
@@ -215,28 +181,20 @@ procedure Init is
          Next_Token (Line_End, Pos, Token, Length, Have_Token);
          exit when not Have_Token;
 
-         if Token_Equals (Token, Length, "uart_mmio") then
-            Grant (UART_MMIO_Cap,
-                   Akernel_User.Syscalls.Right_Map
-                     + Akernel_User.Syscalls.Right_Read
-                     + Akernel_User.Syscalls.Right_Write,
-                   0);
-         elsif Token_Equals (Token, Length, "uart_irq") then
-            Grant (UART_IRQ_Cap,
-                   Akernel_User.Syscalls.Right_Wait
-                     + Akernel_User.Syscalls.Right_Ack,
-                   0);
-         elsif Token_Equals (Token, Length, "ipc_test") then
+         --  Grant tokens are names in init's namespace: a bootinfo
+         --  entry name grants that cap with the kernel-assigned
+         --  rights; ipc_test grants the badged test endpoint.
+         if Token_Equals (Token, Length, "ipc_test") then
             Grant (IPC_Test_EP,
                    Akernel_User.Syscalls.Right_Send
                      + Akernel_User.Syscalls.Right_Receive
                      + Akernel_User.Syscalls.Right_Transfer
                      + Akernel_User.Syscalls.Right_Manage,
                    IPC_Test_Badge);
-         elsif Token_Equals (Token, Length, "echo_image") then
-            Grant (Echo_Image_Cap,
-                   Akernel_User.Syscalls.Right_Read
-                     + Akernel_User.Syscalls.Right_Execute,
+         else
+            Grant (Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length)),
+                   Akernel_User.Syscalls.Boot_Cap_Rights
+                     (Token (1 .. Length)),
                    0);
          end if;
       end loop;
@@ -291,10 +249,7 @@ procedure Init is
 begin
    Akernel_User.Syscalls.Debug_Put_Line ("init online from Ada");
 
-   Manifest_Cap := Find_Boot_Cap ("System/Manifest");
-   UART_MMIO_Cap := Find_Boot_Cap ("uart/mmio");
-   UART_IRQ_Cap := Find_Boot_Cap ("uart/irq");
-   Echo_Image_Cap := Find_Boot_Cap ("Tests/Echo");
+   Manifest_Cap := Akernel_User.Syscalls.Boot_Cap ("System/Manifest");
 
    if Manifest_Cap = 0 then
       Akernel_User.Syscalls.Debug_Put_Line
