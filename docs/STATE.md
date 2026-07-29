@@ -50,6 +50,8 @@ boot manifest visible
 launching manifest programs
 serial spawned
 serial driver online
+fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000291 failures=0x0000000000000000
+spin online (preemption canary: spins forever, system keeps running)
 init resumed
 timer interrupt online
 ```
@@ -89,7 +91,8 @@ QEMU virt RAM base:     0x80000000
 
 ## Current limitations
 
-- Cooperative scheduler only; small fixed process/thread tables.
+- Preemptive scheduler (100 ms user-thread timeslice); kernel itself
+  non-preemptible; small fixed process/thread tables; single hart.
 - No IPC syscalls yet (design agreed, see docs/IPC.md).
 - Spawn uses manifest path slices + grant mask; namespace grant-list ABI
   designed but not implemented.

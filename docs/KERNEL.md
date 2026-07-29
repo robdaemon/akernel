@@ -65,8 +65,12 @@ cap (both per docs/IPC.md; 255 implemented, 254 pending IPC work).
   buffer per address space while processes are single-threaded.
 - Scheduler: fixed ready queue + current pointer; duplicate-membership
   protection; dead threads rejected on push, skipped on pop;
-  `Remove_Thread` for teardown. Cooperative only. Blocked-current +
-  empty-ready idles with `wfi` until wakeup.
+  `Remove_Thread` for teardown. Preemptive for user threads: 100 ms
+  timer tick saves the interrupted frame and reschedules (only when
+  the trap came from U-mode; kernel threads/idle wfi stay cooperative,
+  syscall handlers run with interrupts off so the kernel is never
+  preempted). Blocked-current + empty-ready idles with `wfi` until
+  wakeup. Single hart; SMP (per-hart queues/locks, IPIs) deferred.
 
 ## Objects / interrupts
 

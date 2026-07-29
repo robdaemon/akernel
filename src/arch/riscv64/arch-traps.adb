@@ -23,8 +23,9 @@ package body Arch.Traps is
    use type Kernel.Tasks.Thread_Access;
 
    Timer_Ticks_Per_Second : constant U64 := 10_000_000;
-   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second;
+   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second / 10;
    Interrupt_Bit         : constant U64 := 16#8000_0000_0000_0000#;
+   Sstatus_SPP           : constant U64 := 16#100#;  --  trap from S-mode
    User_Ecall            : constant U64 := 8;
    Supervisor_Timer      : constant U64 := 5;
    Supervisor_External   : constant U64 := 9;
@@ -196,6 +197,25 @@ package body Arch.Traps is
 
       Restore_Scheduled_Context (Frame, Result);
    end Schedule_Saved_Context;
+
+   --  Preemptive scheduling tick: only when the timer interrupted a
+   --  running user thread (SPP clear). Kernel threads and the idle
+   --  wfi path (SPP set) stay cooperative; syscall handlers run with
+   --  interrupts off, so the kernel itself is never preempted.
+   procedure Handle_Preemption (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Result  : Kernel.Scheduler.Status;
+   begin
+      if Current = null
+        or else (Arch.SBI.Sstatus and Sstatus_SPP) /= 0
+      then
+         return;
+      end if;
+
+      Save_Current_Context (Frame);
+      Schedule_Saved_Context (Frame, Result);
+   end Handle_Preemption;
 
    procedure Handle_Map_MMIO (Frame : System.Address) is
       use type Kernel.Capabilities.Object_Kind;
@@ -732,14 +752,13 @@ package body Arch.Traps is
       elsif (Cause and Interrupt_Bit) /= 0
         and then Code = Supervisor_Timer
       then
+         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
          Tick_Count := Tick_Count + 1;
          if Tick_Count = 1 then
             Board.UART.Put_Line ("timer interrupt online");
-         else
-            Board.UART.Put (".");
          end if;
 
-         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+         Handle_Preemption (Frame);
          return;
       elsif (Cause and Interrupt_Bit) /= 0
         and then Code = Supervisor_External

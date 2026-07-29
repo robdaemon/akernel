@@ -14,4 +14,5 @@ package Arch.SBI is
    function Scause return U64;
    function Sepc return U64;
    function Stval return U64;
+   function Sstatus return U64;
 end Arch.SBI;

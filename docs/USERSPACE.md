@@ -69,6 +69,9 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   `irq_wait` missing-`Advance_SEPC` livelock. Directed PASS incl.
   ep_create and non-blocking IPC validation; random phase skips the
   blocking IPC trio. End-to-end IPC fuzzing is a separate milestone.
+- `userspace/spin/` — preemption canary (`Tests/Spin`, no grants): prints
+  `spin online` then busy-loops forever; boot continuing afterwards
+  proves timer preemption.
 
 ## Manifest
 

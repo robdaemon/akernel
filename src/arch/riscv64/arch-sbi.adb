@@ -30,6 +30,9 @@ package body Arch.SBI is
    function Raw_Stval return U64
      with Import, Convention => C, External_Name => "riscv_read_stval";
 
+   function Raw_Sstatus return U64
+     with Import, Convention => C, External_Name => "riscv_read_sstatus";
+
    procedure Set_Timer (Time_Value : U64) is
    begin
       Raw_Set_Timer (Time_Value);
@@ -60,4 +63,5 @@ package body Arch.SBI is
    function Scause return U64 is (Raw_Scause);
    function Sepc return U64 is (Raw_Sepc);
    function Stval return U64 is (Raw_Stval);
+   function Sstatus return U64 is (Raw_Sstatus);
 end Arch.SBI;

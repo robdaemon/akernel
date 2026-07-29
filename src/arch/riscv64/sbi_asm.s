@@ -58,6 +58,13 @@ riscv_read_scause:
     ret
 .size riscv_read_scause, . - riscv_read_scause
 
+.global riscv_read_sstatus
+.type riscv_read_sstatus, @function
+riscv_read_sstatus:
+    csrr a0, sstatus
+    ret
+.size riscv_read_sstatus, . - riscv_read_sstatus
+
 .global riscv_read_sepc
 .type riscv_read_sepc, @function
 riscv_read_sepc:

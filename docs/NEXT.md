@@ -26,6 +26,12 @@ kernel cap tables.
    buffer, badge stamping, cap transfer with rollback, reply cap at
    254 with full lifecycle (consumed/failed/overwrite/endpoint-gone),
    wake-with-status via saved-context a0.
+5a. ~~Preemption~~ — done: 100 ms timer tick preempts running user
+    threads (SPP check; kernel threads/idle stay cooperative), reusing
+    blocking-syscall context machinery; `Tests/Spin` canary proves a
+    forever-spinner no longer hangs the system. SMP deferred: per-hart
+    ready queues or shared queue + lock, IPIs, per-hart timers, cap
+    table locking.
 5. Fuzzer: IPC/endpoint directed cases (all reply-cap lifecycle rows in
    docs/IPC.md) + random phase with endpoints; multi-process fuzz
    (spawn child that fuzzes, then reap); valid-handle/wrong-rights cases.
@@ -42,6 +48,7 @@ Commit between each milestone.
 
 - Plain `send`, register fast path, notification objects, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
+- SMP: per-hart scheduling, IPIs, cap-table/endpoint locking.
 - Memory object alloc/map syscalls (needed by RTS heap + DMA later).
 - DTB device enumeration, IOMMU, tasking runtime, 9P-ish file protocol.
 

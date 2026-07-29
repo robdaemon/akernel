@@ -112,7 +112,9 @@ invalid/denied instead of raising constraint errors.
 
 - UART: `src/board/qemu_virt_riscv64/board-uart.ads/.adb`, PA 0x10000000.
 - PLIC: `board-plic.*`, `board-interrupts.*`, PA 0x0c000000, UART source 10.
-- Timer via SBI: `src/arch/riscv64/arch-sbi.*`, `sbi_asm.s`. Works,
-  prints first message/dots.
+- Timer via SBI: `src/arch/riscv64/arch-sbi.*`, `sbi_asm.s`. 100 ms
+  tick; U-mode ticks preempt the running user thread
+  (`Handle_Preemption` in arch-traps: save frame, reschedule via the
+  blocking-syscall machinery). S-mode ticks (idle/kernel) only re-arm.
 - Device tree: generic FDT parser `kernel-device_tree.*`; board exposes
   boot DTB pointer (`board-device_tree.*`). PMM init uses DTB RAM end.
