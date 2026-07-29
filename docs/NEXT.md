@@ -9,9 +9,10 @@ kernel cap tables.
 
 ## Milestone order
 
-1. Object refcounting infra: `Refcount` on dynamic objects, pinned
-   sentinel for boot statics; `Cleanup_Thread_Cap_Object` becomes
-   decrement-and-maybe-destroy dispatcher.
+1. ~~Object refcounting infra~~ — done: `Object_Header` +
+   `Pinned_Refcount` in `Kernel.Objects`, endpoint `Retain`/`Release`,
+   `Retain_Cap` in cap-insert wrappers, dispatcher releases once
+   (caps closed at exit/reap cleanup).
 2. Dynamic endpoints: `ep_create` (syscall 11), endpoint finalizer
    (fail blocked caller + waiting receiver on last close).
 3. Per-thread IPC buffer page at VA `0x6FFF0000`, created/mapped at

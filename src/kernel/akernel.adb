@@ -262,6 +262,34 @@ procedure Akernel is
          Board.UART.Put_Line ("pmm selftest failed");
       end if;
    end PMM_Self_Test;
+
+   Selftest_Endpoint : aliased Kernel.IPC.Endpoint;
+
+   procedure Objects_Self_Test is
+      Passed : Boolean := True;
+   begin
+      --  Dynamic lifecycle: init refcount 1, retain to 2, release to 1
+      --  (not destroyed), release to 0 (destroyed).
+      Kernel.IPC.Initialize (Selftest_Endpoint, Pinned => False);
+      Kernel.IPC.Retain (Selftest_Endpoint'Address);
+      if Kernel.IPC.Release (Selftest_Endpoint'Address) then
+         Passed := False;
+      end if;
+      if not Kernel.IPC.Release (Selftest_Endpoint'Address) then
+         Passed := False;
+      end if;
+
+      --  Pinned objects never release.
+      if Kernel.IPC.Release (Test_Endpoint'Address) then
+         Passed := False;
+      end if;
+
+      if Passed then
+         Board.UART.Put_Line ("objects selftest online");
+      else
+         Board.UART.Put_Line ("objects selftest failed");
+      end if;
+   end Objects_Self_Test;
 begin
    Board.UART.Put_Line ("Hello world!");
 
@@ -342,7 +370,8 @@ begin
      (TCB     => Driver_Task,
       Id      => 2,
       Process => Driver_Process'Unchecked_Access);
-   Kernel.IPC.Initialize (Test_Endpoint);
+   Kernel.IPC.Initialize (Test_Endpoint, Pinned => True);
+   Objects_Self_Test;
 
    Kernel.Tasks.Insert_Cap
      (TCB    => Bootstrap_Task,

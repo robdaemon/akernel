@@ -67,14 +67,25 @@ cap (both per docs/IPC.md; 255 implemented, 254 pending IPC work).
 `src/kernel/kernel-objects.*`, `src/kernel/kernel-interrupts.*`
 
 Objects: `MMIO_Region` (Physical_Base, Length), `IRQ_Line` (Source,
-Pending, In_Flight, Waiter). Kernel-owned pinned statics today;
-refcounting arrives with dynamic endpoints/memory objects (docs/IPC.md).
+Pending, In_Flight, Waiter). Kernel-owned pinned statics.
 
-`Cleanup_Thread_Cap_Object`: generic dispatcher for thread-owned cap
-references on exit/reap/cap close; endpoint hook clears waiting
-sender/receiver slots, IRQ hook clears waiter. Public process-only cap
-close removed; thread-affine close goes through
-`Kernel.Tasks.Close_Cap (Thread_Access, ...)`.
+Refcounting: dynamically-owned shared objects embed
+`Kernel.Objects.Object_Header` (first component); `Pinned_Refcount`
+sentinel = never destroyed. Kind-owning package implements
+Retain/Release (endpoints: `Kernel.IPC`); `Kernel.Objects.Retain_Cap`
+dispatches by kind and runs from the `Kernel.Tasks` cap-insert
+wrappers (choke point for all inserts). MMIO/IRQ/address-space/
+process/thread/kernel kinds are pinned-by-kind (no header, no release).
+`Cleanup_Thread_Cap_Object` is the decrement-and-maybe-destroy
+dispatcher: kind-specific waiter cleanup, then one release; endpoint
+finalizer clears pending message and both waiter slots (dynamic
+endpoint storage reclamation arrives with `ep_create`). Boot selftest
+(dynamic retain/release cycle + pinned no-release) prints
+`objects selftest online`. Cap close on exit/reap closes every cap so
+refcounted objects release exactly once (cleanup runs at both exit
+and reap).
+
+Endpoint/IRQ waiter cleanup hooks stay kind-local.
 
 Init gets cap 1 = UART MMIO (PA 0x10000000, 4096, Map|Read|Write),
 cap 2 = UART IRQ (source 10, Wait|Ack).
@@ -90,9 +101,10 @@ waiter once and clears slot; second different waiter -> invalid/denied;
 
 `src/kernel/kernel-ipc.*`. Endpoint/message scaffold: label + 6 words +
 4 caps + badge; one waiting sender/receiver; drops dead waiters before
-matching. No cap transfer, no syscalls yet. Agreed design (rendezvous,
-IPC buffer, call/recv/reply, reply cap, dynamic endpoints, refcounts):
-docs/IPC.md.
+matching. Endpoints carry `Object_Header` refcount (boot test endpoint
+pinned); `Retain`/`Release`/`Initialize (Pinned)` implemented. No cap
+transfer, no syscalls yet. Agreed design (rendezvous,
+IPC buffer, call/recv/reply, reply cap, dynamic endpoints): docs/IPC.md.
 
 ## Processes / program loader / boot files
 
@@ -128,7 +140,7 @@ spawn.
 
 ## Lifecycle/cleanup decisions
 
-- No object refcounts until dynamic shared objects arrive (they arrive
-  with IPC endpoints/memory objects — see docs/IPC.md).
+- Object refcounts exist for refcounted kinds (endpoints first);
+  memory objects join when implemented.
 - No main thread cap from spawn until a thread-targeting syscall exists.
 - Spawn authority is a general user capability, not init-privileged.

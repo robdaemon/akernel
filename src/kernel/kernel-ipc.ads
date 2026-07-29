@@ -1,6 +1,7 @@
 with Interfaces;
 with System;
 with Kernel.Capabilities;
+with Kernel.Objects;
 with Kernel.Tasks;
 
 package Kernel.IPC is
@@ -43,7 +44,17 @@ package Kernel.IPC is
 
    type Endpoint is private;
 
-   procedure Initialize (Object : out Endpoint);
+   --  Pinned => True for kernel-owned static endpoints (never
+   --  destroyed); False for dynamically-owned endpoints whose storage
+   --  lifetime is governed by the refcount (one reference per cap).
+   procedure Initialize (Object : out Endpoint; Pinned : Boolean);
+
+   --  Refcount operations on an endpoint object address. Retain adds
+   --  one reference; Release drops one and returns True when the last
+   --  reference dropped (object finalized). Both are no-ops on pinned
+   --  endpoints.
+   procedure Retain (Object : System.Address);
+   function Release (Object : System.Address) return Boolean;
 
    procedure Send
      (Sender       : Kernel.Tasks.Thread_Access;
@@ -63,6 +74,7 @@ package Kernel.IPC is
 
 private
    type Endpoint is record
+      Header           : Kernel.Objects.Object_Header;
       Has_Message      : Boolean;
       Pending          : Message;
       Waiting_Sender   : Kernel.Tasks.Thread_Access;

@@ -1,7 +1,6 @@
 with System;
 with Arch.MMU;
 with Kernel.ELF;
-with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Program_Loader;
 with Kernel.Scheduler;
@@ -391,10 +390,13 @@ package body Kernel.Processes is
       Spawn_Image (Parent, Image, Grant_Mask, Result, Process_Cap);
    end Spawn_Boot_Path;
 
+   --  Runs cleanup hooks and closes every cap in the owning process's
+   --  table. Runs at exit and again at reap; closing each cap makes
+   --  the second pass a no-op so refcounted objects are released
+   --  exactly once.
    procedure Cleanup_Cap_Refs (Thread : Kernel.Tasks.Thread_Access) is
       Process    : Kernel.Tasks.Process_Access;
       Cap_Result : Kernel.Capabilities.Status;
-      Cap_Info   : Kernel.Capabilities.Cap_Entry;
    begin
       if Thread = null then
          return;
@@ -409,15 +411,7 @@ package body Kernel.Processes is
         (Kernel.Capabilities.Invalid_Handle) ..
           Kernel.Capabilities.Handle'Last
       loop
-         Kernel.Tasks.Lookup_Process_Cap
-           (PCB       => Process.all,
-            Cap       => Cap,
-            Result    => Cap_Result,
-            Out_Entry => Cap_Info);
-
-         if Cap_Result = Kernel.Capabilities.Ok then
-            Kernel.Objects.Cleanup_Thread_Cap_Object (Thread, Cap_Info);
-         end if;
+         Kernel.Tasks.Close_Cap (Thread, Cap, Cap_Result);
       end loop;
    end Cleanup_Cap_Refs;
 

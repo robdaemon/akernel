@@ -263,6 +263,15 @@ package body Kernel.Tasks is
          Badge  => Badge,
          Result => Result,
          Cap    => Cap);
+
+      if Result = Kernel.Capabilities.Ok then
+         Kernel.Objects.Retain_Cap
+           ((Valid  => True,
+             Kind   => Kind,
+             Object => Object,
+             Rights => Rights,
+             Badge  => Badge));
+      end if;
    end Insert_Process_Cap;
 
    procedure Insert_Cap
@@ -309,6 +318,15 @@ package body Kernel.Tasks is
          Rights => Rights,
          Badge  => Badge,
          Result => Result);
+
+      if Result = Kernel.Capabilities.Ok then
+         Kernel.Objects.Retain_Cap
+           ((Valid  => True,
+             Kind   => Kind,
+             Object => Object,
+             Rights => Rights,
+             Badge  => Badge));
+      end if;
    end Insert_Process_Cap_At;
 
    procedure Insert_Cap_At

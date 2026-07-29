@@ -41,6 +41,7 @@ memory manager online
 ram MiB: 4096
 pmm selftest online
 cap table online
+objects selftest online
 ipc online
 scheduler online
 entering initrd init
@@ -92,6 +93,5 @@ QEMU virt RAM base:     0x80000000
 - No IPC syscalls yet (design agreed, see docs/IPC.md).
 - Spawn uses manifest path slices + grant mask; namespace grant-list ABI
   designed but not implemented.
-- No object refcounts yet (arriving with dynamic endpoints/memory objects).
 - No DTB-based device enumeration; initrd load address fixed.
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime + stubs).

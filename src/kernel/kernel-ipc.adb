@@ -1,4 +1,3 @@
-with System;
 with Ada.Unchecked_Conversion;
 with Kernel.Scheduler;
 
@@ -39,14 +38,63 @@ package body Kernel.IPC is
       Transfer => False,
       Manage   => False);
 
-   procedure Initialize (Object : out Endpoint) is
+   procedure Initialize (Object : out Endpoint; Pinned : Boolean) is
    begin
+      if Pinned then
+         Object.Header.Count := Kernel.Objects.Pinned_Refcount;
+      else
+         Object.Header.Count := 1;
+      end if;
+
       Object.Has_Message := False;
       Object.Pending := Empty_Message;
       Object.Waiting_Sender := null;
       Object.Sender_Message := Empty_Message;
       Object.Waiting_Receiver := null;
    end Initialize;
+
+   procedure Retain (Object : System.Address) is
+      Endpoint_Object : constant Endpoint_Access := To_Endpoint (Object);
+      use type Kernel.Objects.Refcount;
+   begin
+      if Endpoint_Object = null
+        or else Endpoint_Object.Header.Count =
+          Kernel.Objects.Pinned_Refcount
+      then
+         return;
+      end if;
+
+      Endpoint_Object.Header.Count := Endpoint_Object.Header.Count + 1;
+   end Retain;
+
+   function Release (Object : System.Address) return Boolean is
+      Endpoint_Object : constant Endpoint_Access := To_Endpoint (Object);
+      use type Kernel.Objects.Refcount;
+   begin
+      if Endpoint_Object = null
+        or else Endpoint_Object.Header.Count =
+          Kernel.Objects.Pinned_Refcount
+        or else Endpoint_Object.Header.Count = 0
+      then
+         return False;
+      end if;
+
+      Endpoint_Object.Header.Count := Endpoint_Object.Header.Count - 1;
+
+      if Endpoint_Object.Header.Count /= 0 then
+         return False;
+      end if;
+
+      --  Last reference dropped: fail any remaining waiters, then the
+      --  object is dead. Dynamic endpoint storage reclamation arrives
+      --  with ep_create; static storage needs no free.
+      Endpoint_Object.Has_Message := False;
+      Endpoint_Object.Pending := Empty_Message;
+      Endpoint_Object.Waiting_Sender := null;
+      Endpoint_Object.Sender_Message := Empty_Message;
+      Endpoint_Object.Waiting_Receiver := null;
+      return True;
+   end Release;
 
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
