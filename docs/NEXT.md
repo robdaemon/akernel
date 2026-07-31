@@ -56,10 +56,23 @@ kernel cap tables.
    namespaces from manifest tokens that are plain bootinfo entry
    names (kernel-assigned rights), only `ipc_test` stays a special
    badged-endpoint token. 40/40 directed PASS.
-8. RTS streams: `Akernel_User.Streams` — `Root_Stream_Type` over
-   endpoint caps as the I/O substrate; console output path as first
-   consumer (replaces debug_putchar for normal programs); file
-   protocol (9P-ish, simplified) layers on top later.
+8. ~~RTS streams~~ — done: `Akernel_User.Streams` `Endpoint_Stream`
+   (Ada.Streams `Root_Stream_Type` over endpoint caps; vendored
+   `a-stream`/`a-ioexce` into the RTS, per-program `-gnatg`);
+   `Akernel_User.Console` Put/Put_Line over it; init mints the
+   console endpoint (`console` = Send, `console_server` = Receive
+   manifest tokens); Drivers/Serial is the console server (UART RX
+   opportunistic; IRQ-driven RX waits on notifications); fuzz, echo,
+   spin migrated off debug_putchar. 42/42 directed PASS.
+
+Next candidates (order open):
+
+9. Memory objects: alloc/map/unmap syscalls, `Memory_Object` cap
+   kind with Map/Read/Write rights, PMM-backed frames, refcounted
+   teardown (needed by RTS heap, bulk IPC, DMA later).
+10. RTS heap on memory objects (real non-tasking runtime core:
+    heap, secondary stack; then file protocol (9P-ish) over
+    streams).
 
 Commit between each milestone.
 
@@ -68,7 +81,6 @@ Commit between each milestone.
 - Plain `send`, register fast path, notification objects, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
 - SMP: per-hart scheduling, IPIs, cap-table/endpoint locking.
-- Memory object alloc/map syscalls (needed by RTS heap + DMA later).
 - DTB device enumeration, IOMMU, tasking runtime, 9P-ish file protocol.
 
 ## Start by reading

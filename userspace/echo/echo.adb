@@ -1,10 +1,11 @@
 with Akernel_User.Syscalls;
 with Akernel_User.IPC;
+with Akernel_User.Console;
 
 --  Echo test server for the fuzzer's end-to-end IPC checks, granted
---  an endpoint cap at handle 1. Written against the typed RPC
---  wrappers; the fuzzer drives the same wire protocol with raw
---  ecalls. Three rounds:
+--  an endpoint cap at handle 1 and the console Send cap at handle 2.
+--  Written against the typed RPC wrappers; the fuzzer drives the
+--  same wire protocol with raw ecalls. Three rounds:
 --    rounds 1-2: reply carries the badge, the request's words 0..3
 --      echoed into reply words 1..4, and the previous round's
 --      double-reply status in word 5 (0 first);
@@ -39,7 +40,8 @@ procedure Echo is
    Prev_Double_Reply : U64 := 0;
    Rounds            : Natural := 0;
 begin
-   Debug_Put_Line ("echo online");
+   Akernel_User.Console.Set_Endpoint (2);
+   Akernel_User.Console.Put_Line ("echo online");
 
    loop
       Status := RPC.Receive (1, Label, Request, Badge, Caps);
@@ -70,9 +72,9 @@ begin
    end loop;
 
    if Status = IPC_Ok then
-      Debug_Put_Line ("echo done");
+      Akernel_User.Console.Put_Line ("echo done");
    else
-      Debug_Put_Line ("echo error exit");
+      Akernel_User.Console.Put_Line ("echo error exit");
    end if;
 
    Process_Exit;

@@ -3,9 +3,11 @@ with Akernel_User.Syscalls;
 --  Init composes its namespace from the kernel-provided bootinfo
 --  page and composes each child's namespace from manifest grant
 --  tokens: any token naming a bootinfo entry grants that cap to
---  the child with the kernel-assigned rights; the only non-bootinfo
---  token is ipc_test (a dynamically minted, badged endpoint). The
---  manifest is boot-launch data only; the kernel never sees a name.
+--  the child with the kernel-assigned rights; the non-bootinfo
+--  tokens are ipc_test (a dynamically minted, badged endpoint) and
+--  console/console_server (the console endpoint, Send/Receive
+--  sides). The manifest is boot-launch data only; the kernel never
+--  sees a name.
 
 procedure Init is
    use type Akernel_User.Syscalls.U64;
@@ -23,6 +25,12 @@ procedure Init is
    --  badge pattern.
    IPC_Test_EP    : Akernel_User.Syscalls.U64 := 0;
    IPC_Test_Badge : constant Akernel_User.Syscalls.U64 := 16#EC40#;
+
+   --  Console endpoint minted at boot: Receive side granted to the
+   --  console server (Drivers/Serial), Send side to every program
+   --  with the console token. Clients print through
+   --  Akernel_User.Console over this endpoint.
+   Console_EP : Akernel_User.Syscalls.U64 := 0;
 
    function Is_Space (C : Character) return Boolean is
    begin
@@ -183,7 +191,8 @@ procedure Init is
 
          --  Grant tokens are names in init's namespace: a bootinfo
          --  entry name grants that cap with the kernel-assigned
-         --  rights; ipc_test grants the badged test endpoint.
+         --  rights; ipc_test grants the badged test endpoint;
+         --  console/console_server grant the console endpoint sides.
          if Token_Equals (Token, Length, "ipc_test") then
             Grant (IPC_Test_EP,
                    Akernel_User.Syscalls.Right_Send
@@ -191,6 +200,10 @@ procedure Init is
                      + Akernel_User.Syscalls.Right_Transfer
                      + Akernel_User.Syscalls.Right_Manage,
                    IPC_Test_Badge);
+         elsif Token_Equals (Token, Length, "console") then
+            Grant (Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "console_server") then
+            Grant (Console_EP, Akernel_User.Syscalls.Right_Receive, 0);
          else
             Grant (Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length)),
                    Akernel_User.Syscalls.Boot_Cap_Rights
@@ -272,6 +285,7 @@ begin
    Akernel_User.Syscalls.Debug_Put_Line ("launching manifest programs");
 
    IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
+   Console_EP := Akernel_User.Syscalls.EP_Create;
 
    Parse_Manifest;
 

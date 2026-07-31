@@ -4,8 +4,9 @@ Status: core implemented (ep_create, call/recv/reply, cap transfer,
 reply cap, endpoint slab, FIFO caller queue, grant-list spawn with
 rights-subset enforcement + badges, Boot_File_Object image caps,
 bootinfo page, Akernel_User.IPC typed wrappers, init namespace
-composition via bootinfo-name grant tokens). Remaining
-designed-but-unbuilt: Akernel.Streams. Deferred items at bottom.
+composition via bootinfo-name grant tokens, Akernel_User.Streams
+endpoint streams + console output path via the console server in
+Drivers/Serial). Deferred items at bottom.
 
 ## Principles
 
@@ -255,9 +256,15 @@ namespace mechanism.
 - `Akernel_User.IPC` (implemented): typed wrappers over
   call/recv/reply, generic over request/response payload records
   marshalled into the 6-word area (larger payloads via memory caps).
-- `Akernel.Streams`: `Root_Stream_Type` over endpoint caps becomes the
-  fundamental I/O substrate; file protocol (9P-ish, simplified) layers
-  on top.
+- `Akernel_User.Streams` (implemented): `Endpoint_Stream`, an
+  Ada.Streams `Root_Stream_Type` over endpoint caps, is the
+  fundamental I/O substrate (40-byte chunks, Op_Write/Op_Read
+  labels, (Count, Data) records); `Akernel_User.Console` binds it to
+  the init-minted console endpoint (`console`/`console_server`
+  manifest tokens) with Drivers/Serial as the console server.
+  Ada.Streams itself is vendored into the RTS (light runtime lacks
+  it) until the real custom RTS lands. File protocol (9P-ish,
+  simplified) layers on top later.
 - Future tasking runtime: Ada rendezvous maps onto call/recv/reply
   (entry call = call, accept = recv + reply). Non-tasking core first.
 

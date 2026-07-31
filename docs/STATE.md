@@ -49,12 +49,21 @@ init online from Ada
 boot manifest visible
 launching manifest programs
 serial spawned
-serial driver online
-fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000291 failures=0x0000000000000000
-spin online (preemption canary: spins forever, system keeps running)
+fuzz spawned
+program spawned
+console server online
 init resumed
+fuzz online          (via console server endpoint stream)
+spin online          (via console server)
 timer interrupt online
+... 42/42 directed PASS (console stream RPC, echo IPC rounds, grants) ...
+fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000291 failures=0x0000000000000000
+fuzz exit test
 ```
+
+Normal programs print through the console server (endpoint stream);
+init and the kernel still use debug_putchar, as does the fuzzer's
+random phase (printable garbage in the log is that fuzz traffic).
 
 ## Repository layout
 

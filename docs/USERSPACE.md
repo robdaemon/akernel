@@ -49,7 +49,10 @@ nonblocking paths only).
 cap valid + Map right; R/W flags within cap rights; offset/len in object;
 page alignment; VA in `0x40000000..0x80000000`; maps as `User_RW`.
 
-Planned additions (docs/IPC.md): Akernel.Streams over endpoints.
+Stream protocol (Akernel_User.Streams over endpoints, implemented):
+label = op (1 write, 2 read), request/reply records (Count +
+40-byte Data) in the 6-word area; console server is the first
+consumer.
 
 ## RTS scaffold
 
@@ -63,6 +66,18 @@ akernel_user-syscalls.*   raw syscall wrappers, IPC buffer/message
 akernel_user-ipc.*        typed RPC wrappers (generic over request/
                           response payload records marshalled into
                           the message's 6-word area, 48-byte limit)
+akernel_user-streams.*    Ada.Streams Root_Stream_Type over endpoint
+                          caps (Endpoint_Stream): Read/Write RPC per
+                          40-byte chunk, wire protocol Op_Write=1 /
+                          Op_Read=2 with (Count, Data) records both
+                          directions; Device_Error on failed calls
+akernel_user-console.*    console output for normal programs: Put /
+                          Put_Line over an Endpoint_Stream bound to
+                          the init-minted console endpoint; falls back
+                          to debug_putchar when no console cap granted
+a-stream.*, a-ioexce.ads  vendored GNAT runtime units (light runtime
+                          lacks Ada.Streams): compiled per program
+                          with -gnatg via each .gpr's Compiler package
 akernel_user-mmio.*       MMIO helpers
 syscalls-riscv64.s        ecall stubs (incl. generic stub for fuzzer)
 start-riscv64.s           entry
@@ -80,25 +95,34 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 
 - `userspace/init/` — verifies manifest readable (fatal yield loop if
   not; not kernel panic), parses manifest, builds a grant list per
-  `program` line (uart_mmio/uart_irq/ipc_test tokens), spawns, yields,
-  resumes. Mints the badged ipc_test endpoint granted to the fuzzer
-  (session-manager badge pattern).
-- `userspace/serial/` — maps UART MMIO (cap 1) at VA 0x50000000, prints
-  `serial driver online`, loops `IRQ_Wait`/`IRQ_Ack` (cap 2) draining RX.
-- `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted the badged
-  ipc_test endpoint at cap 1): directed edge cases + end-to-end IPC
-  (spawns echo with a granted endpoint, three ping-pong rounds: badge
-  stamping, label/word round-trip, one-shot reply cap, cap transfer
-  with handle rewrite, then reap) + grant-list validation cases +
-  4096 deterministic pseudo-random syscalls. Found the `irq_wait`
-  missing-`Advance_SEPC` livelock. 40/40 directed PASS.
+  `program` line (bootinfo names / ipc_test / console tokens),
+  spawns, yields, resumes. Mints the badged ipc_test endpoint and
+  the console endpoint (session-manager badge pattern).
+- `userspace/serial/` — console server: maps UART MMIO (cap 1),
+  holds Receive on the console endpoint (cap 2), serves stream
+  protocol writes to the UART (read ops get EOF). UART RX drained
+  opportunistically on each write (single thread cannot wait on both
+  IRQ and endpoint; IRQ-driven RX waits on notification objects).
+- `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test
+  endpoint at cap 1, console Send cap at 2, Tests/Echo image cap at
+  3): directed edge cases + console stream RPC checks + end-to-end
+  IPC (spawns echo with granted endpoint + console cap, three
+  ping-pong rounds: badge stamping, label/word round-trip, one-shot
+  reply cap, cap transfer + handle rewrite, then reap) + grant-list
+  validation cases + 4096 deterministic pseudo-random syscalls.
+  Test output goes through the console stream; the random phase
+  still fuzzes raw debug_putchar (printable garbage in the log is
+  that, by design). Found the `irq_wait` missing-`Advance_SEPC`
+  livelock. 42/42 directed PASS.
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
-  fuzzer with an endpoint cap at handle 1: recv/reply rounds reporting
-  badge, words, double-reply failure, transferred cap handle; exits
-  after three rounds.
-- `userspace/spin/` — preemption canary (`Tests/Spin`, no grants): prints
-  `spin online` then busy-loops forever; boot continuing afterwards
-  proves timer preemption.
+  fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
+  recv/reply rounds reporting badge, words, double-reply failure,
+  transferred cap handle; exits after three rounds. Prints through
+  the console stream.
+- `userspace/spin/` — preemption canary (`Tests/Spin`, console Send
+  cap at 1): prints `spin online` via the console stream then
+  busy-loops forever; boot continuing afterwards proves timer
+  preemption.
 
 ## Manifest
 
@@ -108,13 +132,16 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 program <id> <path> [grants...]
 ```
 
-Current: serial with `uart_mmio uart_irq`, fuzzer with `ipc_test`,
-spinner, plus a `# file Tests/Echo` comment line (skipped by init;
-keeps the path resolvable for the fuzzer's spawn). Boot-launch
-mechanism for initrd contents only (Amiga-ish startup-sequence
-role); not a general namespace mechanism — see docs/IPC.md for
-namespace/session design.
+Current: serial with `uart/mmio console_server`, fuzzer with
+`ipc_test console Tests/Echo`, spinner with `console`, plus a
+`# file Tests/Echo` comment line (skipped by init; keeps the path
+resolvable for the fuzzer's spawn). Boot-launch mechanism for
+initrd contents only (Amiga-ish startup-sequence role); not a
+general namespace mechanism — see docs/IPC.md for namespace/session
+design.
 
-Grant tokens map to grant-list entries: `uart_mmio` -> cap 1
-(Map+Read+Write), `uart_irq` -> cap 2 (Wait+Ack), `ipc_test` -> init's
-endpoint with full rights and badge 0xEC40.
+Grant tokens map to grant-list entries: a bootinfo entry name
+grants that cap with the kernel-assigned rights; `ipc_test` grants
+init's badged test endpoint (full rights, badge 0xEC40); `console`
+grants Send on the console endpoint, `console_server` grants
+Receive on it (Drivers/Serial only).

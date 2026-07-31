@@ -1,11 +1,18 @@
 with Interfaces;
 with Akernel_User.Syscalls;
+with Akernel_User.Console;
+with Akernel_User.IPC;
+with Akernel_User.Streams;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
 --  keeps returning clean status codes.  Runs as a manifest-spawned user
---  process granted the ipc_test endpoint (handle 1, badge 0xEC40) and
---  the Tests/Echo Boot_File_Object image cap (handle 2).
+--  process granted the ipc_test endpoint (handle 1, badge 0xEC40), the
+--  console endpoint Send cap (handle 2) and the Tests/Echo
+--  Boot_File_Object image cap (handle 3).  Test output goes through
+--  the console server (Akernel_User.Console over the endpoint stream);
+--  the random phase still hits the raw debug_putchar syscall as a
+--  fuzz target.
 --
 --  NOTE: spawn consumes Boot_File_Object image caps (spawn ABI v2).
 --  The fuzzer deliberately never forms a valid image cap in the
@@ -63,45 +70,30 @@ procedure Fuzz is
 
    procedure Put (S : String) is
    begin
-      for C of S loop
-         declare
-            Ignore : U64;
-         begin
-            Ignore := Raw_Ecall
-              (Sys_Debug_Putchar, U64 (Character'Pos (C)), 0, 0, 0, 0, 0);
-         end;
-      end loop;
+      Akernel_User.Console.Put (S);
    end Put;
 
    procedure Put_Line (S : String) is
    begin
-      Put (S);
-      declare
-         Ignore : U64;
-      begin
-         Ignore := Raw_Ecall
-           (Sys_Debug_Putchar, U64 (Character'Pos (Character'Val (10))),
-            0, 0, 0, 0, 0);
-      end;
+      Akernel_User.Console.Put_Line (S);
    end Put_Line;
 
    Hex_Digits : constant String := "0123456789abcdef";
 
    procedure Put_Hex (Value : U64) is
-      Ignore : U64;
+      S : String (1 .. 18);
    begin
-      Put ("0x");
+      S (1) := '0';
+      S (2) := 'x';
       for Shift in reverse 0 .. 15 loop
          declare
             Nibble : constant U64 :=
               Interfaces.Shift_Right (Value, Shift * 4) and 16#F#;
          begin
-            Ignore := Raw_Ecall
-              (Sys_Debug_Putchar,
-               U64 (Character'Pos (Hex_Digits (Natural (Nibble) + 1))),
-               0, 0, 0, 0, 0);
+            S (3 + (15 - Shift)) := Hex_Digits (Natural (Nibble) + 1);
          end;
       end loop;
+      Put (S);
    end Put_Hex;
 
    --  Edge-case argument pool.
@@ -157,11 +149,22 @@ procedure Fuzz is
    Reaped        : Boolean;
    Ignore        : U64;
 
-   --  Tests/Echo image cap granted by init at handle 2.
-   Echo_Image : constant U64 := 2;
+   --  Granted caps: ipc_test endpoint at handle 1, console Send cap
+   --  at handle 2, Tests/Echo image cap at handle 3.
+   Console_EP : constant U64 := 2;
+   Echo_Image : constant U64 := 3;
+
+   package Console_RPC is new Akernel_User.IPC
+     (Akernel_User.Streams.Stream_Request,
+      Akernel_User.Streams.Stream_Response);
+
+   Console_Request  : Akernel_User.Streams.Stream_Request;
+   Console_Response : Akernel_User.Streams.Stream_Response;
+   Reply_Label      : U64;
 
    Iterations : constant U64 := 4096;
 begin
+   Akernel_User.Console.Set_Endpoint (Console_EP);
    Put_Line ("fuzz online");
 
    --  Directed cases first.
@@ -189,6 +192,23 @@ begin
    Check (Status = 1, "ipc_reply without reply cap rejected");
    Status := Raw_Ecall (Sys_IPC_Reply, 200, 0, 0, 0, 0, 0);
    Check (Status = 1, "ipc_reply wrong handle rejected");
+
+   --  Console stream RPC: a write op must round-trip through the
+   --  console server and report the byte count consumed.
+   Console_Request := (Count => 1, Data => (others => 0));
+   Console_Request.Data (1) := Character'Pos ('.');
+   Status := Console_RPC.Call
+     (Console_EP, Akernel_User.Streams.Op_Write, Console_Request,
+      Console_RPC.No_Caps, Reply_Label, Console_Response);
+   Check (Status = 0 and then Console_Response.Count = 1,
+          "console write rpc round-trips");
+   --  A read op on the output-only console yields EOF (count 0).
+   Console_Request := (Count => 4, Data => (others => 0));
+   Status := Console_RPC.Call
+     (Console_EP, Akernel_User.Streams.Op_Read, Console_Request,
+      Console_RPC.No_Caps, Reply_Label, Console_Response);
+   Check (Status = 0 and then Console_Response.Count = 0,
+          "console read reports eof");
 
    --  Boot byte API probes: valid image cap, huge offset, invalid
    --  handle, wrong-kind cap (handle 1 is the granted endpoint).
@@ -256,12 +276,15 @@ begin
    Check (Status = 4, "spawn grant count over limit rejected");
 
    --  Valid grant: endpoint with Send+Receive (badged cap stays
-   --  with the fuzzer; echo's own badge is irrelevant).
+   --  with the fuzzer; echo's own badge is irrelevant) plus the
+   --  console Send cap so echo can print.
    Akernel_User.Syscalls.Set_Grant
      (0, EP,
       Akernel_User.Syscalls.Right_Send + Akernel_User.Syscalls.Right_Receive,
       0);
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
+   Akernel_User.Syscalls.Set_Grant
+     (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 2, 0, 0, 0, 0);
    --  fuzz_last_a1 is rewritten by every ecall: capture the process
    --  cap before Check (or anything else) makes another syscall.
    Echo_Process := Last_A1;
@@ -269,46 +292,60 @@ begin
           "echo spawned with granted endpoint");
 
    --  Round 1: badge + round-trip + first double-reply marker.
+   --  NB: the reply is copied out of the IPC buffer before any
+   --  Check, because Check prints through the console stream, which
+   --  itself round-trips through this thread's message buffer.
    Akernel_User.Syscalls.Message.Label := 16#AB#;
    Akernel_User.Syscalls.Message.Words := (1, 2, 3, 4, 5, 6);
    Akernel_User.Syscalls.Message.Caps := (others => 0);
    Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
-   Check (Status = 0, "echo call round 1 returned ok");
-   Check (Akernel_User.Syscalls.Message.Label = 16#AB#,
-          "echo round 1 label round-trips");
-   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#,
-          "echo round 1 badge delivered");
-   Check (Akernel_User.Syscalls.Message.Words (1) = 1
-          and then Akernel_User.Syscalls.Message.Words (4) = 4,
-          "echo round 1 words round-trip");
-   Check (Akernel_User.Syscalls.Message.Words (5) = 0,
-          "echo round 1 first-reply marker");
+   declare
+      R_Label : constant U64 := Akernel_User.Syscalls.Message.Label;
+      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
+        Akernel_User.Syscalls.Message.Words;
+   begin
+      Check (Status = 0, "echo call round 1 returned ok");
+      Check (R_Label = 16#AB#, "echo round 1 label round-trips");
+      Check (R_Words (0) = 16#EC40#, "echo round 1 badge delivered");
+      Check (R_Words (1) = 1 and then R_Words (4) = 4,
+             "echo round 1 words round-trip");
+      Check (R_Words (5) = 0, "echo round 1 first-reply marker");
+   end;
 
    --  Round 2: word 5 must carry the failed double-reply code (1).
    Akernel_User.Syscalls.Message.Label := 16#CD#;
    Akernel_User.Syscalls.Message.Words := (6, 5, 4, 3, 2, 1);
    Akernel_User.Syscalls.Message.Caps := (others => 0);
    Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
-   Check (Status = 0, "echo call round 2 returned ok");
-   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#
-          and then Akernel_User.Syscalls.Message.Words (1) = 6,
-          "echo round 2 payload");
-   Check (Akernel_User.Syscalls.Message.Words (5) = 1,
-          "echo double reply rejected (one-shot cap)");
+   declare
+      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
+        Akernel_User.Syscalls.Message.Words;
+   begin
+      Check (Status = 0, "echo call round 2 returned ok");
+      Check (R_Words (0) = 16#EC40# and then R_Words (1) = 6,
+             "echo round 2 payload");
+      Check (R_Words (5) = 1,
+             "echo double reply rejected (one-shot cap)");
+   end;
 
    --  Round 3: cap transfer. EP2's handle is rewritten into echo's
-   --  table (first free handle there = 2); echo reports it.
+   --  table (first free handle there = 3: endpoint at 1, console at
+   --  2); echo reports it.
    EP2 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
    Check (EP2 < 256 and then EP2 /= EP, "second endpoint created");
    Akernel_User.Syscalls.Message.Label := 16#EF#;
    Akernel_User.Syscalls.Message.Words := (others => 0);
    Akernel_User.Syscalls.Message.Caps := (EP2, 0, 0, 0);
    Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
-   Check (Status = 0, "echo call round 3 returned ok");
-   Check (Akernel_User.Syscalls.Message.Words (0) = 16#EC40#,
-          "echo round 3 badge delivered");
-   Check (Akernel_User.Syscalls.Message.Words (1) = 2,
-          "cap transferred and rewritten to echo handle 2");
+   declare
+      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
+        Akernel_User.Syscalls.Message.Words;
+   begin
+      Check (Status = 0, "echo call round 3 returned ok");
+      Check (R_Words (0) = 16#EC40#, "echo round 3 badge delivered");
+      Check (R_Words (1) = 3,
+             "cap transferred and rewritten to echo handle 3");
+   end;
 
    --  Echo exits after three rounds; reap it once it has exited.
    Reaped := False;
