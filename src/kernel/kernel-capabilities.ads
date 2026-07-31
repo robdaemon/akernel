@@ -21,7 +21,8 @@ package Kernel.Capabilities is
       MMIO_Object,
       DMA_Object,
       Kernel_Object,
-      Boot_File_Object);
+      Boot_File_Object,
+      Memory_Object);
 
    type Rights is record
       Read     : Boolean;

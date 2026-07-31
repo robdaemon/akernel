@@ -1,29 +1,29 @@
 # Resume prompt (next session)
 
 ```text
-Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement milestone 9:
-Memory objects — alloc/map/unmap syscalls, Memory_Object cap kind
-(Map/Read/Write rights), PMM-backed frames, refcounted teardown.
-Needed by RTS heap, bulk IPC, DMA later. Design sketch in docs/IPC.md
-("Memory objects (bulk/DMA)"). Follow with milestone 10 (RTS heap on
-memory objects) if scope allows.
+Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement milestone 10:
+RTS heap on memory objects — real non-tasking runtime core (heap,
+secondary stack) backed by mem_alloc/mem_map; then file protocol
+(9P-ish) over streams if scope allows.
 
-Milestone 8 landed: Akernel_User.Streams Endpoint_Stream (Ada.Streams
-Root_Stream_Type over endpoint caps; a-stream/a-ioexce vendored into
-userspace/rts/akernel, per-program -gnatg in each userspace .gpr),
-Akernel_User.Console Put/Put_Line, init-minted console endpoint
-(console = Send / console_server = Receive manifest tokens),
-Drivers/Serial console server (UART RX opportunistic; IRQ RX waits
-on notifications), fuzz/echo/spin migrated off debug_putchar.
-42/42 directed PASS, fuzz failures=0.
+Milestone 9 landed: Kernel.Memory (refcounted slab + PMM frames,
+1..64 zeroed pages/object), Memory_Object cap kind (rights
+Map+Read+Write+Transfer+Manage at creation), syscalls 15 mem_alloc /
+16 mem_map / 17 mem_unmap. Borrowed mappings marked with PTE RSW
+bit 0 (PTE_Borrowed, arch-mmu): AS teardown and Unmap_Borrowed_Page
+never free object frames; object finalizer returns frames to PMM on
+last cap close. Unmap refuses AS-owned pages (Not_Mapped). Sv39
+write-without-read rejected. RTS wrappers Mem_Alloc/Mem_Map/Mem_Unmap
+in akernel_user-syscalls.*; fuzz directed cases cover alloc bounds,
+map validation, touch (zeroed+writable), unmap rules. 54/54 directed
+PASS, fuzz failures=0.
 
-Key files: userspace/rts/akernel/akernel_user-streams.* (stream
-protocol + Endpoint_Stream), akernel_user-console.* (client print
-path), userspace/serial/serial.adb (console server), init.adb
-(console endpoint minting). Gotcha: any console print round-trips
-through the caller's IPC message buffer — snapshot IPC replies into
-locals before printing (see fuzz echo rounds). Kernel uses raw
-light-rv64imafdc; vendored RTS units are userspace-only.
+Key files: src/kernel/kernel-memory.*, src/arch/riscv64/arch-mmu.*
+(Borrowed param on Map_Page, Unmap_Borrowed_Page), arch-traps.adb
+(Handle_Mem_*), userspace/rts/akernel/akernel_user-syscalls.*.
+Gotchas: fuzz Raw_Ecall has A0..A5 defaults, always named
+association; console prints round-trip through the caller's IPC
+message buffer (snapshot replies before printing).
 Build/run: make all && make run. Commit per milestone; docs
 current-state only.
 ```

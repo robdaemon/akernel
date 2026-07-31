@@ -29,6 +29,14 @@
 12 ipc_call(a0 = ep_cap) -> IPC result code; blocks until reply
 13 ipc_recv(a0 = ep_cap) -> IPC result code; blocks until caller arrives
 14 ipc_reply(a0 = 254) -> IPC result code; one-shot reply
+15 mem_alloc(a0 = pages) -> memory-object cap handle, U64'Last fail
+   (1..64 pages, zeroed PMM frames, rights Map+Read+Write+Transfer+Manage)
+16 mem_map(a0 = as_cap, a1 = mem_cap, a2 = VA, a3 = offset,
+   a4 = length, a5 = flags bit0 R/bit1 W) -> 0 ok, 1 fail; maps the
+   object's frames as borrowed user pages (frame stays object-owned,
+   AS teardown/unmap never frees it); write requires read
+17 mem_unmap(a0 = as_cap, a1 = VA, a2 = length) -> 0 ok, 1 fail;
+   only borrowed (memory-object) pages unmap, AS-owned pages refuse
 ```
 
 IPC result codes: 0 ok, 1 invalid, 2 transfer failed, 3 endpoint gone,
@@ -48,6 +56,11 @@ nonblocking paths only).
 `map_mmio` checks: caller AS cap kind/rights/matches current root; MMIO
 cap valid + Map right; R/W flags within cap rights; offset/len in object;
 page alignment; VA in `0x40000000..0x80000000`; maps as `User_RW`.
+
+Memory objects (`Kernel.Memory`, refcounted slab + PMM frames) follow
+the endpoint lifecycle: one reference per cap, finalizer returns
+frames to the PMM when the last cap closes (exit/reap). Borrowed
+mappings are marked with PTE RSW bit 0.
 
 Stream protocol (Akernel_User.Streams over endpoints, implemented):
 label = op (1 write, 2 read), request/reply records (Count +
@@ -113,7 +126,8 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Test output goes through the console stream; the random phase
   still fuzzes raw debug_putchar (printable garbage in the log is
   that, by design). Found the `irq_wait` missing-`Advance_SEPC`
-  livelock. 42/42 directed PASS.
+  livelock. 54/54 directed PASS (incl. memory-object alloc/map/
+  touch/unmap cases).
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,

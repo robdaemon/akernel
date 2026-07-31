@@ -50,6 +50,25 @@ package body Akernel_User.Syscalls is
    function Raw_EP_Create return U64
      with Import, Convention => C, External_Name => "akernel_sys_ep_create";
 
+   function Raw_Mem_Alloc (Pages : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_mem_alloc";
+
+   function Raw_Mem_Map
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_mem_map";
+
+   function Raw_Mem_Unmap
+     (Address_Space : U64;
+      VA            : U64;
+      Length        : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_mem_unmap";
+
    function Raw_IPC_Call (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_call";
 
@@ -125,6 +144,32 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_EP_Create;
    end EP_Create;
+
+   function Mem_Alloc (Pages : U64) return U64 is
+   begin
+      return Raw_Mem_Alloc (Pages);
+   end Mem_Alloc;
+
+   function Mem_Map
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64
+   is
+   begin
+      return Raw_Mem_Map (Address_Space, Cap, VA, Offset, Length, Flags);
+   end Mem_Map;
+
+   function Mem_Unmap
+     (Address_Space : U64;
+      VA            : U64;
+      Length        : U64) return U64
+   is
+   begin
+      return Raw_Mem_Unmap (Address_Space, VA, Length);
+   end Mem_Unmap;
 
    function IPC_Call (Cap : U64) return U64 is
    begin

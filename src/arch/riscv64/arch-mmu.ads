@@ -10,7 +10,8 @@ package Arch.MMU is
      (Ok,
       Allocation_Failed,
       Invalid_Address,
-      Already_Mapped);
+      Already_Mapped,
+      Not_Mapped);
 
    type Page_Flags is record
       Read    : Boolean;
@@ -59,11 +60,23 @@ package Arch.MMU is
 
    procedure Activate (Root : U64);
 
+   --  Borrowed => leaf marked frame-not-owned (memory-object
+   --  mappings): AS teardown and Unmap_Borrowed_Page never return
+   --  the frame to the PMM; the owning object does.
    procedure Map_Page
      (Root     : U64;
       Virtual  : U64;
       Physical : U64;
       Flags    : Page_Flags;
+      Result   : out Status;
+      Borrowed : Boolean := False);
+
+   --  Removes one borrowed (memory-object) mapping; the frame stays
+   --  with its owning object. Refuses pages owned by the address
+   --  space itself (image/stack/IPC buffer) with Not_Mapped.
+   procedure Unmap_Borrowed_Page
+     (Root     : U64;
+      Virtual  : U64;
       Result   : out Status);
 
    --  Maps a 1 GiB leaf at level 2 of the given root.

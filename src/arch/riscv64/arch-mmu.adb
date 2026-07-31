@@ -15,6 +15,12 @@ package body Arch.MMU is
    PTE_A : constant U64 := 16#040#;
    PTE_D : constant U64 := 16#080#;
 
+   --  RSW bit 0 (bit 8): kernel-private marker on user leaf PTEs
+   --  whose frame is NOT owned by the address space (memory-object
+   --  borrowed mappings). Destroy_Table/Unmap never deallocate
+   --  borrowed frames; the owning object reclaims them.
+   PTE_Borrowed : constant U64 := 16#100#;
+
    type Page_Table_Index is range 0 .. 511;
    type Page_Table is array (Page_Table_Index) of U64;
    type Page_Table_Access is access all Page_Table;
@@ -80,7 +86,10 @@ package body Arch.MMU is
       return Interfaces.Shift_Left (Physical / Page_Size, 10);
    end Physical_To_PTE;
 
-   function Leaf_Flags (Flags : Page_Flags) return U64 is
+   function Leaf_Flags
+     (Flags    : Page_Flags;
+      Borrowed : Boolean := False) return U64
+   is
       Value : U64 := PTE_V or PTE_A or PTE_D;
    begin
       if Flags.Read then
@@ -97,6 +106,9 @@ package body Arch.MMU is
       end if;
       if Flags.Global then
          Value := Value or PTE_G;
+      end if;
+      if Borrowed then
+         Value := Value or PTE_Borrowed;
       end if;
 
       return Value;
@@ -206,7 +218,8 @@ package body Arch.MMU is
       Virtual  : U64;
       Physical : U64;
       Flags    : Page_Flags;
-      Result   : out Status)
+      Result   : out Status;
+      Borrowed : Boolean := False)
    is
       Table_Physical : U64 := Root;
       Table          : Page_Table_Access;
@@ -250,9 +263,60 @@ package body Arch.MMU is
          return;
       end if;
 
-      Table (Index) := Physical_To_PTE (Physical) or Leaf_Flags (Flags);
+      Table (Index) := Physical_To_PTE (Physical)
+        or Leaf_Flags (Flags, Borrowed);
       Result := Ok;
    end Map_Page;
+
+   procedure Unmap_Borrowed_Page
+     (Root     : U64;
+      Virtual  : U64;
+      Result   : out Status)
+   is
+      Table_Physical : U64 := Root;
+      Table          : Page_Table_Access;
+      PTE_Value      : U64;
+      Index          : Page_Table_Index;
+   begin
+      if Root mod Page_Size /= 0 or else Virtual mod Page_Size /= 0 then
+         Result := Invalid_Address;
+         return;
+      end if;
+
+      for Level in reverse 1 .. 2 loop
+         Table := To_Table (To_Address (Table_Physical));
+         Index := Index_For (Virtual, Level);
+         PTE_Value := Table (Index);
+
+         if (PTE_Value and PTE_V) = 0 or else Is_Leaf (PTE_Value) then
+            Result := Not_Mapped;
+            return;
+         end if;
+
+         Table_Physical := PTE_To_Physical (PTE_Value);
+      end loop;
+
+      Table := To_Table (To_Address (Table_Physical));
+      Index := Index_For (Virtual, 0);
+      PTE_Value := Table (Index);
+      if (PTE_Value and PTE_V) = 0
+        or else not Is_Leaf (PTE_Value)
+        or else (PTE_Value and PTE_Borrowed) = 0
+      then
+         --  Nothing mapped, or an address-space-owned page (image,
+         --  stack, IPC buffer): refuse. Only borrowed memory-object
+         --  mappings are unmapped through this path.
+         Result := Not_Mapped;
+         return;
+      end if;
+
+      --  Clear the leaf; the frame stays with the owning memory
+      --  object. The trampoline's satp switch back to this space
+      --  (sfence.vma) flushes stale translations before user code
+      --  runs again.
+      Table (Index) := 0;
+      Result := Ok;
+   end Unmap_Borrowed_Page;
 
    procedure Map_Gigapage
      (Root     : U64;
@@ -375,7 +439,9 @@ package body Arch.MMU is
             Child_Frame := PTE_To_Physical (PTE_Value);
 
             if Is_Leaf (PTE_Value) then
-               if (PTE_Value and PTE_G) = 0 then
+               if (PTE_Value and PTE_G) = 0
+                 and then (PTE_Value and PTE_Borrowed) = 0
+               then
                   Kernel.Physical_Memory.Deallocate_Frame
                     (Frame  => Child_Frame,
                      Result => Free_Result);

@@ -105,6 +105,30 @@ akernel_sys_ipc_reply:
     ret
 .size akernel_sys_ipc_reply, . - akernel_sys_ipc_reply
 
+.global akernel_sys_mem_alloc
+.type akernel_sys_mem_alloc, @function
+akernel_sys_mem_alloc:
+    li a7, 15
+    ecall
+    ret
+.size akernel_sys_mem_alloc, . - akernel_sys_mem_alloc
+
+.global akernel_sys_mem_map
+.type akernel_sys_mem_map, @function
+akernel_sys_mem_map:
+    li a7, 16
+    ecall
+    ret
+.size akernel_sys_mem_map, . - akernel_sys_mem_map
+
+.global akernel_sys_mem_unmap
+.type akernel_sys_mem_unmap, @function
+akernel_sys_mem_unmap:
+    li a7, 17
+    ecall
+    ret
+.size akernel_sys_mem_unmap, . - akernel_sys_mem_unmap
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

@@ -56,7 +56,8 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 42/42 directed PASS (console stream RPC, echo IPC rounds, grants) ...
+... 54/54 directed PASS (console stream RPC, echo IPC rounds,
+grants, memory objects) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000291 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -106,6 +107,8 @@ QEMU virt RAM base:     0x80000000
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is
-  cap-based; retires once memory-object mapping lands.
+  cap-based; memory objects (alloc/map/unmap, borrowed mappings,
+  refcounted PMM frames) exist but boot files are not memory objects
+  yet.
 - No DTB-based device enumeration; initrd load address fixed.
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime + stubs).

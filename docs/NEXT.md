@@ -65,11 +65,16 @@ kernel cap tables.
    opportunistic; IRQ-driven RX waits on notifications); fuzz, echo,
    spin migrated off debug_putchar. 42/42 directed PASS.
 
+9. ~~Memory objects~~ — done: `Kernel.Memory` (refcounted slab +
+   PMM frames, 1..64 zeroed pages per object), `Memory_Object` cap
+   kind (Map/Read/Write/Transfer/Manage at creation), syscalls
+   15/16/17 mem_alloc/mem_map/mem_unmap; borrowed mappings marked
+   with PTE RSW bit 0 (AS teardown and unmap never free object
+   frames; object finalizer returns them to the PMM on last cap
+   close); unmap refuses AS-owned pages. 54/54 directed PASS.
+
 Next candidates (order open):
 
-9. Memory objects: alloc/map/unmap syscalls, `Memory_Object` cap
-   kind with Map/Read/Write rights, PMM-backed frames, refcounted
-   teardown (needed by RTS heap, bulk IPC, DMA later).
 10. RTS heap on memory objects (real non-tasking runtime core:
     heap, secondary stack; then file protocol (9P-ish) over
     streams).

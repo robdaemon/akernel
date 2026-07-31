@@ -1,5 +1,6 @@
 with Kernel.IPC;
 with Kernel.Interrupts;
+with Kernel.Memory;
 
 package body Kernel.Objects is
    use type Kernel.Tasks.Thread_Access;
@@ -14,6 +15,8 @@ package body Kernel.Objects is
       case Cap.Kind is
          when Kernel.Capabilities.Endpoint_Object =>
             Kernel.IPC.Retain (Cap.Object);
+         when Kernel.Capabilities.Memory_Object =>
+            Kernel.Memory.Retain (Cap.Object);
          when others =>
             null;
       end case;
@@ -39,6 +42,10 @@ package body Kernel.Objects is
             Kernel.IPC.Fail_Reply_Target (Cap.Object);
          when Kernel.Capabilities.IRQ_Object =>
             Kernel.Interrupts.Cleanup_Thread_Cap (Thread, Cap.Object);
+         when Kernel.Capabilities.Memory_Object =>
+            if Kernel.Memory.Release (Cap.Object) then
+               null;
+            end if;
          when others =>
             null;
       end case;

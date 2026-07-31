@@ -58,6 +58,28 @@ package Akernel_User.Syscalls is
    procedure Process_Exit;
    function Reap_Process (Process_Cap : U64) return U64;
    function EP_Create return U64;
+
+   --  Memory objects (PMM-backed frame bundles, refcounted).
+   --  Mem_Alloc returns a cap handle (Map+Read+Write+Transfer+
+   --  Manage) or Syscall_Failed. Mem_Map/Mem_Unmap map the object's
+   --  frames as borrowed user pages (frames stay object-owned);
+   --  Flags bit 0 = read, bit 1 = write (write implies read).
+   --  Return 0 on success, 1 on failure.
+   function Mem_Alloc (Pages : U64) return U64;
+   function Mem_Map
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Flags         : U64) return U64;
+   function Mem_Unmap
+     (Address_Space : U64;
+      VA            : U64;
+      Length        : U64) return U64;
+
+   Mem_Max_Pages : constant U64 := 64;
+   Page_Size     : constant U64 := 4096;
    function IPC_Call (Cap : U64) return U64;
    function IPC_Recv (Cap : U64) return U64;
    function IPC_Reply return U64;
@@ -107,6 +129,7 @@ package Akernel_User.Syscalls is
    Kind_IRQ       : constant U64 := 7;
    Kind_MMIO      : constant U64 := 8;
    Kind_Boot_File : constant U64 := 11;
+   Kind_Memory    : constant U64 := 12;
 
    Bootinfo_Max_Name : constant := 32;
    type Bootinfo_Name is array (1 .. Bootinfo_Max_Name) of Character;

@@ -9,7 +9,9 @@ with Kernel.Boot_Files;
 with Kernel.Capabilities;
 with Kernel.Interrupts;
 with Kernel.IPC;
+with Kernel.Memory;
 with Kernel.Objects;
+with Kernel.Physical_Memory;
 with Kernel.Processes;
 with Kernel.Scheduler;
 with Kernel.Tasks;
@@ -44,6 +46,9 @@ package body Arch.Traps is
    Sys_IPC_Call          : constant U64 := 12;
    Sys_IPC_Recv          : constant U64 := 13;
    Sys_IPC_Reply         : constant U64 := 14;
+   Sys_Mem_Alloc         : constant U64 := 15;
+   Sys_Mem_Map           : constant U64 := 16;
+   Sys_Mem_Unmap         : constant U64 := 17;
 
    Tick_Count : U64 := 0;
 
@@ -748,6 +753,207 @@ package body Arch.Traps is
       Set_IPC_Result (Frame, IPC_Result);
    end Handle_IPC_Reply;
 
+   --  mem_alloc (a0 = page count): mint a memory object cap
+   --  (Map+Read+Write+Transfer+Manage rights). Returns the handle
+   --  or U64'Last on failure.
+   procedure Handle_Mem_Alloc (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Memory.Status;
+
+      Pages   : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Mem_Result : Kernel.Memory.Status;
+      Cap_Result : Kernel.Capabilities.Status;
+      Object     : System.Address;
+      New_Cap    : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Memory.Create (Pages, Mem_Result, Object);
+      if Mem_Result /= Kernel.Memory.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      --  Fresh object has refcount 0; the insert retains it to 1.
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.Memory_Object,
+         Object => Object,
+         Rights => Kernel.Memory.Memory_Full_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Kernel.Memory.Discard (Object);
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_Mem_Alloc;
+
+   --  mem_map (a0 = as cap, a1 = memory cap, a2 = VA, a3 = offset,
+   --  a4 = length, a5 = flags bit0 R / bit1 W): map the object's
+   --  frames as borrowed user pages (frames stay object-owned).
+   procedure Handle_Mem_Map (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Address_Space_Cap : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Cap_Handle        : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handles_Valid     : Boolean;
+      VA                : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Offset            : constant U64 := Trap_Frame_Get_A3 (Frame);
+      Length            : constant U64 := Trap_Frame_Get_A4 (Frame);
+      Flags             : constant U64 := Trap_Frame_Get_A5 (Frame);
+      Current    : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      Map_Result : Arch.MMU.Status;
+      Page_Flags : Arch.MMU.Page_Flags;
+      Page_Count : U64;
+   begin
+      Decode_Handle
+        (Trap_Frame_Get_A0 (Frame), Address_Space_Cap, Handles_Valid);
+      if not Handles_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Decode_Handle (Trap_Frame_Get_A1 (Frame), Cap_Handle, Handles_Valid);
+      if not Handles_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      if Current = null
+        or else not Kernel.Tasks.Has_Address_Space_Map_Authority
+          (Current.all, Address_Space_Cap)
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Cap_Info.Rights.Map
+        or else ((Flags and 1) /= 0 and then not Cap_Info.Rights.Read)
+        or else ((Flags and 2) /= 0 and then not Cap_Info.Rights.Write)
+        or else (Flags and not 3) /= 0
+        or else Flags = 0
+        --  Sv39 reserves write-without-read leaves.
+        or else (Flags and 3) = 2
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      if VA < 16#4000_0000#
+        or else VA + Length > 16#8000_0000#
+        or else Length = 0
+        or else Offset + Length >
+          Kernel.Memory.Page_Count (Cap_Info.Object)
+            * Kernel.Physical_Memory.Page_Size
+        or else not Is_Page_Aligned (VA)
+        or else not Is_Page_Aligned (Offset)
+        or else not Is_Page_Aligned (Length)
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Page_Flags :=
+        (Read    => (Flags and 1) /= 0,
+         Write   => (Flags and 2) /= 0,
+         Execute => False,
+         User    => True,
+         Global  => False);
+
+      Page_Count := Length / Arch.MMU.Page_Size;
+      for Page in U64 range 0 .. Page_Count - 1 loop
+         Arch.MMU.Map_Page
+           (Root     => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual  => VA + Page * Arch.MMU.Page_Size,
+            Physical => Kernel.Memory.Frame_At
+              (Cap_Info.Object, (Offset / Arch.MMU.Page_Size) + Page),
+            Flags    => Page_Flags,
+            Result   => Map_Result,
+            Borrowed => True);
+
+         if Map_Result /= Arch.MMU.Ok then
+            Trap_Frame_Set_A0 (Frame, 1);
+            return;
+         end if;
+      end loop;
+
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Mem_Map;
+
+   --  mem_unmap (a0 = as cap, a1 = VA, a2 = length): drop borrowed
+   --  memory-object mappings; frames stay with their objects.
+   procedure Handle_Mem_Unmap (Frame : System.Address) is
+      Address_Space_Cap : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handles_Valid     : Boolean;
+      VA                : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Length            : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Current    : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Map_Result : Arch.MMU.Status;
+      Page_Count : U64;
+   begin
+      Decode_Handle
+        (Trap_Frame_Get_A0 (Frame), Address_Space_Cap, Handles_Valid);
+      if not Handles_Valid or else Current = null
+        or else not Kernel.Tasks.Has_Address_Space_Map_Authority
+          (Current.all, Address_Space_Cap)
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      if VA < 16#4000_0000#
+        or else VA + Length > 16#8000_0000#
+        or else Length = 0
+        or else not Is_Page_Aligned (VA)
+        or else not Is_Page_Aligned (Length)
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Page_Count := Length / Arch.MMU.Page_Size;
+      for Page in U64 range 0 .. Page_Count - 1 loop
+         Arch.MMU.Unmap_Borrowed_Page
+           (Root    => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual => VA + Page * Arch.MMU.Page_Size,
+            Result  => Map_Result);
+
+         if Map_Result /= Arch.MMU.Ok then
+            Trap_Frame_Set_A0 (Frame, 1);
+            return;
+         end if;
+      end loop;
+
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Mem_Unmap;
+
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
@@ -792,6 +998,12 @@ package body Arch.Traps is
          return;
       elsif Number = Sys_IPC_Reply then
          Handle_IPC_Reply (Frame);
+      elsif Number = Sys_Mem_Alloc then
+         Handle_Mem_Alloc (Frame);
+      elsif Number = Sys_Mem_Map then
+         Handle_Mem_Map (Frame);
+      elsif Number = Sys_Mem_Unmap then
+         Handle_Mem_Unmap (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

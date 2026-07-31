@@ -1,4 +1,6 @@
 with Interfaces;
+with System;
+with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.IPC;
@@ -22,14 +24,16 @@ procedure Fuzz is
    subtype U64 is Interfaces.Unsigned_64;
    use type U64;
 
+   --  A0..A5 default to 0: named association at call sites states
+   --  only the arguments a syscall actually takes.
    function Raw_Ecall
      (Number : U64;
-      A0     : U64;
-      A1     : U64;
-      A2     : U64;
-      A3     : U64;
-      A4     : U64;
-      A5     : U64) return U64
+      A0     : U64 := 0;
+      A1     : U64 := 0;
+      A2     : U64 := 0;
+      A3     : U64 := 0;
+      A4     : U64 := 0;
+      A5     : U64 := 0) return U64
      with Import, Convention => C, External_Name => "fuzz_ecall";
 
    Last_A1 : U64
@@ -50,8 +54,11 @@ procedure Fuzz is
    Sys_IPC_Call       : constant U64 := 12;
    Sys_IPC_Recv       : constant U64 := 13;
    Sys_IPC_Reply      : constant U64 := 14;
+   Sys_Mem_Alloc      : constant U64 := 15;
+   Sys_Mem_Map        : constant U64 := 16;
+   Sys_Mem_Unmap      : constant U64 := 17;
 
-   Highest_Known      : constant U64 := 14;
+   Highest_Known      : constant U64 := 17;
 
    Failed : constant U64 := U64'Last;
 
@@ -161,6 +168,7 @@ procedure Fuzz is
    Console_Request  : Akernel_User.Streams.Stream_Request;
    Console_Response : Akernel_User.Streams.Stream_Response;
    Reply_Label      : U64;
+   Mem_Cap          : U64;
 
    Iterations : constant U64 := 4096;
 begin
@@ -170,27 +178,29 @@ begin
    --  Directed cases first.
 
    --  Unknown syscall numbers must return Failed.
-   Status := Raw_Ecall (15, 0, 0, 0, 0, 0, 0);
-   Check (Status = Failed, "unknown syscall 15 rejected");
-   Status := Raw_Ecall (255, 1, 2, 3, 4, 5, 6);
+   Status := Raw_Ecall (Number => 18);
+   Check (Status = Failed, "unknown syscall 18 rejected");
+   Status := Raw_Ecall
+     (Number => 255, A0 => 1, A1 => 2, A2 => 3,
+      A3 => 4, A4 => 5, A5 => 6);
    Check (Status = Failed, "unknown syscall 255 rejected");
-   Status := Raw_Ecall (U64'Last, 0, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => U64'Last);
    Check (Status = Failed, "unknown syscall max rejected");
 
    --  ep_create returns fresh distinct endpoint cap handles.
-   Status := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_EP_Create);
    Check (Status /= Failed and then Status < 256, "ep_create returns handle");
-   A0 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   A0 := Raw_Ecall (Number => Sys_EP_Create);
    Check (A0 /= Failed and then A0 /= Status, "ep_create distinct handles");
 
    --  IPC syscall argument validation (non-blocking cases only).
-   Status := Raw_Ecall (Sys_IPC_Call, 16#100#, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => 16#100#);
    Check (Status = 1, "ipc_call invalid cap rejected");
-   Status := Raw_Ecall (Sys_IPC_Recv, U64'Last, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => U64'Last);
    Check (Status = 1, "ipc_recv invalid cap rejected");
-   Status := Raw_Ecall (Sys_IPC_Reply, 254, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
    Check (Status = 1, "ipc_reply without reply cap rejected");
-   Status := Raw_Ecall (Sys_IPC_Reply, 200, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 200);
    Check (Status = 1, "ipc_reply wrong handle rejected");
 
    --  Console stream RPC: a write op must round-trip through the
@@ -210,38 +220,97 @@ begin
    Check (Status = 0 and then Console_Response.Count = 0,
           "console read reports eof");
 
+   --  Memory objects: alloc/map/touch/unmap of borrowed frames.
+   --  The object stays allocated until this process exits, which
+   --  also exercises the refcounted frame teardown path.
+   declare
+      Mem_VA : constant U64 := 16#5000_0000#;
+      AS     : constant U64 := Akernel_User.Syscalls.Address_Space_Cap;
+
+      type Page_Words is array (0 .. 511) of U64;
+      Mapped : Page_Words
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Mem_VA));
+   begin
+      Mem_Cap := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
+      Check (Mem_Cap /= U64'Last, "mem_alloc returns handle");
+      Check (Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 0) = U64'Last,
+             "mem_alloc zero pages rejected");
+      Check (Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 65) = U64'Last,
+             "mem_alloc over max pages rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map, A0 => AS, A1 => 200,
+                A2 => Mem_VA, A3 => 0, A4 => 4096, A5 => 3) = 1,
+             "mem_map invalid cap rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map, A0 => AS, A1 => Mem_Cap,
+                A2 => Mem_VA + 1, A3 => 0, A4 => 4096, A5 => 3) = 1,
+             "mem_map unaligned va rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map, A0 => AS, A1 => Mem_Cap,
+                A2 => Mem_VA, A3 => 4096, A4 => 4096, A5 => 3) = 1,
+             "mem_map beyond object rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map, A0 => AS, A1 => Mem_Cap,
+                A2 => Mem_VA, A3 => 0, A4 => 4096, A5 => 2) = 1,
+             "mem_map write-only rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map, A0 => AS, A1 => Mem_Cap,
+                A2 => Mem_VA, A3 => 0, A4 => 4096, A5 => 3) = 0,
+             "mem_map rw page maps");
+      Mapped (0) := 16#DEAD_BEEF#;
+      Check (Mapped (0) = 16#DEAD_BEEF# and then Mapped (511) = 0,
+             "memory object page writable and zeroed");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Unmap, A0 => AS,
+                A1 => Mem_VA, A2 => 4096) = 0,
+             "mem_unmap drops mapping");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Unmap, A0 => AS,
+                A1 => Mem_VA, A2 => 4096) = 1,
+             "mem_unmap twice rejected");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Unmap, A0 => AS,
+                A1 => Akernel_User.Syscalls.IPC_Buffer_VA,
+                A2 => 4096) = 1,
+             "mem_unmap refuses owned pages");
+   end;
+
    --  Boot byte API probes: valid image cap, huge offset, invalid
    --  handle, wrong-kind cap (handle 1 is the granted endpoint).
-   Status := Raw_Ecall (Sys_Boot_File_Size, Echo_Image, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Boot_File_Size, A0 => Echo_Image);
    Check (Status /= Failed, "image cap size query works");
    Status := Raw_Ecall
-     (Sys_Boot_Read_Byte, Echo_Image, U64'Last, 0, 0, 0, 0);
+     (Number => Sys_Boot_Read_Byte, A0 => Echo_Image, A1 => U64'Last);
    Check (Status = 256 or else Status = Failed, "huge read offset safe");
-   Status := Raw_Ecall (Sys_Boot_File_Size, U64'Last, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Boot_File_Size, A0 => U64'Last);
    Check (Status = Failed, "invalid boot cap rejected");
-   Status := Raw_Ecall (Sys_Boot_File_Size, 1, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Boot_File_Size, A0 => 1);
    Check (Status = Failed, "boot byte api wrong-kind cap rejected");
 
    --  Invalid cap handles on cap-taking syscalls.
-   Status := Raw_Ecall (Sys_IRQ_Wait, 16#100#, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IRQ_Wait, A0 => 16#100#);
    Check (Status /= 0, "irq_wait invalid cap rejected");
-   Status := Raw_Ecall (Sys_IRQ_Ack, U64'Last, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IRQ_Ack, A0 => U64'Last);
    Check (Status /= 0, "irq_ack invalid cap rejected");
-   Status := Raw_Ecall (Sys_Reap, 16#FEED_BEEF#, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Reap, A0 => 16#FEED_BEEF#);
    Check (Status /= 0, "reap invalid cap rejected");
    Status := Raw_Ecall
-     (Sys_Map_MMIO, 255, U64'Last, 0, 0, 16#1000#, 3);
+     (Number => Sys_Map_MMIO, A0 => 255, A1 => U64'Last,
+      A4 => 16#1000#, A5 => 3);
    Check (Status /= 0, "map_mmio invalid mmio cap rejected");
    Status := Raw_Ecall
-     (Sys_Map_MMIO, 16#100#, 1, 0, 0, 16#1000#, 3);
+     (Number => Sys_Map_MMIO, A0 => 16#100#, A1 => 1,
+      A4 => 16#1000#, A5 => 3);
    Check (Status /= 0, "map_mmio invalid as cap rejected");
 
    --  Spawn with invalid image caps (spawn ABI v2: a0 = image cap).
-   Status := Raw_Ecall (Sys_Spawn, 0, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => 0);
    Check (Status /= 0, "spawn null image cap rejected");
-   Status := Raw_Ecall (Sys_Spawn, U64'Last, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => U64'Last);
    Check (Status /= 0, "spawn huge image cap rejected");
-   Status := Raw_Ecall (Sys_Spawn, 1, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => 1);
    Check (Status /= 0, "spawn wrong-kind image cap rejected");
 
    ----------------------------------------------------------------
@@ -257,22 +326,22 @@ begin
 
    --  Grant-list validation: unopened source handle.
    Akernel_User.Syscalls.Set_Grant (0, 250, 0, 0);
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant of unopened cap rejected");
 
    --  Rights escalation: endpoints carry no Read right.
    Akernel_User.Syscalls.Set_Grant
      (0, EP, Akernel_User.Syscalls.Right_Read, 0);
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant rights escalation rejected");
 
    --  Rights mask bits outside the valid set.
    Akernel_User.Syscalls.Set_Grant (0, EP, 16#400#, 0);
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 1, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant unknown rights bits rejected");
 
    --  Grant count above the ABI limit.
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 33, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 33);
    Check (Status = 4, "spawn grant count over limit rejected");
 
    --  Valid grant: endpoint with Send+Receive (badged cap stays
@@ -284,7 +353,7 @@ begin
       0);
    Akernel_User.Syscalls.Set_Grant
      (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
-   Status := Raw_Ecall (Sys_Spawn, Echo_Image, 2, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 2);
    --  fuzz_last_a1 is rewritten by every ecall: capture the process
    --  cap before Check (or anything else) makes another syscall.
    Echo_Process := Last_A1;
@@ -298,7 +367,7 @@ begin
    Akernel_User.Syscalls.Message.Label := 16#AB#;
    Akernel_User.Syscalls.Message.Words := (1, 2, 3, 4, 5, 6);
    Akernel_User.Syscalls.Message.Caps := (others => 0);
-   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
       R_Label : constant U64 := Akernel_User.Syscalls.Message.Label;
       R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
@@ -316,7 +385,7 @@ begin
    Akernel_User.Syscalls.Message.Label := 16#CD#;
    Akernel_User.Syscalls.Message.Words := (6, 5, 4, 3, 2, 1);
    Akernel_User.Syscalls.Message.Caps := (others => 0);
-   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
       R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
         Akernel_User.Syscalls.Message.Words;
@@ -331,12 +400,12 @@ begin
    --  Round 3: cap transfer. EP2's handle is rewritten into echo's
    --  table (first free handle there = 3: endpoint at 1, console at
    --  2); echo reports it.
-   EP2 := Raw_Ecall (Sys_EP_Create, 0, 0, 0, 0, 0, 0);
+   EP2 := Raw_Ecall (Number => Sys_EP_Create);
    Check (EP2 < 256 and then EP2 /= EP, "second endpoint created");
    Akernel_User.Syscalls.Message.Label := 16#EF#;
    Akernel_User.Syscalls.Message.Words := (others => 0);
    Akernel_User.Syscalls.Message.Caps := (EP2, 0, 0, 0);
-   Status := Raw_Ecall (Sys_IPC_Call, EP, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
       R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
         Akernel_User.Syscalls.Message.Words;
@@ -350,12 +419,12 @@ begin
    --  Echo exits after three rounds; reap it once it has exited.
    Reaped := False;
    for Try in 1 .. 128 loop
-      Status := Raw_Ecall (Sys_Reap, Echo_Process, 0, 0, 0, 0, 0);
+      Status := Raw_Ecall (Number => Sys_Reap, A0 => Echo_Process);
       if Status = 0 then
          Reaped := True;
          exit;
       end if;
-      Ignore := Raw_Ecall (Sys_Yield, 0, 0, 0, 0, 0, 0);
+      Ignore := Raw_Ecall (Number => Sys_Yield);
    end loop;
    Check (Reaped, "echo reaped after exit");
 
@@ -389,7 +458,9 @@ begin
             A0 := 0;
          end if;
 
-         Status := Raw_Ecall (Number, A0, A1, A2, A3, A4, A5);
+         Status := Raw_Ecall
+           (Number => Number, A0 => A0, A1 => A1, A2 => A2,
+            A3 => A3, A4 => A4, A5 => A5);
          Total_Calls := Total_Calls + 1;
          if Number > Highest_Known and then Status = Failed then
             Unknown_Count := Unknown_Count + 1;
@@ -404,7 +475,7 @@ begin
    end loop;
 
    --  Kernel still answers correctly after the random phase.
-   Status := Raw_Ecall (Sys_Boot_File_Size, Echo_Image, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Boot_File_Size, A0 => Echo_Image);
    Check (Status /= Failed, "kernel alive after random phase");
 
    Put ("fuzz complete: calls=");
@@ -418,7 +489,7 @@ begin
    --  Exit path is the final test: this thread must die cleanly and the
    --  system (init, serial driver, timer) must keep running.
    Put_Line ("fuzz exit test");
-   Status := Raw_Ecall (Sys_Exit, 0, 0, 0, 0, 0, 0);
+   Status := Raw_Ecall (Number => Sys_Exit);
 
    --  Reaching here means exit returned, which it never should.
    Put_Line ("FAIL exit returned");
