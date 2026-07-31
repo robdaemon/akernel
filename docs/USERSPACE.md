@@ -141,9 +141,9 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Test output goes through the console stream; the random phase
   still fuzzes raw debug_putchar (printable garbage in the log is
   that, by design). Found the `irq_wait` missing-`Advance_SEPC`
-  livelock. 64/64 directed PASS (incl. memory-object alloc/map/
+  livelock. 67/67 directed PASS (incl. memory-object alloc/map/
   touch/unmap, RTS heap new/free/churn/growth, and file-protocol
-  stat/open/read cases against System/Fileserver).
+  stat/open/read/volume cases against System/Fileserver).
 - `userspace/fileserver/` — file server (`System/Fileserver`,
   granted fs endpoint Receive at cap 1, console Send at 2, every
   boot-file cap from 3 via the `boot_files` token): serves the
@@ -167,10 +167,17 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 `System/Manifest` line format:
 
 ```text
+volume <device> <label> [ci|cs]
 program <id> <path> [grants...]
 ```
 
-Current: serial with `uart/mmio console_server`, fileserver with
+The volume directive mounts the initrd file set Amiga-style: device
+name `RD0`, volume label `Initrd`, case-insensitive paths (`ci`).
+The file server accepts `RD0:...` and `Initrd:...` qualified names;
+unqualified names get the client-side default volume prepended.
+
+Current: serial with `uart/mmio console_server`, a `volume RD0
+Initrd ci` directive, fileserver with
 `fs_server console boot_files`, fuzzer with
 `ipc_test console Tests/Echo fs System/Manifest`, spinner with
 `console`, plus a

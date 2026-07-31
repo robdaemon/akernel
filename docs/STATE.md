@@ -59,8 +59,8 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 64/64 directed PASS (console stream RPC, echo IPC rounds,
-grants, memory objects, RTS heap, file protocol) ...
+... 67/67 directed PASS (console stream RPC, echo IPC rounds,
+grants, memory objects, RTS heap, file protocol + volumes) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```

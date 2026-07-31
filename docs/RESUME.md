@@ -32,6 +32,17 @@ trap-frame word dump (Words : array (0..33) of U64 with Address =>
 Frame; a6 = word 15).
 64/64 directed PASS, fuzz failures=0.
 
+Amiga-style volumes added on top: manifest `volume RD0 Initrd ci`
+directive -> init Op_Mount; fileserver resolves RD0:/Initrd:
+prefixes (prefix match always case-insensitive, path match per the
+volume's case flag); Akernel_User.Files prepends default volume
+"RD0" for unqualified names (client-side PATH seed, settable via
+Set_Default_Volume). 67/67 PASS. CRITICAL latent bug fixed: userspace
+_start never set gp (kernel zeroes it) — fine until small globals
+(<=8 bytes) landed in .sdata/.sbss and the linker relaxed accesses to
+gp-relative (fault, gp=0). _start now does lla gp, __global_pointer$
+under .option norelax.
+
 Build/run: make all && make run. Commit per milestone; docs
 current-state only.
 ```

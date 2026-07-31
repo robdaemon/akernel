@@ -12,8 +12,19 @@ with Akernel_User.Syscalls;
 --                      cap in cap slot 0 -> (status, count); bytes
 --                      appear at offset 0 of the client's buffer
 --
+--    Op_Mount    = 4   init -> server: (devlen, labellen, ci,
+--                      device ++ label chars[24]) from the manifest's
+--                      volume directive
+--
 --  Statuses: 0 ok, 1 not found, 2 server not ready (name table not
 --  yet pushed by init), 3 bad arguments, 4 out of range.
+--
+--  Wire names are volume-qualified Amiga-style: "RD0:System/Init"
+--  or via the volume label "Initrd:System/Init". Volume prefixes
+--  always compare case-insensitively; path comparison follows the
+--  mounted filesystem's case flag. Unqualified names are resolved
+--  client-side: this package prepends the default volume (RD0,
+--  settable via Set_Default_Volume) — the seed of a PATH resolver.
 --
 --  Reads are stateless (no fids, no close). The read buffer is a
 --  client-owned memory object (Buf_Pages pages) transferred with
@@ -31,6 +42,7 @@ package Akernel_User.Files is
    Op_Stat     : constant U64 := 1;
    Op_Open     : constant U64 := 2;
    Op_Read     : constant U64 := 3;
+   Op_Mount    : constant U64 := 4;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -46,6 +58,9 @@ package Akernel_User.Files is
 
    --  Bind the package to a file-server endpoint cap (Send right).
    procedure Bind (FS_Cap : U64);
+
+   --  Default volume for unqualified names (initially "RD0").
+   procedure Set_Default_Volume (Name : String);
 
    --  Stat/Open return a protocol status; Open also allocates and
    --  maps the read buffer on first success.

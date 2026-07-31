@@ -8,11 +8,45 @@ package body Akernel_User.Files is
    Buf_Cap   : U64 := 0;
    Buf_Bytes : constant U64 := Buf_Pages * Syscalls.Page_Size;
 
+   Default_Volume : String (1 .. 16) :=
+     "RD0" & (1 .. 13 => Character'Val (0));
+   Default_Volume_Len : Natural := 3;
+
    subtype Byte is Interfaces.Unsigned_8;
    type Byte_Array is array (U64 range <>) of Byte;
 
    function Shift_Left (Value : U64; Amount : Natural) return U64
      renames Interfaces.Shift_Left;
+
+   --  Effective wire name: Name unchanged when already qualified
+   --  (contains ':'), otherwise the default volume is prepended.
+   procedure Qualified
+     (Name : String;
+      S    : out String;
+      Len  : out Natural)
+   is
+   begin
+      Len := 0;
+      S := (others => Character'Val (0));
+      for C of Name loop
+         if C = ':' then
+            if Name'Length <= S'Length then
+               S (1 .. Name'Length) := Name;
+               Len := Name'Length;
+            end if;
+            return;
+         end if;
+      end loop;
+
+      if Default_Volume_Len + 1 + Name'Length <= S'Length then
+         S (1 .. Default_Volume_Len) :=
+           Default_Volume (1 .. Default_Volume_Len);
+         S (Default_Volume_Len + 1) := ':';
+         S (Default_Volume_Len + 2
+            .. Default_Volume_Len + 1 + Name'Length) := Name;
+         Len := Default_Volume_Len + 1 + Name'Length;
+      end if;
+   end Qualified;
 
    --  Pack Name (NUL-padded) into message words First .. Last.
    procedure Pack_Name
@@ -42,15 +76,27 @@ package body Akernel_User.Files is
       Akernel_User.Files.FS_Cap := FS_Cap;
    end Bind;
 
+   procedure Set_Default_Volume (Name : String) is
+   begin
+      if Name'Length > 0 and then Name'Length <= 16 then
+         Default_Volume := (others => Character'Val (0));
+         Default_Volume (1 .. Name'Length) := Name;
+         Default_Volume_Len := Name'Length;
+      end if;
+   end Set_Default_Volume;
+
    function Stat (Name : String; Size : out U64) return U64 is
+      Q   : String (1 .. 48);
+      Len : Natural;
    begin
       Size := 0;
-      if FS_Cap = 0 or else Name'Length = 0 or else Name'Length > 48 then
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
          return Status_Bad_Args;
       end if;
 
       Syscalls.Message.Label := Op_Stat;
-      Pack_Name (Name, 0, 5);
+      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
@@ -97,16 +143,18 @@ package body Akernel_User.Files is
       Count  : out U64) return U64
    is
       Status : U64;
+      Q      : String (1 .. 32);
+      Len    : Natural;
       Src    : Byte_Array (0 .. Buf_Bytes - 1)
         with Address => To_Address (Integer_Address (Buffer_VA));
       Dst    : Byte_Array (0 .. Length - 1)
         with Address => Dest;
    begin
       Count := 0;
+      Qualified (Name, Q, Len);
       if Buf_Cap = 0
         or else FS_Cap = 0
-        or else Name'Length = 0
-        or else Name'Length > Max_Name
+        or else Len = 0
         or else Length = 0
       then
          return Status_Bad_Args;
@@ -115,7 +163,7 @@ package body Akernel_User.Files is
       Syscalls.Message.Label := Op_Read;
       Syscalls.Message.Words (0) := Offset;
       Syscalls.Message.Words (1) := U64'Min (Length, Buf_Bytes);
-      Pack_Name (Name, 2, 5);
+      Pack_Name (Q (1 .. Len), 2, 5);
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then

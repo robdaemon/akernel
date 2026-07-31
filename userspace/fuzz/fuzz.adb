@@ -396,6 +396,23 @@ begin
         ("System/Manifest", Size, Buf'Address, 64, Count);
       Check (Status = Akernel_User.Files.Status_Out_Of_Range,
              "fs read past EOF rejected");
+
+      --  Volumes: device name and label both resolve; volume
+      --  prefixes are case-insensitive, paths follow the volume's
+      --  case flag (RD0 mounts ci).
+      Status := Akernel_User.Files.Stat ("Initrd:System/Manifest", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size =
+               Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap),
+             "fs stat via volume label");
+
+      Status := Akernel_User.Files.Stat ("rd0:system/manifest", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fs names case-insensitive on RD0");
+
+      Status := Akernel_User.Files.Stat ("DH0:System/Manifest", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fs unknown volume rejected");
    end;
 
    --  Boot byte API probes: valid image cap, huge offset, invalid

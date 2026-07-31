@@ -40,6 +40,16 @@ procedure Init is
    --  messages (docs/IPC.md file protocol).
    FS_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  Volume directive state (manifest: "volume RD0 Initrd ci"):
+   --  sent to the file server as Op_Mount right after spawn,
+   --  before the name table.
+   Vol_Set    : Boolean := False;
+   Vol_Device : String (1 .. 16) := (others => Character'Val (0));
+   Vol_Dev_Len : Natural := 0;
+   Vol_Label  : String (1 .. 16) := (others => Character'Val (0));
+   Vol_Lab_Len : Natural := 0;
+   Vol_CI     : Boolean := False;
+
    function Shl
      (Value  : Akernel_User.Syscalls.U64;
       Amount : Natural) return Akernel_User.Syscalls.U64
@@ -135,6 +145,33 @@ procedure Init is
       end loop;
    end Next_Token;
 
+   --  Send Op_Mount with the manifest's volume directive.
+   procedure Push_FS_Mount is
+      use Akernel_User.Syscalls;
+   begin
+      Message.Label := 4;  --  Files.Op_Mount
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Vol_Dev_Len);
+      Message.Words (1) := U64 (Vol_Lab_Len);
+      Message.Words (2) := (if Vol_CI then 1 else 0);
+      for P in 1 .. Vol_Dev_Len loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Vol_Device (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      for P in 1 .. Vol_Lab_Len loop
+         Message.Words (3 + (Vol_Dev_Len + P - 1) / 8) :=
+           Message.Words (3 + (Vol_Dev_Len + P - 1) / 8)
+             or Shl (U64 (Character'Pos (Vol_Label (P))),
+                     ((Vol_Dev_Len + P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("fs mount push failed");
+      end if;
+   end Push_FS_Mount;
+
    --  Push the file server's (handle -> boot-file name) table as
    --  Op_Set_Name messages, one per boot-file cap it was granted,
    --  then a zero-handle terminator.
@@ -214,6 +251,37 @@ procedure Init is
    begin
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token or else Token (1) = '#' then
+         return;
+      end if;
+
+      --  Volume directive: "volume <device> <label> [ci|cs]" —
+      --  sent to the file server as Op_Mount after spawn.
+      if Token_Equals (Token, Length, "volume") then
+         Vol_Set := False;
+         Vol_CI := False;
+
+         Next_Token (Line_End, Pos, Token, Length, Have_Token);
+         if not Have_Token or else Length > 16 then
+            return;
+         end if;
+         Vol_Device := (others => Character'Val (0));
+         Vol_Device (1 .. Length) := Token (1 .. Length);
+         Vol_Dev_Len := Length;
+
+         Next_Token (Line_End, Pos, Token, Length, Have_Token);
+         if not Have_Token or else Length > 16 then
+            return;
+         end if;
+         Vol_Label := (others => Character'Val (0));
+         Vol_Label (1 .. Length) := Token (1 .. Length);
+         Vol_Lab_Len := Length;
+
+         Next_Token (Line_End, Pos, Token, Length, Have_Token);
+         if Have_Token then
+            Vol_CI := Token_Equals (Token, Length, "ci");
+         end if;
+
+         Vol_Set := True;
          return;
       end if;
 
@@ -308,6 +376,9 @@ procedure Init is
          end if;
 
          if Is_FS then
+            if Vol_Set then
+               Push_FS_Mount;
+            end if;
             Push_FS_Names (FS_Base, FS_Count);
             Akernel_User.Syscalls.Debug_Put_Line ("fs name table pushed");
          end if;

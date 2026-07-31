@@ -197,8 +197,22 @@ Op_Open     = 2  words = name[48] -> (status, size); client then
 Op_Read     = 3  (offset, length, name[32]) + buffer memory cap in
                  cap slot 0 -> (status, count); bytes land at offset
                  0 of the client's buffer
+Op_Mount    = 4  init -> server: (devlen, labellen, ci-flag,
+                 device ++ label chars[24]) from the manifest's
+                 volume directive; binds device name + volume label
+                 + case-sensitivity to the boot-file set
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
+
+Volumes are Amiga-style: a device name (`RD0`) and a volume label
+(`Initrd`) both resolve to the mounted file set. Wire names are
+qualified (`RD0:System/Init` or `Initrd:System/Init`); volume
+prefixes always compare case-insensitively, path comparison follows
+the volume's case flag (the initrd mounts `ci`). Unqualified names
+are a client-side concern: Akernel_User.Files prepends a default
+volume (`RD0`, settable) — the seed of a PATH resolver. Other
+devices get their label from the mounted filesystem itself; the
+manifest directive is the initrd's boot-time equivalent.
 
 Stateless reads (no fids, no close). The read buffer is client-owned
 (replies cannot transfer caps — the reply path zeroes cap slots);
