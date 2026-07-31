@@ -91,6 +91,16 @@ akernel_user-console.*    console output for normal programs: Put /
 a-stream.*, a-ioexce.ads  vendored GNAT runtime units (light runtime
                           lacks Ada.Streams): compiled per program
                           with -gnatg via each .gpr's Compiler package
+s-memory.adb              custom System.Memory body (overrides the
+                          light runtime's bump allocator): free-list
+                          heap at VA 0x4000_0000 (below text at
+                          0x4600_0000), 16-byte blocks with 8-byte
+                          size/flag headers, first-fit + splitting +
+                          both-sides coalescing, grown on demand by
+                          mem_alloc(64)/mem_map page-by-page, max
+                          8 chunks (2 MiB); Storage_Error past that.
+                          Pulled into every program's closure via a
+                          private with on the Akernel_User root spec.
 akernel_user-mmio.*       MMIO helpers
 syscalls-riscv64.s        ecall stubs (incl. generic stub for fuzzer)
 start-riscv64.s           entry
@@ -126,8 +136,8 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Test output goes through the console stream; the random phase
   still fuzzes raw debug_putchar (printable garbage in the log is
   that, by design). Found the `irq_wait` missing-`Advance_SEPC`
-  livelock. 54/54 directed PASS (incl. memory-object alloc/map/
-  touch/unmap cases).
+  livelock. 58/58 directed PASS (incl. memory-object alloc/map/
+  touch/unmap and RTS heap new/free/churn/growth cases).
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,

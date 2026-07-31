@@ -1,29 +1,30 @@
 # Resume prompt (next session)
 
 ```text
-Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement milestone 10:
-RTS heap on memory objects — real non-tasking runtime core (heap,
-secondary stack) backed by mem_alloc/mem_map; then file protocol
-(9P-ish) over streams if scope allows.
+Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement milestone 11:
+file protocol (9P-ish) over streams — a server exposing initrd files
+(open/read/close RPCs), boot files as memory objects, bulk transfer
+beyond the 40-byte stream chunk (shared memory-object frames in the
+IPC cap slots). Otherwise pick from NEXT.md's later list
+(notifications, line-atomic console, SMP, DTB, IOMMU).
 
-Milestone 9 landed: Kernel.Memory (refcounted slab + PMM frames,
-1..64 zeroed pages/object), Memory_Object cap kind (rights
-Map+Read+Write+Transfer+Manage at creation), syscalls 15 mem_alloc /
-16 mem_map / 17 mem_unmap. Borrowed mappings marked with PTE RSW
-bit 0 (PTE_Borrowed, arch-mmu): AS teardown and Unmap_Borrowed_Page
-never free object frames; object finalizer returns frames to PMM on
-last cap close. Unmap refuses AS-owned pages (Not_Mapped). Sv39
-write-without-read rejected. RTS wrappers Mem_Alloc/Mem_Map/Mem_Unmap
-in akernel_user-syscalls.*; fuzz directed cases cover alloc bounds,
-map validation, touch (zeroed+writable), unmap rules. 54/54 directed
-PASS, fuzz failures=0.
+Milestone 10 landed: custom userspace s-memory.adb overrides the
+light runtime bump allocator — free-list heap at VA 0x4000_0000
+(below text at 0x4600_0000), 8-byte size/flag headers, first-fit +
+split + coalesce, grown via mem_alloc(64 pages)/mem_map page-by-page
+(borrowed frames), 8 chunks = 2 MiB cap, Storage_Error past that.
+Gotchas discovered: heap state must live in .bss with lazy init
+(adainit never runs — _start calls main directly); s-memory.adb is
+only compiled when in the program's dependency closure (forced via
+private with System.Memory on the Akernel_User root spec, pragma
+Pure dropped); s-memory.adb must NOT with Akernel_User.Syscalls
+(binder circularity via pragma Elaborate_Body) — it imports the raw
+asm syscall symbols directly; free-list next pointer lives at block
+payload (after the 8-byte header), never at the header word; light
+runtime = No_Exception_Propagation, so no exception-based tests.
+58/58 directed PASS (heap new/free/churn/cross-object growth/
+near-limit fill), fuzz failures=0.
 
-Key files: src/kernel/kernel-memory.*, src/arch/riscv64/arch-mmu.*
-(Borrowed param on Map_Page, Unmap_Borrowed_Page), arch-traps.adb
-(Handle_Mem_*), userspace/rts/akernel/akernel_user-syscalls.*.
-Gotchas: fuzz Raw_Ecall has A0..A5 defaults, always named
-association; console prints round-trip through the caller's IPC
-message buffer (snapshot replies before printing).
 Build/run: make all && make run. Commit per milestone; docs
 current-state only.
 ```

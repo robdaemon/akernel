@@ -1,6 +1,7 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
+with Ada.Unchecked_Deallocation;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.IPC;
@@ -275,6 +276,63 @@ begin
                 A1 => Akernel_User.Syscalls.IPC_Buffer_VA,
                 A2 => 4096) = 1,
              "mem_unmap refuses owned pages");
+   end;
+
+   --  RTS heap (System.Memory over memory objects): allocate /
+   --  write / free / churn across chunk growth.
+   declare
+      type Byte_Array is array (Natural range <>) of U64;
+      type Array_Access is access Byte_Array;
+      procedure Free is new Ada.Unchecked_Deallocation
+        (Byte_Array, Array_Access);
+
+      Ptrs  : array (1 .. 16) of Array_Access := (others => null);
+      Big   : Array_Access;
+      Ok    : Boolean := True;
+   begin
+      Ptrs (1) := new Byte_Array (0 .. 7);
+      Ptrs (1).all := (others => 16#ABCD#);
+      Check (Ptrs (1) (0) = 16#ABCD# and then Ptrs (1) (7) = 16#ABCD#,
+             "heap new/write/read works");
+
+      --  Churn: alloc 15 more, free every other, alloc again.
+      for I in 2 .. 16 loop
+         Ptrs (I) := new Byte_Array (0 .. 63);
+         Ptrs (I) (0) := U64 (I);
+      end loop;
+      for I in 1 .. 8 loop
+         Free (Ptrs (I * 2 - 1));
+      end loop;
+      for I in 1 .. 8 loop
+         Ptrs (I * 2 - 1) := new Byte_Array (0 .. 31);
+         Ptrs (I * 2 - 1) (0) := U64 (100 + I);
+      end loop;
+      for I in 2 .. 16 loop
+         if I mod 2 = 0 then
+            Ok := Ok and then Ptrs (I) (0) = U64 (I);
+         end if;
+      end loop;
+      Check (Ok, "heap churn preserves even slots");
+      for I in 1 .. 16 loop
+         Free (Ptrs (I));
+      end loop;
+
+      --  Chunk growth: 400 KiB spans two 256 KiB memory objects.
+      Big := new Byte_Array (0 .. 51_199);
+      Big (0) := 1;
+      Big (51_199) := 2;
+      Check (Big (0) = 1 and then Big (51_199) = 2,
+             "heap grows across memory objects");
+      Free (Big);
+
+      --  Near-limit fill: 1.25 MiB forces five of the eight
+      --  256 KiB chunks to be mapped.
+      Big := new Byte_Array (0 .. 163_839);
+      Big (0) := 3;
+      Big (163_839) := 4;
+      Check (Big (0) = 3 and then Big (163_839) = 4,
+             "heap fills near chunk limit");
+      Free (Big);
    end;
 
    --  Boot byte API probes: valid image cap, huge offset, invalid

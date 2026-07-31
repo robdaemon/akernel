@@ -73,11 +73,22 @@ kernel cap tables.
    frames; object finalizer returns them to the PMM on last cap
    close); unmap refuses AS-owned pages. 54/54 directed PASS.
 
+10. ~~RTS heap on memory objects~~ — done: custom `s-memory.adb`
+    overrides the light runtime bump allocator: free-list heap at
+    VA 0x4000_0000 (below text), first-fit + splitting + coalescing,
+    grown on demand via mem_alloc(64)/mem_map (8 chunks = 2 MiB
+    cap), pulled into every program's closure by a private with on
+    the Akernel_User root spec. `new`/Unchecked_Deallocation work in
+    all userspace programs (heap state is .bss + lazy init, since
+    adainit never runs). Secondary stack already functional via the
+    light runtime's default pool. Exceptions remain
+    No_Exception_Propagation (last-chance handler). 58/58 directed
+    PASS.
+
 Next candidates (order open):
 
-10. RTS heap on memory objects (real non-tasking runtime core:
-    heap, secondary stack; then file protocol (9P-ish) over
-    streams).
+11. File protocol (9P-ish) over streams; boot files as memory
+    objects; larger bulk transfers than the 40-byte stream chunk.
 
 Commit between each milestone.
 

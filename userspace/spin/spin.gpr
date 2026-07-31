@@ -17,6 +17,7 @@ project Spin is
       for Switches ("a-stream.ads") use ("-gnatg");
       for Switches ("a-stream.adb") use ("-gnatg");
       for Switches ("a-ioexce.ads") use ("-gnatg");
+      for Switches ("s-memory.adb") use ("-gnatg");
    end Compiler;
 
    package Linker is
