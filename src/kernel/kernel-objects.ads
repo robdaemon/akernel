@@ -1,4 +1,5 @@
 with Interfaces;
+with System;
 with Kernel.Capabilities;
 with Kernel.Tasks;
 
@@ -15,6 +16,10 @@ package Kernel.Objects is
       Pending   : Boolean;
       In_Flight : Boolean;
       Waiter    : Kernel.Tasks.Thread_Access;
+      --  Notification signaled (with badge) when the line fires;
+      --  Null_Address = none bound (irq_bind_ntfn syscall).
+      Ntfn       : System.Address;
+      Ntfn_Badge : U64;
    end record;
 
    --  Boot file: a slice of the initrd image (physmap VA + length).

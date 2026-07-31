@@ -129,6 +129,46 @@ akernel_sys_mem_unmap:
     ret
 .size akernel_sys_mem_unmap, . - akernel_sys_mem_unmap
 
+.global akernel_sys_ntfn_create
+.type akernel_sys_ntfn_create, @function
+akernel_sys_ntfn_create:
+    li a7, 18
+    ecall
+    ret
+.size akernel_sys_ntfn_create, . - akernel_sys_ntfn_create
+
+.global akernel_sys_ntfn_wait
+.type akernel_sys_ntfn_wait, @function
+akernel_sys_ntfn_wait:
+    li a7, 19
+    ecall
+    ret
+.size akernel_sys_ntfn_wait, . - akernel_sys_ntfn_wait
+
+.global akernel_sys_ntfn_signal
+.type akernel_sys_ntfn_signal, @function
+akernel_sys_ntfn_signal:
+    li a7, 20
+    ecall
+    ret
+.size akernel_sys_ntfn_signal, . - akernel_sys_ntfn_signal
+
+.global akernel_sys_ntfn_bind_thread
+.type akernel_sys_ntfn_bind_thread, @function
+akernel_sys_ntfn_bind_thread:
+    li a7, 21
+    ecall
+    ret
+.size akernel_sys_ntfn_bind_thread, . - akernel_sys_ntfn_bind_thread
+
+.global akernel_sys_irq_bind_ntfn
+.type akernel_sys_irq_bind_ntfn, @function
+akernel_sys_irq_bind_ntfn:
+    li a7, 22
+    ecall
+    ret
+.size akernel_sys_irq_bind_ntfn, . - akernel_sys_irq_bind_ntfn
+
 .global akernel_sys_mem_map_file
 .type akernel_sys_mem_map_file, @function
 akernel_sys_mem_map_file:

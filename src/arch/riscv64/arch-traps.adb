@@ -13,6 +13,7 @@ with Kernel.IPC;
 with Kernel.Memory;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
+with Kernel.Notifications;
 with Kernel.Processes;
 with Kernel.Scheduler;
 with Kernel.Tasks;
@@ -21,9 +22,11 @@ package body Arch.Traps is
    use type Arch.MMU.Status;
    use type Kernel.IPC.Status;
    use type Kernel.Processes.Status;
+   use type Kernel.Notifications.Status;
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Scheduler.Status;
    use type Kernel.Tasks.Thread_Access;
+   use type System.Address;
 
    Timer_Ticks_Per_Second : constant U64 := 10_000_000;
    Timer_Interval        : constant U64 := Timer_Ticks_Per_Second / 10;
@@ -50,6 +53,14 @@ package body Arch.Traps is
    Sys_Mem_Alloc         : constant U64 := 15;
    Sys_Mem_Map           : constant U64 := 16;
    Sys_Mem_Unmap         : constant U64 := 17;
+   Sys_Ntfn_Create       : constant U64 := 18;
+   Sys_Ntfn_Wait         : constant U64 := 19;
+   Sys_Ntfn_Signal       : constant U64 := 20;
+   Sys_Ntfn_Bind_Thread  : constant U64 := 21;
+   Sys_IRQ_Bind_Ntfn     : constant U64 := 22;
+
+   --  Which right a notification syscall requires on its cap.
+   type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
 
    Tick_Count : U64 := 0;
 
@@ -626,6 +637,234 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, 0);
    end Handle_Debug_Putchar;
 
+   procedure Handle_Ntfn_Create (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Ntfn_Result : Kernel.Notifications.Status;
+      Cap_Result  : Kernel.Capabilities.Status;
+      Object      : System.Address;
+      New_Cap     : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Notifications.Create (Ntfn_Result, Object);
+      if Ntfn_Result /= Kernel.Notifications.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.Notification_Object,
+         Object => Object,
+         Rights => Kernel.Notifications.Notification_Full_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Kernel.Notifications.Discard (Object);
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_Ntfn_Create;
+
+   --  Shared cap lookup for the notification syscalls: resolves the
+   --  a0 handle to a Notification_Object cap with the required
+   --  right.
+   procedure Lookup_Ntfn_Cap
+     (Frame   : System.Address;
+      Current : Kernel.Tasks.Thread_Access;
+      Right   : Ntfn_Right;
+      Object  : out System.Address;
+      Valid   : out Boolean)
+   is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Cap_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+   begin
+      Object := System.Null_Address;
+      Valid := False;
+
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Notification_Object
+      then
+         return;
+      end if;
+
+      case Right is
+         when Ntfn_Wait_Right =>
+            if not Cap_Info.Rights.Wait then
+               return;
+            end if;
+         when Ntfn_Signal_Right =>
+            if not Cap_Info.Rights.Write then
+               return;
+            end if;
+         when Ntfn_Manage_Right =>
+            if not Cap_Info.Rights.Manage then
+               return;
+            end if;
+      end case;
+
+      Object := Cap_Info.Object;
+      Valid := True;
+   end Lookup_Ntfn_Cap;
+
+   procedure Handle_Ntfn_Wait (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Object  : System.Address;
+      Valid   : Boolean;
+      Bits    : U64;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      Lookup_Ntfn_Cap (Frame, Current, Ntfn_Wait_Right, Object, Valid);
+      if not Valid then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      Bits := Kernel.Notifications.Take (Object);
+      if Bits /= 0 then
+         Trap_Frame_Set_A0 (Frame, Bits);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      --  Block: Signal writes the consumed bits into saved a0.
+      Advance_SEPC (Frame);
+      Save_Current_Context (Frame);
+      Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Notification);
+      Schedule_Saved_Context (Frame, Scheduler_Result);
+   end Handle_Ntfn_Wait;
+
+   procedure Handle_Ntfn_Signal (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Object  : System.Address;
+      Valid   : Boolean;
+   begin
+      Lookup_Ntfn_Cap (Frame, Current, Ntfn_Signal_Right, Object, Valid);
+      if not Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Notifications.Signal (Object, Trap_Frame_Get_A1 (Frame));
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Ntfn_Signal;
+
+   procedure Handle_Ntfn_Bind_Thread (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Object  : System.Address;
+      Valid   : Boolean;
+      Bind_Result : Kernel.Notifications.Status;
+   begin
+      Lookup_Ntfn_Cap (Frame, Current, Ntfn_Manage_Right, Object, Valid);
+      if not Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Notifications.Bind_Thread (Object, Current, Bind_Result);
+      if Bind_Result = Kernel.Notifications.Ok then
+         Trap_Frame_Set_A0 (Frame, 0);
+      else
+         Trap_Frame_Set_A0 (Frame, 1);
+      end if;
+   end Handle_Ntfn_Bind_Thread;
+
+   procedure Handle_IRQ_Bind_Ntfn (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IRQ_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Ntfn_Handle : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      IRQ_Info     : Kernel.Capabilities.Cap_Entry;
+      Ntfn_Info    : Kernel.Capabilities.Cap_Entry;
+      Line         : Kernel.Objects.IRQ_Line_Access;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), IRQ_Handle, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+      Decode_Handle (Trap_Frame_Get_A1 (Frame), Ntfn_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => IRQ_Handle,
+         Result    => Cap_Result,
+         Out_Entry => IRQ_Info);
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else IRQ_Info.Kind /= Kernel.Capabilities.IRQ_Object
+        or else not IRQ_Info.Rights.Ack
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Ntfn_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Ntfn_Info);
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Ntfn_Info.Kind /= Kernel.Capabilities.Notification_Object
+        or else not Ntfn_Info.Rights.Write
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Line := To_IRQ_Line (IRQ_Info.Object);
+      if Line = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Kernel.Interrupts.Bind_Notification
+        (Line, Ntfn_Info.Object, Trap_Frame_Get_A2 (Frame));
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_IRQ_Bind_Ntfn;
+
    procedure Handle_Exit (Frame : System.Address) is
       Current          : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
@@ -747,9 +986,31 @@ package body Arch.Traps is
         Kernel.Scheduler.Current;
       IPC_Result       : Kernel.IPC.Status;
       Scheduler_Result : Kernel.Scheduler.Status;
+      Bound       : System.Address;
+      Bits        : U64;
    begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      --  Thread-bound notification fast path: pending bits beat an
+      --  endpoint wait, delivered as a synthetic message so a
+      --  server multiplexes IPC and IRQ notifications on one recv.
+      Bound := Kernel.Tasks.Bound_Ntfn (Current.all);
+      if Bound /= System.Null_Address then
+         Bits := Kernel.Notifications.Take (Bound);
+         if Bits /= 0 then
+            Kernel.IPC.Write_Notification_Message (Current, Bits);
+            Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
+            Advance_SEPC (Frame);
+            return;
+         end if;
+      end if;
+
       Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
-      if not Handle_Valid or else Current = null then
+      if not Handle_Valid then
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
          Advance_SEPC (Frame);
          return;
@@ -1101,6 +1362,17 @@ package body Arch.Traps is
          Handle_Mem_Map (Frame);
       elsif Number = Sys_Mem_Unmap then
          Handle_Mem_Unmap (Frame);
+      elsif Number = Sys_Ntfn_Create then
+         Handle_Ntfn_Create (Frame);
+      elsif Number = Sys_Ntfn_Wait then
+         Handle_Ntfn_Wait (Frame);
+         return;
+      elsif Number = Sys_Ntfn_Signal then
+         Handle_Ntfn_Signal (Frame);
+      elsif Number = Sys_Ntfn_Bind_Thread then
+         Handle_Ntfn_Bind_Thread (Frame);
+      elsif Number = Sys_IRQ_Bind_Ntfn then
+         Handle_IRQ_Bind_Ntfn (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
@@ -1141,6 +1413,13 @@ package body Arch.Traps is
       Board.UART.Put ("  scause = ");
       Put_Hex (Cause);
       Board.UART.Put_Line ("");
+
+      if Kernel.Scheduler.Current /= null then
+         Board.UART.Put ("  thread = ");
+         Put_Hex (U64 (Kernel.Tasks.Thread_Id'Pos
+                   (Kernel.Tasks.Id (Kernel.Scheduler.Current.all))));
+         Board.UART.Put_Line ("");
+      end if;
 
       Board.UART.Put ("  sepc   = ");
       Put_Hex (Arch.SBI.Sepc);

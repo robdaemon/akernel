@@ -333,14 +333,38 @@ namespace mechanism.
 - Future tasking runtime: Ada rendezvous maps onto call/recv/reply
   (entry call = call, accept = recv + reply). Non-tasking core first.
 
+## Notification objects (implemented)
+
+seL4-style: a capability-ownable word of pending signal bits
+(`Notification_Object`, static slab of 16). Signaling ORs bits in;
+waiting consumes them. Rights: Wait = ntfn_wait, Write =
+ntfn_signal, Manage = ntfn_bind_thread.
+
+```text
+ntfn_create() -> cap handle or fail          (syscall 18)
+ntfn_wait(cap) -> bits (blocks until /= 0)   (syscall 19)
+ntfn_signal(cap, bits) -> 0/1                (syscall 20)
+ntfn_bind_thread(cap) -> 0/1                 (syscall 21)
+irq_bind_ntfn(irq_cap, ntfn_cap, badge)      (syscall 22)
+  -> 0/1; IRQ cap needs Ack, ntfn needs Write
+```
+
+A thread binds at most one notification to itself. IPC_Recv checks
+the bound notification before blocking: pending bits are delivered
+as a synthetic message (Label = U64'Last, kernel-reserved; word 0 =
+bits; no caps, no reply cap). A signal arriving while the bound
+thread is blocked in Receive cancels the endpoint wait and delivers
+the same synthetic message, so a server multiplexes endpoint
+traffic and IRQ notifications on one recv (Drivers/Serial: UART RX
+is IRQ-driven this way — the UART IRQ line signals the bound
+notification with badge 1, the server drains RBR and acks).
+
 ## Deferred
 
 - Plain `send` (notify-style, no reply).
 - Register fast path: `call_small`/`send_small` variants carrying
   label + 4 words + no caps in registers. Pure optimization, no
   protocol change; only if profiling justifies.
-- Notification/signal objects (Amiga signals analog); IRQ wait is the
-  current proto-notification.
 - Kernel introspection syscalls for init state reconstruction.
 - IOMMU/DMA isolation.
 - Cap transfer beyond 4 per message.

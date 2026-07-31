@@ -12,6 +12,7 @@ package Kernel.Tasks is
       Blocked_Send,
       Blocked_Receive,
       Blocked_IRQ,
+      Blocked_Notification,
       Dead);
 
    type Process_State is
@@ -166,6 +167,25 @@ package Kernel.Tasks is
       Line : out String;
       Len  : out Natural);
 
+   --  Thread-bound notification (seL4-style): at most one
+   --  notification object is bound to a thread; IPC_Recv checks it
+   --  before blocking and IRQ-driven signals can wake a receiver
+   --  blocked on an endpoint with a synthetic message.
+   procedure Set_Bound_Ntfn
+     (TCB   : in out Thread_Control_Block;
+      Ntfn  : System.Address);
+
+   function Bound_Ntfn (TCB : Thread_Control_Block) return System.Address;
+
+   --  Endpoint object a Blocked_Receive thread is waiting on,
+   --  recorded so a notification signal can cancel the wait.
+   procedure Set_Recv_Endpoint
+     (TCB      : in out Thread_Control_Block;
+      Endpoint : System.Address);
+
+   function Recv_Endpoint
+     (TCB : Thread_Control_Block) return System.Address;
+
    --  Overwrite the saved a0 of a blocked thread with a syscall
    --  result status (surfaces when the thread is rescheduled).
    procedure Set_Saved_Result
@@ -256,6 +276,8 @@ private
       Call_Badge       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
+      Bound_Ntfn       : System.Address;
+      Recv_EP          : System.Address;
       Debug_Line       : String (1 .. Debug_Line_Max);
       Debug_Len        : Natural;
    end record;

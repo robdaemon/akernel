@@ -13,17 +13,20 @@ with Akernel_User.Streams;
 --  the UART on newline or a full buffer, so concurrent clients'
 --  lines never interleave. Partial lines flush lazily (a full
 --  buffer) or not at all if a client exits mid-line.
---  UART RX is drained opportunistically
---  on each write (single thread cannot wait on both the IRQ line and
---  the endpoint); IRQ-driven RX waits on notification objects.
+--  UART RX is IRQ-driven through a thread-bound notification:
+--  the UART IRQ line signals it (irq_bind_ntfn), the server's
+--  IPC_Recv wakes with a synthetic message (Notification_Label),
+--  the server drains and acks.
 
 procedure Serial is
    use Akernel_User.Syscalls;
    use type U64;
    use type Akernel_User.MMIO.U8;
 
+   --  Grant order follows the manifest token order.
    UART_MMIO_Cap : constant U64 := 1;
-   Console_EP    : constant U64 := 2;
+   UART_IRQ_Cap  : constant U64 := 2;
+   Console_EP    : constant U64 := 3;
    UART_Base     : constant Akernel_User.MMIO.U64 := 16#5000_0000#;
    Page_Size     : constant U64 := 4096;
 
@@ -42,6 +45,7 @@ procedure Serial is
    Label  : U64;
    Badge  : U64;
    Reg    : Akernel_User.MMIO.U8;
+   Ntfn   : U64;
 
    Request  : Akernel_User.Streams.Stream_Request;
    Response : Akernel_User.Streams.Stream_Response;
@@ -60,7 +64,7 @@ procedure Serial is
       Akernel_User.MMIO.Write8 (THR, Character'Pos (Character'Val (10)));
    end UART_Put_Line;
 
-   --  Echo any pending input; opportunistic (no IRQ wait).
+   --  Drain input (echo back); interrupt clears once RBR is empty.
    procedure Drain_RX is
    begin
       loop
@@ -143,25 +147,43 @@ begin
 
    UART_Put_Line ("console server online");
 
+   --  IRQ-driven RX: a thread-bound notification signaled by the
+   --  UART IRQ line; IPC_Recv delivers it as a synthetic message.
+   Ntfn := Ntfn_Create;
+   if Ntfn = Syscall_Failed
+     or else Ntfn_Bind_Thread (Ntfn) /= 0
+     or else IRQ_Bind_Ntfn (UART_IRQ_Cap, Ntfn, 1) /= 0
+   then
+      Debug_Put_Line ("serial ntfn setup failed");
+      Process_Exit;
+   end if;
+
    loop
       Status := RPC.Receive (Console_EP, Label, Request, Badge, Caps);
       exit when Status /= IPC_Ok;
 
-      Drain_RX;
-
-      if Label = Akernel_User.Streams.Op_Write then
-         for I in 1 .. Ada.Streams.Stream_Element_Offset (Request.Count) loop
-            Buffer_Write
-              (Badge, Character'Val (Natural (Request.Data (I))));
-         end loop;
-         Response := (Count => Request.Count, Data => (others => 0));
+      if Label = Notification_Label then
+         --  UART RX interrupt: input waiting in RBR. No reply cap
+         --  rides a synthetic message, so nothing to reply to.
+         Drain_RX;
+         Result := IRQ_Ack (UART_IRQ_Cap);
       else
-         --  Op_Read and unknown ops: console is output-only, no data.
-         Response := (Count => 0, Data => (others => 0));
-      end if;
+         Drain_RX;
 
-      Status := RPC.Reply (Label, Response);
-      exit when Status /= IPC_Ok;
+         if Label = Akernel_User.Streams.Op_Write then
+            for I in 1 .. Ada.Streams.Stream_Element_Offset (Request.Count) loop
+               Buffer_Write
+                 (Badge, Character'Val (Natural (Request.Data (I))));
+            end loop;
+            Response := (Count => Request.Count, Data => (others => 0));
+         else
+            --  Op_Read and unknown ops: console is output-only, no data.
+            Response := (Count => 0, Data => (others => 0));
+         end if;
+
+         Status := RPC.Reply (Label, Response);
+         exit when Status /= IPC_Ok;
+      end if;
    end loop;
 
    Debug_Put_Line ("console server error exit");

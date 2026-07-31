@@ -132,9 +132,11 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   line-atomic: per-client buffers keyed by the console cap badge
   (init badges each grant with the program id) flush on newline or
   a full 160-byte buffer; the kernel debug_putchar path buffers per
-  thread (newline/full/exit flush). UART RX drained
-  opportunistically on each write (single thread cannot wait on both
-  IRQ and endpoint; IRQ-driven RX waits on notification objects).
+  thread (newline/full/exit flush). UART RX is IRQ-driven through a
+  thread-bound notification (uart/irq grant at cap 2,
+  irq_bind_ntfn): the line signals the notification, IPC_Recv wakes
+  with a synthetic Notification_Label message, the server drains
+  RBR and acks.
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test
   endpoint at cap 1, console Send cap at 2, Tests/Echo image cap at
   3): directed edge cases + console stream RPC checks + end-to-end
@@ -145,10 +147,10 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Test output goes through the console stream; the random phase
   still fuzzes raw debug_putchar (printable garbage in the log is
   that, by design). Found the `irq_wait` missing-`Advance_SEPC`
-  livelock. 74/74 directed PASS (incl. memory-object alloc/map/
+  livelock. 89/89 directed PASS (incl. memory-object alloc/map/
   touch/unmap, RTS heap new/free/churn/growth, file-protocol
-  stat/open/read/volume cases, and spawn-from-memory-object with
-  reap against an fs-staged Tests/Memstage).
+  stat/open/read/volume cases, spawn-from-memory-object with
+  reap, and notification wait/signal/bind/recv-delivery cases).
 - `userspace/fileserver/` — file server (`System/Fileserver`,
   granted fs endpoint Receive at cap 1, console Send at 2, every
   boot-file cap from 3 via the `boot_files` token): serves the

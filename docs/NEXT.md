@@ -103,11 +103,15 @@ Next candidates (order open):
 12. ~~Spawn v2 completion~~ — done: spawn accepts Memory_Object caps
     (Kernel.ELF.Source abstracts image bytes over physmap ranges and
     object frames; fuzz stages Tests/Memstage via the file server
-    into an object, spawns from it, reaps). Remaining: notification
-    objects (IRQ-driven UART RX in the console server).
+    into an object, spawns from it, reaps). Remaining: none.
 13. ~~Line-atomic console writes~~ — done: serial server buffers per
     client (badge = program id, newline/full-buffer flush); kernel
     debug_putchar buffers per thread (TCB, newline/full/exit flush).
+14. ~~Notification objects~~ — done: Notification_Object caps
+    (ntfn_create/wait/signal/bind_thread, irq_bind_ntfn),
+    thread-bound delivery as a synthetic IPC_Recv message
+    (Label = U64'Last); UART RX in Drivers/Serial is IRQ-driven
+    through it (uart/irq grant).
 
 Commit between each milestone.
 

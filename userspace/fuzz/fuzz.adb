@@ -60,7 +60,7 @@ procedure Fuzz is
    Sys_Mem_Map        : constant U64 := 16;
    Sys_Mem_Unmap      : constant U64 := 17;
 
-   Highest_Known      : constant U64 := 17;
+   Highest_Known      : constant U64 := 22;
 
    Failed : constant U64 := U64'Last;
 
@@ -180,8 +180,8 @@ begin
    --  Directed cases first.
 
    --  Unknown syscall numbers must return Failed.
-   Status := Raw_Ecall (Number => 18);
-   Check (Status = Failed, "unknown syscall 18 rejected");
+   Status := Raw_Ecall (Number => 23);
+   Check (Status = Failed, "unknown syscall 23 rejected");
    Status := Raw_Ecall
      (Number => 255, A0 => 1, A1 => 2, A2 => 3,
       A3 => 4, A4 => 5, A5 => 6);
@@ -633,22 +633,82 @@ begin
    end loop;
    Check (Reaped, "echo reaped after exit");
 
-   --  Random phase: every syscall except exit (9).  Spawn's image
+   --  Notification objects: pending bits, OR-accumulation, the
+   --  thread-bound fast path delivering a synthetic message through
+   --  IPC_Recv, and irq_bind cap validation.
+   declare
+      N1   : U64;
+      N2   : U64 := 0;
+   begin
+      N1 := Akernel_User.Syscalls.Ntfn_Create;
+      Check (N1 /= Akernel_User.Syscalls.Syscall_Failed,
+             "ntfn create returns handle");
+
+      N2 := Akernel_User.Syscalls.Ntfn_Create;
+      Check (N2 /= Akernel_User.Syscalls.Syscall_Failed
+             and then N2 /= N1,
+             "ntfn create distinct handles");
+
+      Check (Akernel_User.Syscalls.Ntfn_Wait (16#FEED_BEEF#) =
+               Akernel_User.Syscalls.Syscall_Failed,
+             "ntfn wait invalid cap rejected");
+      Check (Akernel_User.Syscalls.Ntfn_Signal (16#FEED_BEEF#, 1) /= 0,
+             "ntfn signal invalid cap rejected");
+      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (16#FEED_BEEF#) /= 0,
+             "ntfn bind invalid cap rejected");
+
+      Check (Akernel_User.Syscalls.Ntfn_Signal (N1, 5) = 0,
+             "ntfn signal ok");
+      Check (Akernel_User.Syscalls.Ntfn_Wait (N1) = 5,
+             "ntfn wait returns pending bits");
+
+      Check (Akernel_User.Syscalls.Ntfn_Signal (N1, 2) = 0
+             and then Akernel_User.Syscalls.Ntfn_Signal (N1, 8) = 0,
+             "ntfn signals ok");
+      Check (Akernel_User.Syscalls.Ntfn_Wait (N1) = 10,
+             "ntfn bits OR-accumulate");
+
+      --  Bound-thread delivery: a signal lands as a synthetic
+      --  message on the next IPC_Recv (fast path: bits pending
+      --  before the endpoint wait).
+      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N2) = 0,
+             "ntfn bind thread ok");
+      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N1) /= 0,
+             "ntfn second bind rejected");
+      Check (Akernel_User.Syscalls.Ntfn_Signal (N2, 16#AB#) = 0,
+             "ntfn signal bound ok");
+      Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => 1);
+      Check (Status = 0
+             and then Akernel_User.Syscalls.Message.Label =
+               Akernel_User.Syscalls.Notification_Label
+             and then Akernel_User.Syscalls.Message.Words (0) = 16#AB#,
+             "recv delivers bound notification");
+
+      Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (16#FEED_BEEF#, N1, 1) /= 0,
+             "irq bind invalid irq cap rejected");
+      Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (1, N1, 1) /= 0,
+             "irq bind wrong-kind cap rejected");
+   end;
+
+   --  Random phase: every syscall except exit (9) and the blocking
+   --  set.  Spawn's image
    --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
    --  constrained to printable to keep the log readable.
    while Total_Calls < Iterations loop
-      Number := Next_Random mod 16;
+      Number := Next_Random mod 23;
       if (Next_Random and 16#F#) = 0 then
          Number := Next_Random;  --  occasionally a huge syscall number
       end if;
 
-      --  Skip exit (9) and the blocking IPC trio (12-14): a random
-      --  call/recv with no peer would block this thread forever.
+      --  Skip exit (9), the blocking IPC trio (12-14) and ntfn_wait
+      --  (19): a random call/recv/wait with no peer or no pending
+      --  bits would block this thread forever.
       --  Directed IPC coverage is a separate milestone.
       if Number /= Sys_Exit
         and then Number /= Sys_IPC_Call
         and then Number /= Sys_IPC_Recv
         and then Number /= Sys_IPC_Reply
+        and then Number /= 19
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

@@ -1,6 +1,7 @@
 with Kernel.IPC;
 with Kernel.Interrupts;
 with Kernel.Memory;
+with Kernel.Notifications;
 
 package body Kernel.Objects is
    use type Kernel.Tasks.Thread_Access;
@@ -17,6 +18,8 @@ package body Kernel.Objects is
             Kernel.IPC.Retain (Cap.Object);
          when Kernel.Capabilities.Memory_Object =>
             Kernel.Memory.Retain (Cap.Object);
+         when Kernel.Capabilities.Notification_Object =>
+            Kernel.Notifications.Retain (Cap.Object);
          when others =>
             null;
       end case;
@@ -44,6 +47,11 @@ package body Kernel.Objects is
             Kernel.Interrupts.Cleanup_Thread_Cap (Thread, Cap.Object);
          when Kernel.Capabilities.Memory_Object =>
             if Kernel.Memory.Release (Cap.Object) then
+               null;
+            end if;
+         when Kernel.Capabilities.Notification_Object =>
+            Kernel.Notifications.Cleanup_Thread_Cap (Thread, Cap.Object);
+            if Kernel.Notifications.Release (Cap.Object) then
                null;
             end if;
          when others =>

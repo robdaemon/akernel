@@ -1,10 +1,12 @@
 with Ada.Unchecked_Conversion;
+with Kernel.Notifications;
 with Kernel.Scheduler;
 
 package body Kernel.Interrupts is
    use type Kernel.Objects.IRQ_Line_Access;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
+   use type System.Address;
 
    Max_Sources : constant := 1024;
 
@@ -53,6 +55,8 @@ package body Kernel.Interrupts is
          Line.Pending := False;
          Line.In_Flight := False;
          Line.Waiter := null;
+         Line.Ntfn := System.Null_Address;
+         Line.Ntfn_Badge := 0;
          Lines (Index) := Line;
          Result := Ok;
       end if;
@@ -74,6 +78,11 @@ package body Kernel.Interrupts is
       Lines (Index).Pending := True;
       Lines (Index).In_Flight := True;
 
+      if Lines (Index).Ntfn /= System.Null_Address then
+         Kernel.Notifications.Signal
+           (Lines (Index).Ntfn, Lines (Index).Ntfn_Badge);
+      end if;
+
       if Lines (Index).Waiter /= null then
          Kernel.Scheduler.Wake (Lines (Index).Waiter, Wake_Result);
          Lines (Index).Waiter := null;
@@ -81,6 +90,16 @@ package body Kernel.Interrupts is
 
       Claimed := True;
    end Deliver;
+
+   procedure Bind_Notification
+     (Line   : not null Kernel.Objects.IRQ_Line_Access;
+      Ntfn   : System.Address;
+      Badge  : U64)
+   is
+   begin
+      Line.Ntfn := Ntfn;
+      Line.Ntfn_Badge := Badge;
+   end Bind_Notification;
 
    procedure Wait
      (Line   : not null Kernel.Objects.IRQ_Line_Access;

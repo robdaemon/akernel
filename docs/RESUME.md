@@ -1,9 +1,26 @@
 # Resume prompt (next session)
 
 ```text
-Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement next steps:
-notification objects (IRQ-driven UART RX in the console server);
-otherwise pick from NEXT.md's later list (SMP, DTB, IOMMU).
+Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
+NEXT.md's later list (SMP, DTB, IOMMU) or the IPC.md deferred list.
+
+Notification objects landed: Notification_Object caps (static slab
+of 16; Wait/Write/Manage rights), syscalls 18-22 (ntfn_create,
+ntfn_wait, ntfn_signal, ntfn_bind_thread, irq_bind_ntfn). A thread
+binds one notification; IPC_Recv checks it before blocking and a
+signal arriving while bound+blocked-in-Receive cancels the endpoint
+wait (Kernel.IPC.Cancel_Receive via TCB Recv_Endpoint) and delivers
+a synthetic message (Label = U64'Last, word 0 = bits). IRQ lines
+carry (Ntfn, badge): Deliver signals. Drivers/Serial RX is
+IRQ-driven through it (uart/irq grant, manifest token order moved
+console to cap 3). 89/89 directed PASS, fuzz failures=0.
+
+Gotcha burned: syscall handlers that self-advance sepc (block/wake
+paths like IPC_Recv, Ntfn_Wait) must have `return` after the call
+in Handle_Syscall's dispatch — falling through to the tail
+Advance_SEPC double-advances (+8), which resumed fuzz mid-stub and
+walked the stub table until a fatal store. Trap dump now prints
+the current thread id.
 
 Line-atomic console writes landed: the serial server line-buffers
 per client (keyed by console cap badge = manifest program id set by

@@ -59,6 +59,9 @@ package body Kernel.Tasks is
       TCB.Call_Badge := 0;
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
+      TCB.Bound_Ntfn := System.Null_Address;
+      TCB.Recv_EP := System.Null_Address;
+      TCB.Debug_Len := 0;
    end Initialize_Thread;
 
    function Id (TCB : Thread_Control_Block) return Thread_Id is
@@ -263,7 +266,6 @@ package body Kernel.Tasks is
    begin
       TCB.Status := New_State;
    end Set_State;
-
    procedure Set_Awaiting_Reply
      (TCB      : in out Thread_Control_Block;
       Awaiting : Boolean)
@@ -306,6 +308,35 @@ package body Kernel.Tasks is
    begin
       return TCB.Call_Badge;
    end IPC_Badge;
+
+   procedure Set_Bound_Ntfn
+     (TCB   : in out Thread_Control_Block;
+      Ntfn  : System.Address)
+   is
+   begin
+      TCB.Bound_Ntfn := Ntfn;
+   end Set_Bound_Ntfn;
+
+   function Bound_Ntfn (TCB : Thread_Control_Block) return System.Address
+   is
+   begin
+      return TCB.Bound_Ntfn;
+   end Bound_Ntfn;
+
+   procedure Set_Recv_Endpoint
+     (TCB      : in out Thread_Control_Block;
+      Endpoint : System.Address)
+   is
+   begin
+      TCB.Recv_EP := Endpoint;
+   end Set_Recv_Endpoint;
+
+   function Recv_Endpoint
+     (TCB : Thread_Control_Block) return System.Address
+   is
+   begin
+      return TCB.Recv_EP;
+   end Recv_Endpoint;
 
    procedure Append_Debug_Char
      (TCB   : in out Thread_Control_Block;

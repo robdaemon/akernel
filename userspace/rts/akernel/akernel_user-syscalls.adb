@@ -69,6 +69,29 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_mem_unmap";
 
+   function Raw_Ntfn_Create return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_ntfn_create";
+
+   function Raw_Ntfn_Wait (Cap : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_ntfn_wait";
+
+   function Raw_Ntfn_Signal (Cap : U64; Bits : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_ntfn_signal";
+
+   function Raw_Ntfn_Bind_Thread (Cap : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_ntfn_bind_thread";
+
+   function Raw_IRQ_Bind_Ntfn
+     (IRQ_Cap  : U64;
+      Ntfn_Cap : U64;
+      Badge    : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_irq_bind_ntfn";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -180,6 +203,35 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Mem_Unmap (Address_Space, VA, Length);
    end Mem_Unmap;
+
+   function Ntfn_Create return U64 is
+   begin
+      return Raw_Ntfn_Create;
+   end Ntfn_Create;
+
+   function Ntfn_Wait (Cap : U64) return U64 is
+   begin
+      return Raw_Ntfn_Wait (Cap);
+   end Ntfn_Wait;
+
+   function Ntfn_Signal (Cap : U64; Bits : U64) return U64 is
+   begin
+      return Raw_Ntfn_Signal (Cap, Bits);
+   end Ntfn_Signal;
+
+   function Ntfn_Bind_Thread (Cap : U64) return U64 is
+   begin
+      return Raw_Ntfn_Bind_Thread (Cap);
+   end Ntfn_Bind_Thread;
+
+   function IRQ_Bind_Ntfn
+     (IRQ_Cap  : U64;
+      Ntfn_Cap : U64;
+      Badge    : U64) return U64
+   is
+   begin
+      return Raw_IRQ_Bind_Ntfn (IRQ_Cap, Ntfn_Cap, Badge);
+   end IRQ_Bind_Ntfn;
 
    function Mem_Map_File
      (Address_Space : U64;

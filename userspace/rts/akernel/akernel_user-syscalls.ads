@@ -78,6 +78,28 @@ package Akernel_User.Syscalls is
       VA            : U64;
       Length        : U64) return U64;
 
+   --  Notification objects (docs/IPC.md): a word of pending signal
+   --  bits with an optional bound thread. Ntfn_Create returns a cap
+   --  handle (Wait+Write+Manage) or Syscall_Failed. Ntfn_Wait
+   --  blocks until bits are pending and returns them (consumed),
+   --  Syscall_Failed on a bad cap. A thread binds one notification
+   --  to itself (Ntfn_Bind_Thread, Manage right); IPC_Recv then
+   --  checks it before blocking and signals can wake a blocked
+   --  receiver with a synthetic message (Label = Notification_Label,
+   --  word 0 = bits). IRQ_Bind_Ntfn makes an IRQ line signal the
+   --  notification with Badge when it fires (IRQ cap Ack right,
+   --  notification Write right).
+   Notification_Label : constant U64 := U64'Last;
+
+   function Ntfn_Create return U64;
+   function Ntfn_Wait (Cap : U64) return U64;
+   function Ntfn_Signal (Cap : U64; Bits : U64) return U64;
+   function Ntfn_Bind_Thread (Cap : U64) return U64;
+   function IRQ_Bind_Ntfn
+     (IRQ_Cap  : U64;
+      Ntfn_Cap : U64;
+      Badge    : U64) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

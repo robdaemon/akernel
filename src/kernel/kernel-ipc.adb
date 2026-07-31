@@ -602,6 +602,8 @@ package body Kernel.IPC is
          end if;
 
          Object.Waiting_Receiver := Receiver;
+         Kernel.Tasks.Set_Recv_Endpoint
+           (Receiver.all, Object.all'Address);
          Result := Would_Block;
          return;
       end if;
@@ -687,6 +689,47 @@ package body Kernel.IPC is
       Result := Ok;
    end Reply;
 
+   procedure Write_Notification_Message
+     (Receiver : Kernel.Tasks.Thread_Access;
+      Bits     : U64)
+   is
+      Buf : constant Buffer_Message_Access := Buffer_Of (Receiver);
+   begin
+      if Buf = null then
+         return;
+      end if;
+
+      Buf.Label := Notification_Label;
+      Buf.Words := (others => 0);
+      Buf.Words (0) := Bits;
+      Buf.Caps := (others => 0);
+   end Write_Notification_Message;
+
+   procedure Cancel_Receive (Thread : Kernel.Tasks.Thread_Access) is
+      use type System.Address;
+
+      Endpoint_Addr  : System.Address;
+      Endpoint_Object : Endpoint_Access;
+   begin
+      if Thread = null then
+         return;
+      end if;
+
+      Endpoint_Addr := Kernel.Tasks.Recv_Endpoint (Thread.all);
+      if Endpoint_Addr = System.Null_Address then
+         return;
+      end if;
+
+      Endpoint_Object := To_Endpoint (Endpoint_Addr);
+      if Endpoint_Object /= null
+        and then Endpoint_Object.Waiting_Receiver = Thread
+      then
+         Endpoint_Object.Waiting_Receiver := null;
+      end if;
+
+      Kernel.Tasks.Set_Recv_Endpoint (Thread.all, System.Null_Address);
+   end Cancel_Receive;
+
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
       Object : System.Address)
@@ -702,6 +745,8 @@ package body Kernel.IPC is
       if Endpoint_Object.Waiting_Receiver = Thread then
          Endpoint_Object.Waiting_Receiver := null;
       end if;
+
+      Kernel.Tasks.Set_Recv_Endpoint (Thread.all, System.Null_Address);
 
       --  Unlink the thread from the caller queue if present.
       Previous := null;

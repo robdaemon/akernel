@@ -33,6 +33,13 @@ package Kernel.Interrupts is
       Result          : out Status;
       Complete_Source : out U64);
 
+   --  Bind a notification object to the line: Deliver signals it
+   --  with Badge when the interrupt fires (rebinding allowed).
+   procedure Bind_Notification
+     (Line   : not null Kernel.Objects.IRQ_Line_Access;
+      Ntfn   : System.Address;
+      Badge  : U64);
+
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
       Object : System.Address);

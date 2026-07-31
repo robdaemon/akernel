@@ -20,6 +20,12 @@ package Kernel.IPC is
    --  Syscall result codes surfaced in user a0.
    Result_Ok              : constant U64 := 0;
    Result_Invalid         : constant U64 := 1;
+
+   --  Label of the synthetic message delivered by Receive when a
+   --  thread-bound notification has pending bits (kernel-reserved;
+   --  userspace protocols use small op codes). Word 0 carries the
+   --  consumed bits.
+   Notification_Label : constant U64 := U64'Last;
    Result_Transfer_Failed : constant U64 := 2;
    Result_Endpoint_Gone   : constant U64 := 3;
    Result_Reply_Gone      : constant U64 := 4;
@@ -107,6 +113,18 @@ package Kernel.IPC is
    procedure Reply
      (Replier : Kernel.Tasks.Thread_Access;
       Result  : out Status);
+
+   --  Notification delivery (thread-bound notifications): write the
+   --  synthetic message (Notification_Label + bits in word 0, no
+   --  caps) into the receiver's IPC buffer.
+   procedure Write_Notification_Message
+     (Receiver : Kernel.Tasks.Thread_Access;
+      Bits     : U64);
+
+   --  Cancel a pending Receive wait: clear the endpoint's
+   --  waiting-receiver slot for Thread (endpoint found via the
+   --  TCB's recorded Recv_Endpoint) and forget the recording.
+   procedure Cancel_Receive (Thread : Kernel.Tasks.Thread_Access);
 
    --  Cap-close hook (exit/reap/close): unlinks the thread from the
    --  endpoint's caller queue and clears a waiting-receiver slot.
