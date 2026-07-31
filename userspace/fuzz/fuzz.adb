@@ -413,6 +413,73 @@ begin
       Status := Akernel_User.Files.Stat ("DH0:System/Manifest", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fs unknown volume rejected");
+
+      --  Spawn v2: stage an ELF into a memory object via the file
+      --  server, spawn from the object cap (no boot-file cap
+      --  involved), reap the exited child.
+      declare
+         use System.Storage_Elements;
+
+         Stage_VA : constant U64 := 16#5400_0000#;
+         Pages    : U64;
+         Mem_Cap  : U64;
+         Proc_Cap : U64 := 0;
+         Off      : U64;
+         Chunk    : U64;
+         Staged   : Boolean := True;
+      begin
+         Status := Akernel_User.Files.Stat ("Tests/Memstage", Size);
+         Check (Status = Akernel_User.Files.Status_Ok and then Size > 0,
+                "memstage size via fs");
+
+         Pages := (Size + 4095) / 4096;
+         Mem_Cap := Akernel_User.Syscalls.Mem_Alloc (Pages);
+         Check (Mem_Cap /= Akernel_User.Syscalls.Syscall_Failed,
+                "memstage staging object allocated");
+
+         Check (Akernel_User.Syscalls.Mem_Map
+                  (Address_Space =>
+                     Akernel_User.Syscalls.Address_Space_Cap,
+                   Cap           => Mem_Cap,
+                   VA            => Stage_VA,
+                   Offset        => 0,
+                   Length        => Pages * 4096,
+                   Flags         => 3) = 0,
+                "memstage staging object mapped");
+
+         Status := Akernel_User.Files.Open ("Tests/Memstage", Size);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "memstage open ok");
+
+         Off := 0;
+         while Off < Size loop
+            Chunk := U64'Min (Size - Off, 32768);
+            Status := Akernel_User.Files.Read
+              ("Tests/Memstage", Off,
+               System'To_Address (Integer_Address (Stage_VA + Off)),
+               Chunk, Count);
+            Staged := Staged
+              and then Status = Akernel_User.Files.Status_Ok
+              and then Count = Chunk;
+            Off := Off + Chunk;
+         end loop;
+         Check (Staged, "memstage ELF staged into memory object");
+
+         Akernel_User.Syscalls.Set_Grant
+           (Index       => 0,
+            Source_Cap  => 2,  --  fuzz console cap -> child handle 1
+            Rights_Mask => Akernel_User.Syscalls.Right_Send,
+            Badge       => 0);
+         Status := Akernel_User.Syscalls.Spawn
+           (Image_Cap   => Mem_Cap,
+            Grant_Count => 1,
+            Process_Cap => Proc_Cap);
+         Check (Status = 0 and then Proc_Cap /= 0,
+                "spawn from memory object ok");
+
+         Check (Akernel_User.Syscalls.Reap_Process (Proc_Cap) = 0,
+                "memstage reaped after exit");
+      end;
    end;
 
    --  Boot byte API probes: valid image cap, huge offset, invalid

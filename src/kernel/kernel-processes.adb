@@ -4,6 +4,7 @@ with Ada.Unchecked_Conversion;
 with Arch;
 with Arch.MMU;
 with Kernel.ELF;
+with Kernel.Memory;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Scheduler;
@@ -35,10 +36,11 @@ package body Kernel.Processes is
 
    Stack_Top : constant U64 := 16#7000_0000#;
 
-   --  ELF image slice handed to the loader: physmap base + size.
+   --  ELF image handed to the loader: a byte source (physmap range
+   --  or memory-object frames) + size.
    type Program_Image is record
-      Base : U64;
-      Size : U64;
+      Bytes : Kernel.ELF.Source;
+      Size  : U64;
    end record;
 
    Process_Rights : constant Kernel.Capabilities.Rights :=
@@ -337,7 +339,7 @@ package body Kernel.Processes is
       end if;
 
       Kernel.ELF.Load_Into_Address_Space
-        (Image_Base  => Image.Base,
+        (Image       => Image.Bytes,
          Image_Size  => Image.Size,
          Root        => Root,
          Result      => ELF_Result,
@@ -446,6 +448,7 @@ package body Kernel.Processes is
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info   : Kernel.Capabilities.Cap_Entry;
       File       : Boot_File_Access;
+      MO_Pages   : U64;
       Image      : Program_Image;
    begin
       Process_Cap := Kernel.Capabilities.Invalid_Handle;
@@ -462,21 +465,45 @@ package body Kernel.Processes is
          Out_Entry => Cap_Info);
 
       if Cap_Result /= Kernel.Capabilities.Ok
-        or else Cap_Info.Kind /= Kernel.Capabilities.Boot_File_Object
         or else not Cap_Info.Rights.Read
-        or else not Cap_Info.Rights.Execute
+        or else (Cap_Info.Kind /= Kernel.Capabilities.Boot_File_Object
+                 and then Cap_Info.Kind
+                   /= Kernel.Capabilities.Memory_Object)
       then
          Result := Invalid_Program;
          return;
       end if;
 
-      File := To_Boot_File (Cap_Info.Object);
-      if File = null or else File.Length = 0 then
-         Result := Invalid_Program;
-         return;
+      --  Boot files must additionally carry Execute; a memory object
+      --  only needs Read (spawn v2: image staged by a file server).
+      if Cap_Info.Kind = Kernel.Capabilities.Boot_File_Object then
+         if not Cap_Info.Rights.Execute then
+            Result := Invalid_Program;
+            return;
+         end if;
+
+         File := To_Boot_File (Cap_Info.Object);
+         if File = null or else File.Length = 0 then
+            Result := Invalid_Program;
+            return;
+         end if;
+
+         Image :=
+           (Bytes => (Kind => Kernel.ELF.Physmap_Bytes, Base => File.Base),
+            Size  => File.Length);
+      else
+         MO_Pages := Kernel.Memory.Page_Count (Cap_Info.Object);
+         if MO_Pages = 0 then
+            Result := Invalid_Program;
+            return;
+         end if;
+
+         Image :=
+           (Bytes => (Kind   => Kernel.ELF.Object_Frames,
+                      Object => Cap_Info.Object),
+            Size  => MO_Pages * Arch.MMU.Page_Size);
       end if;
 
-      Image := (Base => File.Base, Size => File.Length);
       Spawn_Image (Parent, Image, Grant_Count, Result, Process_Cap);
    end Spawn_Boot_Image;
 

@@ -1,12 +1,21 @@
 # Resume prompt (next session)
 
 ```text
-Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement milestone 12:
-spawn v2 completion — spawn from a Memory_Object cap holding an ELF
-staged by the file server (fuzz test: read Tests/Spin via fs, spawn it
-from the memory object, reap); then notification objects for
-IRQ-driven UART RX if scope allows. Otherwise pick from NEXT.md's
-later list (line-atomic console, SMP, DTB, IOMMU).
+Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement next steps:
+notification objects (IRQ-driven UART RX in the console server) and/or
+line-atomic console writes; otherwise pick from NEXT.md's later list
+(SMP, DTB, IOMMU).
+
+Milestone 12 landed: spawn v2 completion. Spawn accepts Memory_Object
+caps (Read right; boot files still need Read+Execute): Kernel.ELF
+gained a Source discriminated record (Physmap_Bytes | Object_Frames)
+abstracting image byte reads, so the loader works over a memory
+object's scattered frames via Kernel.Memory.Frame_At. New finite test
+program Tests/Memstage (console banner at handle 1, Process_Exit);
+fuzz stages it via the file server into a memory object (chunked
+32 KiB reads to VA 0x5400_0000), grants console via Set_Grant
+(index 0 -> child handle 1, Right_Send), spawns from the object cap,
+reaps. 74/74 directed PASS, fuzz failures=0.
 
 Milestone 11 landed: file protocol (9P-ish) over endpoint RPC.
 System/Fileserver (new userspace program) holds all boot-file caps

@@ -232,7 +232,10 @@ names are userspace metadata, never parsed by the kernel.
 
 ```text
 spawn(a0 = image_cap, a1 = grant_count)
-  image_cap: Boot_File_Object cap with Read + Execute rights held by
+  image_cap: Boot_File_Object cap with Read + Execute rights, or a
+  Memory_Object cap with Read (ELF staged by a file server: read via
+  the file protocol into an object, spawn from the object cap — no
+  boot-file cap involved), held by
   the spawner (kernel never sees a path). Grant entries in the
   spawner's IPC buffer at offset 128, max 32, each 24 bytes:
     u64 parent_handle
@@ -248,8 +251,10 @@ parent grants. Reserved handles 254 (reply) and 255 (self AS) are
 kernel-managed.
 
 Uniform spawn regardless of backend: a `Boot_File_Object` (initrd)
-or later a `Memory_Object` (ELF staged by a file server) — a file
-server hands the spawner a memory cap containing the ELF, killing
+or a `Memory_Object` (ELF staged by a file server, implemented:
+`Kernel.ELF.Source` abstracts byte reads over a physmap range or the
+object's scattered frames, so the loader never needs contiguity) — a
+file server hands the spawner a memory cap containing the ELF, killing
 the "VFS path for spawn" item.
 
 ### Boot file caps

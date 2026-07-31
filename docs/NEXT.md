@@ -100,10 +100,12 @@ kernel cap tables.
 
 Next candidates (order open):
 
-12. Spawn v2 completion: spawn from a Memory_Object cap holding an
-    ELF staged by the file server (kills the initrd-only image
-    path); notification objects (IRQ-driven UART RX in the console
-    server); line-atomic console writes.
+12. ~~Spawn v2 completion~~ — done: spawn accepts Memory_Object caps
+    (Kernel.ELF.Source abstracts image bytes over physmap ranges and
+    object frames; fuzz stages Tests/Memstage via the file server
+    into an object, spawns from it, reaps). Remaining: notification
+    objects (IRQ-driven UART RX in the console server); line-atomic
+    console writes.
 
 Commit between each milestone.
 

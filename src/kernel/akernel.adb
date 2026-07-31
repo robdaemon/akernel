@@ -504,7 +504,8 @@ begin
      and then MMU_Result = Arch.MMU.Ok
    then
       Kernel.ELF.Load_Into_Address_Space
-        (Image_Base  => Init_Image_Base,
+        (Image       => (Kind => Kernel.ELF.Physmap_Bytes,
+                         Base => Init_Image_Base),
          Image_Size  => Init_Image_Size,
          Root        => User_Root_Table,
          Result      => ELF_Result,
