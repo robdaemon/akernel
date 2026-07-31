@@ -69,6 +69,16 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_mem_unmap";
 
+   function Raw_Mem_Map_File
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Lead_In_Ptr   : System.Address) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_mem_map_file";
+
    function Raw_IPC_Call (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_call";
 
@@ -170,6 +180,19 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Mem_Unmap (Address_Space, VA, Length);
    end Mem_Unmap;
+
+   function Mem_Map_File
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Lead_In       : out U64) return U64
+   is
+   begin
+      return Raw_Mem_Map_File
+        (Address_Space, Cap, VA, Offset, Length, Lead_In'Address);
+   end Mem_Map_File;
 
    function IPC_Call (Cap : U64) return U64 is
    begin

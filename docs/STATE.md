@@ -49,16 +49,19 @@ init online from Ada
 boot manifest visible
 launching manifest programs
 serial spawned
+fileserver spawned
+console server online
+fileserver online
+fs name table pushed
 fuzz spawned
 program spawned
-console server online
 init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 58/58 directed PASS (console stream RPC, echo IPC rounds,
-grants, memory objects, RTS heap) ...
-fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000291 failures=0x0000000000000000
+... 64/64 directed PASS (console stream RPC, echo IPC rounds,
+grants, memory objects, RTS heap, file protocol) ...
+fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
 

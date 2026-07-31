@@ -101,6 +101,11 @@ s-memory.adb              custom System.Memory body (overrides the
                           8 chunks (2 MiB); Storage_Error past that.
                           Pulled into every program's closure via a
                           private with on the Akernel_User root spec.
+akernel_user-files.*      9P-ish file protocol constants + client:
+                          Bind/Stat/Open/Read over the fs endpoint;
+                          client-owned 32 KiB read-buffer memory
+                          object mapped at 0x4400_0000, transferred
+                          per Read call
 akernel_user-mmio.*       MMIO helpers
 syscalls-riscv64.s        ecall stubs (incl. generic stub for fuzzer)
 start-riscv64.s           entry
@@ -136,8 +141,17 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Test output goes through the console stream; the random phase
   still fuzzes raw debug_putchar (printable garbage in the log is
   that, by design). Found the `irq_wait` missing-`Advance_SEPC`
-  livelock. 58/58 directed PASS (incl. memory-object alloc/map/
-  touch/unmap and RTS heap new/free/churn/growth cases).
+  livelock. 64/64 directed PASS (incl. memory-object alloc/map/
+  touch/unmap, RTS heap new/free/churn/growth, and file-protocol
+  stat/open/read cases against System/Fileserver).
+- `userspace/fileserver/` — file server (`System/Fileserver`,
+  granted fs endpoint Receive at cap 1, console Send at 2, every
+  boot-file cap from 3 via the `boot_files` token): serves the
+  9P-ish file protocol (docs/IPC.md) — Stat/Open by name, stateless
+  Read into the client-owned buffer memory object whose cap rides
+  cap slot 0. Maps boot files as borrowed read-only pages (mem_map
+  boot-file branch + lead-in offset); init pushes the handle->name
+  table as Op_Set_Name messages after spawn.
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,
@@ -156,8 +170,10 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 program <id> <path> [grants...]
 ```
 
-Current: serial with `uart/mmio console_server`, fuzzer with
-`ipc_test console Tests/Echo`, spinner with `console`, plus a
+Current: serial with `uart/mmio console_server`, fileserver with
+`fs_server console boot_files`, fuzzer with
+`ipc_test console Tests/Echo fs System/Manifest`, spinner with
+`console`, plus a
 `# file Tests/Echo` comment line (skipped by init; keeps the path
 resolvable for the fuzzer's spawn). Boot-launch mechanism for
 initrd contents only (Amiga-ish startup-sequence role); not a
@@ -168,4 +184,8 @@ Grant tokens map to grant-list entries: a bootinfo entry name
 grants that cap with the kernel-assigned rights; `ipc_test` grants
 init's badged test endpoint (full rights, badge 0xEC40); `console`
 grants Send on the console endpoint, `console_server` grants
-Receive on it (Drivers/Serial only).
+Receive on it (Drivers/Serial only); `fs` grants Send on the
+file-server endpoint, `fs_server` grants Receive on it
+(System/Fileserver only); `boot_files` grants every boot-file cap
+in bootinfo order (System/Fileserver only — init pushes the
+matching name table over the fs endpoint after spawn).

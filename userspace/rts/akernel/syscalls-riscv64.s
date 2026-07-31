@@ -129,6 +129,17 @@ akernel_sys_mem_unmap:
     ret
 .size akernel_sys_mem_unmap, . - akernel_sys_mem_unmap
 
+.global akernel_sys_mem_map_file
+.type akernel_sys_mem_map_file, @function
+akernel_sys_mem_map_file:
+    mv a6, a5    /* delta ptr (6th Ada arg) */
+    li a5, 1     /* flags: read-only (boot files) */
+    li a7, 16
+    ecall
+    sd a1, 0(a6)
+    ret
+.size akernel_sys_mem_map_file, . - akernel_sys_mem_map_file
+
 .global akernel_sys_debug_putchar
 .type akernel_sys_debug_putchar, @function
 akernel_sys_debug_putchar:

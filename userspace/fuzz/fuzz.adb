@@ -4,6 +4,7 @@ with System.Storage_Elements;
 with Ada.Unchecked_Deallocation;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
+with Akernel_User.Files;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
 
@@ -333,6 +334,68 @@ begin
       Check (Big (0) = 3 and then Big (163_839) = 4,
              "heap fills near chunk limit");
       Free (Big);
+   end;
+
+   --  File protocol: fileserver serves initrd files by name over
+   --  the fs endpoint; reads move through a client-owned memory
+   --  object the server maps into its own address space.
+   declare
+      FS_EP         : constant U64 := 4;  --  manifest grant order
+      Manifest_Cap  : constant U64 := 5;
+      Buf           : array (0 .. 63) of Interfaces.Unsigned_8;
+      Size          : U64 := 0;
+      Count         : U64 := 0;
+      Status        : U64;
+      Tries         : Natural := 0;
+      Match         : Boolean;
+   begin
+      Akernel_User.Files.Bind (FS_EP);
+
+      --  The server needs its name table from init first; retry
+      --  while it reports not-ready.
+      loop
+         Status := Akernel_User.Files.Stat ("System/Manifest", Size);
+         exit when Status /= Akernel_User.Files.Status_Not_Ready
+           or else Tries >= 10_000;
+         Tries := Tries + 1;
+         Akernel_User.Syscalls.Yield;
+      end loop;
+
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size =
+               Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap),
+             "fs stat matches boot file size");
+
+      Status := Akernel_User.Files.Stat ("no/such/file", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fs stat unknown name rejected");
+
+      Status := Akernel_User.Files.Open ("System/Manifest", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fs open manifest ok");
+
+      Status := Akernel_User.Files.Read
+        ("System/Manifest", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 64;
+      for I in Buf'Range loop
+         Match := Match
+           and then U64 (Buf (I)) =
+             Akernel_User.Syscalls.Boot_Read_Byte
+               (Manifest_Cap, U64 (I));
+      end loop;
+      Check (Match, "fs read bytes match boot byte API");
+
+      Status := Akernel_User.Files.Read
+        ("System/Manifest", Size - 16, Buf'Address, 64, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 16,
+             "fs read clamps at EOF");
+
+      Status := Akernel_User.Files.Read
+        ("System/Manifest", Size, Buf'Address, 64, Count);
+      Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+             "fs read past EOF rejected");
    end;
 
    --  Boot byte API probes: valid image cap, huge offset, invalid

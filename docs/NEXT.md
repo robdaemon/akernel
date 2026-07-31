@@ -85,10 +85,25 @@ kernel cap tables.
     No_Exception_Propagation (last-chance handler). 58/58 directed
     PASS.
 
+11. ~~File protocol (9P-ish) over streams~~ — done:
+    System/Fileserver holds every boot-file cap (`boot_files`
+    manifest token; init pushes the handle->name table over the fs
+    endpoint as Op_Set_Name messages after spawn) and serves
+    Stat/Open/Read by name. mem_map accepts Boot_File_Object caps:
+    borrowed read-only initrd frames, true-page-span extent, lead-in
+    byte offset returned in a1 (`akernel_sys_mem_map_file` stub
+    injects flags=read-only — Ada's 6th arg lands in a5, so the
+    stub moves the delta pointer to a6 and sets a5). Reads are
+    stateless; bulk data moves through a client-owned buffer memory
+    object transferred per Read (replies cannot carry caps). 64/64
+    directed PASS.
+
 Next candidates (order open):
 
-11. File protocol (9P-ish) over streams; boot files as memory
-    objects; larger bulk transfers than the 40-byte stream chunk.
+12. Spawn v2 completion: spawn from a Memory_Object cap holding an
+    ELF staged by the file server (kills the initrd-only image
+    path); notification objects (IRQ-driven UART RX in the console
+    server); line-atomic console writes.
 
 Commit between each milestone.
 

@@ -78,6 +78,18 @@ package Akernel_User.Syscalls is
       VA            : U64;
       Length        : U64) return U64;
 
+   --  Boot files as memory objects: maps a Boot_File_Object cap's
+   --  frames read-only and borrowed. File data need not start on a
+   --  page boundary; Lead_In returns the byte offset of the file
+   --  start (plus Offset) within the first mapped page.
+   function Mem_Map_File
+     (Address_Space : U64;
+      Cap           : U64;
+      VA            : U64;
+      Offset        : U64;
+      Length        : U64;
+      Lead_In       : out U64) return U64;
+
    Mem_Max_Pages : constant U64 := 64;
    Page_Size     : constant U64 := 4096;
    function IPC_Call (Cap : U64) return U64;

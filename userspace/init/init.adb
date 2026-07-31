@@ -1,3 +1,4 @@
+with Interfaces;
 with Akernel_User.Syscalls;
 
 --  Init composes its namespace from the kernel-provided bootinfo
@@ -31,6 +32,18 @@ procedure Init is
    --  with the console token. Clients print through
    --  Akernel_User.Console over this endpoint.
    Console_EP : Akernel_User.Syscalls.U64 := 0;
+
+   --  File-server endpoint minted at boot: Receive side granted
+   --  (fs_server token) to System/Fileserver, Send side (fs token)
+   --  to clients. After spawning the file server init pushes the
+   --  (handle -> name) table for its boot-file caps as Op_Set_Name
+   --  messages (docs/IPC.md file protocol).
+   FS_EP : Akernel_User.Syscalls.U64 := 0;
+
+   function Shl
+     (Value  : Akernel_User.Syscalls.U64;
+      Amount : Natural) return Akernel_User.Syscalls.U64
+     renames Interfaces.Shift_Left;
 
    function Is_Space (C : Character) return Boolean is
    begin
@@ -122,6 +135,49 @@ procedure Init is
       end loop;
    end Next_Token;
 
+   --  Push the file server's (handle -> boot-file name) table as
+   --  Op_Set_Name messages, one per boot-file cap it was granted,
+   --  then a zero-handle terminator.
+   procedure Push_FS_Names
+     (Base  : Akernel_User.Syscalls.U64;
+      Count : Akernel_User.Syscalls.U64)
+   is
+      use Akernel_User.Syscalls;
+      J   : U64 := 0;
+      Len : Natural;
+   begin
+      for I in 0 .. Natural (Bootinfo.Count) - 1 loop
+         exit when J >= Count;
+         if Bootinfo.Entries (I).Kind = Kind_Boot_File then
+            Len := Natural (Bootinfo.Entries (I).Name_Length);
+            Message.Label := 0;
+            Message.Words := (others => 0);
+            Message.Words (0) := Base + J;
+            Message.Words (1) := U64 (Len);
+            for P in 1 .. Len loop
+               Message.Words (2 + (P - 1) / 8) :=
+                 Message.Words (2 + (P - 1) / 8)
+                   or Shl
+                     (U64 (Character'Pos (Bootinfo.Entries (I).Name (P))),
+                      ((P - 1) mod 8) * 8);
+            end loop;
+            Message.Caps := (others => 0);
+            if IPC_Call (FS_EP) /= IPC_Ok then
+               Debug_Put_Line ("fs name push failed");
+               return;
+            end if;
+            J := J + 1;
+         end if;
+      end loop;
+
+      Message.Label := 0;
+      Message.Words := (others => 0);
+      Message.Caps := (others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("fs name push failed");
+      end if;
+   end Push_FS_Names;
+
    procedure Parse_Program_Line
      (Line_Start : Akernel_User.Syscalls.U64;
       Line_End   : Akernel_User.Syscalls.U64)
@@ -136,6 +192,9 @@ procedure Init is
       Image_Cap   : Akernel_User.Syscalls.U64;
       Process_Cap : Akernel_User.Syscalls.U64;
       Result      : Akernel_User.Syscalls.U64;
+      Is_FS       : Boolean := False;
+      FS_Base     : Akernel_User.Syscalls.U64 := 0;
+      FS_Count    : Akernel_User.Syscalls.U64 := 0;
 
       procedure Grant
         (Source_Cap  : Akernel_User.Syscalls.U64;
@@ -204,6 +263,27 @@ procedure Init is
             Grant (Console_EP, Akernel_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "console_server") then
             Grant (Console_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "fs") then
+            Grant (FS_EP, Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "fs_server") then
+            Is_FS := True;
+            Grant (FS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "boot_files") then
+            --  Every boot-file cap in bootinfo order; the name
+            --  table is pushed to the file server after spawn.
+            FS_Base := Grant_Count + 1;
+            FS_Count := 0;
+            for I in 0 .. Natural (Akernel_User.Syscalls.Bootinfo.Count) - 1 loop
+               if Akernel_User.Syscalls.Bootinfo.Entries (I).Kind =
+                 Akernel_User.Syscalls.Kind_Boot_File
+               then
+                  Grant
+                    (Akernel_User.Syscalls.Bootinfo.Entries (I).Handle,
+                     Akernel_User.Syscalls.Bootinfo.Entries (I).Rights_Mask,
+                     0);
+                  FS_Count := FS_Count + 1;
+               end if;
+            end loop;
          else
             Grant (Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length)),
                    Akernel_User.Syscalls.Boot_Cap_Rights
@@ -220,9 +300,16 @@ procedure Init is
          if Program_Id = 1 then
             Akernel_User.Syscalls.Debug_Put_Line ("serial spawned");
          elsif Program_Id = 2 then
+            Akernel_User.Syscalls.Debug_Put_Line ("fileserver spawned");
+         elsif Program_Id = 3 then
             Akernel_User.Syscalls.Debug_Put_Line ("fuzz spawned");
          else
             Akernel_User.Syscalls.Debug_Put_Line ("program spawned");
+         end if;
+
+         if Is_FS then
+            Push_FS_Names (FS_Base, FS_Count);
+            Akernel_User.Syscalls.Debug_Put_Line ("fs name table pushed");
          end if;
       else
          Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
@@ -286,6 +373,7 @@ begin
 
    IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
    Console_EP := Akernel_User.Syscalls.EP_Create;
+   FS_EP := Akernel_User.Syscalls.EP_Create;
 
    Parse_Manifest;
 

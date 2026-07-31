@@ -36,6 +36,15 @@ package Kernel.Boot_Files is
       Result  : out Status;
       Length  : out U64);
 
+   --  File extent for borrowed read-only mapping (mem_map syscall):
+   --  Base is the physmap VA of the file data; Length is the file
+   --  length in bytes. The cap must have the Read right.
+   procedure Bounds
+     (Cap     : Kernel.Capabilities.Cap_Entry;
+      Result  : out Status;
+      Base    : out U64;
+      Length  : out U64);
+
    procedure Read_Byte
      (Cap     : Kernel.Capabilities.Cap_Entry;
       Offset  : U64;

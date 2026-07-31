@@ -1,5 +1,6 @@
 with System;
 with Ada.Unchecked_Conversion;
+with Arch;
 with Arch.MMU;
 with Arch.SBI;
 with Board.Interrupts;
@@ -805,6 +806,7 @@ package body Arch.Traps is
    procedure Handle_Mem_Map (Frame : System.Address) is
       use type Kernel.Capabilities.Object_Kind;
       use type Kernel.Capabilities.Status;
+      use type Kernel.Boot_Files.Status;
 
       Address_Space_Cap : Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Invalid_Handle;
@@ -850,26 +852,15 @@ package body Arch.Traps is
          Result    => Cap_Result,
          Out_Entry => Cap_Info);
 
+      --  Shared checks: flag bits 0 (read) / 1 (write) only, never
+      --  empty, and Sv39 reserves write-without-read leaves.
       if Cap_Result /= Kernel.Capabilities.Ok
-        or else Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
-        or else not Cap_Info.Rights.Map
-        or else ((Flags and 1) /= 0 and then not Cap_Info.Rights.Read)
-        or else ((Flags and 2) /= 0 and then not Cap_Info.Rights.Write)
         or else (Flags and not 3) /= 0
         or else Flags = 0
-        --  Sv39 reserves write-without-read leaves.
         or else (Flags and 3) = 2
-      then
-         Trap_Frame_Set_A0 (Frame, 1);
-         return;
-      end if;
-
-      if VA < 16#4000_0000#
+        or else VA < 16#4000_0000#
         or else VA + Length > 16#8000_0000#
         or else Length = 0
-        or else Offset + Length >
-          Kernel.Memory.Page_Count (Cap_Info.Object)
-            * Kernel.Physical_Memory.Page_Size
         or else not Is_Page_Aligned (VA)
         or else not Is_Page_Aligned (Offset)
         or else not Is_Page_Aligned (Length)
@@ -884,6 +875,82 @@ package body Arch.Traps is
          Execute => False,
          User    => True,
          Global  => False);
+
+      if Cap_Info.Kind = Kernel.Capabilities.Boot_File_Object then
+         --  Boot files as memory objects: borrowed read-only pages
+         --  over the initrd image frames (pinned, never freed).
+         --  File data need not start on a page boundary; a1 returns
+         --  the byte offset of the file start within the first
+         --  mapped page.
+         declare
+            Bounds_Result : Kernel.Boot_Files.Status;
+            Base_VA       : U64;
+            File_Length   : U64;
+            PA            : U64;
+            Lead_In         : U64;
+         begin
+            if not Cap_Info.Rights.Read
+              or else Flags /= 1  --  initrd image is read-only
+            then
+               Trap_Frame_Set_A0 (Frame, 1);
+               return;
+            end if;
+
+            Kernel.Boot_Files.Bounds
+              (Cap     => Cap_Info,
+               Result => Bounds_Result,
+               Base   => Base_VA,
+               Length => File_Length);
+
+            --  The file's true page span: the lead-in byte offset
+            --  can push file data one page past the rounded length.
+            if Bounds_Result /= Kernel.Boot_Files.Ok
+              or else Offset + Length >
+                (((Base_VA mod Arch.MMU.Page_Size) + File_Length
+                    + Arch.MMU.Page_Size - 1)
+                   / Arch.MMU.Page_Size) * Arch.MMU.Page_Size
+            then
+               Trap_Frame_Set_A0 (Frame, 1);
+               return;
+            end if;
+
+            PA := Base_VA - Arch.Physmap_Base + Offset;
+            Lead_In := PA mod Arch.MMU.Page_Size;
+
+            Page_Count := Length / Arch.MMU.Page_Size;
+            for Page in U64 range 0 .. Page_Count - 1 loop
+               Arch.MMU.Map_Page
+                 (Root     => Kernel.Tasks.Address_Space_Root
+                    (Current.all),
+                  Virtual  => VA + Page * Arch.MMU.Page_Size,
+                  Physical => PA - Lead_In + Page * Arch.MMU.Page_Size,
+                  Flags    => Page_Flags,
+                  Result   => Map_Result,
+                  Borrowed => True);
+
+               if Map_Result /= Arch.MMU.Ok then
+                  Trap_Frame_Set_A0 (Frame, 1);
+                  return;
+               end if;
+            end loop;
+
+            Trap_Frame_Set_A1 (Frame, Lead_In);
+            Trap_Frame_Set_A0 (Frame, 0);
+            return;
+         end;
+      end if;
+
+      if Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Cap_Info.Rights.Map
+        or else ((Flags and 1) /= 0 and then not Cap_Info.Rights.Read)
+        or else ((Flags and 2) /= 0 and then not Cap_Info.Rights.Write)
+        or else Offset + Length >
+          Kernel.Memory.Page_Count (Cap_Info.Object)
+            * Kernel.Physical_Memory.Page_Size
+      then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
 
       Page_Count := Length / Arch.MMU.Page_Size;
       for Page in U64 range 0 .. Page_Count - 1 loop

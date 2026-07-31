@@ -149,6 +149,23 @@ package body Kernel.Boot_Files is
       end if;
    end Size;
 
+   procedure Bounds
+     (Cap     : Kernel.Capabilities.Cap_Entry;
+      Result  : out Status;
+      Base    : out U64;
+      Length  : out U64)
+   is
+      File : Boot_File_Access;
+   begin
+      Base := 0;
+      Length := 0;
+      Locate (Cap, Result, File);
+      if Result = Ok then
+         Base := File.Base;
+         Length := File.Length;
+      end if;
+   end Bounds;
+
    procedure Read_Byte
      (Cap     : Kernel.Capabilities.Cap_Entry;
       Offset  : U64;

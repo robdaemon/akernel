@@ -169,6 +169,46 @@ reads, shared buffers) moves through `Memory_Object` caps:
 - Refcounted: frames return to PMM when last cap closes.
 - No IOMMU yet: DMA drivers are trusted privileged processes.
 
+### Boot files as memory objects
+
+`mem_map` also accepts `Boot_File_Object` caps (Read right; flags
+must be read-only): the initrd image frames are mapped borrowed and
+read-only (pinned statics, never freed). File data need not start on
+a page boundary, so the syscall returns the lead-in byte offset in
+a1 (userspace stub `akernel_sys_mem_map_file` / wrapper
+`Mem_Map_File`; the asm stub injects flags=read-only). The mappable
+extent is the file's true page span, ceil((lead-in + length) / 4096)
+pages. Servers holding boot-file caps map files directly instead of
+byte-at-a-time `boot_read_byte`.
+
+## File protocol (9P-ish)
+
+Userspace protocol (kernel never parses it) between
+System/Fileserver (holds every boot-file cap via the `boot_files`
+manifest token) and clients (hold only the `fs` endpoint Send cap):
+
+```text
+Op_Set_Name = 0  init -> server: (handle, length, name[32]), one per
+                 granted boot file, pushed right after spawn, then a
+                 zero-handle terminator
+Op_Stat     = 1  words = name[48] -> (status, size)
+Op_Open     = 2  words = name[48] -> (status, size); client then
+                 allocates/maps its read buffer (memory object)
+Op_Read     = 3  (offset, length, name[32]) + buffer memory cap in
+                 cap slot 0 -> (status, count); bytes land at offset
+                 0 of the client's buffer
+statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
+```
+
+Stateless reads (no fids, no close). The read buffer is client-owned
+(replies cannot transfer caps — the reply path zeroes cap slots);
+the transferred cap pins the frames while the server holds it. The
+server maps boot files via the mem_map boot-file branch (borrowed
+RO pages + lead-in offset) and copies into the client buffer mapped
+in its own AS. Manifest tokens: `fs_server` (Receive side),
+`fs` (Send side), `boot_files` (all boot-file caps in bootinfo
+order).
+
 ## Namespaces and spawn v2
 
 Namespace = per-process set of caps, Plan 9 style. Kernel moves caps;
