@@ -321,6 +321,12 @@ namespace mechanism.
   labels, (Count, Data) records); `Akernel_User.Console` binds it to
   the init-minted console endpoint (`console`/`console_server`
   manifest tokens) with Drivers/Serial as the console server.
+  Console writes are line-atomic on both paths: the server buffers
+  per client (keyed by the console cap badge, which init sets to the
+  manifest program id) and flushes to the UART only on newline or a
+  full 160-byte buffer; the kernel debug_putchar syscall buffers per
+  thread (128 bytes in the TCB) with the same flush rule, plus a
+  flush on exit. Concurrent writers never interleave within a line.
   Ada.Streams itself is vendored into the RTS (light runtime lacks
   it) until the real custom RTS lands. File protocol (9P-ish,
   simplified) layers on top later.

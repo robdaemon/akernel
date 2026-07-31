@@ -147,6 +147,25 @@ package Kernel.Tasks is
    function IPC_Badge
      (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
+   --  Per-thread debug_putchar line buffer (line-atomic debug
+   --  output: bytes accumulate per thread, the trap handler flushes
+   --  to the UART only on newline or a full buffer, so concurrent
+   --  threads' debug lines never interleave).
+   Debug_Line_Max : constant := 128;
+
+   --  Append one byte; Flush is True when the caller must take and
+   --  emit the line (newline appended, or the buffer is full).
+   procedure Append_Debug_Char
+     (TCB   : in out Thread_Control_Block;
+      Char  : Character;
+      Flush : out Boolean);
+
+   --  Copy the pending line out and reset the buffer.
+   procedure Take_Debug_Line
+     (TCB  : in out Thread_Control_Block;
+      Line : out String;
+      Len  : out Natural);
+
    --  Overwrite the saved a0 of a blocked thread with a syscall
    --  result status (surfaces when the thread is rescheduled).
    procedure Set_Saved_Result
@@ -237,5 +256,7 @@ private
       Call_Badge       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
+      Debug_Line       : String (1 .. Debug_Line_Max);
+      Debug_Len        : Natural;
    end record;
 end Kernel.Tasks;

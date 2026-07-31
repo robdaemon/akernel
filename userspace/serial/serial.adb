@@ -7,7 +7,13 @@ with Akernel_User.Streams;
 --  Console server: holds the UART MMIO cap and the Receive cap on
 --  the init-minted console endpoint; clients print through
 --  Akernel_User.Streams / Akernel_User.Console (write ops arrive as
---  stream-protocol messages). UART RX is drained opportunistically
+--  stream-protocol messages). Writes are line-atomic: bytes
+--  accumulate in a per-client buffer (keyed by the console cap
+--  badge, which init sets to the manifest program id) and only hit
+--  the UART on newline or a full buffer, so concurrent clients'
+--  lines never interleave. Partial lines flush lazily (a full
+--  buffer) or not at all if a client exits mid-line.
+--  UART RX is drained opportunistically
 --  on each write (single thread cannot wait on both the IRQ line and
 --  the endpoint); IRQ-driven RX waits on notification objects.
 
@@ -64,6 +70,63 @@ procedure Serial is
          Akernel_User.MMIO.Write8 (THR, Reg);
       end loop;
    end Drain_RX;
+
+   --  Per-client line buffers (line-atomic writes): a client's
+   --  bytes only reach the UART on newline or a full buffer.
+   Max_Clients : constant := 8;
+   Line_Max    : constant := 160;
+
+   type Client_Line is record
+      Badge : U64 := U64'Last;
+      Buf   : String (1 .. Line_Max);
+      Len   : Natural := 0;
+   end record;
+
+   Lines : array (1 .. Max_Clients) of Client_Line;
+
+   procedure Flush_Line (Slot : Positive) is
+   begin
+      if Lines (Slot).Len > 0 then
+         UART_Put (Lines (Slot).Buf (1 .. Lines (Slot).Len));
+         Lines (Slot).Len := 0;
+      end if;
+   end Flush_Line;
+
+   procedure Buffer_Write (Badge : U64; Ch : Character) is
+      Slot : Natural := 0;
+      Free : Natural := 0;
+   begin
+      for I in Lines'Range loop
+         if Lines (I).Badge = Badge then
+            Slot := I;
+            exit;
+         elsif Lines (I).Badge = U64'Last and then Free = 0 then
+            Free := I;
+         end if;
+      end loop;
+
+      if Slot = 0 then
+         if Free = 0 then
+            --  Table full: bypass buffering rather than drop bytes.
+            Akernel_User.MMIO.Write8 (THR, Character'Pos (Ch));
+            return;
+         end if;
+         Slot := Free;
+         Lines (Slot).Badge := Badge;
+         Lines (Slot).Len := 0;
+      end if;
+
+      if Lines (Slot).Len = Line_Max then
+         Flush_Line (Slot);
+      end if;
+
+      Lines (Slot).Len := Lines (Slot).Len + 1;
+      Lines (Slot).Buf (Lines (Slot).Len) := Ch;
+
+      if Ch = Character'Val (10) then
+         Flush_Line (Slot);
+      end if;
+   end Buffer_Write;
 begin
    Result := Map_MMIO
      (Address_Space => Address_Space_Cap,
@@ -88,8 +151,8 @@ begin
 
       if Label = Akernel_User.Streams.Op_Write then
          for I in 1 .. Ada.Streams.Stream_Element_Offset (Request.Count) loop
-            Akernel_User.MMIO.Write8
-              (THR, Akernel_User.MMIO.U8 (Request.Data (I)));
+            Buffer_Write
+              (Badge, Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
       else

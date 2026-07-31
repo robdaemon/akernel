@@ -2,9 +2,14 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Implement next steps:
-notification objects (IRQ-driven UART RX in the console server) and/or
-line-atomic console writes; otherwise pick from NEXT.md's later list
-(SMP, DTB, IOMMU).
+notification objects (IRQ-driven UART RX in the console server);
+otherwise pick from NEXT.md's later list (SMP, DTB, IOMMU).
+
+Line-atomic console writes landed: the serial server line-buffers
+per client (keyed by console cap badge = manifest program id set by
+init, newline/160-byte-full flush, replies immediately) and the
+kernel debug_putchar syscall line-buffers per thread (128 bytes in
+the TCB, flush on newline/full/exit). 74/74 directed PASS.
 
 Milestone 12 landed: spawn v2 completion. Spawn accepts Memory_Object
 caps (Read right; boot files still need Read+Execute): Kernel.ELF

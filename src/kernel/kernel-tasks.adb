@@ -307,6 +307,37 @@ package body Kernel.Tasks is
       return TCB.Call_Badge;
    end IPC_Badge;
 
+   procedure Append_Debug_Char
+     (TCB   : in out Thread_Control_Block;
+      Char  : Character;
+      Flush : out Boolean)
+   is
+   begin
+      if TCB.Debug_Len >= Debug_Line_Max then
+         Flush := True;
+         return;
+      end if;
+
+      TCB.Debug_Len := TCB.Debug_Len + 1;
+      TCB.Debug_Line (TCB.Debug_Len) := Char;
+      Flush := Char = Character'Val (10) or else TCB.Debug_Len = Debug_Line_Max;
+   end Append_Debug_Char;
+
+   procedure Take_Debug_Line
+     (TCB  : in out Thread_Control_Block;
+      Line : out String;
+      Len  : out Natural)
+   is
+   begin
+      Len := TCB.Debug_Len;
+      if Len > Line'Length then
+         Len := Line'Length;
+      end if;
+      Line (Line'First .. Line'First + Len - 1) :=
+        TCB.Debug_Line (1 .. Len);
+      TCB.Debug_Len := 0;
+   end Take_Debug_Line;
+
    procedure Set_Saved_Result
      (TCB   : in out Thread_Control_Block;
       Value : Kernel.Capabilities.U64)

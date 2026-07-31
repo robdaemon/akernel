@@ -128,7 +128,11 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   the console endpoint (session-manager badge pattern).
 - `userspace/serial/` — console server: maps UART MMIO (cap 1),
   holds Receive on the console endpoint (cap 2), serves stream
-  protocol writes to the UART (read ops get EOF). UART RX drained
+  protocol writes to the UART (read ops get EOF). Writes are
+  line-atomic: per-client buffers keyed by the console cap badge
+  (init badges each grant with the program id) flush on newline or
+  a full 160-byte buffer; the kernel debug_putchar path buffers per
+  thread (newline/full/exit flush). UART RX drained
   opportunistically on each write (single thread cannot wait on both
   IRQ and endpoint; IRQ-driven RX waits on notification objects).
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test

@@ -319,7 +319,10 @@ procedure Init is
          --  Grant tokens are names in init's namespace: a bootinfo
          --  entry name grants that cap with the kernel-assigned
          --  rights; ipc_test grants the badged test endpoint;
-         --  console/console_server grant the console endpoint sides.
+         --  console/console_server grant the console endpoint
+         --  sides; the Send side is badged with the program id so
+         --  the console server can line-buffer per client
+         --  (line-atomic writes).
          if Token_Equals (Token, Length, "ipc_test") then
             Grant (IPC_Test_EP,
                    Akernel_User.Syscalls.Right_Send
@@ -328,7 +331,7 @@ procedure Init is
                      + Akernel_User.Syscalls.Right_Manage,
                    IPC_Test_Badge);
          elsif Token_Equals (Token, Length, "console") then
-            Grant (Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Grant (Console_EP, Akernel_User.Syscalls.Right_Send, Program_Id);
          elsif Token_Equals (Token, Length, "console_server") then
             Grant (Console_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "fs") then

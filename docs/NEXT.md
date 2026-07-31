@@ -104,8 +104,10 @@ Next candidates (order open):
     (Kernel.ELF.Source abstracts image bytes over physmap ranges and
     object frames; fuzz stages Tests/Memstage via the file server
     into an object, spawns from it, reaps). Remaining: notification
-    objects (IRQ-driven UART RX in the console server); line-atomic
-    console writes.
+    objects (IRQ-driven UART RX in the console server).
+13. ~~Line-atomic console writes~~ — done: serial server buffers per
+    client (badge = program id, newline/full-buffer flush); kernel
+    debug_putchar buffers per thread (TCB, newline/full/exit flush).
 
 Commit between each milestone.
 

@@ -594,6 +594,38 @@ package body Arch.Traps is
       end if;
    end Handle_Reap_Process;
 
+   --  Line-atomic debug output: bytes accumulate in the calling
+   --  thread's TCB buffer and only hit the UART on newline, a full
+   --  buffer, or thread exit, so concurrent threads' debug lines
+   --  never interleave.
+   procedure Flush_Debug_Line (Current : Kernel.Tasks.Thread_Access) is
+      Line : String (1 .. Kernel.Tasks.Debug_Line_Max);
+      Len  : Natural;
+   begin
+      Kernel.Tasks.Take_Debug_Line (Current.all, Line, Len);
+      if Len > 0 then
+         Board.UART.Put (Line (1 .. Len));
+      end if;
+   end Flush_Debug_Line;
+
+   procedure Handle_Debug_Putchar (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Char    : constant Character := Character'Val
+        (Natural (Trap_Frame_Get_A0 (Frame) and 16#ff#));
+      Flush   : Boolean;
+   begin
+      if Current = null then
+         Board.UART.Put ((1 => Char));
+      else
+         Kernel.Tasks.Append_Debug_Char (Current.all, Char, Flush);
+         if Flush then
+            Flush_Debug_Line (Current);
+         end if;
+      end if;
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Debug_Putchar;
+
    procedure Handle_Exit (Frame : System.Address) is
       Current          : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
@@ -605,6 +637,7 @@ package body Arch.Traps is
          return;
       end if;
 
+      Flush_Debug_Line (Current);
       Kernel.Processes.Mark_Exited (Current);
       Advance_SEPC (Frame);
       Kernel.Scheduler.Exit_Current (Exit_Result);
@@ -1033,10 +1066,7 @@ package body Arch.Traps is
          Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       elsif Number = Sys_Debug_Putchar then
-         Board.UART.Put
-           ((1 => Character'Val
-              (Natural (Trap_Frame_Get_A0 (Frame) and 16#ff#))));
-         Trap_Frame_Set_A0 (Frame, 0);
+         Handle_Debug_Putchar (Frame);
       elsif Number = Sys_Map_MMIO then
          Handle_Map_MMIO (Frame);
       elsif Number = Sys_IRQ_Wait then
