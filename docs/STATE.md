@@ -39,6 +39,7 @@ Hello world!
 kernel address space online
 memory manager online
 ram MiB: 4096
+dtb devices online
 pmm selftest online
 cap table online
 objects selftest online
@@ -114,5 +115,8 @@ QEMU virt RAM base:     0x80000000
   cap-based; memory objects (alloc/map/unmap, borrowed mappings,
   refcounted PMM frames) exist but boot files are not memory objects
   yet.
-- No DTB-based device enumeration; initrd load address fixed.
-- No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime + stubs).
+- No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime +
+  stubs); initrd load address fixed.
+- UART/PLIC bases and the UART IRQ source come from DTB discovery
+  (board constants as fallback); other devices (virtio etc.) are not
+  enumerated yet.

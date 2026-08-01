@@ -1,17 +1,14 @@
-with Arch.MMU;
+with Interfaces;
 with Kernel.Objects;
-with System;
 
 package Kernel.Boot_Resources is
-   UART_MMIO_Object : aliased Kernel.Objects.MMIO_Region :=
-     (Physical_Base => 16#1000_0000#,
-      Length        => Arch.MMU.Page_Size);
+   subtype U64 is Interfaces.Unsigned_64;
 
-   UART_IRQ_Object : aliased Kernel.Objects.IRQ_Line :=
-     (Source     => 10,
-      Pending    => False,
-      In_Flight  => False,
-      Waiter     => null,
-      Ntfn       => System.Null_Address,
-      Ntfn_Badge => 0);
+   --  Boot device objects backing the uart/mmio and uart/irq caps
+   --  handed to init. Fields are filled by Initialize from DTB
+   --  discovery (board defaults when the DTB lacks the nodes).
+   UART_MMIO_Object : aliased Kernel.Objects.MMIO_Region;
+   UART_IRQ_Object  : aliased Kernel.Objects.IRQ_Line;
+
+   procedure Initialize (UART_Base : U64; UART_IRQ : U64);
 end Kernel.Boot_Resources;

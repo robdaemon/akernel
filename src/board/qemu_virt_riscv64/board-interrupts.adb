@@ -1,13 +1,12 @@
-with Board.PLIC;
 with Board.UART;
 with Kernel.Interrupts;
 
 package body Board.Interrupts is
-   procedure Initialize is
+   procedure Initialize (UART_Source : Board.PLIC.Source_Id) is
    begin
       Board.PLIC.Initialize;
       Board.UART.Initialize_Interrupts;
-      Board.PLIC.Enable (Board.PLIC.UART0_Source);
+      Board.PLIC.Enable (UART_Source);
    end Initialize;
 
    procedure Handle_External_Interrupt is

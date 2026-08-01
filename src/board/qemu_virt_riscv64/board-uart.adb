@@ -1,5 +1,5 @@
 with Arch;
-with Interfaces;
+with Board.Memory_Map;
 
 package body Board.UART is
    use type Interfaces.Unsigned_8;
@@ -8,13 +8,13 @@ package body Board.UART is
    subtype U8 is Interfaces.Unsigned_8;
    subtype U64 is Interfaces.Unsigned_64;
 
-   Base : constant U64 := Arch.Phys_To_Virt (16#1000_0000#);
+   Base : U64 := Arch.Phys_To_Virt (Board.Memory_Map.UART0_Base);
 
-   RBR : constant U64 := Base + 0; -- receive buffer, read
-   THR : constant U64 := Base + 0; -- transmit holding, write
-   IER : constant U64 := Base + 1; -- interrupt enable
-   IIR : constant U64 := Base + 2; -- interrupt identification, read
-   LSR : constant U64 := Base + 5; -- line status
+   function RBR return U64 is (Base + 0); -- receive buffer, read
+   function THR return U64 is (Base + 0); -- transmit holding, write
+   function IER return U64 is (Base + 1); -- interrupt enable
+   function IIR return U64 is (Base + 2); -- interrupt identification
+   function LSR return U64 is (Base + 5); -- line status
 
    IER_RDA : constant U8 := 16#01#; -- received data available
    LSR_DR  : constant U8 := 16#01#; -- data ready
@@ -24,6 +24,11 @@ package body Board.UART is
 
    procedure Mmio_Write8 (Address : U64; Value : U8)
      with Import, Convention => C, External_Name => "mmio_write8";
+
+   procedure Set_Base (Physical_Base : Interfaces.Unsigned_64) is
+   begin
+      Base := Arch.Phys_To_Virt (Physical_Base);
+   end Set_Base;
 
    procedure Put (S : String) is
    begin

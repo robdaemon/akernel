@@ -6,6 +6,8 @@ with Arch.Traps;
 with Arch.User_Mode;
 with Board.Device_Tree;
 with Board.Interrupts;
+with Board.Memory_Map;
+with Board.PLIC;
 with Board.UART;
 with Kernel.Boot_Files;
 with Kernel.Boot_Resources;
@@ -50,11 +52,21 @@ procedure Akernel is
    Scheduler_Result : Kernel.Scheduler.Status;
    DTB_Result       : Kernel.Device_Tree.Status :=
      Kernel.Device_Tree.Memory_Not_Found;
+   Dev_Result       : Kernel.Device_Tree.Status :=
+     Kernel.Device_Tree.Device_Not_Found;
    PMM_Result       : Kernel.Physical_Memory.Status :=
      Kernel.Physical_Memory.Not_Initialized;
    MMU_Result       : Arch.MMU.Status := Arch.MMU.Allocation_Failed;
    Memory_Base      : Interfaces.Unsigned_64 := 0;
    Memory_Size      : Interfaces.Unsigned_64 := 0;
+   Dev_Base         : Interfaces.Unsigned_64 := 0;
+   Dev_Size         : Interfaces.Unsigned_64 := 0;
+   Dev_IRQ          : Interfaces.Unsigned_64 := 0;
+   UART_Base        : Interfaces.Unsigned_64 := Board.Memory_Map.UART0_Base;
+   UART_IRQ         : Interfaces.Unsigned_64 :=
+     Interfaces.Unsigned_64 (Board.PLIC.UART0_Source);
+   PLIC_Base        : Interfaces.Unsigned_64 := Board.Memory_Map.PLIC_Base;
+   Devices_Found    : Natural := 0;
    User_Stack_Frame        : Interfaces.Unsigned_64 := 0;
    Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
    Init_IPC_Buffer_Frame   : Interfaces.Unsigned_64 := 0;
@@ -319,6 +331,49 @@ begin
       Base   => Memory_Base,
       Size   => Memory_Size);
 
+   --  Device enumeration: UART and PLIC come from the DTB when the
+   --  nodes are present; board defaults stand otherwise.
+   if DTB_Result = Kernel.Device_Tree.Ok then
+      Kernel.Device_Tree.Find_Device
+        (DTB        => Board.Device_Tree.Boot_DTB_Physical_Address,
+         Compatible => "ns16550a",
+         Base       => Dev_Base,
+         Size       => Dev_Size,
+         IRQ_Source => Dev_IRQ,
+         Result     => Dev_Result);
+
+      if Dev_Result = Kernel.Device_Tree.Ok
+        and then Dev_IRQ <= Interfaces.Unsigned_64 (Board.PLIC.Source_Id'Last)
+      then
+         UART_Base := Dev_Base;
+         UART_IRQ := Dev_IRQ;
+         Devices_Found := Devices_Found + 1;
+      end if;
+
+      Kernel.Device_Tree.Find_Device
+        (DTB        => Board.Device_Tree.Boot_DTB_Physical_Address,
+         Compatible => "riscv,plic0",
+         Base       => Dev_Base,
+         Size       => Dev_Size,
+         IRQ_Source => Dev_IRQ,
+         Result     => Dev_Result);
+
+      if Dev_Result = Kernel.Device_Tree.Ok then
+         PLIC_Base := Dev_Base;
+         Devices_Found := Devices_Found + 1;
+      end if;
+   end if;
+
+   Board.UART.Set_Base (UART_Base);
+   Board.PLIC.Set_Base (PLIC_Base);
+   Kernel.Boot_Resources.Initialize (UART_Base, UART_IRQ);
+
+   if Devices_Found = 2 then
+      Board.UART.Put_Line ("dtb devices online");
+   else
+      Board.UART.Put_Line ("dtb devices incomplete; board defaults");
+   end if;
+
    if DTB_Result = Kernel.Device_Tree.Ok then
       Kernel.Physical_Memory.Initialize
         (First_Free => First_Free,
@@ -379,7 +434,8 @@ begin
    Kernel.Tasks.Insert_Cap
      (TCB    => Bootstrap_Task,
       Kind   => Kernel.Capabilities.MMIO_Object,
-      Object => System'To_Address (16#1000_0000#),
+      Object => System'To_Address
+        (System.Storage_Elements.Integer_Address (UART_Base)),
       Rights => Console_Rights,
       Badge  => 0,
       Result => Result,
@@ -635,7 +691,7 @@ begin
      (TCB    => Init_Task'Unchecked_Access,
       Result => Scheduler_Result);
 
-   Board.Interrupts.Initialize;
+   Board.Interrupts.Initialize (Board.PLIC.Source_Id (UART_IRQ));
    Arch.Traps.Initialize;
 
    if Initrd_Result = Kernel.Initrd.Ok

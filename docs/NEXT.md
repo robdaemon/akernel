@@ -112,15 +112,25 @@ Next candidates (order open):
     thread-bound delivery as a synthetic IPC_Recv message
     (Label = U64'Last); UART RX in Drivers/Serial is IRQ-driven
     through it (uart/irq grant).
+15. ~~DTB device enumeration~~ — done: `Kernel.Device_Tree.Find_Device`
+    (compatible string-list match, per-node capture decided at node
+    close since FDT property order is arbitrary, parent
+    #address-cells/#size-cells stack, #size-cells=0 handled); UART
+    base + IRQ source and PLIC base come from the DTB
+    (`Kernel.Boot_Resources.Initialize`, `Board.UART.Set_Base`,
+    `Board.PLIC.Set_Base`, `Board.Interrupts.Initialize (source)`),
+    board constants are fallback defaults. 89/89 directed PASS, fuzz
+    failures=0.
 
 Commit between each milestone.
 
 ## Deferred (do not build yet)
 
-- Plain `send`, register fast path, notification objects, >4 caps/msg.
+- Plain `send`, register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
 - SMP: per-hart scheduling, IPIs, cap-table/endpoint locking.
-- DTB device enumeration, IOMMU, tasking runtime, 9P-ish file protocol.
+- IOMMU, tasking runtime; virtio/other DTB device enumeration as
+  drivers arrive.
 
 ## Start by reading
 

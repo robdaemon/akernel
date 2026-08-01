@@ -118,3 +118,13 @@ invalid/denied instead of raising constraint errors.
   blocking-syscall machinery). S-mode ticks (idle/kernel) only re-arm.
 - Device tree: generic FDT parser `kernel-device_tree.*`; board exposes
   boot DTB pointer (`board-device_tree.*`). PMM init uses DTB RAM end.
+  `Find_Device` enumerates devices by compatible string (string-list
+  match, parent #address-cells/#size-cells stack, reg + first
+  interrupts cell): UART (`ns16550a`) and PLIC (`riscv,plic0`) bases
+  and the UART IRQ source come from the DTB, with
+  `board-memory_map.*`/`board-plic.*` constants as fallback defaults
+  ("dtb devices online" vs "dtb devices incomplete; board defaults"
+  in the boot log). Gotcha: FDT property order inside a node is
+  arbitrary (qemu emits reg before compatible) — capture per-node and
+  decide at node close; and #size-cells = 0 is legal (modular U32
+  0 .. Cells-1 wraps, walking off RAM).

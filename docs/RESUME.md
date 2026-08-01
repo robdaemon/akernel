@@ -2,7 +2,35 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's later list (SMP, DTB, IOMMU) or the IPC.md deferred list.
+NEXT.md's deferred list: SMP (per-hart scheduling, IPIs, cap-table
+locking), IOMMU, kernel introspection syscalls, plain send, register
+fast path, virtio driver (needs DTB enumeration for new devices,
+now trivial via Find_Device).
+
+DTB device enumeration landed: Kernel.Device_Tree.Find_Device walks
+the FDT matching a compatible string against each node's compatible
+string list, capturing reg (first entry, parent #address-cells/
+#size-cells via a depth stack) and the first interrupts cell.
+Decision happens at node close because FDT property order is
+arbitrary (qemu emits reg before compatible — a match-then-capture
+walk silently misses reg). UART base + IRQ source and PLIC base now
+come from the DTB: Kernel.Boot_Resources.Initialize fills the
+uart/mmio + uart/irq objects, Board.UART.Set_Base /
+Board.PLIC.Set_Base override the board-default MMIO bases,
+Board.Interrupts.Initialize takes the source as a parameter. Board
+constants (board-memory_map.*, Board.PLIC.UART0_Source) are fallback
+defaults when nodes are absent ("dtb devices incomplete; board
+defaults" in the boot log). 89/89 directed PASS, fuzz failures=0.
+
+Gotcha burned: #size-cells = 0 is legal FDT (qemu /cpus uses it) —
+a modular U32 `for I in 0 .. Cells - 1` wraps to 4 billion reads and
+walks off RAM (fault at physmap VA of PA exactly RAM end; the DTB
+sits at the top of RAM, so any overrun faults immediately).
+Read_Cells returns 0 for Cells = 0 now. Debug method that found it:
+Python re-model of the Ada walk against `qemu -machine
+dumpdtb=...` output reproduced the match-then-capture bug; the
+cells wrap needed the kernel trap dump (scause/sepc/stval) +
+objdump of sepc (mmio_read8).
 
 Notification objects landed: Notification_Object caps (static slab
 of 16; Wait/Write/Manage rights), syscalls 18-22 (ntfn_create,
