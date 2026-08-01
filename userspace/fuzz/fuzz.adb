@@ -477,8 +477,21 @@ begin
          Check (Status = 0 and then Proc_Cap /= 0,
                 "spawn from memory object ok");
 
-         Check (Akernel_User.Syscalls.Reap_Process (Proc_Cap) = 0,
-                "memstage reaped after exit");
+         --  Reap is non-blocking and the child runs in parallel on
+         --  another hart, so poll (bounded) until it has exited.
+         declare
+            Reaped   : Boolean := False;
+            Attempts : Natural := 0;
+         begin
+            while not Reaped and then Attempts < 100_000 loop
+               Reaped   := Akernel_User.Syscalls.Reap_Process (Proc_Cap) = 0;
+               Attempts := Attempts + 1;
+               if not Reaped then
+                  Akernel_User.Syscalls.Yield;
+               end if;
+            end loop;
+            Check (Reaped, "memstage reaped after exit");
+         end;
       end;
    end;
 

@@ -2,6 +2,7 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Arch.MMU;
+with Arch.SBI;
 with Arch.Traps;
 with Arch.User_Mode;
 with Board.Device_Tree;
@@ -13,6 +14,7 @@ with Kernel.Boot_Files;
 with Kernel.Boot_Resources;
 with Kernel.Bootinfo;
 with Kernel.Capabilities;
+with Kernel.CPUs;
 with Kernel.Device_Tree;
 with Kernel.ELF;
 with Kernel.Initrd;
@@ -67,6 +69,18 @@ procedure Akernel is
      Interfaces.Unsigned_64 (Board.PLIC.UART0_Source);
    PLIC_Base        : Interfaces.Unsigned_64 := Board.Memory_Map.PLIC_Base;
    Devices_Found    : Natural := 0;
+
+   --  SMP topology: boot hart raw id (a0 at entry), cpu nodes from
+   --  the DTB, and the dense CPU-index table handed to Kernel.CPUs.
+   Boot_Hart_Raw_Id : Interfaces.Unsigned_64
+     with Import, Convention => C, External_Name => "boot_hart_id";
+   Secondary_Boot_Sym : Interfaces.Unsigned_8
+     with Import, Convention => C, External_Name => "secondary_boot";
+   Cpu_Ids        : Kernel.Device_Tree.Cpu_Id_List := (others => 0);
+   Cpu_Count      : Natural := 0;
+   Hart_Raw       : Kernel.CPUs.Raw_Id_Array := (others => 0);
+   Hart_Count     : Natural := 1;
+   Hart_Start_RC  : Interfaces.Unsigned_64 := 0;
    User_Stack_Frame        : Interfaces.Unsigned_64 := 0;
    Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
    Init_IPC_Buffer_Frame   : Interfaces.Unsigned_64 := 0;
@@ -362,6 +376,56 @@ begin
          PLIC_Base := Dev_Base;
          Devices_Found := Devices_Found + 1;
       end if;
+   end if;
+
+   --  SMP topology from the DTB: boot hart at CPU index 0, every
+   --  other hart the firmware described after it, clamped to
+   --  Kernel.CPUs.Max_CPUs.  Falls back to uniprocessor.
+   Hart_Raw (Kernel.CPUs.CPU_Index'First) := Boot_Hart_Raw_Id;
+   if DTB_Result = Kernel.Device_Tree.Ok then
+      Kernel.Device_Tree.Enumerate_Cpus
+        (DTB    => Board.Device_Tree.Boot_DTB_Physical_Address,
+         Ids    => Cpu_Ids,
+         Count  => Cpu_Count,
+         Result => Dev_Result);
+
+      if Dev_Result = Kernel.Device_Tree.Ok then
+         for I in 0 .. Cpu_Count - 1 loop
+            exit when Hart_Count >= Kernel.CPUs.Max_CPUs;
+            if Cpu_Ids (I) /= Boot_Hart_Raw_Id then
+               Hart_Raw (Kernel.CPUs.CPU_Index (Hart_Count)) :=
+                 Cpu_Ids (I);
+               Hart_Count := Hart_Count + 1;
+            end if;
+         end loop;
+      end if;
+   end if;
+   Kernel.CPUs.Configure (Hart_Raw, Hart_Count);
+
+   --  Boot hart idle stacks: the boot main/trap stacks (linker
+   --  symbols link at kernel VAs; convert to physical addresses).
+   --  The idle path leaves a blocked thread's kernel stack for
+   --  these.
+   declare
+      Boot_Stack_Top : Interfaces.Unsigned_8
+        with Import, External_Name => "__stack_top";
+      Boot_Trap_Top  : Interfaces.Unsigned_8
+        with Import, External_Name => "__trap_stack_top";
+   begin
+      Kernel.CPUs.Set_Stacks
+        (CPU      => Kernel.CPUs.CPU_Index'First,
+         Trap_Top => Arch.Kernel_Virt_To_Phys
+           (Kernel.CPUs.U64 (System.Storage_Elements.To_Integer
+             (Boot_Trap_Top'Address))),
+         Main_Top => Arch.Kernel_Virt_To_Phys
+           (Kernel.CPUs.U64 (System.Storage_Elements.To_Integer
+             (Boot_Stack_Top'Address))));
+   end;
+
+   if Hart_Count > 1 then
+      Board.UART.Put ("smp: ");
+      Board.UART.Put_Decimal (Hart_Count);
+      Board.UART.Put_Line (" harts");
    end if;
 
    Board.UART.Set_Base (UART_Base);
@@ -698,6 +762,59 @@ begin
      and then ELF_Result = Kernel.ELF.Ok
    then
       Board.UART.Put_Line ("entering initrd init");
+
+      --  Start secondary harts: PMM-allocated per-hart kernel stacks
+      --  (contiguous bump runs) recorded in each hart's boot info
+      --  block, then SBI HSM hart_start at secondary_boot.  A hart
+      --  that fails to start is simply skipped; the system stays up
+      --  with the harts that made it.
+      for H in 1 .. Hart_Count - 1 loop
+         declare
+            Idx : constant Kernel.CPUs.CPU_Index :=
+              Kernel.CPUs.CPU_Index (H);
+            Trap_Base : Interfaces.Unsigned_64 := 0;
+            Main_Base : Interfaces.Unsigned_64 := 0;
+         begin
+            Kernel.Physical_Memory.Allocate_Contiguous
+              (Pages       => Kernel.CPUs.Trap_Stack_Pages,
+               Result      => PMM_Result,
+               First_Frame => Trap_Base);
+            if PMM_Result = Kernel.Physical_Memory.Ok then
+               Kernel.Physical_Memory.Allocate_Contiguous
+                 (Pages       => Kernel.CPUs.Main_Stack_Pages,
+                  Result      => PMM_Result,
+                  First_Frame => Main_Base);
+            end if;
+
+            if PMM_Result = Kernel.Physical_Memory.Ok then
+               Kernel.CPUs.Set_Stacks
+                 (CPU      => Idx,
+                  Trap_Top => Trap_Base
+                    + Interfaces.Unsigned_64 (Kernel.CPUs.Trap_Stack_Pages)
+                      * Kernel.Physical_Memory.Page_Size,
+                  Main_Top => Main_Base
+                    + Interfaces.Unsigned_64 (Kernel.CPUs.Main_Stack_Pages)
+                      * Kernel.Physical_Memory.Page_Size);
+               Hart_Start_RC := Arch.SBI.Hart_Start
+                 (Raw_Hart_Id => Kernel.CPUs.Raw_Id (Idx),
+                  Entry_PA    => Arch.Kernel_Virt_To_Phys
+                    (Interfaces.Unsigned_64
+                      (System.Storage_Elements.To_Integer
+                        (Secondary_Boot_Sym'Address))),
+                  Opaque      => Kernel.CPUs.Info_Block_PA (Idx));
+               if Hart_Start_RC /= 0 then
+                  Board.UART.Put ("hart ");
+                  Board.UART.Put_Decimal (H);
+                  Board.UART.Put_Line (" start failed");
+               end if;
+            else
+               Board.UART.Put ("hart ");
+               Board.UART.Put_Decimal (H);
+               Board.UART.Put_Line (" stack allocation failed");
+            end if;
+         end;
+      end loop;
+
       if Kernel.Tasks.Kernel_Stack_Top (Init_Task) /= 0 then
          Arch.Traps.Set_Kernel_Trap_Stack
            (Arch.Phys_To_Virt (Kernel.Tasks.Kernel_Stack_Top (Init_Task)));

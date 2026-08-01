@@ -20,6 +20,14 @@ package Kernel.Physical_Memory is
      (Result : out Status;
       Frame  : out U64);
 
+   --  Bump-only contiguous run (never deallocated; SMP per-hart
+   --  kernel stacks at boot).  Skips the free list so the run is
+   --  guaranteed contiguous; fails when the bump region is exhausted.
+   procedure Allocate_Contiguous
+     (Pages       : Natural;
+      Result      : out Status;
+      First_Frame : out U64);
+
    procedure Deallocate_Frame
      (Frame  : U64;
       Result : out Status);

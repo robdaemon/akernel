@@ -16,6 +16,7 @@
    W^X kernel address space. */
 
 .equ KERNEL_DELTA, 0xFFFFFFFF00000000  /* KERNEL_VIRT_BASE - 0x80200000 */
+.equ PHYSMAP_BASE, 0xFFFFFFC000000000  /* Arch.Physmap_Base */
 
 .section .text.boot, "ax"
 .global _start
@@ -117,6 +118,7 @@ _start:
     lla t0, __trap_stack_top
     add t0, t0, t2
     csrw sscratch, t0
+    sd zero, -8(t0)         /* hart slot: boot hart is index 0 */
     lla t0, main
     add t0, t0, t2
     jalr ra, 0(t0)
@@ -130,14 +132,75 @@ _start:
     j .Lpark_hart
 .size _start, . - _start
 
+/* Secondary hart entry, reached via SBI HSM hart_start from the
+   primary.  Entered in S-mode with the MMU off:
+     a0 = raw hart id, a1 = PA of this hart's boot info block
+   Boot info block (Kernel.CPUs.Boot_Info, physical memory):
+     +0   trap kernel stack top PA (PMM-allocated, hart slot at -8)
+     +8   hart index (Kernel.CPUs index, not the raw hart id)
+     +16  main kernel stack top PA
+   Stacks come from the PMM, so their runtime addresses are physmap
+   VAs (PHYSMAP_BASE + PA) once the MMU is on.  The final kernel root
+   keeps one identity RX gigapage covering the kernel image so the
+   satp switch below does not fault the handful of instructions that
+   still execute at physical addresses. */
+.section .text.boot, "ax"
+.global secondary_boot
+.type secondary_boot, @function
+secondary_boot:
+    csrw sie, zero
+
+    mv   s0, a1               /* boot info block PA */
+    ld   t0, 0(s0)            /* trap stack top PA */
+    ld   t3, 8(s0)            /* hart index */
+    ld   t4, 16(s0)           /* main stack top PA */
+    sd   t3, -8(t0)           /* hart slot: this hart's index */
+    csrw sscratch, t0
+
+    /* Switch to the kernel address space.  The slot sits in the
+       trampoline page; lla still yields its physical address, which
+       the MMU-off load below reads directly. */
+    lla t1, kernel_satp_slot
+    ld t1, 0(t1)
+    csrw satp, t1
+    sfence.vma zero, zero
+
+    /* High VAs from here (identity gigapage bridged the switch);
+       PMM frames live at PHYSMAP_BASE + PA. */
+    li t2, PHYSMAP_BASE
+    add t0, t0, t2
+    csrw sscratch, t0
+    add sp, t4, t2
+    li t2, KERNEL_DELTA
+.option push
+.option norelax
+    lla gp, __global_pointer$
+    add gp, gp, t2
+.option pop
+    lla t0, trap_vector
+    add t0, t0, t2
+    csrw stvec, t0
+    lla t0, secondary_main
+    add t0, t0, t2
+    jalr ra, 0(t0)
+
+2:  wfi
+    j 2b
+.size secondary_boot, . - secondary_boot
+
 /* Trap trampoline.  This page is mapped at its kernel VMA in every
    user address space (supervisor RX, global), so satp switching keeps
-   execution valid.  Frame layout (272 bytes), built on the per-thread
+   execution valid.  Frame layout (280 bytes), built on the per-thread
    kernel stack:
      word 0..30  x1..x31 at (reg - 1) * 8   (word 1 = interrupted sp)
      word 31     sepc (offset 248), frame-authoritative
      word 32     satp (offset 256), root to return to
      word 33     pad (offset 264)
+   The word at stack_top - 8 (just above the frame) is the hart slot:
+   the index of the hart currently running on this stack.  It is
+   written by the boot asm for per-hart stacks and by the scheduler
+   every time a thread is switched in, so kernel code can always
+   recover its hart index from sscratch (riscv_current_hart).
    sscratch invariant: always holds the current thread kernel stack
    top as a physmap VA (PHYSMAP_BASE + PA; user roots map their own
    kernel stack at that VA) or a kernel VMA for the boot trap stack.
@@ -154,11 +217,11 @@ kernel_satp_slot:
 .type trap_vector, @function
 trap_vector:
     csrrw t0, sscratch, t0   /* t0 = kernel stack top, sscratch = user t0 */
-    addi  t0, t0, -272
+    addi  t0, t0, -280
     sd    t1, 40(t0)         /* user t1 (x6) */
     csrr  t1, sscratch       /* user t0 */
     sd    t1, 32(t0)         /* user t0 (x5) */
-    addi  t1, t0, 272
+    addi  t1, t0, 280
     csrw  sscratch, t1       /* sscratch = kernel stack top again */
 
     sd    x1,   0(t0)
@@ -208,11 +271,28 @@ trap_vector:
     mv    a0, t0
     call  riscv_trap_handler
 
+    /* Release the big kernel lock here, not inside the C handler:
+       the handler's return path just finished reading the old
+       thread's kernel stack, and after the unlock another hart may
+       resume that thread, whose next trap reuses the stack.  From
+       here on this path touches no stack at all. */
+    lla   t0, kernel_lock_owner
+    li    t1, -1
+    sd    t1, 0(t0)
+    lla   t0, kernel_lock_word
+    amoswap.d.rl t1, zero, (t0)
+
     /* Exit: use sscratch so a scheduled-away trap returns through the
        newly current thread kernel stack frame.  The frame is valid in
-       the current space and in the space named by its satp slot. */
+       the current space and in the space named by its satp slot.
+       trap_return is a separate global entry: a secondary hart that
+       just picked its first thread restores its context into the
+       thread kernel stack frame, points sscratch at that stack, and
+       jumps here (no trap frame of its own exists). */
+.global trap_return
+trap_return:
     csrr  t0, sscratch
-    addi  t0, t0, -272
+    addi  t0, t0, -280
     ld    t1, 256(t0)
     csrw  satp, t1
     sfence.vma zero, zero

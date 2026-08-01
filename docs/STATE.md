@@ -108,7 +108,9 @@ QEMU virt RAM base:     0x80000000
 ## Current limitations
 
 - Preemptive scheduler (100 ms user-thread timeslice); kernel itself
-  non-preemptible; small fixed process/thread tables; single hart.
+  serialized by a big kernel lock (SMP: all harts run user code in
+  parallel, kernel execution single-file; shared ready queue + IPI
+  wakeup); small fixed process/thread tables.
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is

@@ -353,7 +353,11 @@ package body Arch.MMU is
       --  - kernel image at kernel VAs: text/rodata RX, data/bss RW
       --  - physmap gigapage leaves for all of PA space up to RAM end,
       --    RW: page tables, PMM frames, initrd, DTB, MMIO devices
-      --  No identity mappings; the early boot root is abandoned.
+      --  - one identity RX gigapage over the kernel image's PA window:
+      --    secondary harts enter at physical addresses (SBI HSM, MMU
+      --    off) and need a handful of instructions to survive the
+      --    satp switch before jumping to high VAs.  The early boot
+      --    root's other identity gigapages are abandoned.
       Rx_Start : constant U64 :=
         U64 (System.Storage_Elements.To_Integer (Rx_Start_Sym'Address));
       Rx_End   : constant U64 :=
@@ -406,6 +410,15 @@ package body Arch.MMU is
          Failed := Map_Result /= Ok;
          Page := Page + Gigapage_Size;
       end loop;
+
+      --  Identity gigapage for SMP secondary entry (see above).
+      if not Failed then
+         Map_Gigapage
+           (Root, Arch.Kernel_Phys_Base - Arch.Kernel_Phys_Base mod Gigapage_Size,
+            Arch.Kernel_Phys_Base - Arch.Kernel_Phys_Base mod Gigapage_Size,
+            Kernel_RX, Map_Result);
+         Failed := Map_Result /= Ok;
+      end if;
 
       if Failed then
          Destroy_User_Address_Space (Root, Destroy_Result);

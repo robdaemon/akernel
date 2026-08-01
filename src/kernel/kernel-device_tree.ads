@@ -30,4 +30,16 @@ package Kernel.Device_Tree is
       Size       : out U64;
       IRQ_Source : out U64;
       Result     : out Status);
+   --  Enumerate CPU harts: raw hart ids (reg of each device_type =
+   --  "cpu" node under /cpus) in DTB order.  Ids has room for
+   --  Max_Cpus entries; more CPUs in the tree are silently ignored.
+   Max_Cpus : constant := 64;
+   type Cpu_Id_List is array (Natural range 0 .. Max_Cpus - 1) of U64;
+
+   procedure Enumerate_Cpus
+     (DTB    : U64;
+      Ids    : out Cpu_Id_List;
+      Count  : out Natural;
+      Result : out Status);
+
 end Kernel.Device_Tree;

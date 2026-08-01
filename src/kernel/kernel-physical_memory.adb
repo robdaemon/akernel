@@ -113,6 +113,29 @@ package body Kernel.Physical_Memory is
       Result := Ok;
    end Allocate_Frame;
 
+   procedure Allocate_Contiguous
+     (Pages       : Natural;
+      Result      : out Status;
+      First_Frame : out U64)
+   is
+   begin
+      First_Frame := 0;
+
+      if not Is_Ready then
+         Result := Not_Initialized;
+         return;
+      end if;
+
+      if Next_Frame + U64 (Pages) * Page_Size > Limit then
+         Result := Out_Of_Memory;
+         return;
+      end if;
+
+      First_Frame := Next_Frame;
+      Next_Frame := Next_Frame + U64 (Pages) * Page_Size;
+      Result := Ok;
+   end Allocate_Contiguous;
+
    procedure Deallocate_Frame
      (Frame  : U64;
       Result : out Status)

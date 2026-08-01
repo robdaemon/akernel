@@ -29,9 +29,20 @@ kernel cap tables.
 5a. ~~Preemption~~ — done: 100 ms timer tick preempts running user
     threads (SPP check; kernel threads/idle stay cooperative), reusing
     blocking-syscall context machinery; `Tests/Spin` canary proves a
-    forever-spinner no longer hangs the system. SMP deferred: per-hart
-    ready queues or shared queue + lock, IPIs, per-hart timers, cap
-    table locking.
+    forever-spinner no longer hangs the system.
+5b. ~~SMP~~ — done: seL4-style big kernel lock (Kernel.Lock) taken at
+    trap entry and released by the trap trampoline itself; user code
+    runs truly in parallel. DTB /cpus enumeration drives topology
+    (metadata cap 64; per-hart kernel stacks PMM-allocated), SBI HSM
+    starts secondaries into an idle/scheduling loop on per-hart
+    stacks, wakers IPI via SBI sPI on ready-queue empty->nonempty,
+    per-hart timer arms, PLIC external handling stays on the boot
+    hart. Two SMP invariants burned in: a hart must never idle on a
+    blocked thread's kernel stack (another hart can resume it and the
+    next trap clobbers the sleeper's frames), and the BKL must be
+    released only after the handler's C stack is fully popped (the
+    trampoline does it). 89/89 directed PASS at QEMU_SMP 1/2/4/8,
+    fuzz failures=0.
 5. ~~Fuzzer~~ — done: grant-list spawn replaced grant_mask outright
    (syscall 8 a2 = grant count; entries in spawner's IPC buffer,
    rights-subset enforced); end-to-end echo (badge stamping,
@@ -128,7 +139,8 @@ Commit between each milestone.
 
 - Plain `send`, register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
-- SMP: per-hart scheduling, IPIs, cap-table/endpoint locking.
+- Finer-grained kernel locking / per-hart runqueues if hart counts
+  grow (BKL serializes all kernel execution; fine at hobby scale).
 - IOMMU, tasking runtime; virtio/other DTB device enumeration as
   drivers arrive.
 

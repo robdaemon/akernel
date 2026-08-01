@@ -1,6 +1,6 @@
 with System;
+with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
-with Arch;
 with Arch.MMU;
 with Arch.SBI;
 with Board.Interrupts;
@@ -8,8 +8,10 @@ with Board.PLIC;
 with Board.UART;
 with Kernel.Boot_Files;
 with Kernel.Capabilities;
+with Kernel.CPUs;
 with Kernel.Interrupts;
 with Kernel.IPC;
+with Kernel.Lock;
 with Kernel.Memory;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
@@ -20,6 +22,7 @@ with Kernel.Tasks;
 
 package body Arch.Traps is
    use type Arch.MMU.Status;
+   use type Kernel.CPUs.CPU_Index;
    use type Kernel.IPC.Status;
    use type Kernel.Processes.Status;
    use type Kernel.Notifications.Status;
@@ -35,6 +38,9 @@ package body Arch.Traps is
    User_Ecall            : constant U64 := 8;
    Supervisor_Timer      : constant U64 := 5;
    Supervisor_External   : constant U64 := 9;
+   Supervisor_Software   : constant U64 := 1;
+   Sip_Software_Pending  : constant U64 := 16#002#;
+   Sip_External_Pending  : constant U64 := 16#200#;
 
    Sys_Yield             : constant U64 := 0;
    Sys_Debug_Putchar     : constant U64 := 1;
@@ -94,14 +100,36 @@ package body Arch.Traps is
    procedure Raw_Set_Trap_Stack (Stack_Top : U64)
      with Import, Convention => C, External_Name => "riscv_set_trap_stack";
 
+   procedure Raw_Enter_Via_Frame
+     with Import, Convention => C, External_Name => "riscv_enter_via_frame";
+
    procedure Advance_SEPC (Frame : System.Address)
      with Import, Convention => C, External_Name => "trap_frame_advance_sepc";
 
    function Trap_Frame_For_Stack (Stack_Top : U64) return System.Address
      with Import, Convention => C, External_Name => "trap_frame_for_stack";
 
+   type U64_Access is access all U64;
+   function To_U64_Access is new Ada.Unchecked_Conversion
+     (Source => System.Address, Target => U64_Access);
+
+   --  Hart slot: the word at kernel stack top - 8, just above the
+   --  trap frame.  riscv_current_hart reads it through sscratch, so
+   --  every stack kernel code runs on must carry this hart's index.
+   procedure Write_Hart_Slot (Stack_Top : U64) is
+   begin
+      To_U64_Access
+        (System'To_Address
+          (System.Storage_Elements.Integer_Address (Stack_Top - 8))).all
+        := U64 (Kernel.CPUs.Current);
+   end Write_Hart_Slot;
+
    procedure Set_Kernel_Trap_Stack (Stack_Top : U64) is
    begin
+      --  Keep the hart-slot invariant: sscratch may only point at
+      --  stacks whose slot names this hart (this is the single place
+      --  sscratch changes in kernel code).
+      Write_Hart_Slot (Stack_Top);
       Raw_Set_Trap_Stack (Stack_Top);
    end Set_Kernel_Trap_Stack;
 
@@ -111,18 +139,18 @@ package body Arch.Traps is
       return Hex (Natural (Nibble) + 1);
    end Hex_Digit;
 
-   procedure Put_Hex (Value : U64) is
+   procedure Put_Hex_Unsafe (Value : U64) is
       Shift : Natural := 60;
    begin
-      Board.UART.Put ("0x");
+      Board.UART.Put_Unsafe ("0x");
       loop
-         Board.UART.Put
+         Board.UART.Put_Unsafe
            ((1 => Hex_Digit
               (Interfaces.Shift_Right (Value, Shift) and 16#f#)));
          exit when Shift = 0;
          Shift := Shift - 4;
       end loop;
-   end Put_Hex;
+   end Put_Hex_Unsafe;
 
    procedure Halt is
    begin
@@ -184,7 +212,6 @@ package body Arch.Traps is
             Top : constant U64 := Kernel.Tasks.Kernel_Stack_Top (Current.all);
          begin
             if Top /= 0 then
-               Set_Kernel_Trap_Stack (Arch.Phys_To_Virt (Top));
                --  Restore context into the newly current thread's own
                --  kernel stack frame (reached through the physmap);
                --  the exit trampoline finds it via sscratch and
@@ -192,6 +219,7 @@ package body Arch.Traps is
                Kernel.Tasks.Restore_Trap_Context
                  (TCB   => Current.all,
                   Frame => Trap_Frame_For_Stack (Arch.Phys_To_Virt (Top)));
+               Set_Kernel_Trap_Stack (Arch.Phys_To_Virt (Top));
             end if;
          end;
       elsif Result /= Kernel.Scheduler.Ok then
@@ -199,20 +227,116 @@ package body Arch.Traps is
       end if;
    end Restore_Scheduled_Context;
 
+   --  Idle-time interrupt handling.  Kernel mode runs with
+   --  sstatus.SIE clear, so pending interrupts never trap while a
+   --  hart sleeps in the idle wfi; the idle loop polls them instead:
+   --  external (UART RX via PLIC, boot hart only: its context is the
+   --  only one with sources enabled) and software (IPI).  This is
+   --  also what lets a fully-blocked system (all threads waiting on
+   --  notifications/endpoints) notice device interrupts at all.
+   procedure Poll_Pending_Interrupts is
+      Pending : constant U64 := Arch.SBI.Pending;
+   begin
+      if (Pending and Sip_External_Pending) /= 0
+        and then Kernel.CPUs.Current = Kernel.CPUs.CPU_Index'First
+      then
+         Board.Interrupts.Handle_External_Interrupt;
+      end if;
+
+      if (Pending and Sip_Software_Pending) /= 0 then
+         Arch.SBI.Clear_Software_Pending;
+      end if;
+   end Poll_Pending_Interrupts;
+
+   --  Idle loop on the per-hart main stack (see Kernel.CPUs stack
+   --  accessors).  Entered with the kernel lock held and no
+   --  runnable thread; schedules threads out of the ready queue or
+   --  sleeps in wfi.  Never returns: it either loops or enters a
+   --  thread through the trap-return path.
+   procedure Idle_Loop with No_Return;
+
+   procedure Raw_Jump_To_Idle
+     (Main_Stack_Top : U64;
+      Trap_Stack_Top : U64;
+      Idle_Entry     : System.Address)
+     with Import, Convention => C,
+          External_Name => "riscv_jump_to_idle", No_Return;
+
+   procedure Idle_Loop is
+      Result : Kernel.Scheduler.Status;
+   begin
+      loop
+         Kernel.Scheduler.Yield (Result);
+         if Result = Kernel.Scheduler.Ok
+           and then Kernel.Scheduler.Current /= null
+         then
+            declare
+               Current : constant Kernel.Tasks.Thread_Access :=
+                 Kernel.Scheduler.Current;
+               Top     : constant U64 :=
+                 Kernel.Tasks.Kernel_Stack_Top (Current.all);
+            begin
+               if Top /= 0 then
+                  --  No trap frame of our own exists: restore the
+                  --  thread's saved context into its kernel stack,
+                  --  point sscratch at it, and take the trap-return
+                  --  path into user mode.
+                  Kernel.Tasks.Restore_Trap_Context
+                    (TCB   => Current.all,
+                     Frame => Trap_Frame_For_Stack
+                       (Arch.Phys_To_Virt (Top)));
+                  Set_Kernel_Trap_Stack (Arch.Phys_To_Virt (Top));
+                  Kernel.Lock.Release;
+                  Raw_Enter_Via_Frame;   --  does not return
+               end if;
+            end;
+         end if;
+
+         --  Idle: no runnable thread anywhere.  Poll interrupts and
+         --  re-arm the tick while still holding the kernel lock
+         --  (both clear their pending bits), then drop the lock so
+         --  other harts can enter the kernel, and sleep.  A waker
+         --  pushes to the ready queue and IPIs this hart; the
+         --  pending SSIP makes the wfi return immediately even if
+         --  the push lands in the release/wfi window.  Safe to
+         --  sleep here: this is the per-hart main stack, never a
+         --  resumable thread's kernel stack.
+         Poll_Pending_Interrupts;
+         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+         Kernel.Lock.Release;
+         Arch.SBI.Wait_For_Interrupt;
+         Kernel.Lock.Acquire;
+      end loop;
+   end Idle_Loop;
+
    procedure Schedule_Saved_Context
      (Frame  : System.Address;
       Result : out Kernel.Scheduler.Status)
    is
    begin
-      loop
-         Kernel.Scheduler.Yield (Result);
-         exit when Result /= Kernel.Scheduler.Queue_Empty
-           and then (Result /= Kernel.Scheduler.Ok
-                     or else Kernel.Scheduler.Current /= null);
-         Arch.SBI.Wait_For_Interrupt;
-      end loop;
+      Kernel.Scheduler.Yield (Result);
+      if Result /= Kernel.Scheduler.Queue_Empty
+        and then (Result /= Kernel.Scheduler.Ok
+                  or else Kernel.Scheduler.Current /= null)
+      then
+         Restore_Scheduled_Context (Frame, Result);
+         return;
+      end if;
 
-      Restore_Scheduled_Context (Frame, Result);
+      --  No runnable thread: abandon this kernel stack.  It belongs
+      --  to the thread that just blocked or exited, and another
+      --  hart may resume that thread while this hart sleeps; the
+      --  thread's next trap would then clobber this hart's live
+      --  frames.  Switch to the per-hart main/trap stacks and idle
+      --  there.  Does not return.
+      declare
+         Self : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+      begin
+         Raw_Jump_To_Idle
+           (Main_Stack_Top => Kernel.CPUs.Idle_Main_Stack_Top (Self),
+            Trap_Stack_Top => Kernel.CPUs.Idle_Trap_Stack_Top (Self),
+            Idle_Entry     => Idle_Loop'Address);
+      end;
    end Schedule_Saved_Context;
 
    --  Preemptive scheduling tick: only when the timer interrupted a
@@ -1380,10 +1504,17 @@ package body Arch.Traps is
       Advance_SEPC (Frame);
    end Handle_Syscall;
 
+   --  SMP: every trap (user ecall, timer, external, software, fault)
+   --  runs under the big kernel lock.  Kernel mode executes with
+   --  sstatus.SIE clear, so acquisition is flat (never recursive).
+   --  Two paths drop the lock: the trampoline itself, after this
+   --  handler returns (so nothing reads the old thread's kernel
+   --  stack once the lock is gone), and Idle_Loop around its wfi on
+   --  the safe per-hart main stack.
    procedure Riscv_Trap_Handler (Frame : System.Address)
      with Export, Convention => C, External_Name => "riscv_trap_handler";
 
-   procedure Riscv_Trap_Handler (Frame : System.Address) is
+   procedure Dispatch_Trap (Frame : System.Address) is
       Cause : constant U64 := Arch.SBI.Scause;
       Code  : constant U64 := Cause and not Interrupt_Bit;
    begin
@@ -1406,35 +1537,93 @@ package body Arch.Traps is
       then
          Board.Interrupts.Handle_External_Interrupt;
          return;
+      elsif (Cause and Interrupt_Bit) /= 0
+        and then Code = Supervisor_Software
+      then
+         --  IPI from a waker: the work is visible through the ready
+         --  queue; this hart only needs to drop the pending bit.
+         Arch.SBI.Clear_Software_Pending;
+         return;
       end if;
 
       Arch.SBI.Disable_Interrupts;
-      Board.UART.Put_Line ("unexpected trap");
-      Board.UART.Put ("  scause = ");
-      Put_Hex (Cause);
-      Board.UART.Put_Line ("");
-
-      if Kernel.Scheduler.Current /= null then
-         Board.UART.Put ("  thread = ");
-         Put_Hex (U64 (Kernel.Tasks.Thread_Id'Pos
-                   (Kernel.Tasks.Id (Kernel.Scheduler.Current.all))));
-         Board.UART.Put_Line ("");
+      if not Kernel.Lock.Try_Enter_Fatal then
+         --  Another hart is already dumping a fatal; halt quietly.
+         Kernel.Lock.Release;
+         Halt;
       end if;
 
-      Board.UART.Put ("  sepc   = ");
-      Put_Hex (Arch.SBI.Sepc);
-      Board.UART.Put_Line ("");
+      Board.UART.Put_Line_Unsafe ("unexpected trap");
+      Board.UART.Put_Unsafe ("  hart   = ");
+      Put_Hex_Unsafe (U64 (Kernel.CPUs.Current));
+      Board.UART.Put_Line_Unsafe ("");
+      Board.UART.Put_Unsafe ("  scause = ");
+      Put_Hex_Unsafe (Cause);
+      Board.UART.Put_Line_Unsafe ("");
 
-      Board.UART.Put ("  stval  = ");
-      Put_Hex (Arch.SBI.Stval);
-      Board.UART.Put_Line ("");
+      if Kernel.Scheduler.Current /= null then
+         Board.UART.Put_Unsafe ("  thread = ");
+         Put_Hex_Unsafe (U64 (Kernel.Tasks.Thread_Id'Pos
+                   (Kernel.Tasks.Id (Kernel.Scheduler.Current.all))));
+         Board.UART.Put_Line_Unsafe ("");
+      end if;
+
+      Board.UART.Put_Unsafe ("  sepc   = ");
+      Put_Hex_Unsafe (Arch.SBI.Sepc);
+      Board.UART.Put_Line_Unsafe ("");
+
+      Board.UART.Put_Unsafe ("  stval  = ");
+      Put_Hex_Unsafe (Arch.SBI.Stval);
+      Board.UART.Put_Line_Unsafe ("");
+      Kernel.Lock.Release;
       Halt;
+   end Dispatch_Trap;
+
+   procedure Riscv_Trap_Handler (Frame : System.Address) is
+   begin
+      Kernel.Lock.Acquire;
+      Dispatch_Trap (Frame);
+      --  No Release here: the trampoline releases the lock after
+      --  this handler returns (see startup.s), so the return path
+      --  above is the last read of the old thread's kernel stack
+      --  while the lock still guarantees that stack is ours.
+   exception
+      when others =>
+         if not Kernel.Lock.Try_Enter_Fatal then
+            Halt;
+         end if;
+         Board.UART.Put_Line_Unsafe ("fatal: exception in trap handler");
+         Board.UART.Put_Unsafe ("  sepc   = ");
+         Put_Hex_Unsafe (Arch.SBI.Sepc);
+         Board.UART.Put_Line_Unsafe ("");
+         Halt;
    end Riscv_Trap_Handler;
+
+   --  Secondary hart kernel entry (called from secondary_boot asm
+   --  with trap/main stacks, stvec, satp and the hart slot set up).
+   --  Joins the same idle/scheduling loop the boot hart's trap
+   --  handler drops into when no work exists; never returns.
+   procedure Secondary_Main
+     with Export, Convention => C, External_Name => "secondary_main";
+
+   procedure Secondary_Main is
+      Self : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+   begin
+      Kernel.Lock.Acquire;
+      Kernel.CPUs.Mark_Started (Self);
+      Board.UART.Put ("hart ");
+      Board.UART.Put_Decimal (Natural (Self));
+      Board.UART.Put_Line (" online");
+      Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+      Arch.SBI.Enable_Timer_And_Software_SIE;
+      Idle_Loop;
+   end Secondary_Main;
 
    procedure Initialize is
    begin
       Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
       Arch.SBI.Enable_Timer_Interrupts;
       Arch.SBI.Enable_External_Interrupts;
+      Arch.SBI.Enable_Software_Interrupts;
    end Initialize;
 end Arch.Traps;

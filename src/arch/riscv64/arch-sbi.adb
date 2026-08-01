@@ -15,6 +15,30 @@ package body Arch.SBI is
           Convention => C,
           External_Name => "riscv_enable_external_interrupts";
 
+   procedure Raw_Enable_Software_Interrupts
+     with Import,
+          Convention => C,
+          External_Name => "riscv_enable_software_interrupts";
+
+   procedure Raw_Enable_Timer_And_Software_SIE
+     with Import,
+          Convention => C,
+          External_Name => "riscv_enable_timer_software_sie";
+
+   function Raw_Pending return U64
+     with Import, Convention => C, External_Name => "riscv_read_sip";
+
+   procedure Raw_Clear_Software_Pending
+     with Import,
+          Convention => C,
+          External_Name => "riscv_clear_soft_pending";
+
+   function Raw_Hart_Start
+     (Raw_Hart_Id : U64;
+      Entry_PA    : U64;
+      Opaque      : U64) return U64
+     with Import, Convention => C, External_Name => "sbi_hart_start";
+
    procedure Raw_Disable_Interrupts
      with Import, Convention => C, External_Name => "riscv_disable_interrupts";
 
@@ -49,6 +73,29 @@ package body Arch.SBI is
    begin
       Raw_Enable_External_Interrupts;
    end Enable_External_Interrupts;
+
+   procedure Enable_Software_Interrupts is
+   begin
+      Raw_Enable_Software_Interrupts;
+   end Enable_Software_Interrupts;
+
+   procedure Enable_Timer_And_Software_SIE is
+   begin
+      Raw_Enable_Timer_And_Software_SIE;
+   end Enable_Timer_And_Software_SIE;
+
+   function Pending return U64 is (Raw_Pending);
+
+   procedure Clear_Software_Pending is
+   begin
+      Raw_Clear_Software_Pending;
+   end Clear_Software_Pending;
+
+   function Hart_Start
+     (Raw_Hart_Id : U64;
+      Entry_PA    : U64;
+      Opaque      : U64) return U64 is
+     (Raw_Hart_Start (Raw_Hart_Id, Entry_PA, Opaque));
 
    procedure Disable_Interrupts is
    begin

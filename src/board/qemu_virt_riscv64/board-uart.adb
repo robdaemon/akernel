@@ -1,5 +1,6 @@
 with Arch;
 with Board.Memory_Map;
+with System;
 
 package body Board.UART is
    use type Interfaces.Unsigned_8;
@@ -9,6 +10,21 @@ package body Board.UART is
    subtype U64 is Interfaces.Unsigned_64;
 
    Base : U64 := Arch.Phys_To_Virt (Board.Memory_Map.UART0_Base);
+
+   --  SMP: message-level print serialization.  The kernel's big lock
+   --  already serializes normal kernel prints, but fatal/panic paths
+   --  and secondary-hart boot messages can fire without it; this raw
+   --  spinlock keeps whole Put/Put_Line/Put_Hex/Put_Decimal messages
+   --  from interleaving character-by-character.  Lock order is always
+   --  kernel lock -> print lock, never the reverse.
+   Print_Lock : aliased U64 := 0
+     with Alignment => 8;
+
+   procedure Raw_Spin_Lock (Lock : System.Address)
+     with Import, Convention => C, External_Name => "riscv_spin_lock";
+
+   procedure Raw_Spin_Unlock (Lock : System.Address)
+     with Import, Convention => C, External_Name => "riscv_spin_unlock";
 
    function RBR return U64 is (Base + 0); -- receive buffer, read
    function THR return U64 is (Base + 0); -- transmit holding, write
@@ -30,36 +46,30 @@ package body Board.UART is
       Base := Arch.Phys_To_Virt (Physical_Base);
    end Set_Base;
 
-   procedure Put (S : String) is
+   procedure Unlocked_Put (S : String) is
    begin
       for C of S loop
          Mmio_Write8 (THR, Character'Pos (C));
       end loop;
-   end Put;
+   end Unlocked_Put;
 
-   procedure Put_Line (S : String) is
-   begin
-      Put (S);
-      Mmio_Write8 (THR, Character'Pos (Character'Val (10)));
-   end Put_Line;
-
-   procedure Put_Decimal (Value : Natural) is
+   procedure Unlocked_Put_Decimal (Value : Natural) is
    begin
       if Value >= 10 then
-         Put_Decimal (Value / 10);
+         Unlocked_Put_Decimal (Value / 10);
       end if;
 
       Mmio_Write8
         (THR,
          Character'Pos
            (Character'Val (Character'Pos ('0') + Value mod 10)));
-   end Put_Decimal;
+   end Unlocked_Put_Decimal;
 
-   procedure Put_Hex (Value : U64) is
+   procedure Unlocked_Put_Hex (Value : U64) is
       Hex : constant String := "0123456789abcdef";
       Shift : Natural := 60;
    begin
-      Put ("0x");
+      Unlocked_Put ("0x");
       loop
          Mmio_Write8
            (THR,
@@ -69,7 +79,52 @@ package body Board.UART is
          exit when Shift = 0;
          Shift := Shift - 4;
       end loop;
+   end Unlocked_Put_Hex;
+
+   procedure Put (S : String) is
+   begin
+      Raw_Spin_Lock (Print_Lock'Address);
+      Unlocked_Put (S);
+      Raw_Spin_Unlock (Print_Lock'Address);
+   end Put;
+
+   procedure Put_Line (S : String) is
+   begin
+      Raw_Spin_Lock (Print_Lock'Address);
+      Unlocked_Put (S);
+      Mmio_Write8 (THR, Character'Pos (Character'Val (10)));
+      Raw_Spin_Unlock (Print_Lock'Address);
+   end Put_Line;
+
+   procedure Put_Decimal (Value : Natural) is
+   begin
+      Raw_Spin_Lock (Print_Lock'Address);
+      Unlocked_Put_Decimal (Value);
+      Raw_Spin_Unlock (Print_Lock'Address);
+   end Put_Decimal;
+
+   procedure Put_Hex (Value : U64) is
+   begin
+      Raw_Spin_Lock (Print_Lock'Address);
+      Unlocked_Put_Hex (Value);
+      Raw_Spin_Unlock (Print_Lock'Address);
    end Put_Hex;
+
+   procedure Put_Unsafe (S : String) is
+   begin
+      Unlocked_Put (S);
+   end Put_Unsafe;
+
+   procedure Put_Line_Unsafe (S : String) is
+   begin
+      Unlocked_Put (S);
+      Mmio_Write8 (THR, Character'Pos (Character'Val (10)));
+   end Put_Line_Unsafe;
+
+   procedure Put_Hex_Unsafe (Value : U64) is
+   begin
+      Unlocked_Put_Hex (Value);
+   end Put_Hex_Unsafe;
 
    procedure Initialize_Interrupts is
    begin

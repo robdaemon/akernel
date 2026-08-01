@@ -378,4 +378,137 @@ package body Kernel.Device_Tree is
 
       Result := Device_Not_Found;
    end Find_Device;
+
+   procedure Enumerate_Cpus
+     (DTB    : U64;
+      Ids    : out Cpu_Id_List;
+      Count  : out Natural;
+      Result : out Status)
+   is
+      Max_Depth : constant := 16;
+      type U32_Stack is array (0 .. Max_Depth) of U32;
+      type U64_Stack is array (0 .. Max_Depth) of U64;
+      type Bool_Stack is array (0 .. Max_Depth) of Boolean;
+
+      Struct_Start : U64;
+      Struct_End   : U64;
+      Strings      : U64;
+      Cursor       : U64;
+      Token        : U32;
+      Len          : U32;
+      Name_Offset  : U32;
+      Data         : U64;
+      Depth        : Natural := 0;
+      --  Depth of the /cpus node; 0 means "not yet inside".  CPU
+      --  nodes are its direct children (Depth = Cpus_Depth + 1).
+      Cpus_Depth   : Natural := 0;
+      Is_Cpu       : Bool_Stack := (others => False);
+      Has_Reg      : Bool_Stack := (others => False);
+      Cpu_Reg      : U64_Stack := (others => 0);
+      Addr_Cells   : U32_Stack := (others => 2);
+   begin
+      Ids := (others => 0);
+      Count := 0;
+
+      if Read_BE32 (DTB) /= FDT_Magic then
+         Result := Bad_Magic;
+         return;
+      end if;
+
+      Struct_Start := DTB + U64 (Read_BE32 (DTB + 8));
+      Strings := DTB + U64 (Read_BE32 (DTB + 12));
+      Struct_End := Struct_Start + U64 (Read_BE32 (DTB + 36));
+      Cursor := Struct_Start;
+
+      while Cursor < Struct_End loop
+         Token := Read_BE32 (Cursor);
+         Cursor := Cursor + 4;
+
+         if Token = FDT_Begin_Node then
+            if Depth >= Max_Depth then
+               Result := Unsupported_Format;
+               return;
+            end if;
+
+            Addr_Cells (Depth + 1) := Addr_Cells (Depth);
+            Depth := Depth + 1;
+            Is_Cpu (Depth) := False;
+            Has_Reg (Depth) := False;
+
+            if Cpus_Depth = 0
+              and then C_String_Equals (Cursor, "cpus")
+            then
+               Cpus_Depth := Depth;
+            end if;
+
+            while Mmio_Read8 (Cursor) /= 0 loop
+               Cursor := Cursor + 1;
+            end loop;
+            Cursor := Align_4 (Cursor + 1);
+
+         elsif Token = FDT_End_Node then
+            if Depth = 0 then
+               Result := Unsupported_Format;
+               return;
+            end if;
+
+            if Cpus_Depth /= 0 and then Depth = Cpus_Depth + 1 then
+               if Is_Cpu (Depth)
+                 and then Has_Reg (Depth)
+                 and then Count < Max_Cpus
+               then
+                  Ids (Count) := Cpu_Reg (Depth);
+                  Count := Count + 1;
+               end if;
+            elsif Cpus_Depth /= 0 and then Depth = Cpus_Depth then
+               --  Leaving /cpus: all CPU nodes were direct children.
+               Result := Ok;
+               return;
+            end if;
+            Depth := Depth - 1;
+
+         elsif Token = FDT_Prop then
+            Len := Read_BE32 (Cursor);
+            Name_Offset := Read_BE32 (Cursor + 4);
+            Data := Cursor + 8;
+            Cursor := Align_4 (Data + U64 (Len));
+
+            if C_String_Equals
+              (Strings + U64 (Name_Offset), "#address-cells")
+            then
+               Addr_Cells (Depth) := Read_BE32 (Data);
+            elsif Cpus_Depth /= 0 and then Depth = Cpus_Depth + 1 then
+               if C_String_Equals
+                    (Strings + U64 (Name_Offset), "device_type")
+                 and then C_String_Equals (Data, "cpu")
+               then
+                  Is_Cpu (Depth) := True;
+               elsif C_String_Equals
+                    (Strings + U64 (Name_Offset), "reg")
+                 and then Addr_Cells (Depth - 1) in 1 .. 2
+               then
+                  Cpu_Reg (Depth) :=
+                    Read_Cells (Data, Addr_Cells (Depth - 1));
+                  Has_Reg (Depth) := True;
+               end if;
+            end if;
+
+         elsif Token = FDT_Nop then
+            null;
+         elsif Token = FDT_End then
+            exit;
+         else
+            Result := Unsupported_Format;
+            return;
+         end if;
+      end loop;
+
+      --  FDT_End without leaving /cpus (or no /cpus at all): whatever
+      --  was collected stands; an empty list is Device_Not_Found.
+      if Count > 0 then
+         Result := Ok;
+      else
+         Result := Device_Not_Found;
+      end if;
+   end Enumerate_Cpus;
 end Kernel.Device_Tree;

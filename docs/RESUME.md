@@ -7,6 +7,29 @@ locking), IOMMU, kernel introspection syscalls, plain send, register
 fast path, virtio driver (needs DTB enumeration for new devices,
 now trivial via Find_Device).
 
+SMP landed (milestone: BKL multicore). seL4-style big kernel lock:
+user code runs truly in parallel on all harts, every trap acquires
+Kernel.Lock, the trap trampoline itself releases it after the C
+handler returns. Topology from DTB /cpus (Kernel.CPUs, metadata cap
+64, per-hart kernel stacks PMM-allocated); secondaries start via SBI
+HSM into secondary_boot with a per-hart boot-info block PA as opaque
+arg; final kernel page table keeps one identity RX gigapage so the
+secondary entry survives its satp switch. Shared ready queue +
+per-hart Current; wakers IPI (SBI sPI) on empty->nonempty; per-hart
+timer arms; PLIC external handling on boot hart only (idle polls
+SEIP there). Idle never runs on a blocked thread's kernel stack:
+Schedule_Saved_Context jumps (riscv_jump_to_idle) to the per-hart
+main/trap stacks when no work exists — another hart can resume the
+blocked thread and its next trap would clobber the sleeper's frames.
+Hart identity lives at kernel-stack-top - 8 (above the 280-byte
+trap frame), read via sscratch. UART prints are message-level
+spinlocked with Put_Unsafe variants for panic paths;
+Kernel.Lock.Try_Enter_Fatal claims a single fatal dump. Makefile
+QEMU_SMP defaults to 4; 89/89 directed PASS at QEMU_SMP 1/2/4/8,
+fuzz failures=0. Userspace gotcha: Reap_Process is non-blocking, so
+the fuzz memstage test polls with Yield — UP scheduling order had
+hidden the race.
+
 DTB device enumeration landed: Kernel.Device_Tree.Find_Device walks
 the FDT matching a compatible string against each node's compatible
 string list, capturing reg (first entry, parent #address-cells/

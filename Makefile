@@ -1,6 +1,6 @@
 QEMU ?= qemu-system-riscv64
 QEMU_MEMORY ?= 4G
-QEMU_SMP ?= 1
+QEMU_SMP ?= 4
 INITRD_ADDR ?= 0x84000000
 
 KERNEL_ELF := bin/akernel.elf

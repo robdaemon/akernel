@@ -1,3 +1,5 @@
+with Kernel.CPUs;
+
 package body Kernel.Scheduler is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
@@ -10,12 +12,27 @@ package body Kernel.Scheduler is
    Tail  : Queue_Index := Queue_Index'First;
    Count : Natural range 0 .. Max_Tasks := 0;
 
-   Current_TCB : Kernel.Tasks.Thread_Access := null;
+   --  Per-hart running thread (SMP).  One global ready queue feeds
+   --  all harts; threads migrate freely.  All state is protected by
+   --  the big kernel lock (Kernel.Lock): every entry point here runs
+   --  with it held.
+   Current_TCBS : array (Kernel.CPUs.CPU_Index) of
+     Kernel.Tasks.Thread_Access := (others => null);
+
+   function My_Current return Kernel.Tasks.Thread_Access is
+     (Current_TCBS (Kernel.CPUs.Current));
+
+   procedure Set_My_Current (TCB : Kernel.Tasks.Thread_Access) is
+   begin
+      Current_TCBS (Kernel.CPUs.Current) := TCB;
+   end Set_My_Current;
 
    procedure Push
      (TCB    : Kernel.Tasks.Thread_Access;
-      Result : out Status)
+      Result : out Status;
+      Notify : Boolean := True)
    is
+      Was_Empty : constant Boolean := Count = 0;
    begin
       if TCB = null
         or else Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Dead
@@ -42,6 +59,14 @@ package body Kernel.Scheduler is
          Tail := Queue_Index'Succ (Tail);
       end if;
       Count := Count + 1;
+
+      --  Empty -> nonempty: an idle hart may be sleeping in wfi;
+      --  IPI it so it reschedules promptly.  Skipped for Yield's own
+      --  requeue (the same hart pops again immediately).
+      if Notify and then Was_Empty then
+         Kernel.CPUs.Notify_Work;
+      end if;
+
       Result := Ok;
    end Push;
 
@@ -81,7 +106,7 @@ package body Kernel.Scheduler is
       Head := Queue_Index'First;
       Tail := Queue_Index'First;
       Count := 0;
-      Current_TCB := null;
+      Current_TCBS := (others => null);
    end Initialize;
 
    procedure Add_Task
@@ -108,25 +133,25 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      Current_TCB := TCB;
-      Kernel.Tasks.Set_Queued (Current_TCB.all, False);
-      Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Running);
+      Set_My_Current (TCB);
+      Kernel.Tasks.Set_Queued (TCB.all, False);
+      Kernel.Tasks.Set_State (TCB.all, Kernel.Tasks.Running);
       Result := Ok;
    end Set_Current;
 
    function Current return Kernel.Tasks.Thread_Access is
    begin
-      return Current_TCB;
+      return My_Current;
    end Current;
 
    procedure Yield (Result : out Status) is
       Next : Kernel.Tasks.Thread_Access;
    begin
-      if Current_TCB /= null
-        and then Kernel.Tasks.State (Current_TCB.all) = Kernel.Tasks.Running
+      if My_Current /= null
+        and then Kernel.Tasks.State (My_Current.all) = Kernel.Tasks.Running
       then
-         Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Ready);
-         Push (Current_TCB, Result);
+         Kernel.Tasks.Set_State (My_Current.all, Kernel.Tasks.Ready);
+         Push (My_Current, Result, Notify => False);
          if Result /= Ok then
             return;
          end if;
@@ -134,21 +159,21 @@ package body Kernel.Scheduler is
 
       Pop (Next, Result);
       if Result = Queue_Empty then
-         if Current_TCB /= null
-           and then Kernel.Tasks.State (Current_TCB.all) = Kernel.Tasks.Running
+         if My_Current /= null
+           and then Kernel.Tasks.State (My_Current.all) = Kernel.Tasks.Running
          then
             Result := Ok;
          else
-            Current_TCB := null;
+            Set_My_Current (null);
          end if;
          return;
       elsif Result /= Ok then
          return;
       end if;
 
-      Current_TCB := Next;
-      Kernel.Tasks.Set_Queued (Current_TCB.all, False);
-      Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Running);
+      Set_My_Current (Next);
+      Kernel.Tasks.Set_Queued (My_Current.all, False);
+      Kernel.Tasks.Set_State (My_Current.all, Kernel.Tasks.Running);
       Result := Ok;
    end Yield;
 
@@ -157,26 +182,26 @@ package body Kernel.Scheduler is
       Result    : out Status)
    is
    begin
-      if Current_TCB = null then
+      if My_Current = null then
          Result := No_Current_Task;
          return;
       end if;
 
-      Kernel.Tasks.Set_State (Current_TCB.all, New_State);
-      Current_TCB := null;
+      Kernel.Tasks.Set_State (My_Current.all, New_State);
+      Set_My_Current (null);
       Yield (Result);
    end Block_Current;
 
    procedure Exit_Current (Result : out Status) is
    begin
-      if Current_TCB = null then
+      if My_Current = null then
          Result := No_Current_Task;
          return;
       end if;
 
-      Kernel.Tasks.Set_State (Current_TCB.all, Kernel.Tasks.Dead);
-      Kernel.Tasks.Set_Queued (Current_TCB.all, False);
-      Current_TCB := null;
+      Kernel.Tasks.Set_State (My_Current.all, Kernel.Tasks.Dead);
+      Kernel.Tasks.Set_Queued (My_Current.all, False);
+      Set_My_Current (null);
       Result := Ok;
    end Exit_Current;
 
@@ -219,9 +244,11 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      if Current_TCB = TCB then
-         Current_TCB := null;
-      end if;
+      for CPU in Current_TCBS'Range loop
+         if Current_TCBS (CPU) = TCB then
+            Current_TCBS (CPU) := null;
+         end if;
+      end loop;
 
       for I in Natural range 1 .. Count loop
          Candidate := Queue (Scan);

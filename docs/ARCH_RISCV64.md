@@ -128,3 +128,61 @@ invalid/denied instead of raising constraint errors.
   arbitrary (qemu emits reg before compatible) — capture per-node and
   decide at node close; and #size-cells = 0 is legal (modular U32
   0 .. Cells-1 wraps, walking off RAM).
+
+## SMP
+
+seL4-style big kernel lock (BKL): user threads run truly in parallel
+on all harts; every trap (ecall, timer, IPI, fault) acquires
+`Kernel.Lock` (amoswap.d.aq/.rl spinlock) and all kernel state
+(scheduler queue, cap tables, endpoints, PMM, slabs) stays
+effectively single-threaded. Kernel mode runs with sstatus.SIE
+clear, so acquisition is flat; a re-acquire by the owner hart is
+fatal.
+
+Topology: `Kernel.Device_Tree.Enumerate_Cpus` collects raw hart ids
+from /cpus; `Kernel.CPUs` maps them to dense indexes (0 = boot hart,
+metadata cap 64, per-hart kernel stacks PMM-allocated at boot).
+Secondaries start via SBI HSM `hart_start` into `secondary_boot`,
+taking a per-hart boot-info block PA as the HSM opaque arg (trap
+stack top PA, index, main stack top PA); the final kernel page table
+keeps one identity RX gigapage over the kernel image so the entry
+survives its satp switch.
+
+Hart identity: the word at kernel-stack-top - 8 (just above the
+280-byte trap frame) holds the current hart index whenever kernel
+code runs; `riscv_current_hart` reads it via sscratch. Written by
+boot asm for per-hart stacks and by `Set_Kernel_Trap_Stack` for
+thread stacks at schedule-in.
+
+Scheduling: one shared ready queue; `Current` is per-hart. A waker
+whose push takes the queue empty->nonempty sends an SBI sPI IPI to
+all started harts; the idle path clears SSIP and retries. Timers
+re-arm per hart (SBI set_timer is per-hart); PLIC external
+interrupts are serviced on the boot hart only (its PLIC context has
+the sources enabled), including from the idle poll.
+
+Two invariants were burned in debugging (both invisible on UP):
+
+1. Never idle on a blocked thread's kernel stack. The blocked
+   thread's context is saved and the stack looks free, but another
+   hart can wake and resume that thread; the thread's next trap runs
+   the C handler on the same stack and clobbers the sleeping hart's
+   live frames. So when no work exists the trap handler jumps
+   (`riscv_jump_to_idle`) to the per-hart main/trap stacks and the
+   idle loop (poll, re-arm timer, drop BKL, wfi, re-acquire, retry)
+   runs there, identical to the secondary entry loop.
+2. Release the BKL only after the C stack is fully popped. The
+   handler's return path reads the old thread's kernel stack; an
+   earlier release lets another hart resume that thread and clobber
+   the bytes under the in-flight `ret`. So the trampoline itself
+   stores Nobody into the owner word and does the release-ordered
+   unlock as the first step of the exit sequence, after
+   `riscv_trap_handler` returns; only paths that never return
+   through the trampoline (idle loop, fatal dumps) call
+   `Kernel.Lock.Release` themselves.
+
+Panic discipline: `Board.UART` prints are message-level spinlocked;
+panic paths use the `Put_Unsafe` variants (a fault mid-print would
+otherwise deadlock diagnostics) and claim a single fatal dump via
+`Kernel.Lock.Try_Enter_Fatal` (non-blocking: a nested trap during a
+dump must not spin on the dump lock).
