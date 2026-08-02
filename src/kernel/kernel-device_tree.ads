@@ -16,6 +16,10 @@ package Kernel.Device_Tree is
       Base   : out U64;
       Size   : out U64);
 
+   --  FDT header totalsize field: whole DTB extent in bytes
+   --  (reservation against the PMM, userspace exposure).
+   function Total_Size (DTB : U64) return U64;
+
    --  Finds the first node whose compatible string list contains an
    --  entry exactly equal to Compatible. Returns the first reg entry
    --  (Base/Size, interpreted with the parent node's address/size

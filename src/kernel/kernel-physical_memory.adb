@@ -19,6 +19,16 @@ package body Kernel.Physical_Memory is
    Free_List_Count : U64 := 0;
    Is_Ready        : Boolean := False;
 
+   type Reserved_Range is record
+      Base  : U64;
+      Last  : U64;  --  exclusive
+   end record;
+
+   type Reserved_Array is array (1 .. Max_Reserved) of Reserved_Range;
+
+   Reserved       : Reserved_Array := (others => (0, 0));
+   Reserved_Count : Natural := 0;
+
    function Align_Up (Value : U64; Alignment : U64) return U64 is
    begin
       return ((Value + Alignment - 1) / Alignment) * Alignment;
@@ -80,6 +90,57 @@ package body Kernel.Physical_Memory is
       Result := Ok;
    end Initialize;
 
+   procedure Reserve
+     (Base   : U64;
+      Length : U64;
+      Result : out Status)
+   is
+      First_Page : constant U64 := Base - Base mod Page_Size;
+      Last_Page  : constant U64 := Align_Up (Base + Length, Page_Size);
+   begin
+      if Length = 0 then
+         Result := Ok;
+         return;
+      end if;
+
+      if Reserved_Count = Max_Reserved then
+         Result := Too_Many_Ranges;
+         return;
+      end if;
+
+      Reserved_Count := Reserved_Count + 1;
+      Reserved (Reserved_Count) := (First_Page, Last_Page);
+      Result := Ok;
+   end Reserve;
+
+   --  Advance Candidate past any reserved range overlapping the run
+   --  [Candidate, Candidate + Pages * Page_Size). Restarts the scan
+   --  after each skip; reserved ranges need not be sorted.
+   function Skip_Reserved (Candidate : U64; Pages : U64) return U64 is
+      Result_Candidate : U64 := Candidate;
+      Run_Last         : U64;
+      Restart          : Boolean;
+   begin
+      loop
+         Run_Last := Result_Candidate + Pages * Page_Size;
+         Restart := False;
+
+         for R in 1 .. Reserved_Count loop
+            if Result_Candidate < Reserved (R).Last
+              and then Run_Last > Reserved (R).Base
+            then
+               Result_Candidate := Reserved (R).Last;
+               Restart := True;
+               exit;
+            end if;
+         end loop;
+
+         exit when not Restart;
+      end loop;
+
+      return Result_Candidate;
+   end Skip_Reserved;
+
    procedure Allocate_Frame
      (Result : out Status;
       Frame  : out U64)
@@ -103,6 +164,8 @@ package body Kernel.Physical_Memory is
          return;
       end if;
 
+      Next_Frame := Skip_Reserved (Next_Frame, 1);
+
       if Next_Frame + Page_Size > Limit then
          Result := Out_Of_Memory;
          return;
@@ -125,6 +188,8 @@ package body Kernel.Physical_Memory is
          Result := Not_Initialized;
          return;
       end if;
+
+      Next_Frame := Skip_Reserved (Next_Frame, U64 (Pages));
 
       if Next_Frame + U64 (Pages) * Page_Size > Limit then
          Result := Out_Of_Memory;

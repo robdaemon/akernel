@@ -14,6 +14,11 @@ package Kernel.Initrd is
       Not_Found,
       Bad_CPIO);
 
+   --  Whole image extent (akrd header + cpio payload) from the
+   --  image header; used to reserve the initrd frames against the
+   --  PMM.
+   function Image_Length return U64;
+
    procedure Find
      (Name   : String;
       Result : out Status;

@@ -85,6 +85,11 @@ package body Kernel.Device_Tree is
       return Value;
    end Read_Cells;
 
+   function Total_Size (DTB : U64) return U64 is
+   begin
+      return U64 (Read_BE32 (DTB + 4));
+   end Total_Size;
+
    procedure Discover_Memory
      (DTB    : U64;
       Result : out Status;

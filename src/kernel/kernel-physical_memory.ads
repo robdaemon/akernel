@@ -9,12 +9,25 @@ package Kernel.Physical_Memory is
      (Ok,
       Out_Of_Memory,
       Invalid_Range,
-      Not_Initialized);
+      Not_Initialized,
+      Too_Many_Ranges);
 
    procedure Initialize
      (First_Free : U64;
       Last_Byte  : U64;
       Result     : out Status);
+
+   --  Reserve a physical range against future allocation (initrd,
+   --  DTB, firmware). Call after Initialize, before allocations
+   --  reach the range. Bounds are rounded to whole pages; the bump
+   --  allocator skips reserved pages, so they never enter the free
+   --  list either. Up to Max_Reserved ranges.
+   Max_Reserved : constant := 8;
+
+   procedure Reserve
+     (Base   : U64;
+      Length : U64;
+      Result : out Status);
 
    procedure Allocate_Frame
      (Result : out Status;

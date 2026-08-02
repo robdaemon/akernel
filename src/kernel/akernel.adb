@@ -443,6 +443,24 @@ begin
         (First_Free => First_Free,
          Last_Byte  => Memory_Base + Memory_Size,
          Result     => PMM_Result);
+
+      --  Keep the initrd image and the DTB out of the allocator:
+      --  both live above the kernel image in RAM and would
+      --  otherwise be handed out as ordinary frames.
+      if PMM_Result = Kernel.Physical_Memory.Ok then
+         Kernel.Physical_Memory.Reserve
+           (Base   => 16#8400_0000#,
+            Length => Kernel.Initrd.Image_Length,
+            Result => PMM_Result);
+      end if;
+
+      if PMM_Result = Kernel.Physical_Memory.Ok then
+         Kernel.Physical_Memory.Reserve
+           (Base   => Board.Device_Tree.Boot_DTB_Physical_Address,
+            Length => Kernel.Device_Tree.Total_Size
+              (Board.Device_Tree.Boot_DTB_Physical_Address),
+            Result => PMM_Result);
+      end if;
    end if;
 
    if PMM_Result = Kernel.Physical_Memory.Ok then

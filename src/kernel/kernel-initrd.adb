@@ -36,6 +36,11 @@ package body Kernel.Initrd is
       return Value + ((4 - Value mod 4) mod 4);
    end Align_4;
 
+   function Image_Length return U64 is
+   begin
+      return Header_Size + Read_LE64 (Initrd_Base + 8);
+   end Image_Length;
+
    function Hex_Value (C : U8) return U32 is
    begin
       if C >= Character'Pos ('0') and then C <= Character'Pos ('9') then
