@@ -84,6 +84,7 @@ run: all
 	  -nographic \
 	  -kernel $(KERNEL_ELF) \
 	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
+	  -global virtio-mmio.force-legacy=false \
 	  -device virtio-rng-device
 
 clean: clean-kernel clean-userspace clean-initrd

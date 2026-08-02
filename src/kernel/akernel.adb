@@ -474,8 +474,11 @@ begin
       end if;
 
       if PMM_Result = Kernel.Physical_Memory.Ok then
+         --  Boot_DTB_Physical_Address returns a physmap VA despite
+         --  its name; the reservation needs the true PA.
          Kernel.Physical_Memory.Reserve
-           (Base   => Board.Device_Tree.Boot_DTB_Physical_Address,
+           (Base   => Board.Device_Tree.Boot_DTB_Physical_Address
+              - Arch.Physmap_Base,
             Length => Kernel.Device_Tree.Total_Size
               (Board.Device_Tree.Boot_DTB_Physical_Address),
             Result => PMM_Result);
@@ -598,9 +601,9 @@ begin
          elsif DTB_Result = Kernel.Device_Tree.Ok then
             --  Expose the DTB itself as boot file "dtb" so init can
             --  enumerate devices without kernel-side policy.
+            --  Boot_DTB_Physical_Address is already a physmap VA.
             Kernel.Boot_Files.Add_DTB
-              (Base   => Arch.Phys_To_Virt
-                 (Board.Device_Tree.Boot_DTB_Physical_Address),
+              (Base   => Board.Device_Tree.Boot_DTB_Physical_Address,
                Length => Kernel.Device_Tree.Total_Size
                  (Board.Device_Tree.Boot_DTB_Physical_Address),
                Result => Files_Result);

@@ -445,7 +445,11 @@ package body Arch.Traps is
             Physical => Region.Physical_Base + Offset
               + Page * Arch.MMU.Page_Size,
             Flags    => Arch.MMU.User_RW,
-            Result   => Map_Result);
+            Result   => Map_Result,
+            --  Device frames are never PMM-owned: borrowed, so AS
+            --  teardown and mem_unmap never return them to the
+            --  allocator (and mem_unmap accepts them).
+            Borrowed => True);
 
          if Map_Result /= Arch.MMU.Ok then
             Trap_Frame_Set_A0 (Frame, 1);

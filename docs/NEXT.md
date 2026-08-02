@@ -132,6 +132,39 @@ Next candidates (order open):
     `Board.PLIC.Set_Base`, `Board.Interrupts.Initialize (source)`),
     board constants are fallback defaults. 89/89 directed PASS, fuzz
     failures=0.
+16. ~~Device plumbing~~ — done: PMM reserved ranges (initrd, DTB —
+    latent clobber fix); `Kernel.Devices` dynamic MMIO/IRQ objects on
+    a PMM slab (boot UART migrated, IRQ finalizer unregisters the
+    source); syscalls 23/24/25 io_map / irq_create / mem_object_pa,
+    gated by the `device_resource` Kernel_Object cap (Manage right,
+    init only); DTB exposed as pseudo boot file "dtb"; Map_MMIO now
+    maps borrowed (device frames never reach the PMM). 93/93
+    directed PASS, fuzz failures=0.
+17. ~~Virtio-rng end-to-end~~ — done: `userspace/virtio` Alire lib
+    crate (MMIO register level generic over Reg_Read/Reg_Write,
+    split-ring virtqueues as flat volatile array overlays — record
+    Pack is unreliable on volatile types); init's device manager
+    (Device_Tree userspace FDT walker over the mapped "dtb" file +
+    Device_Manager parsing `System/Drivers` lines `driver
+    <compatible> <path> <probe> <class>`, virtio probe = device id
+    @0x08) spawns Drivers/VirtioRng with console/mmio/irq handles
+    1..3; driver runs a 16-byte entropy request through a 4-page DMA
+    object (mem_object_pa for device-side addresses). QEMU virt
+    exposes 8 virtio-mmio slot nodes, one populated; probing
+    tolerates the empties. qemu needs
+    `-global virtio-mmio.force-legacy=false` (mmio defaults to the
+    v1 legacy interface otherwise). 94/94 directed PASS at QEMU_SMP
+    1/4/8, fuzz failures=0.
+
+Next candidates (order open):
+
+18. Virtio-blk driver + block protocol: `System/Drivers` line
+    `driver virtio,mmio Drivers/VirtioBlk virtio 2`, IRQ-driven
+    (irq cap at handle 3, ntfn-bound), read/write requests over an
+    endpoint; then a block-backed volume on the file server.
+19. Retire the uart/mmio + uart/irq bootinfo tokens onto the generic
+    devmgr path (`driver ns16550a Drivers/Serial none 0`), making
+    Drivers/Serial an ordinary spawned driver.
 
 Commit between each milestone.
 
@@ -141,8 +174,7 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- IOMMU, tasking runtime; virtio/other DTB device enumeration as
-  drivers arrive.
+- IOMMU, tasking runtime; PCI virtio transport, virtio-gpu.
 
 ## Start by reading
 

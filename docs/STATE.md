@@ -79,6 +79,8 @@ src/arch/riscv64/               RISC-V64 arch code
 src/board/qemu_virt_riscv64/    QEMU virt board/platform code
 userspace/rts/akernel/          user-mode Ada syscall/RTS scaffold
 userspace/init|serial|fuzz/     standalone Alire projects
+userspace/virtio/               virtio lib crate (MMIO + virtqueues)
+userspace/virtio_rng/           virtio-rng driver (pins the lib)
 initrd/                         generated initrd root/output
 tools/mkinitrd.py               wraps cpio in AKRD header
 docs/                           this file + topic docs
@@ -120,5 +122,10 @@ QEMU virt RAM base:     0x80000000
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime +
   stubs); initrd load address fixed.
 - UART/PLIC bases and the UART IRQ source come from DTB discovery
-  (board constants as fallback); other devices (virtio etc.) are not
-  enumerated yet.
+  (board constants as fallback); all other devices are enumerated
+  by init's device manager from the DTB (exposed as the "dtb" boot
+  file) and the System/Drivers database, with per-instance MMIO/IRQ
+  caps minted via io_map/irq_create (device_resource authority).
+  virtio-mmio devices run as user-mode drivers (virtio-rng live).
+- The PMM honors reserved ranges (initrd, DTB); mem_object_pa
+  exposes memory-object frame PAs for DMA.

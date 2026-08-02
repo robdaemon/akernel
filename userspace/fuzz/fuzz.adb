@@ -180,8 +180,8 @@ begin
    --  Directed cases first.
 
    --  Unknown syscall numbers must return Failed.
-   Status := Raw_Ecall (Number => 23);
-   Check (Status = Failed, "unknown syscall 23 rejected");
+   Status := Raw_Ecall (Number => 200);
+   Check (Status = Failed, "unknown syscall 200 rejected");
    Status := Raw_Ecall
      (Number => 255, A0 => 1, A1 => 2, A2 => 3,
       A3 => 4, A4 => 5, A5 => 6);

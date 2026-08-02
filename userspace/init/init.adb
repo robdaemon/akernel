@@ -1,5 +1,6 @@
 with Interfaces;
 with Akernel_User.Syscalls;
+with Device_Manager;
 
 --  Init composes its namespace from the kernel-provided bootinfo
 --  page and composes each child's namespace from manifest grant
@@ -450,6 +451,11 @@ begin
    FS_EP := Akernel_User.Syscalls.EP_Create;
 
    Parse_Manifest;
+
+   --  Device-driven drivers after the static manifest programs:
+   --  console endpoint + file server are up, driver images resolve
+   --  as boot-file caps.
+   Device_Manager.Run (Console_EP);
 
    Akernel_User.Syscalls.Yield;
    Akernel_User.Syscalls.Debug_Put_Line ("init resumed");

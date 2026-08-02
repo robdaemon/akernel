@@ -2,10 +2,43 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list: SMP (per-hart scheduling, IPIs, cap-table
-locking), IOMMU, kernel introspection syscalls, plain send, register
-fast path, virtio driver (needs DTB enumeration for new devices,
-now trivial via Find_Device).
+NEXT.md's deferred list or the open candidates: virtio-blk (block
+protocol, IRQ-driven driver, block-backed volume on the file
+server), retiring uart/mmio + uart/irq tokens onto the generic
+devmgr path, SMP hardening, IOMMU, kernel introspection syscalls,
+plain send, register fast path.
+
+Device plumbing + first virtio driver landed: init's device manager
+enumerates the DTB itself (exposed as pseudo boot file "dtb", FDT
+walker in userspace Device_Tree) and matches nodes against the
+System/Drivers database (`driver <compatible> <path> <probe>
+<class>`; virtio probe compares the device id @0x08). Kernel side:
+Kernel.Devices dynamic MMIO/IRQ objects on a PMM slab (boot UART
+migrated off statics; IRQ finalizer unregisters the source),
+syscalls 23/24/25 io_map / irq_create / mem_object_pa gated by the
+"device_resource" Kernel_Object cap (Manage, init only), PMM
+reserved ranges for the initrd and DTB (latent clobber: the bump
+allocator would eventually have handed out both). Map_MMIO maps
+borrowed now (device frames were AS-owned — teardown would have
+gifted them to the PMM, and mem_unmap refused them). The virtio
+lib (userspace/virtio Alire crate, no RTS deps: MMIO register level
+generic over Reg_Read/Reg_Write, split-ring virtqueues as flat
+volatile array overlays) backs Drivers/VirtioRng, spawned by the
+devmgr with console/mmio/irq at handles 1..3; 16-byte entropy
+request over a 4-page DMA object with per-page PAs from
+mem_object_pa. 94/94 directed PASS at QEMU_SMP 1/4/8, fuzz
+failures=0.
+
+Gotchas burned: (1) Pack on volatile record types is advisory —
+field offsets shifted and used-ring reads landed one element late;
+ring overlays are flat arrays with explicit word offsets now.
+(2) Board.Device_Tree.Boot_DTB_Physical_Address returns a physmap
+VA despite its name (double Phys_To_Virt gave a garbage boot-file
+base and a no-op DTB reservation). (3) qemu's virtio-mmio transport
+defaults to the legacy v1 interface; the run target passes
+-global virtio-mmio.force-legacy=false. (4) qemu virt emits 8
+virtio-mmio slot nodes (irq 1..8, regs 0x10001000..0x10008000),
+only populated ones probe to a nonzero device id.
 
 SMP landed (milestone: BKL multicore). seL4-style big kernel lock:
 user code runs truly in parallel on all harts, every trap acquires

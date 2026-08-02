@@ -99,11 +99,23 @@ begin
       Process_Exit;
    end if;
 
-   if not Dev.Magic_Ok
-     or else Dev.Version /= 2
-     or else Dev.Device_ID /= Virtio.Device_RNG
-   then
-      Debug_Put_Line ("virtio-rng probe failed");
+   if not Dev.Magic_Ok then
+      Debug_Put_Line ("virtio-rng bad magic");
+      Process_Exit;
+   end if;
+
+   if Dev.Version = 1 then
+      Debug_Put_Line ("virtio-rng version 1 (legacy)");
+      Process_Exit;
+   end if;
+
+   if Dev.Version /= 2 then
+      Debug_Put_Line ("virtio-rng bad version");
+      Process_Exit;
+   end if;
+
+   if Dev.Device_ID /= Virtio.Device_RNG then
+      Debug_Put_Line ("virtio-rng bad device id");
       Process_Exit;
    end if;
 
