@@ -99,20 +99,17 @@ package body Virtio.Queues is
       Next   : U16;
       Word   : U32;
    begin
-      --  Walk the chain to its tail, then splice onto the free list.
+      --  Walk the chain, pushing each descriptor onto the free
+      --  list (link lives in the next half-word, valid because the
+      --  descriptor is inert once freed).
       while Cursor /= No_Desc loop
          Word := D (Cursor * 4 + 3);
          Next := (if (Word and U32 (Desc_F_Next)) /= 0
                   then U16 (Word / 16#1_0000#)
                   else No_Desc);
-         D (Cursor * 4 + 3) := 0;
+         D (Cursor * 4 + 3) := U32 (Q.Free_Head) * 16#1_0000#;
+         Q.Free_Head := Cursor;
          Q.Free_Count := Q.Free_Count + 1;
-
-         if Next = No_Desc then
-            D (Cursor * 4 + 3) := U32 (Q.Free_Head) * 16#1_0000#;
-            Q.Free_Head := Head;
-         end if;
-
          Cursor := Next;
       end loop;
    end Free;

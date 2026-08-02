@@ -12,12 +12,14 @@ MEMSTAGE_ELF := bin/userspace/memstage.elf
 ECHO_ELF := bin/userspace/echo.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
+VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
+DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver virtio_rng initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver virtio_rng virtio_blk initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd
 
@@ -50,15 +52,26 @@ fileserver:
 virtio_rng:
 	$(MAKE) -C userspace/virtio_rng
 
+virtio_blk:
+	$(MAKE) -C userspace/virtio_blk
+
+#  Test disk for the virtio-blk driver: sector 0 carries the
+#  "AKBLKIMG" signature with 0xA5 fill; every later sector s holds
+#  byte j = (s + j) mod 256. Regenerate on any layout change.
+$(DISK_IMG):
+	python3 -c "import sys; img = bytearray(b'AKBLKIMG' + bytes([0xA5] * 504)); [img.extend(bytes(((s + j) & 0xFF) for j in range(512))) for s in range(1, 2048)]; open('$(DISK_IMG)', 'wb').write(img)"
+
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng virtio_blk tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
 	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
 	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' > $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver virtio,mmio Drivers/VirtioBlk virtio 2' >> $(INITRD_ROOT)/System/Drivers
 	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
+	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
@@ -76,7 +89,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng tools/m
 $(INIT_ELF):
 	$(MAKE) -C userspace/init
 
-run: all
+run: all $(DISK_IMG)
 	$(QEMU) \
 	  -machine virt \
 	  -smp $(QEMU_SMP) \
@@ -85,7 +98,9 @@ run: all
 	  -kernel $(KERNEL_ELF) \
 	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
 	  -global virtio-mmio.force-legacy=false \
-	  -device virtio-rng-device
+	  -device virtio-rng-device \
+	  -drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
+	  -device virtio-blk-device,drive=hd0
 
 clean: clean-kernel clean-userspace clean-initrd
 

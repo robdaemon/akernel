@@ -2,11 +2,34 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: virtio-blk (block
-protocol, IRQ-driven driver, block-backed volume on the file
-server), retiring uart/mmio + uart/irq tokens onto the generic
-devmgr path, SMP hardening, IOMMU, kernel introspection syscalls,
-plain send, register fast path.
+NEXT.md's deferred list or the open candidates: virtio-blk 18b
+(block protocol endpoint + block-backed fileserver volume),
+retiring uart/mmio + uart/irq tokens onto the generic devmgr path,
+SMP hardening, IOMMU, kernel introspection syscalls, plain send,
+register fast path.
+
+Virtio-blk driver landed (18a): Drivers/VirtioBlk does IRQ-driven
+single-sector requests (3-descriptor chains: 16-byte header, data,
+status byte) against a Makefile-generated disk.img (sector 0
+"AKBLKIMG"+0xA5, sector s = byte (s+j) mod 256), self-testing
+signature/pattern reads, a write/readback round-trip, and capacity.
+Handle ABI matches the rng driver (1 console, 2 MMIO, 3 IRQ); the
+IRQ cap is bound to a thread-bound notification and the wait loop
+ACKs the device ISR and IRQ_Ack's the PLIC claim each iteration.
+
+Two bugs burned: (1) Virtio.Queues.Free zeroed descriptor words
+before reading their free-list links, corrupting the list into a
+self-loop — the third Alloc of request 2 returned No_Desc, which
+flowed into Set_Buffer as descriptor index 0xFFFF and hung the
+driver on an unhandled exception (no last-chance output in the
+light runtime; bisected with Debug_Put_Line markers). Free now
+pushes each descriptor individually. (2) Ntfn_Wait is only
+Signal-wakeable when the notification is thread-bound
+(Ntfn_Bind_Thread) — unbound, bits pile up with no waiter to wake.
+Fast-path IRQs (device completing before the first wait) left
+stale bits that masked this until a request genuinely blocked;
+then the claim landed, bits were set, and nobody woke (kernel-side
+per-claim UART trace pinned it).
 
 Device plumbing + first virtio driver landed: init's device manager
 enumerates the DTB itself (exposed as pseudo boot file "dtb", FDT

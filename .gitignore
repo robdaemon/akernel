@@ -34,3 +34,4 @@ b__*.ads
 *~
 *.swp
 .DS_Store
+disk.img
