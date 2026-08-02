@@ -169,6 +169,30 @@ akernel_sys_irq_bind_ntfn:
     ret
 .size akernel_sys_irq_bind_ntfn, . - akernel_sys_irq_bind_ntfn
 
+.global akernel_sys_io_map
+.type akernel_sys_io_map, @function
+akernel_sys_io_map:
+    li a7, 23
+    ecall
+    ret
+.size akernel_sys_io_map, . - akernel_sys_io_map
+
+.global akernel_sys_irq_create
+.type akernel_sys_irq_create, @function
+akernel_sys_irq_create:
+    li a7, 24
+    ecall
+    ret
+.size akernel_sys_irq_create, . - akernel_sys_irq_create
+
+.global akernel_sys_mem_object_pa
+.type akernel_sys_mem_object_pa, @function
+akernel_sys_mem_object_pa:
+    li a7, 25
+    ecall
+    ret
+.size akernel_sys_mem_object_pa, . - akernel_sys_mem_object_pa
+
 .global akernel_sys_mem_map_file
 .type akernel_sys_mem_map_file, @function
 akernel_sys_mem_map_file:

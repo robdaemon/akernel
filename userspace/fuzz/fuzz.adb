@@ -277,6 +277,30 @@ begin
                 A1 => Akernel_User.Syscalls.IPC_Buffer_VA,
                 A2 => 4096) = 1,
              "mem_unmap refuses owned pages");
+
+      --  mem_object_pa (syscall 25): DMA drivers read frame PAs.
+      --  Mem_Cap names a live 1-page object with Manage here.
+      declare
+         PA : constant U64 :=
+           Akernel_User.Syscalls.Mem_Object_PA (Mem_Cap, 0);
+      begin
+         Check (PA /= 0 and then PA mod 4096 = 0,
+                "mem_object_pa returns aligned frame PA");
+         Check (Akernel_User.Syscalls.Mem_Object_PA (Mem_Cap, 1) = 0,
+                "mem_object_pa out of range rejected");
+         Check (Akernel_User.Syscalls.Mem_Object_PA (16#FEED_BEEF#, 0) = 0,
+                "mem_object_pa invalid cap rejected");
+      end;
+
+      --  io_map / irq_create (syscalls 23/24): fuzz holds no
+      --  device_resource cap, so creation is refused outright.
+      Check (Akernel_User.Syscalls.IO_Map
+             (16#FEED_BEEF#, 16#1000_0000#, 4096) =
+               Akernel_User.Syscalls.Syscall_Failed,
+             "io_map without resource cap rejected");
+      Check (Akernel_User.Syscalls.IRQ_Create (16#FEED_BEEF#, 10) =
+               Akernel_User.Syscalls.Syscall_Failed,
+             "irq_create without resource cap rejected");
    end;
 
    --  RTS heap (System.Memory over memory objects): allocate /
@@ -708,7 +732,7 @@ begin
    --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
    --  constrained to printable to keep the log readable.
    while Total_Calls < Iterations loop
-      Number := Next_Random mod 23;
+      Number := Next_Random mod 26;
       if (Next_Random and 16#F#) = 0 then
          Number := Next_Random;  --  occasionally a huge syscall number
       end if;

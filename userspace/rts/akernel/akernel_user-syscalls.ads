@@ -100,6 +100,22 @@ package Akernel_User.Syscalls is
       Ntfn_Cap : U64;
       Badge    : U64) return U64;
 
+   --  Device plumbing (init holds the "device_resource" Kernel_Object
+   --  cap with Manage; every other caller is refused). IO_Map
+   --  (syscall 23) creates an MMIO_Object cap over the physical range
+   --  [Base, Base + Length) — page-aligned, at most 64 pages — and
+   --  returns its handle (Map+Read+Write+Transfer+Manage) or
+   --  Syscall_Failed. IRQ_Create (syscall 24) registers and
+   --  PLIC-enables an interrupt source and returns an IRQ_Object cap
+   --  handle (Wait+Ack+Transfer+Manage) or Syscall_Failed
+   --  (already-registered sources fail). Mem_Object_PA (syscall 25)
+   --  returns the physical address of frame Index of a memory object
+   --  (Manage right), 0 on bad cap or out of range — DMA drivers
+   --  program devices with these addresses.
+   function IO_Map (Resource : U64; Base : U64; Length : U64) return U64;
+   function IRQ_Create (Resource : U64; Source : U64) return U64;
+   function Mem_Object_PA (Cap : U64; Index : U64) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

@@ -9,7 +9,7 @@ package Kernel.Boot_Files is
    --  per initrd file, enumerated at boot and handed to init. Spawn
    --  consumes them as ELF images; the cap-based byte API lets init
    --  parse the manifest without the kernel ever parsing a path.
-   Max_Files       : constant := 16;
+   Max_Files       : constant := 24;
    Max_Name_Length : constant := 48;
 
    type Status is
@@ -24,6 +24,17 @@ package Kernel.Boot_Files is
    procedure Enumerate
      (Result : out Status;
       Count  : out Natural);
+
+   --  Append the pseudo-file "dtb": the flattened device tree
+   --  itself, exposed to init through the ordinary boot-file cap
+   --  path (read bytes, borrowed RO mapping) so userspace device
+   --  enumeration needs no new kernel mechanism. Base is the
+   --  physmap VA of the DTB; Length its FDT totalsize. Called once
+   --  at boot after Enumerate when DTB discovery succeeded.
+   procedure Add_DTB
+     (Base   : U64;
+      Length : U64;
+      Result : out Status);
 
    function File_Count return Natural;
    function File_Name (Index : Natural) return String;

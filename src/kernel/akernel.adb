@@ -20,6 +20,7 @@ with Kernel.ELF;
 with Kernel.Initrd;
 with Kernel.IPC;
 with Kernel.Interrupts;
+with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Processes;
 with Kernel.Scheduler;
@@ -151,6 +152,25 @@ procedure Akernel is
       Ack      => False,
       Transfer => True,
       Manage   => False);
+
+   --  Authority token for the device-plumbing syscalls (io_map,
+   --  irq_create): init holds the only Kernel_Object cap, listed in
+   --  bootinfo as "device_resource". The object itself is a pinned
+   --  dummy; only the kind + Manage right are checked.
+   Device_Resource_Object : aliased Kernel.Objects.Object_Header :=
+     (Count => Kernel.Objects.Pinned_Refcount);
+
+   Device_Resource_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => False,
+      Write    => False,
+      Execute  => False,
+      Map      => False,
+      Send     => False,
+      Receive  => False,
+      Wait     => False,
+      Ack      => False,
+      Transfer => False,
+      Manage   => True);
 
    Stress_Frame_Count : constant := 32;
    type Stress_Frame_Array is
@@ -575,6 +595,18 @@ begin
             Count  => Files_Count);
          if Files_Result /= Kernel.Boot_Files.Ok then
             Board.UART.Put_Line ("boot file enumeration failed");
+         elsif DTB_Result = Kernel.Device_Tree.Ok then
+            --  Expose the DTB itself as boot file "dtb" so init can
+            --  enumerate devices without kernel-side policy.
+            Kernel.Boot_Files.Add_DTB
+              (Base   => Arch.Phys_To_Virt
+                 (Board.Device_Tree.Boot_DTB_Physical_Address),
+               Length => Kernel.Device_Tree.Total_Size
+                 (Board.Device_Tree.Boot_DTB_Physical_Address),
+               Result => Files_Result);
+            if Files_Result /= Kernel.Boot_Files.Ok then
+               Board.UART.Put_Line ("dtb boot file failed");
+            end if;
          end if;
       end;
    end if;
@@ -751,6 +783,26 @@ begin
                              Boot_File_Rights,
                              Kernel.Boot_Files.File_Name (Index));
             end loop;
+
+            --  Device-plumbing authority (io_map / irq_create) at
+            --  the first handle past the boot files.
+            if Result = Kernel.Capabilities.Ok then
+               Kernel.Tasks.Insert_Cap_At
+                 (TCB    => Init_Task,
+                  Cap    => Kernel.Capabilities.Handle
+                    (Kernel.Boot_Files.File_Count + 3),
+                  Kind   => Kernel.Capabilities.Kernel_Object,
+                  Object => Device_Resource_Object'Address,
+                  Rights => Device_Resource_Rights,
+                  Badge  => 0,
+                  Result => Result);
+               Add_Bootinfo
+                 (Kernel.Capabilities.U64
+                    (Kernel.Boot_Files.File_Count + 3),
+                  Kernel.Capabilities.Kernel_Object,
+                  Device_Resource_Rights,
+                  "device_resource");
+            end if;
 
             if not Bootinfo_Broken
               and then Result = Kernel.Capabilities.Ok

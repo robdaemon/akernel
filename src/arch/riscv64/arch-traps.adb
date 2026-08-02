@@ -65,6 +65,9 @@ package body Arch.Traps is
    Sys_Ntfn_Signal       : constant U64 := 20;
    Sys_Ntfn_Bind_Thread  : constant U64 := 21;
    Sys_IRQ_Bind_Ntfn     : constant U64 := 22;
+   Sys_IO_Map            : constant U64 := 23;
+   Sys_IRQ_Create        : constant U64 := 24;
+   Sys_Mem_Object_PA     : constant U64 := 25;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1394,6 +1397,211 @@ package body Arch.Traps is
 
    --  mem_unmap (a0 = as cap, a1 = VA, a2 = length): drop borrowed
    --  memory-object mappings; frames stay with their objects.
+   --  Shared privilege check for the device-plumbing syscalls
+   --  (io_map, irq_create): the caller must present a Kernel_Object
+   --  cap with the Manage right — the "device_resource" cap the
+   --  kernel hands to init alone.
+   function Has_Device_Resource
+     (Current : Kernel.Tasks.Thread_Access;
+      Raw     : U64) return Boolean
+   is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      Cap_Handle : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+   begin
+      Decode_Handle (Raw, Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         return False;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      return Cap_Result = Kernel.Capabilities.Ok
+        and then Cap_Info.Kind = Kernel.Capabilities.Kernel_Object
+        and then Cap_Info.Rights.Manage;
+   end Has_Device_Resource;
+
+   MMIO_Device_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => True,
+      Write    => True,
+      Execute  => False,
+      Map      => True,
+      Send     => False,
+      Receive  => False,
+      Wait     => False,
+      Ack      => False,
+      Transfer => True,
+      Manage   => True);
+
+   IRQ_Device_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => False,
+      Write    => False,
+      Execute  => False,
+      Map      => False,
+      Send     => False,
+      Receive  => False,
+      Wait     => True,
+      Ack      => True,
+      Transfer => True,
+      Manage   => True);
+
+   procedure Handle_IO_Map (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Devices.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Base    : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Length  : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Dev_Result : Kernel.Devices.Status;
+      Cap_Result : Kernel.Capabilities.Status;
+      Object     : System.Address;
+      New_Cap    : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
+        or else Length = 0
+        or else Length > 64 * Arch.MMU.Page_Size
+        or else not Is_Page_Aligned (Base)
+        or else not Is_Page_Aligned (Length)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Devices.Create_MMIO (Base, Length, Dev_Result, Object);
+      if Dev_Result /= Kernel.Devices.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.MMIO_Object,
+         Object => Object,
+         Rights => MMIO_Device_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         if Kernel.Devices.Release (Object) then
+            null;
+         end if;
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_IO_Map;
+
+   procedure Handle_IRQ_Create (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Devices.Status;
+      use type Kernel.Interrupts.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Source  : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Dev_Result : Kernel.Devices.Status;
+      IRQ_Result : Kernel.Interrupts.Status;
+      Cap_Result : Kernel.Capabilities.Status;
+      Object     : System.Address;
+      Line       : Kernel.Objects.IRQ_Line_Access;
+      New_Cap    : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
+        or else Source = 0
+        or else Source >= 1024
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Devices.Create_IRQ (Source, Dev_Result, Object);
+      if Dev_Result /= Kernel.Devices.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Line := Kernel.Devices.Line_Of (Object);
+      Kernel.Interrupts.Register (Line, IRQ_Result);
+      if IRQ_Result /= Kernel.Interrupts.Ok then
+         if Kernel.Devices.Release (Object) then
+            null;
+         end if;
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Board.PLIC.Enable (Board.PLIC.Source_Id (Source));
+
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.IRQ_Object,
+         Object => Object,
+         Rights => IRQ_Device_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         if Kernel.Devices.Release (Object) then
+            null;
+         end if;
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_IRQ_Create;
+
+   procedure Handle_Mem_Object_PA (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, 0);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Cap_Info.Rights.Manage
+      then
+         Trap_Frame_Set_A0 (Frame, 0);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0
+        (Frame, Kernel.Memory.Frame_At
+          (Cap_Info.Object, Trap_Frame_Get_A1 (Frame)));
+   end Handle_Mem_Object_PA;
+
    procedure Handle_Mem_Unmap (Frame : System.Address) is
       Address_Space_Cap : Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Invalid_Handle;
@@ -1499,6 +1707,12 @@ package body Arch.Traps is
          Handle_Ntfn_Bind_Thread (Frame);
       elsif Number = Sys_IRQ_Bind_Ntfn then
          Handle_IRQ_Bind_Ntfn (Frame);
+      elsif Number = Sys_IO_Map then
+         Handle_IO_Map (Frame);
+      elsif Number = Sys_IRQ_Create then
+         Handle_IRQ_Create (Frame);
+      elsif Number = Sys_Mem_Object_PA then
+         Handle_Mem_Object_PA (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

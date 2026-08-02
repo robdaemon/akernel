@@ -87,6 +87,26 @@ package body Kernel.Boot_Files is
       Count := Boot_Files.Count;
    end Enumerate;
 
+   procedure Add_DTB
+     (Base   : U64;
+      Length : U64;
+      Result : out Status)
+   is
+   begin
+      Result := Ok;
+
+      if Count = Max_Files or else Length = 0 then
+         Result := Bad_Image;
+         return;
+      end if;
+
+      Count := Count + 1;
+      Files (Count).Valid := True;
+      Files (Count).Name_Length := 3;
+      Files (Count).Name (1 .. 3) := "dtb";
+      Files (Count).Object := (Base => Base, Length => Length);
+   end Add_DTB;
+
    function File_Count return Natural is
    begin
       return Count;
