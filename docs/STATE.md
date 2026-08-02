@@ -126,6 +126,9 @@ QEMU virt RAM base:     0x80000000
   by init's device manager from the DTB (exposed as the "dtb" boot
   file) and the System/Drivers database, with per-instance MMIO/IRQ
   caps minted via io_map/irq_create (device_resource authority).
-  virtio-mmio devices run as user-mode drivers (virtio-rng live).
+  virtio-mmio devices run as user-mode drivers (virtio-rng live;
+  virtio-blk live with a block-backed BD0 volume on the file
+  server exposing the raw device as "disk").
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
-  exposes memory-object frame PAs for DMA.
+  exposes memory-object frame PAs for DMA; spawned processes get
+  4 user stack pages.

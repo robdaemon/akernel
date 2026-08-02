@@ -15,6 +15,15 @@ with Akernel_User.Syscalls;
 --    Op_Mount    = 4   init -> server: (devlen, labellen, ci,
 --                      device ++ label chars[24]) from the manifest's
 --                      volume directive
+--    Op_Add_Block = 5  init -> server: same words as Op_Mount plus
+--                      a block-driver service endpoint cap (Send) in
+--                      cap slot 0; mounts a block-backed volume whose
+--                      single file "disk" is the raw device
+--
+--  Block volumes speak the block protocol to the driver (labels):
+--    0 info  -> (status, capacity in sectors)
+--    1 read  (sector, count<=8) + buffer memory-object cap (Manage)
+--    2 write same, buffer -> device; replies (status, 0)
 --
 --  Statuses: 0 ok, 1 not found, 2 server not ready (name table not
 --  yet pushed by init), 3 bad arguments, 4 out of range.
@@ -43,6 +52,12 @@ package Akernel_User.Files is
    Op_Open     : constant U64 := 2;
    Op_Read     : constant U64 := 3;
    Op_Mount    : constant U64 := 4;
+   Op_Add_Block : constant U64 := 5;
+
+   --  Block protocol (file server -> block driver).
+   Blk_Info  : constant U64 := 0;
+   Blk_Read  : constant U64 := 1;
+   Blk_Write : constant U64 := 2;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;

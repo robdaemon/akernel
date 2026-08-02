@@ -36,6 +36,10 @@ package body Kernel.Processes is
 
    Stack_Top : constant U64 := 16#7000_0000#;
 
+   --  User stack pages per spawned process (fuzz overflowed the
+   --  original single page with on-stack buffers).
+   Stack_Pages : constant := 4;
+
    --  ELF image handed to the loader: a byte source (physmap range
    --  or memory-object frames) + size.
    type Program_Image is record
@@ -273,6 +277,30 @@ package body Kernel.Processes is
          Destroy_Address_Space (Root);
          return;
       end if;
+
+      for I in 2 .. Stack_Pages loop
+         Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Stack_Frame);
+         if PMM_Result /= Kernel.Physical_Memory.Ok then
+            Result := Load_Failed;
+            Destroy_Address_Space (Root);
+            return;
+         end if;
+
+         Arch.MMU.Map_Page
+           (Root     => Root,
+            Virtual  => Stack_Top - U64 (I) * Arch.MMU.Page_Size,
+            Physical => Stack_Frame,
+            Flags    => Arch.MMU.User_RW,
+            Result   => MMU_Result);
+
+         if MMU_Result /= Arch.MMU.Ok then
+            Result := Load_Failed;
+            Kernel.Physical_Memory.Deallocate_Frame
+              (Stack_Frame, PMM_Result);
+            Destroy_Address_Space (Root);
+            return;
+         end if;
+      end loop;
 
       --  Per-thread IPC buffer page (docs/IPC.md): fixed user VA,
       --  kernel-allocated, zeroed to avoid cross-process data leaks,

@@ -2,11 +2,35 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: virtio-blk 18b
-(block protocol endpoint + block-backed fileserver volume),
-retiring uart/mmio + uart/irq tokens onto the generic devmgr path,
-SMP hardening, IOMMU, kernel introspection syscalls, plain send,
+NEXT.md's deferred list or the open candidates: retiring uart/mmio
++ uart/irq tokens onto the generic devmgr path, a real filesystem
+on the block device (needs a cap_delete syscall first — the blk
+driver leaks one cap-table slot per transferred buffer), SMP
+hardening, IOMMU, kernel introspection syscalls, plain send,
 register fast path.
+
+Block-backed volume landed (18b): the disk is readable end-to-end
+— fuzz does Files.Read("BD0:disk") through the file server, which
+issues sector RPCs to the virtio-blk driver over a service
+endpoint the devmgr mints per spawned driver (handle 4 Receive;
+init keeps the block instance's Send side and pushes it to the
+file server as Op_Add_Block = Op_Mount words + endpoint cap).
+Block protocol labels: 0 info -> (status, capacity), 1 read /
+2 write (sector, count<=8) + client buffer memory-object cap —
+IPC transfer copies rights verbatim, so Manage travels and the
+driver mem_object_pa's the client's frame for DMA (no mapping
+needed driver-side). The fileserver mounts BD0 (label Disk),
+exposing the raw device as the single file "disk" with a one-page
+bounce buffer and unaligned-offset support. 104/104 directed PASS
+at QEMU_SMP 1/4/8, fuzz failures=0.
+
+Latent bug burned: spawn mapped ONE 4 KiB user stack page; fuzz's
+new 512-byte on-stack buffer overflowed it (store fault at
+stack-window - 8, thread frozen mid-prologue, system then limped
+on remaining harts with PLIC handling lost on hart 0). Spawn now
+maps 4 stack pages. sepc-to-process identification trick: all
+user images link at the same base, so objdump each .elf for the
+faulting sepc — exactly one matches.
 
 Virtio-blk driver landed (18a): Drivers/VirtioBlk does IRQ-driven
 single-sector requests (3-descriptor chains: 16-byte header, data,

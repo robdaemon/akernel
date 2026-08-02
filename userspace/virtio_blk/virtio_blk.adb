@@ -10,18 +10,26 @@ with Virtio.Queues;
 --  Virtio block driver (device id 2 over the MMIO transport).
 --  Spawned by init's device manager when a virtio,mmio DTB node
 --  probes to class 2. Handle ABI (grant order): 1 = console
---  endpoint (Send), 2 = device MMIO cap, 3 = IRQ cap. Unlike the
---  rng driver, completions are IRQ-driven: the IRQ line signals a
---  fresh notification object and Ntfn_Wait blocks on it (the
---  InterruptStatus register is ACKed after every wait so the
---  level-triggered PLIC line can fire again).
+--  endpoint (Send), 2 = device MMIO cap, 3 = IRQ cap, 4 = block
+--  service endpoint (Receive). Unlike the rng driver, completions
+--  are IRQ-driven: the IRQ line signals a thread-bound notification
+--  object and Ntfn_Wait blocks on it (the InterruptStatus register
+--  is ACKed and the PLIC claim completed with IRQ_Ack after every
+--  wait so the level-triggered line can fire again).
 --
 --  Boot self-test against the generated disk image (Makefile
 --  disk.img, 2048 sectors):
 --    sector 0      = "AKBLKIMG" then 0xA5 fill
 --    sector s >= 1 = byte j of (s + j) mod 256
 --  then a write/readback round-trip on sector 3. Afterwards the
---  driver stays resident as the future block server.
+--  driver serves the block protocol on handle 4:
+--    Op 0 info:  -> (status, capacity in sectors)
+--    Op 1 read:  (sector, count<=8) + buffer memory-object cap in
+--                slot 0 (Manage right; the driver only queries its
+--                first frame's PA and DMAs straight into it)
+--    Op 2 write: same, buffer -> device
+--  Replies carry (status, 0); status 0 = ok, 1 = io error,
+--  3 = bad arguments.
 
 procedure Virtio_Blk is
    use Akernel_User.Syscalls;
@@ -35,6 +43,7 @@ procedure Virtio_Blk is
    Console_EP : constant U64 := 1;
    MMIO_Cap   : constant U64 := 2;
    IRQ_Cap    : constant U64 := 3;
+   Svc_EP     : constant U64 := 4;
 
    MMIO_VA : constant U64 := 16#5000_0000#;
    DMA_VA  : constant U64 := 16#5004_0000#;
@@ -48,6 +57,11 @@ procedure Virtio_Blk is
    --  Virtio-blk request types (virtio 1.2 §5.2).
    Req_Read  : constant Virtio.U32 := 0;
    Req_Write : constant Virtio.U32 := 1;
+
+   --  Block protocol labels (shared with System/Fileserver).
+   Op_Info  : constant U64 := 0;
+   Op_Read  : constant U64 := 1;
+   Op_Write : constant U64 := 2;
 
    ------------------------------------------------------------------
    --  Device register access over the mapped MMIO page
@@ -113,11 +127,16 @@ procedure Virtio_Blk is
    Written  : Virtio.U32;
    Ok       : Boolean;
 
-   --  Issue one single-sector request (3-descriptor chain:
-   --  header read-only, data in/out per Op, status byte writable)
-   --  and block on the IRQ notification until it completes.
-   --  Returns the device status byte (0 = OK).
-   function Do_Request (Op : Virtio.U32; Sector : U64) return U8 is
+   --  Issue one request (3-descriptor chain: header read-only,
+   --  data in/out per Op, status byte writable) and block on the
+   --  IRQ notification until it completes. Buf_PA is the physical
+   --  address of Len bytes of payload. Returns the device status
+   --  byte (0 = OK).
+   function Do_Request
+     (Op     : Virtio.U32;
+      Sector : U64;
+      Buf_PA : U64;
+      Len    : Virtio.U32) return U8 is
       H : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
       D : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
       S : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
@@ -132,7 +151,7 @@ procedure Virtio_Blk is
       Virtio.Queues.Set_Buffer (Q, H, Req_PA, 16, Device_Writes => False);
       Virtio.Queues.Chain_Next (Q, H, D);
       Virtio.Queues.Set_Buffer
-        (Q, D, Data_PA, Sector_Size,
+        (Q, D, Buf_PA, Len,
          Device_Writes => Op = Req_Read);
       Virtio.Queues.Chain_Next (Q, D, S);
       Virtio.Queues.Set_Buffer (Q, S, Req_PA + 16, 1, Device_Writes => True);
@@ -305,7 +324,7 @@ begin
    ------------------------------------------------------------------
 
    --  1. Signature sector: "AKBLKIMG" then 0xA5 fill.
-   if Do_Request (Req_Read, 0) /= 0 then
+   if Do_Request (Req_Read, 0, Data_PA, Sector_Size) /= 0 then
       Fail ("virtio-blk read sector 0 io error");
    end if;
 
@@ -335,7 +354,7 @@ begin
    end if;
 
    --  2. Pattern sector: byte j of sector s = (s + j) mod 256.
-   if Do_Request (Req_Read, 7) /= 0 then
+   if Do_Request (Req_Read, 7, Data_PA, Sector_Size) /= 0 then
       Fail ("virtio-blk read sector 7 io error");
    end if;
 
@@ -358,7 +377,7 @@ begin
       Data_Page (J) := 16#C3#;
    end loop;
 
-   if Do_Request (Req_Write, 3) /= 0 then
+   if Do_Request (Req_Write, 3, Data_PA, Sector_Size) /= 0 then
       Fail ("virtio-blk write sector 3 io error");
    end if;
 
@@ -366,7 +385,7 @@ begin
       Data_Page (J) := 0;
    end loop;
 
-   if Do_Request (Req_Read, 3) /= 0 then
+   if Do_Request (Req_Read, 3, Data_PA, Sector_Size) /= 0 then
       Fail ("virtio-blk readback sector 3 io error");
    end if;
 
@@ -390,8 +409,86 @@ begin
       Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
    end if;
 
-   --  Resident as the future block server.
-   loop
-      Yield;
-   end loop;
+   ------------------------------------------------------------------
+   --  Block service loop
+   ------------------------------------------------------------------
+
+   Akernel_User.Console.Put_Line ("virtio-blk service online");
+
+   declare
+      Sector  : U64;
+      Count   : U64;
+      Buf_Cap : U64;
+      Buf_PA  : U64;
+      Dev_St  : U8;
+   begin
+      loop
+         Result := IPC_Recv (Svc_EP);
+         if Result /= IPC_Ok then
+            Debug_Put_Line ("virtio-blk recv failed");
+            Process_Exit;
+         end if;
+
+         if Message.Label = Notification_Label then
+            --  Stray IRQ while idle: drain it so the PLIC line is
+            --  free for the next real completion.
+            ISR := Dev.Interrupt_Status;
+            if ISR /= 0 then
+               Dev.ACK_Interrupt (ISR);
+            end if;
+
+            Result := IRQ_Ack (IRQ_Cap);
+
+         elsif Message.Label = Op_Info then
+            Message.Words (0) := 0;
+            Message.Words (1) := Capacity;
+            if IPC_Reply /= IPC_Ok then
+               Debug_Put_Line ("virtio-blk reply failed");
+            end if;
+
+         elsif Message.Label = Op_Read or else Message.Label = Op_Write then
+            Sector  := Message.Words (0);
+            Count   := Message.Words (1);
+            Buf_Cap := Message.Caps (0);
+
+            if Buf_Cap = 0 or else Count = 0 or else Count > 8
+              or else Sector + Count > Capacity
+            then
+               Message.Words (0) := 3;  --  bad arguments
+               Message.Words (1) := 0;
+               if IPC_Reply /= IPC_Ok then
+                  Debug_Put_Line ("virtio-blk reply failed");
+               end if;
+            else
+               Buf_PA := Mem_Object_PA (Buf_Cap, 0);
+               if Buf_PA = 0 then
+                  Message.Words (0) := 3;
+                  Message.Words (1) := 0;
+                  if IPC_Reply /= IPC_Ok then
+                     Debug_Put_Line ("virtio-blk reply failed");
+                  end if;
+               else
+                  Dev_St := Do_Request
+                    (Op     => (if Message.Label = Op_Read
+                                then Req_Read else Req_Write),
+                     Sector => Sector,
+                     Buf_PA => Buf_PA,
+                     Len    => Virtio.U32 (Count) * Sector_Size);
+                  Message.Words (0) := (if Dev_St = 0 then 0 else 1);
+                  Message.Words (1) := 0;
+                  if IPC_Reply /= IPC_Ok then
+                     Debug_Put_Line ("virtio-blk reply failed");
+                  end if;
+               end if;
+            end if;
+
+         else
+            Message.Words (0) := 3;
+            Message.Words (1) := 0;
+            if IPC_Reply /= IPC_Ok then
+               Debug_Put_Line ("virtio-blk reply failed");
+            end if;
+         end if;
+      end loop;
+   end;
 end Virtio_Blk;

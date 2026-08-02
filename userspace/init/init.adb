@@ -173,6 +173,32 @@ procedure Init is
       end if;
    end Push_FS_Mount;
 
+   --  Send Op_Add_Block (device "BD0", label "Disk") with the blk
+   --  driver's service endpoint (Send side, transferred in cap
+   --  slot 0) so the file server mounts the block-backed volume.
+   procedure Push_Block_Mount (Blk_EP : Akernel_User.Syscalls.U64) is
+      use Akernel_User.Syscalls;
+      Dev   : constant String := "BD0";
+      Lab   : constant String := "Disk";
+      Chars : constant String := Dev & Lab;
+   begin
+      Message.Label := 5;  --  Files.Op_Add_Block
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Dev'Length);
+      Message.Words (1) := U64 (Lab'Length);
+      Message.Words (2) := 1;  --  case-insensitive
+      for P in 1 .. Chars'Length loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Chars (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (0 => Blk_EP, others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("block mount push failed");
+      end if;
+   end Push_Block_Mount;
+
    --  Push the file server's (handle -> boot-file name) table as
    --  Op_Set_Name messages, one per boot-file cap it was granted,
    --  then a zero-handle terminator.
@@ -456,6 +482,10 @@ begin
    --  console endpoint + file server are up, driver images resolve
    --  as boot-file caps.
    Device_Manager.Run (Console_EP);
+
+   if Device_Manager.Block_Service /= 0 then
+      Push_Block_Mount (Device_Manager.Block_Service);
+   end if;
 
    Akernel_User.Syscalls.Yield;
    Akernel_User.Syscalls.Debug_Put_Line ("init resumed");

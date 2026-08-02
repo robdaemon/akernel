@@ -36,6 +36,9 @@ package body Device_Manager is
 
    Console_Handle  : U64 := 0;
    Resource_Handle : U64 := 0;
+   Block_EP        : U64 := 0;
+
+   function Block_Service return U64 is (Block_EP);
    Next_Id         : U64 := First_Driver_Id;
 
    function Shl (Value : U64; Amount : Natural) return U64
@@ -221,6 +224,7 @@ package body Device_Manager is
       Image_Cap   : constant U64 := Boot_Cap (L.Path (1 .. L.Path_Len));
       Grant_Count : U64 := 0;
       IRQ_Cap     : U64;
+      Svc_EP      : U64;
       Process_Cap : U64;
       Result      : U64;
    begin
@@ -247,9 +251,24 @@ package body Device_Manager is
          Grant_Count := Grant_Count + 1;
       end if;
 
+      --  Per-instance service endpoint: init keeps the Send side,
+      --  the driver receives on handle 4 (or 3 when the node had
+      --  no interrupts — all current virtio nodes do).
+      Svc_EP := EP_Create;
+      if Svc_EP = Syscall_Failed then
+         Log ("devmgr: ep_create failed");
+         return;
+      end if;
+
+      Set_Grant (Grant_Count, Svc_EP, Right_Receive, 0);
+      Grant_Count := Grant_Count + 1;
+
       Result := Spawn (Image_Cap, Grant_Count, Process_Cap);
       if Result = Spawn_Ok and then Process_Cap /= 0 then
          Next_Id := Next_Id + 1;
+         if L.Class_Id = 2 and then Block_EP = 0 then
+            Block_EP := Svc_EP;
+         end if;
          Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
       else
          Log ("devmgr: driver spawn failed");

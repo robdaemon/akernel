@@ -67,6 +67,13 @@ procedure Fileserver is
       Label   : String (1 .. 16) := (others => Character'Val (0));
       Lab_Len : Natural := 0;
       Case_Insensitive : Boolean := False;
+      --  Block-backed volume (Op_Add_Block): the single file
+      --  "disk" is the raw device, Blk_Size bytes, served by the
+      --  block driver at Blk_EP (block protocol, see
+      --  Akernel_User.Files).
+      Is_Block : Boolean := False;
+      Blk_EP   : U64 := 0;
+      Blk_Size : U64 := 0;
    end record;
 
    Volumes : array (1 .. Max_Volumes) of Volume_Entry;
@@ -78,6 +85,12 @@ procedure Fileserver is
      File_Win_Base + Max_Files * Slot_Stride;
 
    Buf_Mapped_Cap : U64 := 0;
+
+   --  Bounce buffer for block-driver calls: one page (the block
+   --  protocol caps a request at 8 sectors = 4 KiB), transferred
+   --  with each read so the driver can DMA straight into it.
+   Blk_Buf_Cap : U64 := 0;
+   Blk_Buf_VA  : constant U64 := Buf_Win_VA + 8 * Syscalls.Page_Size;
    Buf_Bytes      : constant U64 := Files.Buf_Pages * Syscalls.Page_Size;
 
    function Shift_Right
@@ -290,6 +303,60 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Mount;
 
+   --  Op_Add_Block: like Op_Mount plus the block driver's service
+   --  endpoint cap in slot 0. Registers a block-backed volume
+   --  (single file "disk") and learns the device capacity from the
+   --  driver (Blk_Info).
+   procedure Handle_Add_Block is
+      Dev_Len : constant Natural := Natural (Syscalls.Message.Words (0));
+      Lab_Len : constant Natural := Natural (Syscalls.Message.Words (1));
+      CI      : constant Boolean := Syscalls.Message.Words (2) /= 0;
+      EP      : constant U64 := Syscalls.Message.Caps (0);
+   begin
+      if Dev_Len = 0 or else Dev_Len > 16
+        or else Lab_Len = 0 or else Lab_Len > 16
+        or else Dev_Len + Lab_Len > 24
+        or else EP = 0
+      then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      for V in Volumes'Range loop
+         if not Volumes (V).Valid then
+            Volumes (V).Valid := True;
+            Volumes (V).Dev_Len := Dev_Len;
+            Volumes (V).Lab_Len := Lab_Len;
+            Volumes (V).Case_Insensitive := CI;
+            for Pos in 0 .. Dev_Len - 1 loop
+               Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
+            end loop;
+            for Pos in 0 .. Lab_Len - 1 loop
+               Volumes (V).Label (Pos + 1) :=
+                 Unpack_Char (3, Dev_Len + Pos);
+            end loop;
+            Volumes (V).Is_Block := True;
+            Volumes (V).Blk_EP := EP;
+            Volumes (V).Blk_Size := 0;
+
+            --  Device capacity in sectors (one page = 8 sectors).
+            Syscalls.Message.Label := Files.Blk_Info;
+            Syscalls.Message.Words := (others => 0);
+            Syscalls.Message.Caps := (others => 0);
+            if Syscalls.IPC_Call (EP) = Syscalls.IPC_Ok
+              and then Syscalls.Message.Words (0) = 0
+            then
+               Volumes (V).Blk_Size := Syscalls.Message.Words (1) * 512;
+            end if;
+
+            Reply2 (Files.Status_Ok, 0);
+            return;
+         end if;
+      end loop;
+
+      Reply2 (Files.Status_Bad_Args, 0);
+   end Handle_Add_Block;
+
    procedure Handle_Set_Name is
       Handle : constant U64 := Syscalls.Message.Words (0);
       Len    : constant Natural := Natural (Syscalls.Message.Words (1));
@@ -338,6 +405,18 @@ procedure Fileserver is
          return;
       end if;
 
+      if Volumes (V).Is_Block then
+         --  Block volumes expose the raw device as "disk".
+         if Match ("disk", 4, Name (Pos .. Len),
+                   Volumes (V).Case_Insensitive)
+         then
+            Reply2 (Files.Status_Ok, Volumes (V).Blk_Size);
+         else
+            Reply2 (Files.Status_Not_Found, 0);
+         end if;
+         return;
+      end if;
+
       I := Find (Name (Pos .. Len), V);
       if I = 0 then
          Reply2 (Files.Status_Not_Found, 0);
@@ -346,6 +425,119 @@ procedure Fileserver is
 
       Reply2 (Files.Status_Ok, File_Table (I).Size);
    end Handle_Stat_Or_Open;
+
+   --  (Re)map the client read buffer when it changes.
+   function Ensure_Buf_Mapped (Buf : U64) return Boolean is
+   begin
+      if Buf = Buf_Mapped_Cap then
+         return True;
+      end if;
+
+      if Buf_Mapped_Cap /= 0 then
+         if Syscalls.Mem_Unmap
+           (Address_Space => Syscalls.Address_Space_Cap,
+            VA            => Buf_Win_VA,
+            Length        => Buf_Bytes) /= 0
+         then
+            return False;
+         end if;
+      end if;
+
+      if Syscalls.Mem_Map
+        (Address_Space => Syscalls.Address_Space_Cap,
+         Cap           => Buf,
+         VA            => Buf_Win_VA,
+         Offset        => 0,
+         Length        => Buf_Bytes,
+         Flags         => 3) /= 0
+      then
+         Buf_Mapped_Cap := 0;
+         return False;
+      end if;
+
+      Buf_Mapped_Cap := Buf;
+      return True;
+   end Ensure_Buf_Mapped;
+
+   --  Block-volume read: sector RPCs to the driver through the
+   --  bounce buffer, copied into the client buffer window.
+   procedure Handle_Block_Read
+     (V      : Natural;
+      Buf    : U64;
+      Offset : U64;
+      Length : U64)
+   is
+      Count : U64;
+      Done  : U64 := 0;
+      Pos   : U64;
+      Chunk : U64;
+      Skip  : U64;
+      NSec  : U64;
+   begin
+      if Volumes (V).Blk_Size = 0 or else Offset >= Volumes (V).Blk_Size then
+         Reply2 (Files.Status_Out_Of_Range, 0);
+         return;
+      end if;
+
+      Count := U64'Min (Length, Volumes (V).Blk_Size - Offset);
+      Count := U64'Min (Count, Buf_Bytes);
+
+      if Blk_Buf_Cap = 0 then
+         Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
+         if Blk_Buf_Cap = Syscalls.Syscall_Failed
+           or else Syscalls.Mem_Map
+             (Address_Space => Syscalls.Address_Space_Cap,
+              Cap           => Blk_Buf_Cap,
+              VA            => Blk_Buf_VA,
+              Offset        => 0,
+              Length        => Syscalls.Page_Size,
+              Flags         => 3) /= 0
+         then
+            Reply2 (Files.Status_Bad_Args, 0);
+            return;
+         end if;
+      end if;
+
+      if not Ensure_Buf_Mapped (Buf) then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      while Done < Count loop
+         Pos := Offset + Done;
+         Skip := Pos mod 512;
+         NSec := U64'Min (8, (Count - Done + Skip + 511) / 512);
+
+         Syscalls.Message.Label := Files.Blk_Read;
+         Syscalls.Message.Words (0) := Pos / 512;
+         Syscalls.Message.Words (1) := NSec;
+         Syscalls.Message.Caps := (0 => Blk_Buf_Cap, others => 0);
+
+         if Syscalls.IPC_Call (Volumes (V).Blk_EP) /= Syscalls.IPC_Ok
+           or else Syscalls.Message.Words (0) /= 0
+         then
+            Reply2 (Files.Status_Not_Found, 0);
+            return;
+         end if;
+
+         Chunk := U64'Min (NSec * 512 - Skip, Count - Done);
+
+         declare
+            Src : Byte_Array (0 .. Chunk - 1)
+              with Address => To_Address (Integer_Address
+                (Blk_Buf_VA + Skip));
+            Dst : Byte_Array (0 .. Chunk - 1)
+              with Address => To_Address (Integer_Address
+                (Buf_Win_VA + Done));
+         begin
+            Dst := Src;
+         end;
+
+         Done := Done + Chunk;
+      end loop;
+
+      Reply2 (Files.Status_Ok, Count);
+   end Handle_Block_Read;
 
    procedure Handle_Read is
       Offset : constant U64 := Syscalls.Message.Words (0);
@@ -378,6 +570,18 @@ procedure Fileserver is
          return;
       end if;
 
+      if Volumes (V).Is_Block then
+         if not Match ("disk", 4, Name (Pos .. Len),
+                       Volumes (V).Case_Insensitive)
+         then
+            Reply2 (Files.Status_Not_Found, 0);
+            return;
+         end if;
+
+         Handle_Block_Read (V, Buf, Offset, Length);
+         return;
+      end if;
+
       I := Find (Name (Pos .. Len), V);
       if I = 0 then
          Reply2 (Files.Status_Not_Found, 0);
@@ -395,33 +599,9 @@ procedure Fileserver is
          return;
       end if;
 
-      --  (Re)map the client buffer when it changes.
-      if Buf /= Buf_Mapped_Cap then
-         if Buf_Mapped_Cap /= 0 then
-            if Syscalls.Mem_Unmap
-              (Address_Space => Syscalls.Address_Space_Cap,
-               VA            => Buf_Win_VA,
-               Length        => Buf_Bytes) /= 0
-            then
-               Reply2 (Files.Status_Not_Found, 0);
-               return;
-            end if;
-         end if;
-
-         if Syscalls.Mem_Map
-           (Address_Space => Syscalls.Address_Space_Cap,
-            Cap           => Buf,
-            VA            => Buf_Win_VA,
-            Offset        => 0,
-            Length        => Buf_Bytes,
-            Flags         => 3) /= 0
-         then
-            Buf_Mapped_Cap := 0;
-            Reply2 (Files.Status_Not_Found, 0);
-            return;
-         end if;
-
-         Buf_Mapped_Cap := Buf;
+      if not Ensure_Buf_Mapped (Buf) then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
       end if;
 
       Count := U64'Min (Length, File_Table (I).Size - Offset);
@@ -454,6 +634,8 @@ begin
       --  file, then a final message with handle 0 = table complete.
       if Syscalls.Message.Label = Files.Op_Mount then
          Handle_Mount;
+      elsif Syscalls.Message.Label = Files.Op_Add_Block then
+         Handle_Add_Block;
       elsif Syscalls.Message.Label = Files.Op_Set_Name then
          if Syscalls.Message.Words (0) = 0 then
             Names_Done := True;

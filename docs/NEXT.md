@@ -178,13 +178,30 @@ Next candidates (order open):
          wakes; stale bits from fast-path IRQs masked this until a
          request truly blocked. 98/98 directed PASS at QEMU_SMP
          1/4/8, fuzz failures=0.
-    18b. Block protocol over an endpoint (read/write sector RPC
-         with a client-supplied buffer memory object, fileserver
-         Op_Read/Op_Write pattern) + block-backed volume on the
-         file server (BD0:/...).
+    18b. ~~Block protocol + block-backed volume~~ — done: devmgr
+         grants every spawned driver a fresh service endpoint at
+         handle 4 (Receive) and keeps init's Send side of the
+         class-2 (block) instance; init pushes it to the file
+         server as Op_Add_Block (Op_Mount words + endpoint cap in
+         slot 0). Block protocol labels: 0 info -> (status,
+         capacity sectors), 1 read / 2 write (sector, count<=8) +
+         buffer memory-object cap (IPC transfer copies rights
+         verbatim, so Manage travels and the driver can
+         mem_object_pa the client's frame). Fileserver mounts BD0
+         (label Disk) exposing the raw device as the single file
+         "disk": stat/open/read resolve through sector RPCs with a
+         one-page bounce buffer, including unaligned offsets.
+         Latent bug fixed: spawn allocated ONE 4 KiB user stack
+         page; fuzz overflowed it with an on-stack 512-byte buffer
+         (store fault at stack window - 8) — spawn now maps 4
+         stack pages. 104/104 directed PASS at QEMU_SMP 1/4/8,
+         fuzz failures=0.
 19. Retire the uart/mmio + uart/irq bootinfo tokens onto the generic
     devmgr path (`driver ns16550a Drivers/Serial none 0`), making
     Drivers/Serial an ordinary spawned driver.
+20. Real filesystem on the block device (FAT or custom): fileserver
+    block volumes currently expose only the raw "disk" file; blk
+    cap-slot leak per request needs a cap_delete syscall first.
 
 Commit between each milestone.
 

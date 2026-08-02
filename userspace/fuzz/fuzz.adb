@@ -366,7 +366,9 @@ begin
    declare
       FS_EP         : constant U64 := 4;  --  manifest grant order
       Manifest_Cap  : constant U64 := 5;
+      use type Interfaces.Unsigned_8;
       Buf           : array (0 .. 63) of Interfaces.Unsigned_8;
+      Big_Buf       : array (0 .. 511) of Interfaces.Unsigned_8;
       Size          : U64 := 0;
       Count         : U64 := 0;
       Status        : U64;
@@ -437,6 +439,64 @@ begin
       Status := Akernel_User.Files.Stat ("DH0:System/Manifest", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fs unknown volume rejected");
+
+      --  Block volume (BD0, virtio-blk behind Op_Add_Block): the
+      --  raw device resolves as "disk" and reads come through the
+      --  file server -> block driver RPC chain.
+      Status := Akernel_User.Files.Stat ("BD0:disk", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 2048 * 512,
+             "blk volume stat ok");
+
+      Status := Akernel_User.Files.Stat ("Disk:disk", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "blk volume label resolves");
+
+      Status := Akernel_User.Files.Open ("BD0:disk", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "blk volume open ok");
+
+      Status := Akernel_User.Files.Read
+        ("BD0:disk", 0, Buf'Address, 16, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 16;
+      declare
+         Sig : constant String := "AKBLKIMG";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Sig (I + 1)));
+         end loop;
+      end;
+      for I in 8 .. 15 loop
+         Match := Match and then Buf (I) = 16#A5#;
+      end loop;
+      Check (Match, "blk volume read signature ok");
+
+      Status := Akernel_User.Files.Read
+        ("BD0:disk", 7 * 512, Big_Buf'Address, 512, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 512;
+      for J in 0 .. 511 loop
+         Match := Match
+           and then Big_Buf (J) =
+             Interfaces.Unsigned_8 ((7 + J) mod 256);
+      end loop;
+      Check (Match, "blk volume read pattern ok");
+
+      --  Unaligned offset exercises the file server's partial-
+      --  sector copy path.
+      Status := Akernel_User.Files.Read
+        ("BD0:disk", 7 * 512 + 100, Buf'Address, 8, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      for J in 0 .. 7 loop
+         Match := Match
+           and then Buf (J) =
+             Interfaces.Unsigned_8 ((7 + 100 + J) mod 256);
+      end loop;
+      Check (Match, "blk volume unaligned read ok");
 
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap
