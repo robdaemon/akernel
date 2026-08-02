@@ -9,6 +9,7 @@ with Board.UART;
 with Kernel.Boot_Files;
 with Kernel.Capabilities;
 with Kernel.CPUs;
+with Kernel.Devices;
 with Kernel.Interrupts;
 with Kernel.IPC;
 with Kernel.Lock;
@@ -417,7 +418,8 @@ package body Arch.Traps is
          return;
       end if;
 
-      Region := To_MMIO_Region (Cap_Info.Object);
+      Region := MMIO_Region_Access
+        (Kernel.Devices.Region_Of (Cap_Info.Object));
       if Region = null
         or else VA < 16#4000_0000#
         or else VA + Length > 16#8000_0000#
@@ -489,7 +491,7 @@ package body Arch.Traps is
          return;
       end if;
 
-      Line := To_IRQ_Line (Cap_Info.Object);
+      Line := Kernel.Devices.Line_Of (Cap_Info.Object);
       if Line = null then
          Trap_Frame_Set_A0 (Frame, 1);
          Advance_SEPC (Frame);
@@ -550,7 +552,7 @@ package body Arch.Traps is
          return;
       end if;
 
-      Line := To_IRQ_Line (Cap_Info.Object);
+      Line := Kernel.Devices.Line_Of (Cap_Info.Object);
       if Line = null then
          Trap_Frame_Set_A0 (Frame, 1);
          return;
@@ -978,7 +980,7 @@ package body Arch.Traps is
          return;
       end if;
 
-      Line := To_IRQ_Line (IRQ_Info.Object);
+      Line := Kernel.Devices.Line_Of (IRQ_Info.Object);
       if Line = null then
          Trap_Frame_Set_A0 (Frame, 1);
          return;

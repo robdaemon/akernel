@@ -430,7 +430,6 @@ begin
 
    Board.UART.Set_Base (UART_Base);
    Board.PLIC.Set_Base (PLIC_Base);
-   Kernel.Boot_Resources.Initialize (UART_Base, UART_IRQ);
 
    if Devices_Found = 2 then
       Board.UART.Put_Line ("dtb devices online");
@@ -473,6 +472,10 @@ begin
      and then MMU_Result = Arch.MMU.Ok
    then
       Board.UART.Put_Line ("kernel address space online");
+
+      --  Boot device objects (uart/mmio, uart/irq) come from the
+      --  Kernel.Devices slab, so they need the PMM and the physmap.
+      Kernel.Boot_Resources.Initialize (UART_Base, UART_IRQ);
    end if;
 
    if PMM_Result = Kernel.Physical_Memory.Ok
@@ -516,8 +519,7 @@ begin
    Kernel.Tasks.Insert_Cap
      (TCB    => Bootstrap_Task,
       Kind   => Kernel.Capabilities.MMIO_Object,
-      Object => System'To_Address
-        (System.Storage_Elements.Integer_Address (UART_Base)),
+      Object => Kernel.Boot_Resources.UART_MMIO_Object,
       Rights => Console_Rights,
       Badge  => 0,
       Result => Result,
@@ -681,7 +683,7 @@ begin
      (TCB    => Init_Task,
       Cap    => 1,
       Kind   => Kernel.Capabilities.MMIO_Object,
-      Object => Kernel.Boot_Resources.UART_MMIO_Object'Address,
+      Object => Kernel.Boot_Resources.UART_MMIO_Object,
       Rights => MMIO_Map_Rights,
       Badge  => 0,
       Result => Result);
@@ -690,7 +692,7 @@ begin
      (TCB    => Init_Task,
       Cap    => 2,
       Kind   => Kernel.Capabilities.IRQ_Object,
-      Object => Kernel.Boot_Resources.UART_IRQ_Object'Address,
+      Object => Kernel.Boot_Resources.UART_IRQ_Object,
       Rights => IRQ_Wait_Ack_Rights,
       Badge  => 0,
       Result => Result);
@@ -766,7 +768,7 @@ begin
    Kernel.Interrupts.Initialize;
    Kernel.Processes.Initialize;
    Kernel.Interrupts.Register
-     (Kernel.Boot_Resources.UART_IRQ_Object'Access, IRQ_Result);
+     (Kernel.Boot_Resources.UART_IRQ_Line, IRQ_Result);
 
    Kernel.Scheduler.Initialize;
    Kernel.Scheduler.Set_Current

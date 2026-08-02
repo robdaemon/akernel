@@ -19,6 +19,11 @@ package Kernel.Interrupts is
      (Line   : not null Kernel.Objects.IRQ_Line_Access;
       Result : out Status);
 
+   --  Drop the line from the source registry when its object is
+   --  finalized (dynamic IRQ objects, Kernel.Devices).
+   procedure Unregister
+     (Line : not null Kernel.Objects.IRQ_Line_Access);
+
    procedure Deliver
      (Source  : U64;
       Claimed : out Boolean);

@@ -62,6 +62,14 @@ package body Kernel.Interrupts is
       end if;
    end Register;
 
+   procedure Unregister (Line : not null Kernel.Objects.IRQ_Line_Access) is
+      Index : constant Natural := Natural (Line.Source);
+   begin
+      if Index < Max_Sources and then Lines (Index) = Line then
+         Lines (Index) := null;
+      end if;
+   end Unregister;
+
    procedure Deliver
      (Source  : U64;
       Claimed : out Boolean)
