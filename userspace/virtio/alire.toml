@@ -1,0 +1,13 @@
+name = "akernel_virtio"
+description = "akernel virtio device library (MMIO transport, virtqueues)"
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+tags = []
+
+project-files = ["virtio.gpr"]
+
+[[depends-on]]
+gnat_riscv64_elf = "*"

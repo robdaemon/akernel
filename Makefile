@@ -11,12 +11,13 @@ SPIN_ELF := bin/userspace/spin.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
 ECHO_ELF := bin/userspace/echo.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
+VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver virtio_rng initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd
 
@@ -46,13 +47,18 @@ echo:
 fileserver:
 	$(MAKE) -C userspace/fileserver
 
+virtio_rng:
+	$(MAKE) -C userspace/virtio_rng
+
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
 	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
+	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' > $(INITRD_ROOT)/System/Drivers
+	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
@@ -77,7 +83,8 @@ run: all
 	  -m $(QEMU_MEMORY) \
 	  -nographic \
 	  -kernel $(KERNEL_ELF) \
-	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR)
+	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
+	  -device virtio-rng-device
 
 clean: clean-kernel clean-userspace clean-initrd
 
