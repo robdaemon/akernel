@@ -4,8 +4,11 @@ with Akernel_User.Syscalls;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
 
---  Console server: holds the UART MMIO cap and the Receive cap on
---  the init-minted console endpoint; clients print through
+--  Console server, spawned by init's device manager as an ordinary
+--  driver (`driver ns16550a Drivers/Serial none 0`): class 0 gets
+--  the Receive cap on the init-minted console endpoint at handle 1,
+--  the UART MMIO cap at handle 2 and the UART IRQ cap at handle 3
+--  (the generic driver handle ABI). Clients print through
 --  Akernel_User.Streams / Akernel_User.Console (write ops arrive as
 --  stream-protocol messages). Writes are line-atomic: bytes
 --  accumulate in a per-client buffer (keyed by the console cap
@@ -23,16 +26,16 @@ procedure Serial is
    use type U64;
    use type Akernel_User.MMIO.U8;
 
-   --  Grant order follows the manifest token order.
-   UART_MMIO_Cap : constant U64 := 1;
-   UART_IRQ_Cap  : constant U64 := 2;
-   Console_EP    : constant U64 := 3;
-   UART_Base     : constant Akernel_User.MMIO.U64 := 16#5000_0000#;
-   Page_Size     : constant U64 := 4096;
+   --  Grant order follows the devmgr driver handle ABI.
+   Console_EP : constant U64 := 1;
+   MMIO_Cap   : constant U64 := 2;
+   IRQ_Cap    : constant U64 := 3;
+   MMIO_VA    : constant Akernel_User.MMIO.U64 := 16#5000_0000#;
+   Page_Size  : constant U64 := 4096;
 
-   RBR : constant Akernel_User.MMIO.U64 := UART_Base + 0;
-   THR : constant Akernel_User.MMIO.U64 := UART_Base + 0;
-   LSR : constant Akernel_User.MMIO.U64 := UART_Base + 5;
+   RBR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
+   THR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
+   LSR : constant Akernel_User.MMIO.U64 := MMIO_VA + 5;
 
    LSR_DR : constant Akernel_User.MMIO.U8 := 16#01#;
 
@@ -134,8 +137,8 @@ procedure Serial is
 begin
    Result := Map_MMIO
      (Address_Space => Address_Space_Cap,
-      Cap           => UART_MMIO_Cap,
-      VA            => Akernel_User.Syscalls.U64 (UART_Base),
+      Cap           => MMIO_Cap,
+      VA            => Akernel_User.Syscalls.U64 (MMIO_VA),
       Offset        => 0,
       Length        => Page_Size,
       Flags         => 3);
@@ -152,7 +155,7 @@ begin
    Ntfn := Ntfn_Create;
    if Ntfn = Syscall_Failed
      or else Ntfn_Bind_Thread (Ntfn) /= 0
-     or else IRQ_Bind_Ntfn (UART_IRQ_Cap, Ntfn, 1) /= 0
+     or else IRQ_Bind_Ntfn (IRQ_Cap, Ntfn, 1) /= 0
    then
       Debug_Put_Line ("serial ntfn setup failed");
       Process_Exit;
@@ -166,7 +169,7 @@ begin
          --  UART RX interrupt: input waiting in RBR. No reply cap
          --  rides a synthetic message, so nothing to reply to.
          Drain_RX;
-         Result := IRQ_Ack (UART_IRQ_Cap);
+         Result := IRQ_Ack (IRQ_Cap);
       else
          Drain_RX;
 

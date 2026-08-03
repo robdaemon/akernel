@@ -47,8 +47,8 @@ badge@88 (recv only).
 Init also gets a read-only bootinfo page at VA `0x6FFE0000`: magic
 `AKINFO01`@0, entry count@8, then 64-byte entries (handle@0, kind@8,
 rights mask@16, name length@24, name bytes@32, max 32 chars) listing
-every kernel-granted cap by name (uart/mmio, uart/irq, one
-Boot_File_Object per initrd file).
+every kernel-granted cap by name (one Boot_File_Object per initrd
+file, plus device_resource).
 
 Return convention: 0 ok, 1 invalid/denied, 2 would-block (older
 nonblocking paths only).
@@ -122,21 +122,28 @@ maps onto call/recv/reply). See docs/IPC.md.
 Standalone Alire projects building to `bin/userspace/*.elf`:
 
 - `userspace/init/` — verifies manifest readable (fatal yield loop if
-  not; not kernel panic), parses manifest, builds a grant list per
-  `program` line (bootinfo names / ipc_test / console tokens),
-  spawns, yields, resumes. Mints the badged ipc_test endpoint and
-  the console endpoint (session-manager badge pattern).
-- `userspace/serial/` — console server: maps UART MMIO (cap 1),
-  holds Receive on the console endpoint (cap 2), serves stream
-  protocol writes to the UART (read ops get EOF). Writes are
-  line-atomic: per-client buffers keyed by the console cap badge
-  (init badges each grant with the program id) flush on newline or
-  a full 160-byte buffer; the kernel debug_putchar path buffers per
-  thread (newline/full/exit flush). UART RX is IRQ-driven through a
-  thread-bound notification (uart/irq grant at cap 2,
-  irq_bind_ntfn): the line signals the notification, IPC_Recv wakes
-  with a synthetic Notification_Label message, the server drains
-  RBR and acks.
+  not; not kernel panic). Runs its device manager first (DTB walk
+  against the System/Drivers database, spawning Drivers/Serial as
+  the console server and any virtio drivers), then parses the
+  manifest and builds a grant list per `program` line (bootinfo
+  names / ipc_test / console tokens), spawns, yields, resumes.
+  Mints the badged ipc_test endpoint and the console endpoint
+  (session-manager badge pattern). Driver handle ABI: 1 console
+  (Receive for class 0, Send badged with the driver id otherwise),
+  2 MMIO, 3 IRQ, 4 per-instance service endpoint (Receive).
+- `userspace/serial/` — console server, an ordinary devmgr-spawned
+  driver (`driver ns16550a Drivers/Serial none 0`; class 0 grants
+  it the console endpoint Receive side at handle 1, UART MMIO at 2,
+  UART IRQ at 3). Serves stream protocol writes to the UART (read
+  ops get EOF). Writes are line-atomic: per-client buffers keyed by
+  the console cap badge (init/devmgr badge each grant with the
+  program/driver id) flush on newline or a full 160-byte buffer;
+  the kernel debug_putchar path buffers per thread
+  (newline/full/exit flush). UART RX is IRQ-driven through a
+  thread-bound notification (IRQ cap at handle 3, irq_bind_ntfn):
+  the line signals the notification, IPC_Recv wakes with a
+  synthetic Notification_Label message, the server drains RBR and
+  acks.
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test
   endpoint at cap 1, console Send cap at 2, Tests/Echo image cap at
   3): directed edge cases + console stream RPC checks + end-to-end
@@ -183,8 +190,7 @@ name `RD0`, volume label `Initrd`, case-insensitive paths (`ci`).
 The file server accepts `RD0:...` and `Initrd:...` qualified names;
 unqualified names get the client-side default volume prepended.
 
-Current: serial with `uart/mmio console_server`, a `volume RD0
-Initrd ci` directive, fileserver with
+Current: a `volume RD0 Initrd ci` directive, fileserver with
 `fs_server console boot_files`, fuzzer with
 `ipc_test console Tests/Echo fs System/Manifest`, spin with
 `console`, plus a
@@ -197,8 +203,8 @@ design.
 Grant tokens map to grant-list entries: a bootinfo entry name
 grants that cap with the kernel-assigned rights; `ipc_test` grants
 init's badged test endpoint (full rights, badge 0xEC40); `console`
-grants Send on the console endpoint, `console_server` grants
-Receive on it (Drivers/Serial only); `fs` grants Send on the
+grants Send on the console endpoint (badged with the program id);
+`fs` grants Send on the
 file-server endpoint, `fs_server` grants Receive on it
 (System/Fileserver only); `boot_files` grants every boot-file cap
 in bootinfo order (System/Fileserver only — init pushes the

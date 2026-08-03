@@ -233,7 +233,15 @@ package body Device_Manager is
          return;
       end if;
 
-      Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
+      --  Handle 1 is the console endpoint: class 0 is the console
+      --  server itself and receives on it; every other driver gets
+      --  a Send side badged with its driver id (line-atomic console
+      --  writes keyed by badge).
+      if L.Class_Id = 0 then
+         Set_Grant (Grant_Count, Console_Handle, Right_Receive, 0);
+      else
+         Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
+      end if;
       Grant_Count := Grant_Count + 1;
       Set_Grant (Grant_Count, MMIO_Cap,
                  Right_Map + Right_Read + Right_Write, 0);

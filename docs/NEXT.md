@@ -196,9 +196,22 @@ Next candidates (order open):
          (store fault at stack window - 8) — spawn now maps 4
          stack pages. 104/104 directed PASS at QEMU_SMP 1/4/8,
          fuzz failures=0.
-19. Retire the uart/mmio + uart/irq bootinfo tokens onto the generic
-    devmgr path (`driver ns16550a Drivers/Serial none 0`), making
-    Drivers/Serial an ordinary spawned driver.
+19. ~~Retire the uart/mmio + uart/irq bootinfo tokens onto the generic
+    devmgr path~~ — done: `driver ns16550a Drivers/Serial none 0`
+    in System/Drivers; class 0 means the console server, so the
+    devmgr grants it the console endpoint Receive side at handle 1
+    (other drivers get a Send side badged with the driver id) and
+    Drivers/Serial moved to the generic driver handle ABI
+    (1 console, 2 MMIO, 3 IRQ, 4 service endpoint). Kernel no
+    longer mints uart/mmio + uart/irq caps for init: boot-file caps
+    are handles 1..N, device_resource at N+1, Kernel.Boot_Resources
+    deleted (bootstrap's cap-table smoke test inserts the static
+    device_resource header — any object does; the UART IRQ line
+    registers when the devmgr irq_create's it). Ordering fix: the devmgr must run
+    BEFORE the manifest programs — spawning the file server first
+    deadlocked init's fs name push against the file server's first
+    console write (no console server existed yet). 104/104 directed
+    PASS at QEMU_SMP 1/4/8, fuzz failures=0.
 20. Real filesystem on the block device (FAT or custom): fileserver
     block volumes currently expose only the raw "disk" file; blk
     cap-slot leak per request needs a cap_delete syscall first.

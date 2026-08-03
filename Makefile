@@ -68,7 +68,8 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng virtio_
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
 	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
-	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' > $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver virtio,mmio Drivers/VirtioBlk virtio 2' >> $(INITRD_ROOT)/System/Drivers
 	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
 	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
@@ -77,8 +78,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng virtio_
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
 	cp $(MEMSTAGE_ELF) $(INITRD_ROOT)/Tests/Memstage
 	cp $(ECHO_ELF) $(INITRD_ROOT)/Tests/Echo
-	printf '%s\n' 'program 1 Drivers/Serial uart/mmio uart/irq console_server' > $(INITRD_ROOT)/System/Manifest
-	printf '%s\n' 'volume RD0 Initrd ci' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo fs System/Manifest' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest

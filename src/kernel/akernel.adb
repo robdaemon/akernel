@@ -11,7 +11,6 @@ with Board.Memory_Map;
 with Board.PLIC;
 with Board.UART;
 with Kernel.Boot_Files;
-with Kernel.Boot_Resources;
 with Kernel.Bootinfo;
 with Kernel.Capabilities;
 with Kernel.CPUs;
@@ -49,7 +48,6 @@ procedure Akernel is
    Init_Task         : aliased Kernel.Tasks.Thread_Control_Block;
    Result           : Kernel.Capabilities.Status;
    IPC_Result       : Kernel.IPC.Status;
-   IRQ_Result       : Kernel.Interrupts.Status;
    Initrd_Result    : Kernel.Initrd.Status;
    ELF_Result       : Kernel.ELF.Status;
    Scheduler_Result : Kernel.Scheduler.Status;
@@ -113,30 +111,6 @@ procedure Akernel is
       Wait     => False,
       Ack      => False,
       Transfer => True,
-      Manage   => False);
-
-   MMIO_Map_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => True,
-      Write    => True,
-      Execute  => False,
-      Map      => True,
-      Send     => False,
-      Receive  => False,
-      Wait     => False,
-      Ack      => False,
-      Transfer => False,
-      Manage   => False);
-
-   IRQ_Wait_Ack_Rights : constant Kernel.Capabilities.Rights :=
-     (Read     => False,
-      Write    => False,
-      Execute  => False,
-      Map      => False,
-      Send     => False,
-      Receive  => False,
-      Wait     => True,
-      Ack      => True,
-      Transfer => False,
       Manage   => False);
 
    --  Image caps handed to init: spawn consumes them (Read+Execute);
@@ -495,10 +469,6 @@ begin
      and then MMU_Result = Arch.MMU.Ok
    then
       Board.UART.Put_Line ("kernel address space online");
-
-      --  Boot device objects (uart/mmio, uart/irq) come from the
-      --  Kernel.Devices slab, so they need the PMM and the physmap.
-      Kernel.Boot_Resources.Initialize (UART_Base, UART_IRQ);
    end if;
 
    if PMM_Result = Kernel.Physical_Memory.Ok
@@ -539,10 +509,14 @@ begin
      (TCB     => Bootstrap_Task,
       Id      => 1,
       Process => Bootstrap_Process'Unchecked_Access);
+   --  Cap-table smoke test on the bootstrap thread: any static
+   --  object works; the device-resource authority header is one.
+   --  The UART's runtime MMIO/IRQ objects are minted per-instance
+   --  by init's device manager (io_map / irq_create) instead.
    Kernel.Tasks.Insert_Cap
      (TCB    => Bootstrap_Task,
-      Kind   => Kernel.Capabilities.MMIO_Object,
-      Object => Kernel.Boot_Resources.UART_MMIO_Object,
+      Kind   => Kernel.Capabilities.Kernel_Object,
+      Object => Device_Resource_Object'Address,
       Rights => Console_Rights,
       Badge  => 0,
       Result => Result,
@@ -714,28 +688,10 @@ begin
          Phys_PA => Init_IPC_Buffer_Frame);
    end if;
 
-   Kernel.Tasks.Insert_Cap_At
-     (TCB    => Init_Task,
-      Cap    => 1,
-      Kind   => Kernel.Capabilities.MMIO_Object,
-      Object => Kernel.Boot_Resources.UART_MMIO_Object,
-      Rights => MMIO_Map_Rights,
-      Badge  => 0,
-      Result => Result);
-
-   Kernel.Tasks.Insert_Cap_At
-     (TCB    => Init_Task,
-      Cap    => 2,
-      Kind   => Kernel.Capabilities.IRQ_Object,
-      Object => Kernel.Boot_Resources.UART_IRQ_Object,
-      Rights => IRQ_Wait_Ack_Rights,
-      Badge  => 0,
-      Result => Result);
-
    --  Bootinfo page + boot-file image caps (docs/IPC.md): init's
-   --  namespace is one cap per initrd file at handles 3..N, listed
-   --  by name in the read-only bootinfo page alongside the device
-   --  caps at handles 1..2, so init hardcodes no handle numbers.
+   --  namespace is one cap per initrd file at handles 1..N, listed
+   --  by name in the read-only bootinfo page, so init hardcodes no
+   --  handle numbers.
    if User_Root_Table /= 0 then
       declare
          Bootinfo_Result : Kernel.Bootinfo.Status;
@@ -766,22 +722,17 @@ begin
             Result => Bootinfo_Result);
 
          if Bootinfo_Result = Kernel.Bootinfo.Ok then
-            Add_Bootinfo (1, Kernel.Capabilities.MMIO_Object,
-                          MMIO_Map_Rights, "uart/mmio");
-            Add_Bootinfo (2, Kernel.Capabilities.IRQ_Object,
-                          IRQ_Wait_Ack_Rights, "uart/irq");
-
             for Index in 1 .. Kernel.Boot_Files.File_Count loop
                Kernel.Tasks.Insert_Cap_At
                  (TCB    => Init_Task,
-                  Cap    => Kernel.Capabilities.Handle (Index + 2),
+                  Cap    => Kernel.Capabilities.Handle (Index),
                   Kind   => Kernel.Capabilities.Boot_File_Object,
                   Object => Kernel.Boot_Files.File_Object (Index),
                   Rights => Boot_File_Rights,
                   Badge  => 0,
                   Result => Result);
                exit when Result /= Kernel.Capabilities.Ok;
-               Add_Bootinfo (Kernel.Capabilities.U64 (Index + 2),
+               Add_Bootinfo (Kernel.Capabilities.U64 (Index),
                              Kernel.Capabilities.Boot_File_Object,
                              Boot_File_Rights,
                              Kernel.Boot_Files.File_Name (Index));
@@ -793,7 +744,7 @@ begin
                Kernel.Tasks.Insert_Cap_At
                  (TCB    => Init_Task,
                   Cap    => Kernel.Capabilities.Handle
-                    (Kernel.Boot_Files.File_Count + 3),
+                    (Kernel.Boot_Files.File_Count + 1),
                   Kind   => Kernel.Capabilities.Kernel_Object,
                   Object => Device_Resource_Object'Address,
                   Rights => Device_Resource_Rights,
@@ -801,7 +752,7 @@ begin
                   Result => Result);
                Add_Bootinfo
                  (Kernel.Capabilities.U64
-                    (Kernel.Boot_Files.File_Count + 3),
+                    (Kernel.Boot_Files.File_Count + 1),
                   Kernel.Capabilities.Kernel_Object,
                   Device_Resource_Rights,
                   "device_resource");
@@ -822,8 +773,6 @@ begin
 
    Kernel.Interrupts.Initialize;
    Kernel.Processes.Initialize;
-   Kernel.Interrupts.Register
-     (Kernel.Boot_Resources.UART_IRQ_Line, IRQ_Result);
 
    Kernel.Scheduler.Initialize;
    Kernel.Scheduler.Set_Current

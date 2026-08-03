@@ -2,12 +2,27 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: retiring uart/mmio
-+ uart/irq tokens onto the generic devmgr path, a real filesystem
+NEXT.md's deferred list or the open candidates: a real filesystem
 on the block device (needs a cap_delete syscall first — the blk
 driver leaks one cap-table slot per transferred buffer), SMP
 hardening, IOMMU, kernel introspection syscalls, plain send,
 register fast path.
+
+Serial retired onto the devmgr path (19): the uart/mmio + uart/irq
+bootinfo tokens are gone — `driver ns16550a Drivers/Serial none 0`
+in System/Drivers makes Drivers/Serial an ordinary spawned driver
+on the generic handle ABI (1 console, 2 MMIO, 3 IRQ, 4 service
+endpoint); class 0 = console server, so the devmgr grants it the
+console endpoint Receive side instead of a badged Send side.
+Kernel side: no more boot device caps for init (boot files are
+handles 1..N, device_resource N+1), Kernel.Boot_Resources deleted
+(the UART IRQ line now registers when the devmgr irq_create's it;
+the bootstrap cap-table smoke test inserts the static
+device_resource header — any object does). Ordering gotcha burned: the devmgr must run BEFORE
+Parse_Manifest — fileserver-first deadlocked init's fs name push
+against the file server's first console write with no console
+server yet. 104/104 directed PASS at QEMU_SMP 1/4/8, fuzz
+failures=0.
 
 Block-backed volume landed (18b): the disk is readable end-to-end
 — fuzz does Files.Read("BD0:disk") through the file server, which

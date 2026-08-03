@@ -7,9 +7,9 @@ with Device_Manager;
 --  tokens: any token naming a bootinfo entry grants that cap to
 --  the child with the kernel-assigned rights; the non-bootinfo
 --  tokens are ipc_test (a dynamically minted, badged endpoint) and
---  console/console_server (the console endpoint, Send/Receive
---  sides). The manifest is boot-launch data only; the kernel never
---  sees a name.
+--  console (the console endpoint Send side; the Receive side goes to
+--  the serial driver through the device manager). The manifest is
+--  boot-launch data only; the kernel never sees a name.
 
 procedure Init is
    use type Akernel_User.Syscalls.U64;
@@ -346,10 +346,9 @@ procedure Init is
          --  Grant tokens are names in init's namespace: a bootinfo
          --  entry name grants that cap with the kernel-assigned
          --  rights; ipc_test grants the badged test endpoint;
-         --  console/console_server grant the console endpoint
-         --  sides; the Send side is badged with the program id so
-         --  the console server can line-buffer per client
-         --  (line-atomic writes).
+         --  console grants the console endpoint Send side, badged
+         --  with the program id so the console server can
+         --  line-buffer per client (line-atomic writes).
          if Token_Equals (Token, Length, "ipc_test") then
             Grant (IPC_Test_EP,
                    Akernel_User.Syscalls.Right_Send
@@ -359,8 +358,6 @@ procedure Init is
                    IPC_Test_Badge);
          elsif Token_Equals (Token, Length, "console") then
             Grant (Console_EP, Akernel_User.Syscalls.Right_Send, Program_Id);
-         elsif Token_Equals (Token, Length, "console_server") then
-            Grant (Console_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "fs") then
             Grant (FS_EP, Akernel_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "fs_server") then
@@ -395,9 +392,7 @@ procedure Init is
 
       if Result = Akernel_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
          Spawned_Count := Spawned_Count + 1;
-         if Program_Id = 1 then
-            Akernel_User.Syscalls.Debug_Put_Line ("serial spawned");
-         elsif Program_Id = 2 then
+         if Program_Id = 2 then
             Akernel_User.Syscalls.Debug_Put_Line ("fileserver spawned");
          elsif Program_Id = 3 then
             Akernel_User.Syscalls.Debug_Put_Line ("fuzz spawned");
@@ -476,13 +471,17 @@ begin
    Console_EP := Akernel_User.Syscalls.EP_Create;
    FS_EP := Akernel_User.Syscalls.EP_Create;
 
-   Parse_Manifest;
-
-   --  Device-driven drivers after the static manifest programs:
-   --  console endpoint + file server are up, driver images resolve
-   --  as boot-file caps.
+   --  Device-driven drivers before the static manifest programs:
+   --  the console server (Drivers/Serial, class 0) must be serving
+   --  the console endpoint before any manifest program prints, or
+   --  the fs name push below deadlocks against the file server's
+   --  first console write.
    Device_Manager.Run (Console_EP);
 
+   Parse_Manifest;
+
+   --  The file server exists now; mount the block-backed volume if
+   --  the devmgr spawned a class-2 (block) driver.
    if Device_Manager.Block_Service /= 0 then
       Push_Block_Mount (Device_Manager.Block_Service);
    end if;

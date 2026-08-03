@@ -49,9 +49,12 @@ entering initrd init
 init online from Ada
 boot manifest visible
 launching manifest programs
-serial spawned
-fileserver spawned
+devmgr: spawned Drivers/Serial
 console server online
+devmgr: spawned Drivers/VirtioRng
+devmgr: spawned Drivers/VirtioBlk
+(virtio driver self-tests)
+fileserver spawned
 fileserver online
 fs name table pushed
 fuzz spawned
@@ -60,9 +63,9 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 89/89 directed PASS (console stream RPC, echo IPC rounds,
+... 104/104 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
-spawn-from-memory-object, notifications) ...
+spawn-from-memory-object, notifications, block volume) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -122,10 +125,13 @@ QEMU virt RAM base:     0x80000000
 - No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime +
   stubs); initrd load address fixed.
 - UART/PLIC bases and the UART IRQ source come from DTB discovery
-  (board constants as fallback); all other devices are enumerated
-  by init's device manager from the DTB (exposed as the "dtb" boot
-  file) and the System/Drivers database, with per-instance MMIO/IRQ
-  caps minted via io_map/irq_create (device_resource authority).
+  (board constants as fallback); the kernel keeps only its own
+  polled console on that UART. All device runtime objects — the
+  UART included — are enumerated by init's device manager from the
+  DTB (exposed as the "dtb" boot file) and the System/Drivers
+  database, with per-instance MMIO/IRQ caps minted via
+  io_map/irq_create (device_resource authority). Drivers/Serial is
+  an ordinary spawned driver (class 0: console endpoint Receive);
   virtio-mmio devices run as user-mode drivers (virtio-rng live;
   virtio-blk live with a block-backed BD0 volume on the file
   server exposing the raw device as "disk").

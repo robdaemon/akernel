@@ -206,7 +206,7 @@ package Akernel_User.Syscalls is
          (Bootinfo_VA));
 
    --  Bootinfo name lookup (init's namespace basis): resolve a
-   --  kernel-assigned entry name (e.g. "uart/mmio", "Tests/Echo")
+   --  kernel-assigned entry name (e.g. "System/Manifest", "dtb")
    --  to its cap handle; 0 when absent or bootinfo page invalid.
    function Boot_Cap (Name : String) return U64;
 

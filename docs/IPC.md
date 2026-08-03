@@ -276,7 +276,7 @@ files directly.
 - Init gets its bootstrap table from the kernel-provided read-only
   bootinfo page at `0x6FFE0000` (implemented): magic + count header,
   then 64-byte (handle, kind, rights mask, name) entries covering
-  the device caps (uart/mmio, uart/irq) and every boot file cap,
+  every boot file cap and the device_resource authority cap,
   so init hardcodes no handle numbers.
 
 ### Manifest stays boot-launch only
@@ -319,8 +319,8 @@ namespace mechanism.
   Ada.Streams `Root_Stream_Type` over endpoint caps, is the
   fundamental I/O substrate (40-byte chunks, Op_Write/Op_Read
   labels, (Count, Data) records); `Akernel_User.Console` binds it to
-  the init-minted console endpoint (`console`/`console_server`
-  manifest tokens) with Drivers/Serial as the console server.
+  the init-minted console endpoint (`console` manifest token /
+  devmgr class-0 grant) with Drivers/Serial as the console server.
   Console writes are line-atomic on both paths: the server buffers
   per client (keyed by the console cap badge, which init sets to the
   manifest program id) and flushes to the UART only on newline or a
