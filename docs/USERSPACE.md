@@ -182,26 +182,34 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   granted fs endpoint Receive at cap 1, console Send at 2, every
   boot-file cap from 3 via the `boot_files` token): serves the
   9P-ish file protocol (docs/IPC.md) — Stat/Open by name, stateless
-  Read into the client-owned buffer memory object whose cap rides
-  cap slot 0 (deleted after each op; a per-op transferred cap must
-  not linger). Three volume kinds: boot-file set (Op_Mount, files
-  mapped as borrowed read-only pages), raw block passthrough
-  (Op_Add_Block, the single file "disk" via sector RPCs through a
-  bounce page), and fs-driver volumes (Op_Add_FS: ops forwarded
-  verbatim — path repacked into words, buffer cap transferred
-  onward — to an independent filesystem process).
-- `userspace/fat32/` — FAT32 filesystem driver (`System/Fat32`,
-  read-only): an independent fs process behind the VFS. Manifest
+  Read/Write into/out of the client-owned buffer memory object
+  whose cap rides cap slot 0 (deleted after each op; a per-op
+  transferred cap must not linger). Three volume kinds: boot-file
+  set (Op_Mount, files mapped as borrowed read-only pages,
+  writes rejected), raw block passthrough (Op_Add_Block, the
+  single file "disk" via sector RPCs through a bounce page,
+  read-modify-write for partial sectors), and fs-driver volumes
+  (Op_Add_FS: ops forwarded verbatim — path repacked into words,
+  buffer cap transferred onward — to an independent filesystem
+  process).
+- `userspace/fat32/` — FAT32 filesystem driver (`System/Fat32`):
+  an independent fs process behind the VFS. Manifest
   `console blk fat32_server` grants console at 1, the virtio-blk
   service endpoint (Send) at 2 and its own service endpoint
   (Receive) at 3; init pushes the Send side to the VFS as
   Op_Add_FS (device HD0, label AKDISK). Probes sector 0 for a
   FAT32 BPB (0x55AA, 512-byte sectors, "FAT32   " type string,
   cluster size <= 8 sectors), then serves the same client file
-  protocol: flat root directory, 8.3 names (LFN/volume-label/
-  directory entries skipped), FAT chain walks through the bounce
-  page, file reads streaming cluster-by-cluster into the mapped
-  client buffer.
+  protocol: subdirectory traversal ('/'-separated components),
+  LFN matching (UCS-2 assembly, case-insensitive, short 8.3
+  fallback), FAT chain walks through the bounce page, reads
+  streaming cluster-by-cluster into the mapped client buffer,
+  and Op_Write: file create (8.3 component names only, free-slot
+  scan + directory chain extension), sector read-modify-write,
+  cluster chain extension (free-entry scan from the FSInfo hint,
+  both FAT mirrors + FSInfo updated), dirent cluster/size
+  writeback. No sparse writes (offset > size rejected); no
+  delete/mkdir/LFN-create yet.
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,

@@ -182,4 +182,57 @@ package body Akernel_User.Files is
       return Status_Ok;
    end Read;
 
+   function Write
+     (Name           : String;
+      Offset         : U64;
+      Buffer_Address : System.Address;
+      Length         : U64;
+      Count          : out U64) return U64
+   is
+      Status : U64;
+      Q      : String (1 .. 32);
+      Len    : Natural;
+      N      : U64;
+   begin
+      Count := 0;
+      Qualified (Name, Q, Len);
+      if Buf_Cap = 0
+        or else FS_Cap = 0
+        or else Len = 0
+        or else Length = 0
+      then
+         return Status_Bad_Args;
+      end if;
+
+      N := U64'Min (Length, Buf_Bytes);
+
+      declare
+         Src : Byte_Array (0 .. N - 1) with Address => Buffer_Address;
+         Dst : Byte_Array (0 .. Buf_Bytes - 1)
+           with Address => To_Address (Integer_Address (Buffer_VA));
+      begin
+         for I in 0 .. N - 1 loop
+            Dst (I) := Src (I);
+         end loop;
+      end;
+
+      Syscalls.Message.Label := Op_Write;
+      Syscalls.Message.Words (0) := Offset;
+      Syscalls.Message.Words (1) := N;
+      Pack_Name (Q (1 .. Len), 2, 5);
+      Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      Status := Syscalls.Message.Words (0);
+      if Status /= Status_Ok then
+         return Status;
+      end if;
+
+      Count := Syscalls.Message.Words (1);
+      return Status_Ok;
+   end Write;
+
 end Akernel_User.Files;

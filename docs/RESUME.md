@@ -2,9 +2,28 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: FAT32 write path /
-subdirectories / LFN (20b), SMP hardening, IOMMU, kernel
-introspection syscalls, plain send, register fast path.
+NEXT.md's deferred list or the open candidates: FAT32
+delete/truncate/mkdir/LFN-create/timestamps (20c), SMP hardening,
+IOMMU, kernel introspection syscalls, plain send, register fast
+path.
+
+FAT32 20b landed (write path, subdirs, LFN): Op_Write = 7 mirrors
+Op_Read's wire shape with the buffer consumed instead of filled.
+VFS dispatch: boot-file volumes reject writes, raw "disk" writes
+bounce read-modify-write partial sectors, fs-driver volumes forward
+verbatim. The Fat32 driver now resolves '/'-separated paths
+(subdirectory traversal), matches LFN entries (UCS-2 assembly
+case-insensitively, short 8.3 fallback) and writes: file create
+(8.3 component names only, free-dirent scan, directory chain
+extension), sector read-modify-write, cluster chain extension
+(free-entry scan from the FSInfo hint, BOTH FAT mirrors written,
+FSInfo free count + next-free maintained), dirent cluster/size
+writeback. Sparse writes rejected (offset > size). Image gains
+SUBDIR/HELLO.TXT (host mmd) and LongFileName.txt (host LFN). Fuzz
+tests are idempotent across reused images (fixed bytes/offsets;
+extension test checks size relative to prior stat and grows 8
+bytes/boot by design); host fsck.fat validates the driver's writes
+clean. 130/130 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
 
 FAT32 read-only landed (20a): System/Fileserver is now a VFS —
 fs-driver volumes (Op_Add_FS, label 6: Op_Mount words + service

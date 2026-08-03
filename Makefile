@@ -60,16 +60,22 @@ virtio_blk:
 	$(MAKE) -C userspace/virtio_blk
 
 #  64 MiB FAT32 data disk (host mkfs.vfat + mtools): README.TXT and
-#  BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB, multi-cluster chain).
-#  Served read-only by System/Fat32 behind the file server's VFS;
-#  the raw device stays available as BD0:disk.
+#  BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB, multi-cluster chain),
+#  SUBDIR/HELLO.TXT (subdirectory traversal) and LongFileName.txt
+#  (LFN entries). Served by System/Fat32 behind the file server's
+#  VFS; the raw device stays available as BD0:disk.
 $(DISK_IMG):
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
+	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt
+	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt
 	mkfs.vfat -F 32 -S 512 -s 1 -n AKDISK -C $@ 65536
 	mcopy -i $@ $(INITRD_OUT)/readme.txt ::README.TXT
 	mcopy -i $@ $(INITRD_OUT)/big.bin ::BIG.BIN
+	mmd -i $@ ::SUBDIR
+	mcopy -i $@ $(INITRD_OUT)/hello.txt ::SUBDIR/HELLO.TXT
+	mcopy -i $@ $(INITRD_OUT)/longfile.txt "::LongFileName.txt"
 
 initrd: $(INITRD_IMG)
 

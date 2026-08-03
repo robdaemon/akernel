@@ -240,9 +240,28 @@ Next candidates (order open):
          runs its write suite only on legacy AKBLKIMG images and
          read-only checks otherwise. Raw device stays BD0:disk.
          114/114 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
-    20b. Remaining: write path (file create/write, FAT chain
-         allocation, directory entry add/update), subdirectories,
-         LFN entries.
+    20b. ~~Write path, subdirectories, LFN~~ — done: Op_Write = 7
+         (same wire shape as Op_Read, buffer consumed). VFS:
+         boot-file volumes read-only (Status_Bad_Args), raw "disk"
+         writes bounce read-modify-write partial sectors, fs-driver
+         volumes forward verbatim. Fat32 driver: subdirectory
+         traversal ('/'-separated components), LFN matching
+         (UCS-2 assembly, case-insensitive, short-name fallback),
+         file create (8.3 component names, free-dirent scan +
+         directory chain extension), write with sector
+         read-modify-write, cluster chain extension (free-entry
+         scan from the FSInfo hint, both FAT mirrors updated,
+         FSInfo free count/next-free maintained), dirent
+         cluster/size writeback. No sparse writes (offset > size
+         rejected). Image gains SUBDIR/HELLO.TXT (mmd) and
+         LongFileName.txt (host LFN); fuzz adds 16 directed tests
+         (subdir/lfn reads, create/overwrite/extend/stat/readback,
+         subdir create, sparse+bad-parent rejection, raw-disk
+         write+readback) — idempotent across reused images.
+         Host fsck.fat validates the driver's writes clean.
+         130/130 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
+    20c. Remaining: file delete/truncate, mkdir/rmdir, LFN
+         creation (writes are 8.3-only), timestamps.
 
 Commit between each milestone.
 

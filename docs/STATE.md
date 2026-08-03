@@ -64,10 +64,10 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 114/114 directed PASS (console stream RPC, echo IPC rounds,
+... 130/130 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
-FAT32 reads through the VFS) ...
+FAT32 reads + writes through the VFS) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -137,9 +137,12 @@ QEMU virt RAM base:     0x80000000
   virtio-mmio devices run as user-mode drivers (virtio-rng live;
   virtio-blk live with a block-backed BD0 raw volume). The file
   server is a VFS: filesystems are independent driver processes —
-  System/Fat32 (read-only, flat-root 8.3) serves the 64 MiB FAT32
-  disk image as HD0/AKDISK, with ops forwarded verbatim by the
-  VFS and per-op buffer caps cap_delete'd at every layer.
+  System/Fat32 serves the 64 MiB FAT32 disk image as HD0/AKDISK
+  (reads + writes: subdirectory traversal, LFN matching, 8.3 file
+  create, cluster chain extension with mirrored FAT + FSInfo
+  updates; no sparse writes, no delete/mkdir yet), with ops
+  forwarded verbatim by the VFS and per-op buffer caps
+  cap_delete'd at every layer.
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
   exposes memory-object frame PAs for DMA; spawned processes get
   4 user stack pages.

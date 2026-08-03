@@ -364,6 +364,7 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Add_Block;
 
+
    --  Op_Add_FS: like Op_Add_Block but the endpoint speaks the
    --  client file protocol (stat/open/read by path) instead of the
    --  block protocol — the fs driver probed and mounted the
@@ -624,6 +625,189 @@ procedure Fileserver is
          Done := Done + Chunk;
       end loop;
    end Handle_Block_Read;
+   --  Block-volume write: read-modify-write through the bounce
+   --  buffer (partial first/last sectors), full sectors direct.
+   procedure Handle_Block_Write
+     (V      : Natural;
+      Buf    : U64;
+      Offset : U64;
+      Length : U64;
+      Status : out U64;
+      Count  : out U64;
+      Mapped : in out Boolean)
+   is
+      Done  : U64 := 0;
+      Pos   : U64;
+      Chunk : U64;
+      Skip  : U64;
+      NSec  : U64;
+   begin
+      Status := Files.Status_Ok;
+      Count := 0;
+
+      if Volumes (V).Blk_Size = 0 or else Offset >= Volumes (V).Blk_Size then
+         Status := Files.Status_Out_Of_Range;
+         return;
+      end if;
+
+      Count := U64'Min (Length, Volumes (V).Blk_Size - Offset);
+      Count := U64'Min (Count, Buf_Bytes);
+
+      if not Ensure_Blk_Buf then
+         Status := Files.Status_Bad_Args;
+         Count := 0;
+         return;
+      end if;
+
+      if not Map_Buf (Buf) then
+         Status := Files.Status_Not_Found;
+         Count := 0;
+         return;
+      end if;
+      Mapped := True;
+
+      while Done < Count loop
+         Pos := Offset + Done;
+         Skip := Pos mod 512;
+         NSec := U64'Min (8, (Count - Done + Skip + 511) / 512);
+
+         --  Partial head/tail: read the sector range first so the
+         --  untouched bytes survive the writeback.
+         if Skip /= 0
+           or else (Count - Done + Skip) mod 512 /= 0
+         then
+            Syscalls.Message.Label := Files.Blk_Read;
+            Syscalls.Message.Words (0) := Pos / 512;
+            Syscalls.Message.Words (1) := NSec;
+            Syscalls.Message.Caps := (0 => Blk_Buf_Cap, others => 0);
+
+            if Syscalls.IPC_Call (Volumes (V).Blk_EP) /= Syscalls.IPC_Ok
+              or else Syscalls.Message.Words (0) /= 0
+            then
+               Status := Files.Status_Not_Found;
+               Count := 0;
+               return;
+            end if;
+         end if;
+
+         Chunk := U64'Min (NSec * 512 - Skip, Count - Done);
+
+         declare
+            Dst : Byte_Array (0 .. Chunk - 1)
+              with Address => To_Address (Integer_Address
+                (Blk_Buf_VA + Skip));
+            Src : Byte_Array (0 .. Chunk - 1)
+              with Address => To_Address (Integer_Address
+                (Buf_Win_VA + Done));
+         begin
+            Dst := Src;
+         end;
+
+         Syscalls.Message.Label := Files.Blk_Write;
+         Syscalls.Message.Words (0) := Pos / 512;
+         Syscalls.Message.Words (1) := NSec;
+         Syscalls.Message.Caps := (0 => Blk_Buf_Cap, others => 0);
+
+         if Syscalls.IPC_Call (Volumes (V).Blk_EP) /= Syscalls.IPC_Ok
+           or else Syscalls.Message.Words (0) /= 0
+         then
+            Status := Files.Status_Not_Found;
+            Count := 0;
+            return;
+         end if;
+
+         Done := Done + Chunk;
+      end loop;
+   end Handle_Block_Write;
+
+   --  Op_Write: boot-file volumes are read-only; block "disk"
+   --  files write through the bounce buffer; fs-driver volumes
+   --  get the op forwarded verbatim. Same per-op buffer-cap
+   --  discipline as Op_Read (unmap + cap_delete below).
+   procedure Handle_Write is
+      Offset : constant U64 := Syscalls.Message.Words (0);
+      Length : constant U64 := Syscalls.Message.Words (1);
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Name   : String (1 .. 32);
+      Len    : Natural := 0;
+      Pos    : Natural := 1;
+      V      : Natural := 0;
+      Count  : U64 := 0;
+      Status : U64 := Files.Status_Ok;
+      Mapped : Boolean := False;
+
+      procedure Process is
+      begin
+         if not Names_Done then
+            Status := Files.Status_Not_Ready;
+            return;
+         end if;
+
+         if Buf = 0
+           or else Length = 0
+           or else not Name_Of (2, 5, Name, Len)
+         then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
+
+         V := Resolve_Volume (Name, Len, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+
+         if Volumes (V).Is_FS then
+            Syscalls.Message.Words (0) := Offset;
+            Syscalls.Message.Words (1) := Length;
+            Pack_Path (Name, Pos, Len, 2);
+            Syscalls.Message.Label := Files.Op_Write;
+            Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+               Status := Syscalls.Message.Words (0);
+               Count := Syscalls.Message.Words (1);
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+            return;
+         end if;
+
+         if Volumes (V).Is_Block then
+            if not Match ("disk", 4, Name (Pos .. Len),
+                          Volumes (V).Case_Insensitive)
+            then
+               Status := Files.Status_Not_Found;
+               return;
+            end if;
+
+            Handle_Block_Write (V, Buf, Offset, Length,
+                                Status, Count, Mapped);
+            return;
+         end if;
+
+         Status := Files.Status_Bad_Args;  --  boot files read-only
+      end Process;
+   begin
+      Process;
+
+      if Buf /= 0 then
+         if Mapped
+           and then Syscalls.Mem_Unmap
+             (Address_Space => Syscalls.Address_Space_Cap,
+              VA            => Buf_Win_VA,
+              Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer unmap failed");
+         end if;
+         if Syscalls.Cap_Delete (Buf) /= 0 then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer cap delete failed");
+         end if;
+      end if;
+
+      Reply2 (Status, Count);
+   end Handle_Write;
 
    procedure Handle_Read is
       Offset : constant U64 := Syscalls.Message.Words (0);
@@ -770,6 +954,8 @@ begin
          Handle_Add_Block;
       elsif Syscalls.Message.Label = Files.Op_Add_FS then
          Handle_Add_FS;
+      elsif Syscalls.Message.Label = Files.Op_Write then
+         Handle_Write;
       elsif Syscalls.Message.Label = Files.Op_Set_Name then
          if Syscalls.Message.Words (0) = 0 then
             Names_Done := True;

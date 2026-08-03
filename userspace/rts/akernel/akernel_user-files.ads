@@ -25,6 +25,13 @@ with Akernel_User.Syscalls;
 --                      stat/open/read for its paths are relayed to
 --                      the fs driver (e.g. System/Fat32), which
 --                      speaks this same protocol
+--    Op_Write   = 7    (offset, length, name[32]) + buffer memory
+--                      cap in cap slot 0 -> (status, count); the
+--                      server consumes the buffer. Boot-file
+--                      volumes are read-only; raw "disk" files and
+--                      fs-driver volumes accept writes (create when
+--                      the parent directory exists, 8.3 component
+--                      names only; sparse writes rejected)
 --
 --  Block volumes speak the block protocol to the driver (labels):
 --    0 info  -> (status, capacity in sectors)
@@ -60,6 +67,7 @@ package Akernel_User.Files is
    Op_Mount    : constant U64 := 4;
    Op_Add_Block : constant U64 := 5;
    Op_Add_FS   : constant U64 := 6;
+   Op_Write    : constant U64 := 7;
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;
@@ -98,5 +106,17 @@ package Akernel_User.Files is
       Dest   : System.Address;
       Length : U64;
       Count  : out U64) return U64;
+
+   --  Write Length bytes from the caller's buffer (Buffer_Address
+   --  must be an 8-page memory object) at Offset into Name; Count
+   --  returns the bytes actually written. Boot-file volumes are
+   --  read-only (Status_Bad_Args). Buffer contents are undefined
+   --  after the call.
+   function Write
+     (Name           : String;
+      Offset         : U64;
+      Buffer_Address : System.Address;
+      Length         : U64;
+      Count          : out U64) return U64;
 
 end Akernel_User.Files;

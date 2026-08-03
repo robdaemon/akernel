@@ -580,6 +580,195 @@ begin
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat unknown file rejected");
 
+      --  Subdirectory traversal and LFN entries (host-created in
+      --  the image: mmd SUBDIR, mcopy with a long name).
+      Status := Akernel_User.Files.Stat ("HD0:SUBDIR/HELLO.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 14,
+             "fat subdir stat ok");
+
+      Status := Akernel_User.Files.Read
+        ("HD0:subdir/hello.txt", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 14;
+      declare
+         Text : constant String := "Subdir hello!";
+      begin
+         for I in 0 .. 12 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+         Match := Match and then Buf (13) = 10;
+      end;
+      Check (Match, "fat subdir read ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:LongFileName.txt", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 23,
+             "fat lfn stat ok");
+
+      Status := Akernel_User.Files.Read
+        ("hd0:longfilename.txt", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 23;
+      declare
+         Text : constant String := "A long file name body.";
+      begin
+         for I in 0 .. 21 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+         Match := Match and then Buf (22) = 10;
+      end;
+      Check (Match, "fat lfn read ok");
+
+      --  Write path: create + overwrite (idempotent — same bytes
+      --  and offsets every boot, so a reused image still passes).
+      declare
+         Text : constant String := "AKWRITE!+MORE!";
+      begin
+         for I in 0 .. 13 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+
+      Status := Akernel_User.Files.Write
+        ("HD0:NEWFILE.TXT", 0, Buf'Address, 14, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 14,
+             "fat write create ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:NEWFILE.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 14,
+             "fat write stat ok");
+
+      for I in 0 .. 13 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("HD0:NEWFILE.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 14;
+      declare
+         Text : constant String := "AKWRITE!+MORE!";
+      begin
+         for I in 0 .. 13 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat write readback ok");
+
+      --  Create inside a subdirectory.
+      Status := Akernel_User.Files.Write
+        ("HD0:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat write zero-length rejected");
+
+      declare
+         Text : constant String := "AKSUBDIR";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat write subdir ok");
+
+      --  Full-cluster write on create (512 bytes = one cluster on
+      --  a 1-sector/cluster image): first-cluster allocation path.
+      for J in 0 .. 511 loop
+         Big_Buf (J) := Interfaces.Unsigned_8 ((J * 5 + 1) mod 256);
+      end loop;
+      Status := Akernel_User.Files.Write
+        ("HD0:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 512,
+             "fat write big ok");
+
+      --  Extending write at the current end (size grows 8 bytes
+      --  per boot; checks stay relative so reruns pass).
+      Status := Akernel_User.Files.Stat ("HD0:EXT.TXT", Size);
+      declare
+         Prior : U64 := 0;
+      begin
+         if Status = Akernel_User.Files.Status_Ok then
+            Prior := Size;
+         end if;
+         declare
+            Text : constant String := "AKEXTEND";
+         begin
+            for I in 0 .. 7 loop
+               Buf (I) :=
+                 Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+            end loop;
+         end;
+         Status := Akernel_User.Files.Write
+           ("HD0:EXT.TXT", Prior, Buf'Address, 8, Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 8,
+                "fat write extend ok");
+         Status := Akernel_User.Files.Stat ("HD0:EXT.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = Prior + 8,
+                "fat write extend stat ok");
+      end;
+
+      --  Sparse writes rejected; bad parent rejected.
+      Status := Akernel_User.Files.Write
+        ("HD0:NEWFILE.TXT", 100, Buf'Address, 4, Count);
+      Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+             "fat write sparse rejected");
+
+      Status := Akernel_User.Files.Write
+        ("HD0:NODIR/F.TXT", 0, Buf'Address, 4, Count);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat write bad parent rejected");
+
+      --  Raw disk write through the VFS bounce path: last sector,
+      --  beyond the test files' clusters (read-modify-write of a
+      --  partial range).
+      declare
+         Text : constant String := "AKRAWIO!";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("BD0:disk", 131071 * 512 + 100, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "blk volume write ok");
+
+      for I in 0 .. 7 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("BD0:disk", 131071 * 512 + 100, Buf'Address, 8, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      declare
+         Text : constant String := "AKRAWIO!";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "blk volume write readback ok");
+
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap
       --  involved), reap the exited child.
