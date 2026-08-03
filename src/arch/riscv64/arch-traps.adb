@@ -68,6 +68,7 @@ package body Arch.Traps is
    Sys_IO_Map            : constant U64 := 23;
    Sys_IRQ_Create        : constant U64 := 24;
    Sys_Mem_Object_PA     : constant U64 := 25;
+   Sys_Cap_Delete        : constant U64 := 26;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1606,6 +1607,41 @@ package body Arch.Traps is
           (Cap_Info.Object, Trap_Frame_Get_A1 (Frame)));
    end Handle_Mem_Object_PA;
 
+   --  cap_delete: close one of the caller's own cap-table slots,
+   --  running the same per-kind cleanup the exit/reap path runs
+   --  (object release, endpoint/IRQ/notification thread hooks).
+   --  Needed by servers that receive transferred caps per request
+   --  (e.g. the blk driver's client buffer) — without it each
+   --  transfer leaks a table slot. 0 on success, U64'Last on an
+   --  invalid/unopened handle.
+   procedure Handle_Cap_Delete (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Close_Cap
+        (Thread => Current,
+         Cap    => Cap_Handle,
+         Result => Cap_Result);
+
+      if Cap_Result = Kernel.Capabilities.Ok then
+         Trap_Frame_Set_A0 (Frame, 0);
+      else
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+   end Handle_Cap_Delete;
+
    procedure Handle_Mem_Unmap (Frame : System.Address) is
       Address_Space_Cap : Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Invalid_Handle;
@@ -1717,6 +1753,8 @@ package body Arch.Traps is
          Handle_IRQ_Create (Frame);
       elsif Number = Sys_Mem_Object_PA then
          Handle_Mem_Object_PA (Frame);
+      elsif Number = Sys_Cap_Delete then
+         Handle_Cap_Delete (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

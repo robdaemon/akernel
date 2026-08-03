@@ -116,6 +116,15 @@ package Akernel_User.Syscalls is
    function IRQ_Create (Resource : U64; Source : U64) return U64;
    function Mem_Object_PA (Cap : U64; Index : U64) return U64;
 
+   --  Cap_Delete (syscall 26) closes one of the caller's own
+   --  cap-table slots, running the same per-kind cleanup the exit
+   --  path runs (object release, endpoint/IRQ/notification hooks).
+   --  Servers that receive transferred caps per request must
+   --  delete them after use or leak a table slot per transfer.
+   --  Returns 0 on success, Syscall_Failed on an invalid or
+   --  unopened handle.
+   function Cap_Delete (Cap : U64) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

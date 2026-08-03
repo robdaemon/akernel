@@ -3,10 +3,19 @@
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
 NEXT.md's deferred list or the open candidates: a real filesystem
-on the block device (needs a cap_delete syscall first — the blk
-driver leaks one cap-table slot per transferred buffer), SMP
-hardening, IOMMU, kernel introspection syscalls, plain send,
-register fast path.
+on the block device (cap_delete landed — the blk driver no longer
+leaks a slot per transferred buffer), SMP hardening, IOMMU, kernel
+introspection syscalls, plain send, register fast path.
+
+cap_delete landed (20 prereq): syscall 26 closes one of the
+caller's own cap-table slots through Kernel.Tasks.Close_Cap — the
+same per-kind cleanup dispatcher the exit/reap path runs (object
+release, endpoint/IRQ/notification thread hooks). VirtioBlk
+deletes each request's transferred client-buffer cap after the
+RPC, fixing the one-slot-per-transfer leak. Fuzz random phase now
+ranges 0..26 with cap_delete explicitly skipped (a random delete
+could close the fuzzer's own console/fs caps mid-test). 108/108
+directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
 
 Serial retired onto the devmgr path (19): the uart/mmio + uart/irq
 bootinfo tokens are gone — `driver ns16550a Drivers/Serial none 0`

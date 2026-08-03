@@ -213,8 +213,15 @@ Next candidates (order open):
     console write (no console server existed yet). 104/104 directed
     PASS at QEMU_SMP 1/4/8, fuzz failures=0.
 20. Real filesystem on the block device (FAT or custom): fileserver
-    block volumes currently expose only the raw "disk" file; blk
-    cap-slot leak per request needs a cap_delete syscall first.
+    block volumes currently expose only the raw "disk" file.
+    ~~Prerequisite cap_delete~~ — done: syscall 26 closes one of the
+    caller's own cap-table slots via Kernel.Tasks.Close_Cap (same
+    per-kind cleanup as the exit/reap path); the blk driver deletes
+    each request's transferred buffer cap after the RPC (was one
+    leaked slot per transfer). Fuzz random phase ranges over 0..26
+    now with cap_delete skipped (a random delete could close the
+    fuzzer's own granted caps). 108/108 directed PASS at QEMU_SMP
+    1/4/8, fuzz failures=0.
 
 Commit between each milestone.
 

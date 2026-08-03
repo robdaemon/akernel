@@ -193,6 +193,14 @@ akernel_sys_mem_object_pa:
     ret
 .size akernel_sys_mem_object_pa, . - akernel_sys_mem_object_pa
 
+.global akernel_sys_cap_delete
+.type akernel_sys_cap_delete, @function
+akernel_sys_cap_delete:
+    li a7, 26
+    ecall
+    ret
+.size akernel_sys_cap_delete, . - akernel_sys_cap_delete
+
 .global akernel_sys_mem_map_file
 .type akernel_sys_mem_map_file, @function
 akernel_sys_mem_map_file:

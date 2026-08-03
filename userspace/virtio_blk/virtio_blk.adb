@@ -482,6 +482,12 @@ begin
                end if;
             end if;
 
+            --  The transferred buffer cap is consumed by the
+            --  request; delete it or leak a cap-table slot per RPC.
+            if Buf_Cap /= 0 and then Cap_Delete (Buf_Cap) /= 0 then
+               Debug_Put_Line ("virtio-blk buffer cap delete failed");
+            end if;
+
          else
             Message.Words (0) := 3;
             Message.Words (1) := 0;

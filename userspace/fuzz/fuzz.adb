@@ -59,6 +59,7 @@ procedure Fuzz is
    Sys_Mem_Alloc      : constant U64 := 15;
    Sys_Mem_Map        : constant U64 := 16;
    Sys_Mem_Unmap      : constant U64 := 17;
+   Sys_Cap_Delete     : constant U64 := 26;
 
    Highest_Known      : constant U64 := 22;
 
@@ -204,6 +205,17 @@ begin
    Check (Status = 1, "ipc_reply without reply cap rejected");
    Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 200);
    Check (Status = 1, "ipc_reply wrong handle rejected");
+
+   --  cap_delete: closes the caller's own cap-table slot.
+   Status := Raw_Ecall (Number => Sys_Cap_Delete, A0 => 16#100#);
+   Check (Status = Failed, "cap_delete invalid handle rejected");
+   A1 := Raw_Ecall (Number => Sys_EP_Create);
+   Status := Raw_Ecall (Number => Sys_Cap_Delete, A0 => A1);
+   Check (Status = 0, "cap_delete closes endpoint cap");
+   Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => A1);
+   Check (Status = 1, "deleted cap rejected");
+   Status := Raw_Ecall (Number => Sys_Cap_Delete, A0 => A1);
+   Check (Status = Failed, "cap_delete twice rejected");
 
    --  Console stream RPC: a write op must round-trip through the
    --  console server and report the byte count consumed.
@@ -792,20 +804,23 @@ begin
    --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
    --  constrained to printable to keep the log readable.
    while Total_Calls < Iterations loop
-      Number := Next_Random mod 26;
+      Number := Next_Random mod 27;
       if (Next_Random and 16#F#) = 0 then
          Number := Next_Random;  --  occasionally a huge syscall number
       end if;
 
-      --  Skip exit (9), the blocking IPC trio (12-14) and ntfn_wait
-      --  (19): a random call/recv/wait with no peer or no pending
-      --  bits would block this thread forever.
+      --  Skip exit (9), the blocking IPC trio (12-14), ntfn_wait
+      --  (19) and cap_delete (26): a random call/recv/wait with no
+      --  peer or no pending bits would block this thread forever,
+      --  and a random delete could close this process's granted
+      --  caps (console, fs) out from under the test flow.
       --  Directed IPC coverage is a separate milestone.
       if Number /= Sys_Exit
         and then Number /= Sys_IPC_Call
         and then Number /= Sys_IPC_Recv
         and then Number /= Sys_IPC_Reply
         and then Number /= 19
+        and then Number /= Sys_Cap_Delete
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

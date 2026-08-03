@@ -37,6 +37,26 @@
    AS teardown/unmap never frees it); write requires read
 17 mem_unmap(a0 = as_cap, a1 = VA, a2 = length) -> 0 ok, 1 fail;
    only borrowed (memory-object) pages unmap, AS-owned pages refuse
+18 ntfn_create() -> notification cap handle (Wait+Write+Manage),
+   U64'Last fail
+19 ntfn_wait(a0 = ntfn_cap) -> pending bits (consumed); blocks
+20 ntfn_signal(a0 = ntfn_cap, a1 = bits) -> 0 ok, U64'Last fail
+21 ntfn_bind_thread(a0 = ntfn_cap) -> 0 ok, 1 fail (Manage right;
+   one bound notification per thread; IPC_Recv delivers signals as
+   a synthetic message, label = U64'Last, word 0 = bits)
+22 irq_bind_ntfn(a0 = irq_cap, a1 = ntfn_cap, a2 = badge) -> 0 ok,
+   1 fail
+23 io_map(a0 = resource_cap, a1 = base, a2 = length) -> MMIO cap
+   handle, U64'Last fail (device_resource authority; page-aligned,
+   <= 64 pages)
+24 irq_create(a0 = resource_cap, a1 = source) -> IRQ cap handle
+   (Wait+Ack+Transfer+Manage), U64'Last fail (device_resource
+   authority; registers + PLIC-enables the source)
+25 mem_object_pa(a0 = mem_cap, a1 = index) -> frame PA (Manage
+   right), 0 fail
+26 cap_delete(a0 = cap) -> 0 ok, U64'Last fail; closes one of the
+   caller's own cap-table slots with the exit path's per-kind
+   cleanup (object release, endpoint/IRQ/notification hooks)
 ```
 
 IPC result codes: 0 ok, 1 invalid, 2 transfer failed, 3 endpoint gone,
