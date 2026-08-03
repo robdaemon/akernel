@@ -41,6 +41,14 @@ procedure Init is
    --  messages (docs/IPC.md file protocol).
    FS_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  FAT32 driver endpoint minted at boot: Receive side granted
+   --  (fat32_server token) to System/Fat32, Send side pushed to
+   --  the file server as Op_Add_FS (device HD0) after the driver
+   --  spawns, so the VFS forwards HD0: paths to it. The driver's
+   --  blk token grants it the virtio-blk service endpoint (Send)
+   --  kept by the device manager.
+   FAT32_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  Volume directive state (manifest: "volume RD0 Initrd ci"):
    --  sent to the file server as Op_Mount right after spawn,
    --  before the name table.
@@ -199,6 +207,32 @@ procedure Init is
       end if;
    end Push_Block_Mount;
 
+   --  Send Op_Add_FS (device "HD0", label "AKDISK") with the
+   --  FAT32 driver's service endpoint (Send side, transferred in
+   --  cap slot 0) so the VFS mounts the forwarded volume.
+   procedure Push_Fat32_Mount is
+      use Akernel_User.Syscalls;
+      Dev   : constant String := "HD0";
+      Lab   : constant String := "AKDISK";
+      Chars : constant String := Dev & Lab;
+   begin
+      Message.Label := 6;  --  Files.Op_Add_FS
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Dev'Length);
+      Message.Words (1) := U64 (Lab'Length);
+      Message.Words (2) := 1;  --  case-insensitive
+      for P in 1 .. Chars'Length loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Chars (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (0 => FAT32_EP, others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("fat32 mount push failed");
+      end if;
+   end Push_Fat32_Mount;
+
    --  Push the file server's (handle -> boot-file name) table as
    --  Op_Set_Name messages, one per boot-file cap it was granted,
    --  then a zero-handle terminator.
@@ -257,6 +291,7 @@ procedure Init is
       Process_Cap : Akernel_User.Syscalls.U64;
       Result      : Akernel_User.Syscalls.U64;
       Is_FS       : Boolean := False;
+      Is_Fat32    : Boolean := False;
       FS_Base     : Akernel_User.Syscalls.U64 := 0;
       FS_Count    : Akernel_User.Syscalls.U64 := 0;
 
@@ -360,6 +395,14 @@ procedure Init is
             Grant (Console_EP, Akernel_User.Syscalls.Right_Send, Program_Id);
          elsif Token_Equals (Token, Length, "fs") then
             Grant (FS_EP, Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "blk") then
+            --  The virtio-blk service endpoint (Send), kept by the
+            --  device manager; fs drivers talk block protocol to it.
+            Grant (Device_Manager.Block_Service,
+                   Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "fat32_server") then
+            Is_Fat32 := True;
+            Grant (FAT32_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "fs_server") then
             Is_FS := True;
             Grant (FS_EP, Akernel_User.Syscalls.Right_Receive, 0);
@@ -406,6 +449,10 @@ procedure Init is
             end if;
             Push_FS_Names (FS_Base, FS_Count);
             Akernel_User.Syscalls.Debug_Put_Line ("fs name table pushed");
+         end if;
+
+         if Is_Fat32 then
+            Push_Fat32_Mount;
          end if;
       else
          Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
@@ -470,6 +517,7 @@ begin
    IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
    Console_EP := Akernel_User.Syscalls.EP_Create;
    FS_EP := Akernel_User.Syscalls.EP_Create;
+   FAT32_EP := Akernel_User.Syscalls.EP_Create;
 
    --  Device-driven drivers before the static manifest programs:
    --  the console server (Drivers/Serial, class 0) must be serving

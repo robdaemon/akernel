@@ -126,6 +126,7 @@ procedure Virtio_Blk is
    Head     : Virtio.U16;
    Written  : Virtio.U32;
    Ok       : Boolean;
+   Pattern_Image : Boolean;
 
    --  Issue one request (3-descriptor chain: header read-only,
    --  data in/out per Op, status byte writable) and block on the
@@ -320,15 +321,18 @@ begin
    Dev.Add_Status (Virtio.Status_Driver_Ok);
 
    ------------------------------------------------------------------
-   --  Self-test against the generated disk image
+   --  Self-test against the disk image
    ------------------------------------------------------------------
 
-   --  1. Signature sector: "AKBLKIMG" then 0xA5 fill.
+   --  1. Sector 0: the legacy pattern image ("AKBLKIMG") runs the
+   --  full pattern + write/readback suite; a real filesystem image
+   --  gets read-only checks only — test writes would corrupt
+   --  filesystem metadata.
    if Do_Request (Req_Read, 0, Data_PA, Sector_Size) /= 0 then
       Fail ("virtio-blk read sector 0 io error");
    end if;
 
-   Ok :=
+   Pattern_Image :=
      Data_Page (0) = 16#41# and then  --  'A'
      Data_Page (1) = 16#4B# and then  --  'K'
      Data_Page (2) = 16#42# and then  --  'B'
@@ -338,75 +342,87 @@ begin
      Data_Page (6) = 16#4D# and then  --  'M'
      Data_Page (7) = 16#47#;          --  'G'
 
-   if Ok then
+   if Pattern_Image then
+      Ok := True;
       for J in 8 .. Sector_Size - 1 loop
          if Data_Page (J) /= 16#A5# then
             Ok := False;
             exit;
          end if;
       end loop;
-   end if;
 
-   if Ok then
+      if Ok then
+         Akernel_User.Console.Put_Line ("PASS virtio-blk read sector ok");
+      else
+         Fail ("virtio-blk read sector bad data");
+      end if;
+
+      --  2. Pattern sector: byte j of sector s = (s + j) mod 256.
+      if Do_Request (Req_Read, 7, Data_PA, Sector_Size) /= 0 then
+         Fail ("virtio-blk read sector 7 io error");
+      end if;
+
+      Ok := True;
+      for J in 0 .. Sector_Size - 1 loop
+         if Data_Page (J) /= U8 ((7 + J) mod 256) then
+            Ok := False;
+            exit;
+         end if;
+      end loop;
+
+      if Ok then
+         Akernel_User.Console.Put_Line ("PASS virtio-blk pattern sector ok");
+      else
+         Fail ("virtio-blk pattern sector bad data");
+      end if;
+
+      --  3. Write/readback round-trip on sector 3 (0xC3 fill).
+      for J in 0 .. Sector_Size - 1 loop
+         Data_Page (J) := 16#C3#;
+      end loop;
+
+      if Do_Request (Req_Write, 3, Data_PA, Sector_Size) /= 0 then
+         Fail ("virtio-blk write sector 3 io error");
+      end if;
+
+      for J in 0 .. Sector_Size - 1 loop
+         Data_Page (J) := 0;
+      end loop;
+
+      if Do_Request (Req_Read, 3, Data_PA, Sector_Size) /= 0 then
+         Fail ("virtio-blk readback sector 3 io error");
+      end if;
+
+      Ok := True;
+      for J in 0 .. Sector_Size - 1 loop
+         if Data_Page (J) /= 16#C3# then
+            Ok := False;
+            exit;
+         end if;
+      end loop;
+
+      if Ok then
+         Akernel_User.Console.Put_Line ("PASS virtio-blk write readback ok");
+      else
+         Fail ("virtio-blk write readback bad data");
+      end if;
+
+      if Capacity = 2048 then
+         Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
+      else
+         Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
+      end if;
+   else
+      --  Filesystem image: the read above succeeded, nothing else
+      --  is safe to assert sector-by-sector and nothing is safe to
+      --  write.
       Akernel_User.Console.Put_Line ("PASS virtio-blk read sector ok");
-   else
-      Fail ("virtio-blk read sector bad data");
-   end if;
 
-   --  2. Pattern sector: byte j of sector s = (s + j) mod 256.
-   if Do_Request (Req_Read, 7, Data_PA, Sector_Size) /= 0 then
-      Fail ("virtio-blk read sector 7 io error");
-   end if;
-
-   Ok := True;
-   for J in 0 .. Sector_Size - 1 loop
-      if Data_Page (J) /= U8 ((7 + J) mod 256) then
-         Ok := False;
-         exit;
+      if Capacity = 131072 then  --  64 MiB FAT32 image
+         Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
+      else
+         Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
       end if;
-   end loop;
-
-   if Ok then
-      Akernel_User.Console.Put_Line ("PASS virtio-blk pattern sector ok");
-   else
-      Fail ("virtio-blk pattern sector bad data");
-   end if;
-
-   --  3. Write/readback round-trip on sector 3 (0xC3 fill).
-   for J in 0 .. Sector_Size - 1 loop
-      Data_Page (J) := 16#C3#;
-   end loop;
-
-   if Do_Request (Req_Write, 3, Data_PA, Sector_Size) /= 0 then
-      Fail ("virtio-blk write sector 3 io error");
-   end if;
-
-   for J in 0 .. Sector_Size - 1 loop
-      Data_Page (J) := 0;
-   end loop;
-
-   if Do_Request (Req_Read, 3, Data_PA, Sector_Size) /= 0 then
-      Fail ("virtio-blk readback sector 3 io error");
-   end if;
-
-   Ok := True;
-   for J in 0 .. Sector_Size - 1 loop
-      if Data_Page (J) /= 16#C3# then
-         Ok := False;
-         exit;
-      end if;
-   end loop;
-
-   if Ok then
-      Akernel_User.Console.Put_Line ("PASS virtio-blk write readback ok");
-   else
-      Fail ("virtio-blk write readback bad data");
-   end if;
-
-   if Capacity = 2048 then
-      Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
-   else
-      Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
    end if;
 
    ------------------------------------------------------------------

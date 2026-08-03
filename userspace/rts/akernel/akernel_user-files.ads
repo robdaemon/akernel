@@ -19,6 +19,12 @@ with Akernel_User.Syscalls;
 --                      a block-driver service endpoint cap (Send) in
 --                      cap slot 0; mounts a block-backed volume whose
 --                      single file "disk" is the raw device
+--    Op_Add_FS  = 6    init -> server: same words as Op_Mount plus
+--                      an fs-driver service endpoint cap (Send) in
+--                      cap slot 0; mounts a VFS-forwarded volume —
+--                      stat/open/read for its paths are relayed to
+--                      the fs driver (e.g. System/Fat32), which
+--                      speaks this same protocol
 --
 --  Block volumes speak the block protocol to the driver (labels):
 --    0 info  -> (status, capacity in sectors)
@@ -53,6 +59,7 @@ package Akernel_User.Files is
    Op_Read     : constant U64 := 3;
    Op_Mount    : constant U64 := 4;
    Op_Add_Block : constant U64 := 5;
+   Op_Add_FS   : constant U64 := 6;
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;

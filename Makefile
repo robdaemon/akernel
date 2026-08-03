@@ -11,6 +11,7 @@ SPIN_ELF := bin/userspace/spin.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
 ECHO_ELF := bin/userspace/echo.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
+FAT32_ELF := bin/userspace/fat32.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 DISK_IMG := disk.img
@@ -19,14 +20,14 @@ INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver virtio_rng virtio_blk initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 virtio_rng virtio_blk initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd
 
 kernel:
 	alr build
 
-userspace: init serial fuzz spin memstage echo fileserver
+userspace: init serial fuzz spin memstage echo fileserver fat32
 
 init:
 	$(MAKE) -C userspace/init
@@ -49,25 +50,35 @@ echo:
 fileserver:
 	$(MAKE) -C userspace/fileserver
 
+fat32:
+	$(MAKE) -C userspace/fat32
+
 virtio_rng:
 	$(MAKE) -C userspace/virtio_rng
 
 virtio_blk:
 	$(MAKE) -C userspace/virtio_blk
 
-#  Test disk for the virtio-blk driver: sector 0 carries the
-#  "AKBLKIMG" signature with 0xA5 fill; every later sector s holds
-#  byte j = (s + j) mod 256. Regenerate on any layout change.
+#  64 MiB FAT32 data disk (host mkfs.vfat + mtools): README.TXT and
+#  BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB, multi-cluster chain).
+#  Served read-only by System/Fat32 behind the file server's VFS;
+#  the raw device stays available as BD0:disk.
 $(DISK_IMG):
-	python3 -c "import sys; img = bytearray(b'AKBLKIMG' + bytes([0xA5] * 504)); [img.extend(bytes(((s + j) & 0xFF) for j in range(512))) for s in range(1, 2048)]; open('$(DISK_IMG)', 'wb').write(img)"
+	mkdir -p $(INITRD_OUT)
+	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
+	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
+	mkfs.vfat -F 32 -S 512 -s 1 -n AKDISK -C $@ 65536
+	mcopy -i $@ $(INITRD_OUT)/readme.txt ::README.TXT
+	mcopy -i $@ $(INITRD_OUT)/big.bin ::BIG.BIN
 
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng virtio_blk tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 virtio_rng virtio_blk tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
 	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
+	cp $(FAT32_ELF) $(INITRD_ROOT)/System/Fat32
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver virtio,mmio Drivers/VirtioBlk virtio 2' >> $(INITRD_ROOT)/System/Drivers
@@ -82,6 +93,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver virtio_rng virtio_
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo fs System/Manifest' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 5 System/Fat32 console blk fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' '# file Tests/Echo' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)
 	python3 tools/mkinitrd.py $(INITRD_CPIO) $(INITRD_IMG)

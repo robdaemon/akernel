@@ -454,10 +454,11 @@ begin
 
       --  Block volume (BD0, virtio-blk behind Op_Add_Block): the
       --  raw device resolves as "disk" and reads come through the
-      --  file server -> block driver RPC chain.
+      --  file server -> block driver RPC chain. The image is a
+      --  64 MiB FAT32 volume.
       Status := Akernel_User.Files.Stat ("BD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
-             and then Size = 2048 * 512,
+             and then Size = 131072 * 512,
              "blk volume stat ok");
 
       Status := Akernel_User.Files.Stat ("Disk:disk", Size);
@@ -469,11 +470,11 @@ begin
              "blk volume open ok");
 
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 0, Buf'Address, 16, Count);
+        ("BD0:disk", 82, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
-        and then Count = 16;
+        and then Count = 8;
       declare
-         Sig : constant String := "AKBLKIMG";
+         Sig : constant String := "FAT32   ";
       begin
          for I in 0 .. 7 loop
             Match := Match
@@ -481,34 +482,103 @@ begin
                 Interfaces.Unsigned_8 (Character'Pos (Sig (I + 1)));
          end loop;
       end;
-      for I in 8 .. 15 loop
-         Match := Match and then Buf (I) = 16#A5#;
-      end loop;
       Check (Match, "blk volume read signature ok");
 
+      --  Unaligned offset exercises the file server's partial-
+      --  sector copy path.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 7 * 512, Big_Buf'Address, 512, Count);
+        ("BD0:disk", 83, Buf'Address, 7, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 7;
+      declare
+         Sig : constant String := "AT32   ";
+      begin
+         for I in 0 .. 6 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Sig (I + 1)));
+         end loop;
+      end;
+      Check (Match, "blk volume unaligned read ok");
+
+      --  FAT32 volume (HD0, System/Fat32 behind the VFS): real
+      --  files resolve and read through the file server -> fs
+      --  driver -> block driver RPC chain.
+      Status := Akernel_User.Files.Stat ("HD0:README.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 37,
+             "fat stat readme size");
+
+      Status := Akernel_User.Files.Stat ("AKDISK:README.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat volume label resolves");
+
+      Status := Akernel_User.Files.Read
+        ("HD0:README.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 37;
+      declare
+         Text : constant String := "Hello from the akernel FAT32 volume.";
+      begin
+         for I in 0 .. 35 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+         Match := Match and then Buf (36) = 10;
+      end;
+      Check (Match, "fat readme content ok");
+
+      --  BIG.BIN: byte i = (i*7+3) mod 256, 64 KiB — spans 128
+      --  clusters on a 1-sector/cluster image, exercising FAT
+      --  chain walks in the fs driver.
+      Status := Akernel_User.Files.Stat ("HD0:BIG.BIN", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 65536,
+             "fat stat big.bin size");
+
+      Status := Akernel_User.Files.Read
+        ("HD0:BIG.BIN", 0, Big_Buf'Address, 512, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
          Match := Match
            and then Big_Buf (J) =
-             Interfaces.Unsigned_8 ((7 + J) mod 256);
+             Interfaces.Unsigned_8 ((J * 7 + 3) mod 256);
       end loop;
-      Check (Match, "blk volume read pattern ok");
+      Check (Match, "fat big.bin head ok");
 
-      --  Unaligned offset exercises the file server's partial-
-      --  sector copy path.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 7 * 512 + 100, Buf'Address, 8, Count);
+        ("HD0:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 512;
+      for J in 0 .. 511 loop
+         Match := Match
+           and then Big_Buf (J) =
+             Interfaces.Unsigned_8 (((65000 + J) * 7 + 3) mod 256);
+      end loop;
+      Check (Match, "fat big.bin tail ok");
+
+      --  Cluster-crossing unaligned read (clusters are 1 sector).
+      Status := Akernel_User.Files.Read
+        ("HD0:BIG.BIN", 4091, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       for J in 0 .. 7 loop
          Match := Match
            and then Buf (J) =
-             Interfaces.Unsigned_8 ((7 + 100 + J) mod 256);
+             Interfaces.Unsigned_8 (((4091 + J) * 7 + 3) mod 256);
       end loop;
-      Check (Match, "blk volume unaligned read ok");
+      Check (Match, "fat unaligned read ok");
+
+      Status := Akernel_User.Files.Stat ("hd0:big.bin", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 65536,
+             "fat names case-insensitive");
+
+      Status := Akernel_User.Files.Stat ("HD0:NOSUCH.BIN", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat unknown file rejected");
 
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap

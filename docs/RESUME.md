@@ -2,10 +2,29 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: a real filesystem
-on the block device (cap_delete landed — the blk driver no longer
-leaks a slot per transferred buffer), SMP hardening, IOMMU, kernel
+NEXT.md's deferred list or the open candidates: FAT32 write path /
+subdirectories / LFN (20b), SMP hardening, IOMMU, kernel
 introspection syscalls, plain send, register fast path.
+
+FAT32 read-only landed (20a): System/Fileserver is now a VFS —
+fs-driver volumes (Op_Add_FS, label 6: Op_Mount words + service
+endpoint cap) forward stat/open/read verbatim to an independent fs
+process, path repacked into message words, client buffer cap
+transferred onward. System/Fat32 (manifest `program 5 System/Fat32
+console blk fat32_server`: handle 2 = blk service Send via the new
+blk token, handle 3 = init-minted endpoint Receive) probes the BPB
+at boot (0x55AA, "FAT32   " type string, cluster size <= 8
+sectors) and serves flat-root 8.3 reads with FAT chain walks
+through a one-page bounce. disk.img is a 64 MiB FAT32 image built
+by host mkfs.vfat + mtools (README.TXT, BIG.BIN 64 KiB
+multi-cluster pattern); the virtio-blk self-test gates its
+write/readback suite on the legacy AKBLKIMG signature and does
+read-only checks on fs images. Leak class burned: EVERY Op_Read
+transfers the client buffer cap into the receiver's table — the
+file server's own boot-file/block read paths leaked a slot per op
+for milestones (cached-mapping made deletion unsafe); all layers
+now map per op and cap_delete after. 114/114 directed PASS at
+QEMU_SMP 1/4/8, fuzz failures=0.
 
 cap_delete landed (20 prereq): syscall 26 closes one of the
 caller's own cap-table slots through Kernel.Tasks.Close_Cap — the

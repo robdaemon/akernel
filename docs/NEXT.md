@@ -212,8 +212,7 @@ Next candidates (order open):
     deadlocked init's fs name push against the file server's first
     console write (no console server existed yet). 104/104 directed
     PASS at QEMU_SMP 1/4/8, fuzz failures=0.
-20. Real filesystem on the block device (FAT or custom): fileserver
-    block volumes currently expose only the raw "disk" file.
+20. Real filesystem on the block device (in progress):
     ~~Prerequisite cap_delete~~ — done: syscall 26 closes one of the
     caller's own cap-table slots via Kernel.Tasks.Close_Cap (same
     per-kind cleanup as the exit/reap path); the blk driver deletes
@@ -222,6 +221,28 @@ Next candidates (order open):
     now with cap_delete skipped (a random delete could close the
     fuzzer's own granted caps). 108/108 directed PASS at QEMU_SMP
     1/4/8, fuzz failures=0.
+    20a. ~~FAT32 read-only as an independent fs driver~~ — done:
+         System/Fat32 (manifest `program 5 System/Fat32 console blk
+         fat32_server`): handle 2 = virtio-blk service Send, handle
+         3 = init-minted service endpoint Receive; init pushes its
+         Send side to the file server as Op_Add_FS (device HD0,
+         label AKDISK). The file server is now a VFS: fs-driver
+         volumes forward stat/open/read verbatim (path repacked,
+         client buffer cap transferred onward — every layer
+         cap_deletes its copy after the op; the same per-op leak
+         existed in the file server's own read paths and is fixed
+         there too, per-op map/unmap instead of a cached mapping).
+         Driver probes the BPB (0x55AA, "FAT32   ", cluster size
+         <= 8 sectors), serves flat-root 8.3 reads with FAT chain
+         walks through a bounce page. disk.img is now a 64 MiB
+         FAT32 image (host mkfs.vfat + mtools: README.TXT, BIG.BIN
+         64 KiB multi-cluster pattern); the virtio-blk self-test
+         runs its write suite only on legacy AKBLKIMG images and
+         read-only checks otherwise. Raw device stays BD0:disk.
+         114/114 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
+    20b. Remaining: write path (file create/write, FAT chain
+         allocation, directory entry add/update), subdirectories,
+         LFN entries.
 
 Commit between each milestone.
 

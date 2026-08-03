@@ -74,6 +74,12 @@ procedure Fileserver is
       Is_Block : Boolean := False;
       Blk_EP   : U64 := 0;
       Blk_Size : U64 := 0;
+      --  FS-driver volume (Op_Add_FS): stat/open/read for its
+      --  paths are forwarded verbatim to the fs driver at FS_EP
+      --  (this server is the VFS layer; filesystems are
+      --  independent driver processes).
+      Is_FS    : Boolean := False;
+      FS_EP    : U64 := 0;
    end record;
 
    Volumes : array (1 .. Max_Volumes) of Volume_Entry;
@@ -83,8 +89,6 @@ procedure Fileserver is
    Slot_Stride   : constant U64 := 64 * Syscalls.Page_Size;
    Buf_Win_VA    : constant U64 :=
      File_Win_Base + Max_Files * Slot_Stride;
-
-   Buf_Mapped_Cap : U64 := 0;
 
    --  Bounce buffer for block-driver calls: one page (the block
    --  protocol caps a request at 8 sectors = 4 KiB), transferred
@@ -96,6 +100,9 @@ procedure Fileserver is
    function Shift_Right
      (Value : U64; Amount : Natural) return U64
      renames Interfaces.Shift_Right;
+
+   function Shl (Value : U64; Amount : Natural) return U64
+     renames Interfaces.Shift_Left;
 
    function Unpack_Char (First : Natural; Pos : Natural) return Character
    is (Character'Val
@@ -357,6 +364,49 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Add_Block;
 
+   --  Op_Add_FS: like Op_Add_Block but the endpoint speaks the
+   --  client file protocol (stat/open/read by path) instead of the
+   --  block protocol — the fs driver probed and mounted the
+   --  filesystem itself. Registers a VFS-forwarded volume.
+   procedure Handle_Add_FS is
+      Dev_Len : constant Natural := Natural (Syscalls.Message.Words (0));
+      Lab_Len : constant Natural := Natural (Syscalls.Message.Words (1));
+      CI      : constant Boolean := Syscalls.Message.Words (2) /= 0;
+      EP      : constant U64 := Syscalls.Message.Caps (0);
+   begin
+      if Dev_Len = 0 or else Dev_Len > 16
+        or else Lab_Len = 0 or else Lab_Len > 16
+        or else Dev_Len + Lab_Len > 24
+        or else EP = 0
+      then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      for V in Volumes'Range loop
+         if not Volumes (V).Valid then
+            Volumes (V).Valid := True;
+            Volumes (V).Dev_Len := Dev_Len;
+            Volumes (V).Lab_Len := Lab_Len;
+            Volumes (V).Case_Insensitive := CI;
+            for Pos in 0 .. Dev_Len - 1 loop
+               Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
+            end loop;
+            for Pos in 0 .. Lab_Len - 1 loop
+               Volumes (V).Label (Pos + 1) :=
+                 Unpack_Char (3, Dev_Len + Pos);
+            end loop;
+            Volumes (V).Is_FS := True;
+            Volumes (V).FS_EP := EP;
+
+            Reply2 (Files.Status_Ok, 0);
+            return;
+         end if;
+      end loop;
+
+      Reply2 (Files.Status_Bad_Args, 0);
+   end Handle_Add_FS;
+
    procedure Handle_Set_Name is
       Handle : constant U64 := Syscalls.Message.Words (0);
       Len    : constant Natural := Natural (Syscalls.Message.Words (1));
@@ -387,6 +437,27 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Set_Name;
 
+   --  Pack Name (Pos .. Len) into the outgoing message words
+   --  First_Word .. 5 (NUL-padded): the VFS forwards the path
+   --  portion of a volume-qualified name to the fs driver.
+   procedure Pack_Path
+     (Name : String; Pos : Natural; Len : Natural; First_Word : Natural)
+   is
+      W : Natural;
+   begin
+      for I in First_Word .. 5 loop
+         Syscalls.Message.Words (I) := 0;
+      end loop;
+      for P in Pos .. Len loop
+         W := First_Word + (P - Pos) / 8;
+         exit when W > 5;
+         Syscalls.Message.Words (W) :=
+           Syscalls.Message.Words (W)
+             or Shl (U64 (Character'Pos (Name (Name'First + P - 1))),
+                     ((P - Pos) mod 8) * 8);
+      end loop;
+   end Pack_Path;
+
    procedure Handle_Stat_Or_Open is
       Name : String (1 .. 48);
       Len  : Natural;
@@ -402,6 +473,20 @@ procedure Fileserver is
       V := Resolve_Volume (Name, Len, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_FS then
+         --  VFS forwarding: the fs driver speaks the same client
+         --  protocol; the path portion rides words 0..5.
+         Pack_Path (Name, Pos, Len, 0);
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+            Reply2 (Syscalls.Message.Words (0),
+                    Syscalls.Message.Words (1));
+         else
+            Reply2 (Files.Status_Not_Found, 0);
+         end if;
          return;
       end if;
 
@@ -426,82 +511,84 @@ procedure Fileserver is
       Reply2 (Files.Status_Ok, File_Table (I).Size);
    end Handle_Stat_Or_Open;
 
-   --  (Re)map the client read buffer when it changes.
-   function Ensure_Buf_Mapped (Buf : U64) return Boolean is
+   --  Map the client read buffer for this op (unmapped +
+   --  cap_delete'd at op end; a per-op transferred cap must not
+   --  linger or every read leaks a cap-table slot).
+   function Map_Buf (Buf : U64) return Boolean is
    begin
-      if Buf = Buf_Mapped_Cap then
-         return True;
-      end if;
-
-      if Buf_Mapped_Cap /= 0 then
-         if Syscalls.Mem_Unmap
-           (Address_Space => Syscalls.Address_Space_Cap,
-            VA            => Buf_Win_VA,
-            Length        => Buf_Bytes) /= 0
-         then
-            return False;
-         end if;
-      end if;
-
-      if Syscalls.Mem_Map
+      return Syscalls.Mem_Map
         (Address_Space => Syscalls.Address_Space_Cap,
          Cap           => Buf,
          VA            => Buf_Win_VA,
          Offset        => 0,
          Length        => Buf_Bytes,
-         Flags         => 3) /= 0
-      then
-         Buf_Mapped_Cap := 0;
-         return False;
+         Flags         => 3) = 0;
+   end Map_Buf;
+
+   --  Bounce buffer for block-driver calls, allocated lazily.
+   function Ensure_Blk_Buf return Boolean is
+   begin
+      if Blk_Buf_Cap /= 0 then
+         return True;
       end if;
 
-      Buf_Mapped_Cap := Buf;
+      Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
+      if Blk_Buf_Cap = Syscalls.Syscall_Failed
+        or else Syscalls.Mem_Map
+          (Address_Space => Syscalls.Address_Space_Cap,
+           Cap           => Blk_Buf_Cap,
+           VA            => Blk_Buf_VA,
+           Offset        => 0,
+           Length        => Syscalls.Page_Size,
+           Flags         => 3) /= 0
+      then
+         Blk_Buf_Cap := 0;
+         return False;
+      end if;
       return True;
-   end Ensure_Buf_Mapped;
+   end Ensure_Blk_Buf;
 
    --  Block-volume read: sector RPCs to the driver through the
-   --  bounce buffer, copied into the client buffer window.
+   --  bounce buffer, copied into the client buffer window. Sets
+   --  Mapped when the client buffer got mapped (caller unmaps).
    procedure Handle_Block_Read
      (V      : Natural;
       Buf    : U64;
       Offset : U64;
-      Length : U64)
+      Length : U64;
+      Status : out U64;
+      Count  : out U64;
+      Mapped : in out Boolean)
    is
-      Count : U64;
       Done  : U64 := 0;
       Pos   : U64;
       Chunk : U64;
       Skip  : U64;
       NSec  : U64;
    begin
+      Status := Files.Status_Ok;
+      Count := 0;
+
       if Volumes (V).Blk_Size = 0 or else Offset >= Volumes (V).Blk_Size then
-         Reply2 (Files.Status_Out_Of_Range, 0);
+         Status := Files.Status_Out_Of_Range;
          return;
       end if;
 
       Count := U64'Min (Length, Volumes (V).Blk_Size - Offset);
       Count := U64'Min (Count, Buf_Bytes);
 
-      if Blk_Buf_Cap = 0 then
-         Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
-         if Blk_Buf_Cap = Syscalls.Syscall_Failed
-           or else Syscalls.Mem_Map
-             (Address_Space => Syscalls.Address_Space_Cap,
-              Cap           => Blk_Buf_Cap,
-              VA            => Blk_Buf_VA,
-              Offset        => 0,
-              Length        => Syscalls.Page_Size,
-              Flags         => 3) /= 0
-         then
-            Reply2 (Files.Status_Bad_Args, 0);
-            return;
-         end if;
-      end if;
-
-      if not Ensure_Buf_Mapped (Buf) then
-         Reply2 (Files.Status_Not_Found, 0);
+      if not Ensure_Blk_Buf then
+         Status := Files.Status_Bad_Args;
+         Count := 0;
          return;
       end if;
+
+      if not Map_Buf (Buf) then
+         Status := Files.Status_Not_Found;
+         Count := 0;
+         return;
+      end if;
+      Mapped := True;
 
       while Done < Count loop
          Pos := Offset + Done;
@@ -516,7 +603,8 @@ procedure Fileserver is
          if Syscalls.IPC_Call (Volumes (V).Blk_EP) /= Syscalls.IPC_Ok
            or else Syscalls.Message.Words (0) /= 0
          then
-            Reply2 (Files.Status_Not_Found, 0);
+            Status := Files.Status_Not_Found;
+            Count := 0;
             return;
          end if;
 
@@ -535,8 +623,6 @@ procedure Fileserver is
 
          Done := Done + Chunk;
       end loop;
-
-      Reply2 (Files.Status_Ok, Count);
    end Handle_Block_Read;
 
    procedure Handle_Read is
@@ -544,80 +630,126 @@ procedure Fileserver is
       Length : constant U64 := Syscalls.Message.Words (1);
       Buf    : constant U64 := Syscalls.Message.Caps (0);
       Name   : String (1 .. 32);
-      Len    : Natural;
-      Pos    : Natural;
-      V      : Natural;
-      I      : Natural;
-      Count  : U64;
+      Len    : Natural := 0;
+      Pos    : Natural := 1;
+      V      : Natural := 0;
+      I      : Natural := 0;
+      Count  : U64 := 0;
+      Status : U64 := Files.Status_Ok;
+      Mapped : Boolean := False;
       Ok     : Boolean;
-   begin
-      if not Names_Done then
-         Reply2 (Files.Status_Not_Ready, 0);
-         return;
-      end if;
 
-      if Buf = 0
-        or else Length = 0
-        or else not Name_Of (2, 5, Name, Len)
-      then
-         Reply2 (Files.Status_Bad_Args, 0);
-         return;
-      end if;
-
-      V := Resolve_Volume (Name, Len, Pos);
-      if V = 0 then
-         Reply2 (Files.Status_Not_Found, 0);
-         return;
-      end if;
-
-      if Volumes (V).Is_Block then
-         if not Match ("disk", 4, Name (Pos .. Len),
-                       Volumes (V).Case_Insensitive)
-         then
-            Reply2 (Files.Status_Not_Found, 0);
+      procedure Process is
+      begin
+         if not Names_Done then
+            Status := Files.Status_Not_Ready;
             return;
          end if;
 
-         Handle_Block_Read (V, Buf, Offset, Length);
-         return;
+         if Buf = 0
+           or else Length = 0
+           or else not Name_Of (2, 5, Name, Len)
+         then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
+
+         V := Resolve_Volume (Name, Len, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+
+         if Volumes (V).Is_FS then
+            --  VFS forwarding: offset/length in words 0..1, path
+            --  in words 2..5, the client's buffer cap forwarded in
+            --  slot 0 (the fs driver maps, fills and cap_deletes
+            --  its own copy; ours is deleted below).
+            Syscalls.Message.Words (0) := Offset;
+            Syscalls.Message.Words (1) := Length;
+            Pack_Path (Name, Pos, Len, 2);
+            Syscalls.Message.Label := Files.Op_Read;
+            Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+               Status := Syscalls.Message.Words (0);
+               Count := Syscalls.Message.Words (1);
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+            return;
+         end if;
+
+         if Volumes (V).Is_Block then
+            if not Match ("disk", 4, Name (Pos .. Len),
+                          Volumes (V).Case_Insensitive)
+            then
+               Status := Files.Status_Not_Found;
+               return;
+            end if;
+
+            Handle_Block_Read (V, Buf, Offset, Length,
+                               Status, Count, Mapped);
+            return;
+         end if;
+
+         I := Find (Name (Pos .. Len), V);
+         if I = 0 then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+
+         if Offset >= File_Table (I).Size then
+            Status := Files.Status_Out_Of_Range;
+            return;
+         end if;
+
+         Ensure_Mapped (I, Ok);
+         if not Ok then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+
+         if not Map_Buf (Buf) then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+         Mapped := True;
+
+         Count := U64'Min (Length, File_Table (I).Size - Offset);
+         Count := U64'Min (Count, Buf_Bytes);
+
+         declare
+            Src : Byte_Array (0 .. Count - 1)
+              with Address => To_Address (Integer_Address
+                (File_Table (I).Win_VA + File_Table (I).Lead_In + Offset));
+            Dst : Byte_Array (0 .. Count - 1)
+              with Address => To_Address (Integer_Address (Buf_Win_VA));
+         begin
+            Dst := Src;
+         end;
+      end Process;
+   begin
+      Process;
+
+      --  Every Op_Read transfers the client's buffer cap into this
+      --  table; drop the mapping and the cap or leak a slot per op.
+      if Buf /= 0 then
+         if Mapped
+           and then Syscalls.Mem_Unmap
+             (Address_Space => Syscalls.Address_Space_Cap,
+              VA            => Buf_Win_VA,
+              Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer unmap failed");
+         end if;
+         if Syscalls.Cap_Delete (Buf) /= 0 then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer cap delete failed");
+         end if;
       end if;
 
-      I := Find (Name (Pos .. Len), V);
-      if I = 0 then
-         Reply2 (Files.Status_Not_Found, 0);
-         return;
-      end if;
-
-      if Offset >= File_Table (I).Size then
-         Reply2 (Files.Status_Out_Of_Range, 0);
-         return;
-      end if;
-
-      Ensure_Mapped (I, Ok);
-      if not Ok then
-         Reply2 (Files.Status_Not_Found, 0);
-         return;
-      end if;
-
-      if not Ensure_Buf_Mapped (Buf) then
-         Reply2 (Files.Status_Not_Found, 0);
-         return;
-      end if;
-
-      Count := U64'Min (Length, File_Table (I).Size - Offset);
-      Count := U64'Min (Count, Buf_Bytes);
-
-      declare
-         Src : Byte_Array (0 .. Count - 1)
-           with Address => To_Address (Integer_Address
-             (File_Table (I).Win_VA + File_Table (I).Lead_In + Offset));
-         Dst : Byte_Array (0 .. Count - 1)
-           with Address => To_Address (Integer_Address (Buf_Win_VA));
-      begin
-         Dst := Src;
-      end;
-
-      Reply2 (Files.Status_Ok, Count);
+      Reply2 (Status, Count);
    end Handle_Read;
 
 begin
@@ -636,6 +768,8 @@ begin
          Handle_Mount;
       elsif Syscalls.Message.Label = Files.Op_Add_Block then
          Handle_Add_Block;
+      elsif Syscalls.Message.Label = Files.Op_Add_FS then
+         Handle_Add_FS;
       elsif Syscalls.Message.Label = Files.Op_Set_Name then
          if Syscalls.Message.Words (0) = 0 then
             Names_Done := True;

@@ -178,14 +178,30 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   touch/unmap, RTS heap new/free/churn/growth, file-protocol
   stat/open/read/volume cases, spawn-from-memory-object with
   reap, and notification wait/signal/bind/recv-delivery cases).
-- `userspace/fileserver/` — file server (`System/Fileserver`,
+- `userspace/fileserver/` — VFS layer (`System/Fileserver`,
   granted fs endpoint Receive at cap 1, console Send at 2, every
   boot-file cap from 3 via the `boot_files` token): serves the
   9P-ish file protocol (docs/IPC.md) — Stat/Open by name, stateless
   Read into the client-owned buffer memory object whose cap rides
-  cap slot 0. Maps boot files as borrowed read-only pages (mem_map
-  boot-file branch + lead-in offset); init pushes the handle->name
-  table as Op_Set_Name messages after spawn.
+  cap slot 0 (deleted after each op; a per-op transferred cap must
+  not linger). Three volume kinds: boot-file set (Op_Mount, files
+  mapped as borrowed read-only pages), raw block passthrough
+  (Op_Add_Block, the single file "disk" via sector RPCs through a
+  bounce page), and fs-driver volumes (Op_Add_FS: ops forwarded
+  verbatim — path repacked into words, buffer cap transferred
+  onward — to an independent filesystem process).
+- `userspace/fat32/` — FAT32 filesystem driver (`System/Fat32`,
+  read-only): an independent fs process behind the VFS. Manifest
+  `console blk fat32_server` grants console at 1, the virtio-blk
+  service endpoint (Send) at 2 and its own service endpoint
+  (Receive) at 3; init pushes the Send side to the VFS as
+  Op_Add_FS (device HD0, label AKDISK). Probes sector 0 for a
+  FAT32 BPB (0x55AA, 512-byte sectors, "FAT32   " type string,
+  cluster size <= 8 sectors), then serves the same client file
+  protocol: flat root directory, 8.3 names (LFN/volume-label/
+  directory entries skipped), FAT chain walks through the bounce
+  page, file reads streaming cluster-by-cluster into the mapped
+  client buffer.
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,
@@ -213,7 +229,7 @@ unqualified names get the client-side default volume prepended.
 Current: a `volume RD0 Initrd ci` directive, fileserver with
 `fs_server console boot_files`, fuzzer with
 `ipc_test console Tests/Echo fs System/Manifest`, spin with
-`console`, plus a
+`console`, FAT32 driver with `console blk fat32_server`, plus a
 `# file Tests/Echo` comment line (skipped by init; keeps the path
 resolvable for the fuzzer's spawn). Boot-launch mechanism for
 initrd contents only (Amiga-ish startup-sequence role); not a
@@ -228,4 +244,8 @@ grants Send on the console endpoint (badged with the program id);
 file-server endpoint, `fs_server` grants Receive on it
 (System/Fileserver only); `boot_files` grants every boot-file cap
 in bootinfo order (System/Fileserver only — init pushes the
-matching name table over the fs endpoint after spawn).
+matching name table over the fs endpoint after spawn); `blk`
+grants Send on the virtio-blk service endpoint kept by the device
+manager; `fat32_server` grants Receive on the init-minted FAT32
+endpoint (System/Fat32 only — init pushes the Send side to the VFS
+as Op_Add_FS after spawn).
