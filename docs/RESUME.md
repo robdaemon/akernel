@@ -3,9 +3,29 @@
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
 NEXT.md's deferred list or the open candidates: FAT32
-delete/truncate/mkdir/LFN-create/timestamps (20c), SMP hardening,
-IOMMU, kernel introspection syscalls, plain send, register fast
-path.
+delete/truncate/mkdir/LFN-create/timestamps (20c), partition
+enumeration/query op + per-partition raw VFS volumes + MBR
+fallback (21 remaining), SMP hardening, IOMMU, kernel
+introspection syscalls, plain send, register fast path.
+
+GPT partition layer landed (21): System/Partmgr sits between
+virtio-blk and the fs drivers — `console blk part_server`, probes
+LBA 1 "EFI PART" (entry array walk, 8 slots; no header -> slot 0
+maps whole device), serves the same block protocol with the
+partition selected by cap BADGE (new `partN` manifest tokens
+grant Send badged 16#1000#+N), sector offset translation + bounds
+checks, request buffer caps forwarded zero-copy to blk with
+per-op cap_delete. fat32's line becomes `console part0
+fat32_server` — driver code untouched. disk.img is a GPT disk
+(sgdisk partition 1 @ sector 2048, mkfs.vfat --offset 2048,
+mtools @@1048576). Kernel Max_Process_Slots 8 -> 16 — partmgr
+pushed peak concurrent processes past 8 and spawn began failing
+No_Slot mid-fuzz (symptom: spawn tests FAIL then hang; diagnostic
+value: SMP1 runs take >240s with 6 manifest programs, use a
+longer timeout). Raw BD0:disk fuzz checks now read the GPT
+header (sector 1 "EFI PART"); raw-write test moved to the
+pre-partition gap. 130/130 directed PASS at QEMU_SMP 1/4/8,
+fuzz failures=0.
 
 FAT32 20b landed (write path, subdirs, LFN): Op_Write = 7 mirrors
 Op_Read's wire shape with the buffer consumed instead of filled.

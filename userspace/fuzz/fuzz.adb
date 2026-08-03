@@ -455,7 +455,7 @@ begin
       --  Block volume (BD0, virtio-blk behind Op_Add_Block): the
       --  raw device resolves as "disk" and reads come through the
       --  file server -> block driver RPC chain. The image is a
-      --  64 MiB FAT32 volume.
+      --  64 MiB GPT-partitioned disk (partition 1 = FAT32).
       Status := Akernel_User.Files.Stat ("BD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 131072 * 512,
@@ -469,12 +469,13 @@ begin
       Check (Status = Akernel_User.Files.Status_Ok,
              "blk volume open ok");
 
+      --  GPT header at LBA 1: "EFI PART" signature.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 82, Buf'Address, 8, Count);
+        ("BD0:disk", 512, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
-         Sig : constant String := "FAT32   ";
+         Sig : constant String := "EFI PART";
       begin
          for I in 0 .. 7 loop
             Match := Match
@@ -487,11 +488,11 @@ begin
       --  Unaligned offset exercises the file server's partial-
       --  sector copy path.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 83, Buf'Address, 7, Count);
+        ("BD0:disk", 513, Buf'Address, 7, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 7;
       declare
-         Sig : constant String := "AT32   ";
+         Sig : constant String := "FI PART";
       begin
          for I in 0 .. 6 loop
             Match := Match
@@ -734,9 +735,9 @@ begin
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat write bad parent rejected");
 
-      --  Raw disk write through the VFS bounce path: last sector,
-      --  beyond the test files' clusters (read-modify-write of a
-      --  partial range).
+      --  Raw disk write through the VFS bounce path: sector 1000
+      --  sits in the gap between the GPT entry array and partition
+      --  1 (read-modify-write of a partial range).
       declare
          Text : constant String := "AKRAWIO!";
       begin
@@ -746,7 +747,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:disk", 131071 * 512 + 100, Buf'Address, 8, Count);
+        ("BD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "blk volume write ok");
@@ -755,7 +756,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 131071 * 512 + 100, Buf'Address, 8, Count);
+        ("BD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare

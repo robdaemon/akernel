@@ -59,6 +59,7 @@ fileserver online
 fs name table pushed
 fuzz spawned
 program spawned
+partmgr gpt online
 fat32 online
 init resumed
 fuzz online          (via console server endpoint stream)
@@ -135,13 +136,16 @@ QEMU virt RAM base:     0x80000000
   io_map/irq_create (device_resource authority). Drivers/Serial is
   an ordinary spawned driver (class 0: console endpoint Receive);
   virtio-mmio devices run as user-mode drivers (virtio-rng live;
-  virtio-blk live with a block-backed BD0 raw volume). The file
-  server is a VFS: filesystems are independent driver processes —
-  System/Fat32 serves the 64 MiB FAT32 disk image as HD0/AKDISK
-  (reads + writes: subdirectory traversal, LFN matching, 8.3 file
-  create, cluster chain extension with mirrored FAT + FSInfo
-  updates; no sparse writes, no delete/mkdir yet), with ops
-  forwarded verbatim by the VFS and per-op buffer caps
+  virtio-blk live with a block-backed BD0 raw volume). The block
+  stack is driver -> partition -> filesystem: System/Partmgr
+  probes GPT (slot 0 = whole disk without a header) and serves
+  block protocol with badge-selected partition offset
+  translation, zero-copy cap forwarding; System/Fat32 serves
+  partition 1 of the GPT disk as HD0/AKDISK (reads + writes:
+  subdirectory traversal, LFN matching, 8.3 file create, cluster
+  chain extension with mirrored FAT + FSInfo updates; no sparse
+  writes, no delete/mkdir yet). The file server is a VFS in
+  front, forwarding verbatim with per-op buffer caps
   cap_delete'd at every layer.
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
   exposes memory-object frame PAs for DMA; spawned processes get

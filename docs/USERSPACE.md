@@ -192,10 +192,23 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   (Op_Add_FS: ops forwarded verbatim — path repacked into words,
   buffer cap transferred onward — to an independent filesystem
   process).
+- `userspace/partmgr/` — GPT partition layer (`System/Partmgr`):
+  sits between the virtio-blk driver and filesystem drivers.
+  Manifest `console blk part_server` grants console at 1, the
+  blk service endpoint (Send) at 2 and the partition service
+  endpoint (Receive) at 3. Probes LBA 1 for "EFI PART" (entry
+  array walk, first 8 non-empty entries become slots in order;
+  no header -> slot 0 maps the whole device), then serves the
+  same block protocol (info/read/write) with the partition
+  selected by the caller's cap badge (partN tokens), sector
+  offset translation and bounds checks; request buffer caps are
+  forwarded zero-copy to blk and the local copy is cap_delete'd
+  after each op.
 - `userspace/fat32/` — FAT32 filesystem driver (`System/Fat32`):
   an independent fs process behind the VFS. Manifest
-  `console blk fat32_server` grants console at 1, the virtio-blk
-  service endpoint (Send) at 2 and its own service endpoint
+  `console part0 fat32_server` grants console at 1, the
+  partition-1 block service (badged Send on partmgr) at 2 and
+  its own service endpoint
   (Receive) at 3; init pushes the Send side to the VFS as
   Op_Add_FS (device HD0, label AKDISK). Probes sector 0 for a
   FAT32 BPB (0x55AA, 512-byte sectors, "FAT32   " type string,
@@ -254,6 +267,10 @@ file-server endpoint, `fs_server` grants Receive on it
 in bootinfo order (System/Fileserver only — init pushes the
 matching name table over the fs endpoint after spawn); `blk`
 grants Send on the virtio-blk service endpoint kept by the device
-manager; `fat32_server` grants Receive on the init-minted FAT32
+manager (System/Partmgr only); `part_server` grants Receive on
+the init-minted partition service endpoint (System/Partmgr
+only); `partN` (N = 0..7) grants Send on it badged 16#1000#+N —
+the badge selects the GPT slot inside partmgr;
+`fat32_server` grants Receive on the init-minted FAT32
 endpoint (System/Fat32 only — init pushes the Send side to the VFS
 as Op_Add_FS after spawn).

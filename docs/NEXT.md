@@ -263,6 +263,29 @@ Next candidates (order open):
     20c. Remaining: file delete/truncate, mkdir/rmdir, LFN
          creation (writes are 8.3-only), timestamps.
 
+21. ~~GPT partition layer~~ — done: System/Partmgr sits between the
+    virtio-blk driver and filesystem drivers. Manifest `program 5
+    System/Partmgr console blk part_server` (blk token moved here
+    from fat32): probes LBA 1 for "EFI PART", walks the entry
+    array, first 8 non-empty entries become slots; without a GPT
+    header slot 0 maps the whole device (superfloppy fallback).
+    Serves the same block protocol (0 info / 1 read / 2 write) on
+    one endpoint; clients select the partition by cap BADGE — new
+    `partN` manifest tokens grant Send on the part service with
+    badge 16#1000#+N. Sector offset translation + bounds checks;
+    request buffer caps forwarded zero-copy to blk, local copy
+    cap_delete'd per op. fat32's manifest line becomes `console
+    part0 fat32_server`; driver code unchanged. disk.img is now a
+    GPT disk (host sgdisk: partition 1 at sector 2048, 60 MiB
+    FAT32 via mkfs.vfat --offset 2048 + mtools @@1048576); raw
+    BD0:disk fuzz checks switched to the GPT header (sector 1,
+    "EFI PART") and the raw-write test moved to the pre-partition
+    gap sector. Kernel Max_Process_Slots 8 -> 16 (partmgr pushed
+    peak concurrent processes past 8; spawn failed No_Slot).
+    130/130 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
+    Remaining: MBR read fallback, partition enumeration/query op,
+    per-partition raw volumes on the VFS.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

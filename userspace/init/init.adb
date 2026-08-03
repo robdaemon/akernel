@@ -49,6 +49,14 @@ procedure Init is
    --  kept by the device manager.
    FAT32_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  Partition service endpoint minted at boot: Receive side
+   --  granted (part_server token) to System/Partmgr; Send sides
+   --  granted badged 16#1000#+N by the partN tokens so clients
+   --  select the partition by badge. Partmgr probes GPT on the
+   --  blk device and forwards block-protocol ops with sector
+   --  offset translation (zero-copy cap forwarding).
+   PARTMGR_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  Volume directive state (manifest: "volume RD0 Initrd ci"):
    --  sent to the file server as Op_Mount right after spawn,
    --  before the name table.
@@ -403,6 +411,19 @@ procedure Init is
          elsif Token_Equals (Token, Length, "fat32_server") then
             Is_Fat32 := True;
             Grant (FAT32_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "part_server") then
+            Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Length = 5
+           and then Token (1 .. 4) = "part"
+           and then Token (5) in '0' .. '7'
+         then
+            --  partN: badged Send on the partition service; the
+            --  badge selects the GPT slot inside partmgr.
+            Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Send,
+                   16#1000# +
+                     Akernel_User.Syscalls.U64
+                       (Character'Pos (Token (5))
+                          - Character'Pos ('0')));
          elsif Token_Equals (Token, Length, "fs_server") then
             Is_FS := True;
             Grant (FS_EP, Akernel_User.Syscalls.Right_Receive, 0);
@@ -518,6 +539,7 @@ begin
    Console_EP := Akernel_User.Syscalls.EP_Create;
    FS_EP := Akernel_User.Syscalls.EP_Create;
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
+   PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
 
    --  Device-driven drivers before the static manifest programs:
    --  the console server (Drivers/Serial, class 0) must be serving

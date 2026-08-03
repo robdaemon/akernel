@@ -22,7 +22,7 @@ package body Kernel.Processes is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
-   Max_Process_Slots : constant := 8;
+   Max_Process_Slots : constant := 16;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
    type Process_Slot_Array is array (Process_Index)
      of aliased Kernel.Tasks.Process_Control_Block;
