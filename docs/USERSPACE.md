@@ -46,14 +46,19 @@
    a synthetic message, label = U64'Last, word 0 = bits)
 22 irq_bind_ntfn(a0 = irq_cap, a1 = ntfn_cap, a2 = badge) -> 0 ok,
    1 fail
-23 io_map(a0 = resource_cap, a1 = base, a2 = length) -> MMIO cap
-   handle, U64'Last fail (device_resource authority; page-aligned,
-   <= 64 pages)
+23 io_map(a0 = resource_cap, a1 = base, a2 = length, a3 = device_id)
+   -> MMIO cap handle, U64'Last fail (device_resource authority;
+   page-aligned, <= 64 pages; a3 = U64'Last for unattributed
+   platform MMIO, otherwise a PCI requester id the region belongs
+   to — used by the IOMMU authorization hook)
 24 irq_create(a0 = resource_cap, a1 = source) -> IRQ cap handle
    (Wait+Ack+Transfer+Manage), U64'Last fail (device_resource
    authority; registers + PLIC-enables the source)
 25 mem_object_pa(a0 = mem_cap, a1 = index) -> frame PA (Manage
-   right), 0 fail
+   right), 0 fail. IOMMU authorization point: with the IOMMU
+   online the frame is IOVA=PA mapped for every PCI device the
+   caller holds an attributed MMIO cap for; the memory object's
+   finalizer tears the mappings down.
 26 cap_delete(a0 = cap) -> 0 ok, U64'Last fail; closes one of the
    caller's own cap-table slots with the exit path's per-kind
    cleanup (object release, endpoint/IRQ/notification hooks)

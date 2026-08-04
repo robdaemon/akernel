@@ -13,11 +13,19 @@ with Kernel.Objects;
 
 package Kernel.Memory is
    subtype U64 is Interfaces.Unsigned_64;
+   subtype U32 is Interfaces.Unsigned_32;
 
    --  Pages per memory object (fixed upper bound; one object holds
    --  up to Max_Pages * 4096 bytes, bigger buffers use several
    --  objects).
    Max_Pages : constant := 64;
+
+   --  DMA authorization backlink: how many distinct PCI device ids
+   --  one object's frames may be IOMMU-mapped into at once
+   --  (mem_object_pa records the mapping here so the finalizer can
+   --  tear the IOVA=PA entries down before frames return to the
+   --  PMM).
+   Max_DMA_Devices : constant := 8;
 
    type Status is
      (Ok,
@@ -65,13 +73,24 @@ package Kernel.Memory is
      (Object : System.Address;
       Index  : U64) return U64;
 
+   --  Record that Object's frames were IOMMU-mapped for Device_Id
+   --  (deduped). False when the per-object device list is full —
+   --  the caller must roll back the mapping it just installed.
+   function Note_DMA_Mapping
+     (Object    : System.Address;
+      Device_Id : U32) return Boolean;
+
 private
    type Frame_Array is array (0 .. Max_Pages - 1) of U64;
+   type DMA_Device_Array is
+     array (0 .. Max_DMA_Devices - 1) of Interfaces.Unsigned_32;
 
    type Memory_Object is record
       Header    : Kernel.Objects.Object_Header;
       Pages     : U64;
       Frames    : Frame_Array;
+      DMA_Devs  : DMA_Device_Array;
+      DMA_Count : Natural;
       Next_Free : System.Address;
    end record;
 end Kernel.Memory;

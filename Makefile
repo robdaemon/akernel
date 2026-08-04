@@ -118,7 +118,7 @@ $(INIT_ELF):
 
 run: all $(DISK_IMG)
 	$(QEMU) \
-	  -machine virt \
+	  -machine virt,iommu-sys=on \
 	  -smp $(QEMU_SMP) \
 	  -m $(QEMU_MEMORY) \
 	  -nographic \

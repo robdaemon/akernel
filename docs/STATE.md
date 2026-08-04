@@ -45,6 +45,11 @@ cap table online
 objects selftest online
 ipc online
 bootinfo online
+iommu caps 0x...
+iommu online, irq 0x24
+iommu context online for device 0xf8   (self-test scratch id)
+iommu fault ...                        (self-test induced, x2)
+iommu selftest online
 entering initrd init
 init online from Ada
 boot manifest visible
@@ -129,7 +134,7 @@ QEMU virt RAM base:     0x80000000
   cap-based; memory objects (alloc/map/unmap, borrowed mappings,
   refcounted PMM frames) exist but boot files are not memory objects
   yet.
-- No IOMMU/DMA isolation; no full custom GNAT RTS (light runtime +
+- No full custom GNAT RTS (light runtime +
   stubs); initrd load address fixed.
 - UART/PLIC bases and the UART IRQ source come from DTB discovery
   (board constants as fallback); the kernel keeps only its own
@@ -162,6 +167,15 @@ QEMU virt RAM base:     0x80000000
   no-op passthrough today, flush hook for later. The
   file server is a VFS in front, forwarding verbatim with
   per-op buffer caps cap_delete'd at every layer.
+- DMA isolation: riscv-iommu (Arch.IOMMU, qemu
+  -machine iommu-sys=on) translates all PCI DMA through a 3-level
+  DDT + per-device Sv39 IO page tables; IOVA = PA identity
+  mappings exist only for memory-object frames explicitly exposed
+  via mem_object_pa by a thread holding an MMIO cap attributed to
+  that PCI requester id (io_map Device_Id argument). Everything
+  else faults into the fault queue (PLIC-wired, kernel handler
+  logs cause/did/iova); mappings are torn down by the memory
+  object's finalizer.
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
   exposes memory-object frame PAs for DMA; spawned processes get
   4 user stack pages.

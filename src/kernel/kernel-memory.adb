@@ -1,9 +1,11 @@
 with Ada.Unchecked_Conversion;
 with System.Storage_Elements;
 with Arch;
+with Arch.IOMMU;
 with Kernel.Physical_Memory;
 
 package body Kernel.Memory is
+   use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_64;
    use type Kernel.Objects.Refcount;
    use type Kernel.Physical_Memory.Status;
@@ -75,6 +77,22 @@ package body Kernel.Memory is
       Result := Ok;
    end Grow_Pool;
 
+   procedure Unmap_All_DMA (Slot : Memory_Object_Access) is
+   begin
+      if not Arch.IOMMU.Available or else Slot.DMA_Count = 0 then
+         Slot.DMA_Count := 0;
+         return;
+      end if;
+
+      for D in 0 .. Slot.DMA_Count - 1 loop
+         for Index in 0 .. Slot.Pages - 1 loop
+            Arch.IOMMU.Unmap_DMA
+              (Slot.DMA_Devs (D), Slot.Frames (Natural (Index)));
+         end loop;
+      end loop;
+      Slot.DMA_Count := 0;
+   end Unmap_All_DMA;
+
    procedure Free_Frames (Object : Memory_Object_Access) is
       PMM_Result : Kernel.Physical_Memory.Status;
    begin
@@ -114,6 +132,7 @@ package body Kernel.Memory is
       Slot.Header.Count := 0;
       Slot.Pages := Pages;
       Slot.Frames := (others => 0);
+      Slot.DMA_Count := 0;
 
       for Index in 0 .. Pages - 1 loop
          Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Frame);
@@ -141,6 +160,7 @@ package body Kernel.Memory is
          return;
       end if;
 
+      Unmap_All_DMA (Slot);
       Free_Frames (Slot);
       Free_Slot (Object);
    end Discard;
@@ -167,6 +187,7 @@ package body Kernel.Memory is
          return False;
       end if;
 
+      Unmap_All_DMA (Slot);
       Free_Frames (Slot);
       Free_Slot (Object);
       return True;
@@ -194,5 +215,30 @@ package body Kernel.Memory is
 
       return Slot.Frames (Natural (Index));
    end Frame_At;
+
+   function Note_DMA_Mapping
+     (Object    : System.Address;
+      Device_Id : U32) return Boolean
+   is
+      Slot : constant Memory_Object_Access := To_Memory_Object (Object);
+   begin
+      if Slot = null then
+         return False;
+      end if;
+
+      for D in 0 .. Slot.DMA_Count - 1 loop
+         if Slot.DMA_Devs (D) = Device_Id then
+            return True;
+         end if;
+      end loop;
+
+      if Slot.DMA_Count >= Max_DMA_Devices then
+         return False;
+      end if;
+
+      Slot.DMA_Devs (Slot.DMA_Count) := Device_Id;
+      Slot.DMA_Count := Slot.DMA_Count + 1;
+      return True;
+   end Note_DMA_Mapping;
 
 end Kernel.Memory;

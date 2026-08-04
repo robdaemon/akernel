@@ -21,7 +21,16 @@ package body Board.Interrupts is
               (Source  => Kernel.Interrupts.U64 (Source),
                Claimed => Claimed);
 
-            if not Claimed then
+            if Claimed then
+               --  Kernel-owned sources complete the claim
+               --  immediately (userspace-owned ones complete in
+               --  the irq_ack syscall).
+               if Kernel.Interrupts.Is_Kernel_Source
+                 (Kernel.Interrupts.U64 (Source))
+               then
+                  Board.PLIC.Complete (Source);
+               end if;
+            else
                Board.UART.Put ("external interrupt source ");
                Board.UART.Put_Decimal (Natural (Source));
                Board.UART.Put_Line ("");

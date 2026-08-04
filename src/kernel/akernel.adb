@@ -2,6 +2,7 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Arch.MMU;
+with Arch.IOMMU;
 with Arch.SBI;
 with Arch.Traps;
 with Arch.User_Mode;
@@ -781,6 +782,13 @@ begin
 
    Board.Interrupts.Initialize (Board.PLIC.Source_Id (UART_IRQ));
    Arch.Traps.Initialize;
+
+   --  IOMMU: probes the DTB for riscv,iommu (qemu
+   --  -machine iommu-sys=on); when present, PCI DMA is translated
+   --  and restricted to explicitly authorized frames from here on.
+   if DTB_Result = Kernel.Device_Tree.Ok then
+      Arch.IOMMU.Initialize (Board.Device_Tree.Boot_DTB_Physical_Address);
+   end if;
 
    if Initrd_Result = Kernel.Initrd.Ok
      and then ELF_Result = Kernel.ELF.Ok

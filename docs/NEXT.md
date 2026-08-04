@@ -418,6 +418,37 @@ Next candidates (order open):
     167/167 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0,
     host fsck.fat clean.
 
+25. ~~riscv-iommu + DMA isolation~~ — done: Arch.IOMMU kernel
+    driver (spec 1.0 memory-mapped variant, encodings
+    cross-checked against Linux drivers/iommu/riscv/bits.h).
+    Probed from the DTB ("riscv,iommu" @ 0x3010000, wired IRQ
+    vector 0 = PLIC 36); qemu runs with -machine iommu-sys=on.
+    3-level DDT with on-demand leaf pages, one device context per
+    PCI requester id (tc=V, iohgatp bare, SADE=0 with A/D preset
+    in PTEs, MSI translation off — drivers use INTx), per-device
+    Sv39 IO page table, IOVA = PA identity. The authorization
+    point is mem_object_pa: io_map gained a Device_Id argument
+    (a3; RTS default = unattributed), the devmgr attributes every
+    PCI region cap to its requester id, and the syscall maps the
+    queried frame for every attributed device the CALLER holds a
+    cap for (drivers have exactly one); the memory object records
+    per-object device backlinks (Note_DMA_Mapping, 8 slots) so the
+    finalizer unmaps before frames return to the PMM. Callers
+    without device caps see no side effects. Command queue drives
+    IODIR.INVAL_DDT / IOTINVAL.VMA / IOFENCE.C per change; fault
+    queue drains on the PLIC-wired interrupt via a new
+    Kernel.Interrupts kernel-handler slot (board completes the
+    claim immediately; userspace sources still complete in
+    irq_ack). Boot self-test through the DBG translation-probe
+    registers (TR_REQ_IOVA/CTL/RESPONSE on a scratch device id):
+    unmapped IOVA faults, mapped frame resolves to its PPN,
+    unmapped again faults — and the two induced fault records
+    exercise the IRQ path too. From DDTP mode 3LVL on, any DMA to
+    a non-authorized frame faults instead of touching memory;
+    the full block stack (blk self-test + all fuzz sector
+    traffic) runs translated. 167/167 directed PASS at QEMU_SMP
+    1/4/8, fuzz failures=0, host fsck.fat clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -431,7 +462,8 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- IOMMU, tasking runtime; virtio-gpu.
+- Tasking runtime; virtio-gpu; MSI-X for virtio-pci (INTx
+  today); per-device IOVA spaces (IOVA = PA identity today).
 
 ## Start by reading
 

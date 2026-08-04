@@ -128,6 +128,27 @@ invalid/denied instead of raising constraint errors.
   arbitrary (qemu emits reg before compatible) — capture per-node and
   decide at node close; and #size-cells = 0 is legal (modular U32
   0 .. Cells-1 wraps, walking off RAM).
+- IOMMU: `arch-iommu.*`, riscv-iommu memory-mapped interface
+  (DTB `riscv,iommu` @ 0x3010000; qemu `-machine iommu-sys=on`,
+  wired IRQ vector 0 = PLIC 36). 3-level DDT (on-demand leaf
+  pages), one device context per PCI requester id, per-device
+  Sv39 IO page tables with IOVA = PA identity. mem_object_pa is
+  the authorization point: the queried frame is mapped R+W for
+  every PCI device id the caller holds an attributed MMIO cap
+  for (io_map a3), and the memory object records backlinks so
+  its finalizer unmaps before frames return to the PMM — only
+  explicitly exposed frames are reachable by DMA, everything
+  else faults into the fault queue (drained by a
+  Kernel.Interrupts kernel-handler slot on the PLIC line, claim
+  completed immediately by the board dispatch). IODIR/IOTINVAL/
+  IOFENCE.C go through the memory command queue (register
+  head/tail, polled completion). Boot self-test uses the DBG
+  translation-probe registers (unmapped faults / mapped resolves
+  / unmapped faults) on a scratch device id; the two induced
+  fault records also exercise the IRQ path. Encodings
+  cross-checked against Linux `drivers/iommu/riscv/bits.h`.
+  When the DTB node is absent the driver stays bare and
+  mem_object_pa has no side effects.
 
 ## SMP
 

@@ -15,6 +15,28 @@ package body Kernel.Interrupts is
 
    Lines : IRQ_Array;
 
+   type Kernel_Handler_Array is array (Natural range 0 .. Max_Sources - 1)
+     of Kernel_Handler;
+
+   Kernel_Handlers : Kernel_Handler_Array;
+
+   procedure Register_Kernel
+     (Source  : U64;
+      Handler : Kernel_Handler)
+   is
+      Index : constant Natural := Natural (Source);
+   begin
+      if Index < Max_Sources then
+         Kernel_Handlers (Index) := Handler;
+      end if;
+   end Register_Kernel;
+
+   function Is_Kernel_Source (Source : U64) return Boolean is
+   begin
+      return Natural (Source) < Max_Sources
+        and then Kernel_Handlers (Natural (Source)) /= null;
+   end Is_Kernel_Source;
+
    function To_IRQ_Line is new Ada.Unchecked_Conversion
      (Source => System.Address,
       Target => Kernel.Objects.IRQ_Line_Access);
@@ -23,6 +45,7 @@ package body Kernel.Interrupts is
    begin
       for I in Lines'Range loop
          Lines (I) := null;
+         Kernel_Handlers (I) := null;
       end loop;
    end Initialize;
 
@@ -79,7 +102,17 @@ package body Kernel.Interrupts is
    begin
       Claimed := False;
 
-      if Index >= Max_Sources or else Lines (Index) = null then
+      if Index >= Max_Sources then
+         return;
+      end if;
+
+      if Kernel_Handlers (Index) /= null then
+         Kernel_Handlers (Index).all;
+         Claimed := True;
+         return;
+      end if;
+
+      if Lines (Index) = null then
          return;
       end if;
 

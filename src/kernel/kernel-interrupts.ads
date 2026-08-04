@@ -15,6 +15,18 @@ package Kernel.Interrupts is
 
    procedure Initialize;
 
+   --  Kernel-owned interrupt sources (e.g. the IOMMU fault queue):
+   --  Deliver invokes the handler inline instead of waking a
+   --  userspace waiter, and the PLIC source is completed
+   --  immediately by the board dispatch path.
+   type Kernel_Handler is access procedure;
+
+   procedure Register_Kernel
+     (Source  : U64;
+      Handler : Kernel_Handler);
+
+   function Is_Kernel_Source (Source : U64) return Boolean;
+
    procedure Register
      (Line   : not null Kernel.Objects.IRQ_Line_Access;
       Result : out Status);

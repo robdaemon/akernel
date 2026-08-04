@@ -2,6 +2,7 @@ with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
 with Arch.MMU;
+with Arch.IOMMU;
 with Arch.SBI;
 with Board.Interrupts;
 with Board.PLIC;
@@ -1472,12 +1473,22 @@ package body Arch.Traps is
         Kernel.Scheduler.Current;
       Base    : constant U64 := Trap_Frame_Get_A1 (Frame);
       Length  : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Device_Arg : constant U64 := Trap_Frame_Get_A3 (Frame);
+      Dev_Id  : Kernel.Devices.U32 := Kernel.Devices.No_Device;
       Dev_Result : Kernel.Devices.Status;
       Cap_Result : Kernel.Capabilities.Status;
       Object     : System.Address;
       New_Cap    : Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Invalid_Handle;
    begin
+      if Device_Arg /= U64'Last then
+         if Device_Arg > 16#FF_FFFE# then
+            Trap_Frame_Set_A0 (Frame, U64'Last);
+            return;
+         end if;
+         Dev_Id := Kernel.Devices.U32 (Device_Arg);
+      end if;
+
       if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
         or else Length = 0
         or else Length > 64 * Arch.MMU.Page_Size
@@ -1488,7 +1499,8 @@ package body Arch.Traps is
          return;
       end if;
 
-      Kernel.Devices.Create_MMIO (Base, Length, Dev_Result, Object);
+      Kernel.Devices.Create_MMIO
+        (Base, Length, Dev_Id, Dev_Result, Object);
       if Dev_Result /= Kernel.Devices.Ok then
          Trap_Frame_Set_A0 (Frame, U64'Last);
          return;
@@ -1608,9 +1620,53 @@ package body Arch.Traps is
          return;
       end if;
 
-      Trap_Frame_Set_A0
-        (Frame, Kernel.Memory.Frame_At
-          (Cap_Info.Object, Trap_Frame_Get_A1 (Frame)));
+      declare
+         Frame_PA : constant U64 := Kernel.Memory.Frame_At
+           (Cap_Info.Object, Trap_Frame_Get_A1 (Frame));
+      begin
+         --  IOMMU authorization: the caller exposes this frame to
+         --  every PCI device it holds an attributed MMIO cap for
+         --  (IOVA = PA); the memory object records the backlink so
+         --  its finalizer tears the mappings down before the
+         --  frames return to the PMM. Callers with no device caps
+         --  (plain memory users) see no side effects.
+         if Frame_PA /= 0 and then Arch.IOMMU.Available then
+            declare
+               use type Kernel.Devices.U32;
+               Dev_Id   : Kernel.Devices.U32;
+               Mapped   : Boolean;
+               Cap_Info_Entry    : Kernel.Capabilities.Cap_Entry;
+               Lookup   : Kernel.Capabilities.Status;
+            begin
+               for H in Kernel.Capabilities.Handle loop
+                  Kernel.Tasks.Lookup_Cap
+                    (TCB       => Current.all,
+                     Cap       => H,
+                     Result    => Lookup,
+                     Out_Entry => Cap_Info_Entry);
+                  if Lookup = Kernel.Capabilities.Ok
+                    and then Cap_Info_Entry.Kind = Kernel.Capabilities.MMIO_Object
+                  then
+                     Dev_Id := Kernel.Devices.Device_Id_Of (Cap_Info_Entry.Object);
+                     if Dev_Id /= Kernel.Devices.No_Device then
+                        Mapped := Kernel.Memory.Note_DMA_Mapping
+                          (Cap_Info.Object, Dev_Id);
+                        if Mapped then
+                           Arch.IOMMU.Map_DMA (Dev_Id, Frame_PA);
+                        else
+                           --  Per-object device list full: refuse
+                           --  rather than leak an untracked mapping.
+                           Trap_Frame_Set_A0 (Frame, 0);
+                           return;
+                        end if;
+                     end if;
+                  end if;
+               end loop;
+            end;
+         end if;
+
+         Trap_Frame_Set_A0 (Frame, Frame_PA);
+      end;
    end Handle_Mem_Object_PA;
 
    --  cap_delete: close one of the caller's own cap-table slots,

@@ -16,6 +16,7 @@ package body Kernel.Devices is
       Kind      : Slot_Kind;
       Region    : aliased Kernel.Objects.MMIO_Region;
       Line      : aliased Kernel.Objects.IRQ_Line;
+      Device_Id : U32;
       Next_Free : System.Address;
    end record;
 
@@ -88,10 +89,11 @@ package body Kernel.Devices is
    end Allocate_Slot;
 
    procedure Create_MMIO
-     (Base    : U64;
-      Length  : U64;
-      Result  : out Status;
-      Object  : out System.Address)
+     (Base      : U64;
+      Length    : U64;
+      Device_Id : U32 := No_Device;
+      Result    : out Status;
+      Object    : out System.Address)
    is
       Slot : Device_Slot_Access;
    begin
@@ -103,6 +105,7 @@ package body Kernel.Devices is
       Slot := To_Slot (Object);
       Slot.Kind := Slot_MMIO;
       Slot.Region := (Physical_Base => Base, Length => Length);
+      Slot.Device_Id := Device_Id;
    end Create_MMIO;
 
    procedure Create_IRQ
@@ -119,6 +122,7 @@ package body Kernel.Devices is
 
       Slot := To_Slot (Object);
       Slot.Kind := Slot_IRQ;
+      Slot.Device_Id := No_Device;
       Slot.Line :=
         (Source     => Source,
          Pending    => False,
@@ -151,6 +155,16 @@ package body Kernel.Devices is
 
       return Slot.Line'Unchecked_Access;
    end Line_Of;
+
+   function Device_Id_Of (Object : System.Address) return U32 is
+      Slot : constant Device_Slot_Access := To_Slot (Object);
+   begin
+      if Object = System.Null_Address or else Slot.Kind /= Slot_MMIO then
+         return No_Device;
+      end if;
+
+      return Slot.Device_Id;
+   end Device_Id_Of;
 
    procedure Retain (Object : System.Address) is
       Slot : constant Device_Slot_Access := To_Slot (Object);

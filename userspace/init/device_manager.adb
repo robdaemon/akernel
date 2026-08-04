@@ -550,13 +550,18 @@ package body Device_Manager is
       Grant_Count := Grant_Count + 1;
 
       --  Handles 2..5: common-cfg, notify, ISR, device-cfg regions.
+      --  Each cap is attributed to the PCI requester id so the
+      --  IOMMU authorization hook can bind the driver's DMA to
+      --  this device.
       for R in 1 .. 4 loop
          Map_Len := (Regions (R).Length + 4095) / 4096 * 4096;
          if Map_Len = 0 then
             Map_Len := 4096;
          end if;
 
-         Region_Cap := IO_Map (Resource_Handle, Regions (R).PA, Map_Len);
+         Region_Cap := IO_Map
+           (Resource_Handle, Regions (R).PA, Map_Len,
+            Device_Id => Dev * 8);
          if Region_Cap = Syscall_Failed then
             Log ("devmgr: pci region io_map failed");
             return;

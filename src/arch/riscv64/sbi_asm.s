@@ -304,6 +304,13 @@ riscv_activate_satp:
     ret
 .size riscv_activate_satp, . - riscv_activate_satp
 
+.global riscv_fence_rw
+.type riscv_fence_rw, @function
+riscv_fence_rw:
+    fence rw, rw
+    ret
+.size riscv_fence_rw, . - riscv_fence_rw
+
 .global riscv_reset_trap_stack
 .type riscv_reset_trap_stack, @function
 riscv_reset_trap_stack:

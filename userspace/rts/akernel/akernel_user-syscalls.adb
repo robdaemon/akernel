@@ -92,8 +92,11 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_irq_bind_ntfn";
 
-   function Raw_IO_Map (Resource : U64; Base : U64; Length : U64)
-     return U64
+   function Raw_IO_Map
+     (Resource  : U64;
+      Base      : U64;
+      Length    : U64;
+      Device_Id : U64) return U64
      with Import, Convention => C,
           External_Name => "akernel_sys_io_map";
 
@@ -259,9 +262,13 @@ package body Akernel_User.Syscalls is
       return Raw_IRQ_Bind_Ntfn (IRQ_Cap, Ntfn_Cap, Badge);
    end IRQ_Bind_Ntfn;
 
-   function IO_Map (Resource : U64; Base : U64; Length : U64) return U64 is
+   function IO_Map
+     (Resource  : U64;
+      Base      : U64;
+      Length    : U64;
+      Device_Id : U64 := U64'Last) return U64 is
    begin
-      return Raw_IO_Map (Resource, Base, Length);
+      return Raw_IO_Map (Resource, Base, Length, Device_Id);
    end IO_Map;
 
    function IRQ_Create (Resource : U64; Source : U64) return U64 is

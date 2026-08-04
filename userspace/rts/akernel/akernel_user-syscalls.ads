@@ -108,11 +108,19 @@ package Akernel_User.Syscalls is
    --  Syscall_Failed. IRQ_Create (syscall 24) registers and
    --  PLIC-enables an interrupt source and returns an IRQ_Object cap
    --  handle (Wait+Ack+Transfer+Manage) or Syscall_Failed
-   --  (already-registered sources fail). Mem_Object_PA (syscall 25)
+   --  (already-registered sources fail). IO_Map's Device_Id
+   --  attributes the region to a PCI requester id (bus/dev/func);
+   --  with the IOMMU online, mem_object_pa exposes DMA frames only
+   --  to devices the caller holds an attributed MMIO cap for.
+   --  Mem_Object_PA (syscall 25)
    --  returns the physical address of frame Index of a memory object
    --  (Manage right), 0 on bad cap or out of range — DMA drivers
    --  program devices with these addresses.
-   function IO_Map (Resource : U64; Base : U64; Length : U64) return U64;
+   function IO_Map
+     (Resource  : U64;
+      Base      : U64;
+      Length    : U64;
+      Device_Id : U64 := U64'Last) return U64;
    function IRQ_Create (Resource : U64; Source : U64) return U64;
    function Mem_Object_PA (Cap : U64; Index : U64) return U64;
 
