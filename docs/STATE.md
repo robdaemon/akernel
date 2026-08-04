@@ -58,6 +58,8 @@ devmgr: spawned Drivers/Serial
 console server online
 devmgr: spawned Drivers/VirtioRng
 devmgr: spawned Drivers/VirtioBlk
+devmgr: spawned Drivers/VirtioInput   (keyboard instance)
+devmgr: spawned Drivers/VirtioInput   (tablet instance)
 (virtio driver self-tests)
 fileserver spawned
 fileserver online
@@ -70,11 +72,12 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 167/167 directed PASS (console stream RPC, echo IPC rounds,
+... 169/169 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
 FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
-VFS, partition query + per-partition raw volumes, fs sync) ...
+VFS, partition query + per-partition raw volumes, fs sync,
+virtio-input keyboard/tablet config) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -148,7 +151,10 @@ QEMU virt RAM base:     0x80000000
   (devmgr-scanned bus 0, devmgr-assigned BARs, per-region caps from
   the vendor capability list, INTx via the host interrupt-map;
   virtio-rng live; virtio-blk live with a block-backed BD0 raw
-  volume). The block
+  volume; virtio-input live — keyboard chars flow through the
+  stream protocol's Op_Input into the console server's input FIFO
+  (UART RX feeds it too, client Op_Read drains), tablet pointer
+  events are serial-logged until the GPU console lands). The block
   stack is driver -> partition -> filesystem: System/Partmgr
   probes GPT (MBR primary entries as fallback, slot 0 = whole
   disk without either) and serves block protocol with

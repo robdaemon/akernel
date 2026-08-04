@@ -15,13 +15,14 @@ FAT32_ELF := bin/userspace/fat32.elf
 PARTMGR_ELF := bin/userspace/partmgr.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
+VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd
 
@@ -63,6 +64,9 @@ virtio_rng:
 virtio_blk:
 	$(MAKE) -C userspace/virtio_blk
 
+virtio_input:
+	$(MAKE) -C userspace/virtio_input
+
 #  64 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
@@ -86,7 +90,7 @@ $(DISK_IMG):
 
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
@@ -96,8 +100,10 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virt
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver pci,1af4 Drivers/VirtioInput pci 18' >> $(INITRD_ROOT)/System/Drivers
 	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
 	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
+	cp $(VIRTIO_INPUT_ELF) $(INITRD_ROOT)/Drivers/VirtioInput
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
@@ -126,7 +132,10 @@ run: all $(DISK_IMG)
 	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
 	  -device virtio-rng-pci,addr=0x3 \
 	  -drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
-	  -device virtio-blk-pci,drive=hd0,addr=0x4
+	  -device virtio-blk-pci,drive=hd0,addr=0x4 \
+	  -device virtio-keyboard-pci,addr=0x5 \
+	  -device virtio-tablet-pci,addr=0x6 \
+	  -monitor unix:/tmp/qmon.sock,server,nowait
 
 clean: clean-kernel clean-userspace clean-initrd
 

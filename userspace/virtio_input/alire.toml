@@ -1,0 +1,18 @@
+name = "akernel_virtio_input"
+description = "akernel virtio-input user-space driver"
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+tags = []
+
+project-files = ["virtio_input.gpr"]
+executables = ["virtio_input.elf"]
+
+[[depends-on]]
+gnat_riscv64_elf = "*"
+akernel_virtio = "*"
+
+[[pins]]
+akernel_virtio = { path = "../virtio" }

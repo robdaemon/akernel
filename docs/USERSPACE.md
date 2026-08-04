@@ -107,8 +107,12 @@ akernel_user-ipc.*        typed RPC wrappers (generic over request/
 akernel_user-streams.*    Ada.Streams Root_Stream_Type over endpoint
                           caps (Endpoint_Stream): Read/Write RPC per
                           40-byte chunk, wire protocol Op_Write=1 /
-                          Op_Read=2 with (Count, Data) records both
-                          directions; Device_Error on failed calls
+                          Op_Read=2 / Op_Input=3 (device -> server
+                          input injection: source drivers push input
+                          bytes into the server's input FIFO; client
+                          Op_Read drains it) with (Count, Data)
+                          records both directions; Device_Error on
+                          failed calls
 akernel_user-console.*    console output for normal programs: Put /
                           Put_Line over an Endpoint_Stream bound to
                           the init-minted console endpoint; falls back
@@ -182,16 +186,36 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
 - `userspace/serial/` — console server, an ordinary devmgr-spawned
   driver (`driver ns16550a Drivers/Serial none 0`; class 0 grants
   it the console endpoint Receive side at handle 1, UART MMIO at 2,
-  UART IRQ at 3). Serves stream protocol writes to the UART (read
-  ops get EOF). Writes are line-atomic: per-client buffers keyed by
-  the console cap badge (init/devmgr badge each grant with the
-  program/driver id) flush on newline or a full 160-byte buffer;
-  the kernel debug_putchar path buffers per thread
-  (newline/full/exit flush). UART RX is IRQ-driven through a
-  thread-bound notification (IRQ cap at handle 3, irq_bind_ntfn):
-  the line signals the notification, IPC_Recv wakes with a
-  synthetic Notification_Label message, the server drains RBR and
-  acks.
+  UART IRQ at 3). Serves stream protocol writes to the UART. Writes
+  are line-atomic: per-client buffers keyed by the console cap
+  badge (init/devmgr badge each grant with the program/driver id)
+  flush on newline or a full 160-byte buffer — newline-flush slots
+  are RELEASED immediately (a badge needs a slot only while a
+  partial line pends; pinning them overflowed the 8-slot table
+  once 10+ console clients existed, pushing steady-state writers
+  onto the table-full bypass where lines interleave); the kernel
+  debug_putchar path buffers per thread (newline/full/exit flush).
+  Input: a bounded FIFO (128 bytes, drop-new) fed by UART RX and
+  by Op_Input pushes from source drivers (virtio-input keyboard);
+  client Op_Read drains it (Count = 0 when empty). UART RX is
+  IRQ-driven through a thread-bound notification (IRQ cap at
+  handle 3, irq_bind_ntfn): the line signals the notification,
+  IPC_Recv wakes with a synthetic Notification_Label message, the
+  server drains RBR (into the FIFO, echoed) and acks.
+- `userspace/virtio_input/` — virtio-input driver (one image for
+  every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
+  addr 0x6; class 18 spawns one instance each, role from the
+  ID_NAME config string). Same 7-handle PCI driver ABI. Eventq
+  only: 8 posted 8-byte event buffers, descriptor id == slot id,
+  IRQ-driven over INTx, decode + repost on completion. Device
+  config is the QEMU/Linux virtio_input.h layout (selected-blob
+  region: select/subsel/size at 0x00..0x02, payload at 0x08;
+  EV_BITS=0x11, ABS_INFO=0x12, per-type bitmaps only). Keyboard:
+  US keymap with shift/capslock, printable chars (+ enter/tab/
+  backspace/escape) delivered as Op_Input to the console server.
+  Tablet/mouse: absolute/relative motion and buttons are
+  serial-logged for now — a structured pointer channel lands with
+  the GPU console.
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test
   endpoint at cap 1, console Send cap at 2, Tests/Echo image cap at
   3): directed edge cases + console stream RPC checks + end-to-end

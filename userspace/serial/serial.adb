@@ -20,6 +20,12 @@ with Akernel_User.Streams;
 --  the UART IRQ line signals it (irq_bind_ntfn), the server's
 --  IPC_Recv wakes with a synthetic message (Notification_Label),
 --  the server drains and acks.
+--  Input: the server keeps a bounded input FIFO fed by UART RX
+--  (still echoed for UX) and by source drivers through the
+--  stream protocol's Op_Input (virtio-input keyboard chars).
+--  Client Op_Read drains the FIFO (Count = 0 when empty); the
+--  GPU console will sit on the same protocol, making the
+--  serial sink switchable.
 
 procedure Serial is
    use Akernel_User.Syscalls;
@@ -67,13 +73,47 @@ procedure Serial is
       Akernel_User.MMIO.Write8 (THR, Character'Pos (Character'Val (10)));
    end UART_Put_Line;
 
-   --  Drain input (echo back); interrupt clears once RBR is empty.
+   --  Input FIFO: UART RX bytes (echoed) and Op_Input bytes from
+   --  source drivers converge here; Op_Read drains it. Drop-new
+   --  on overflow (typing bursts never block the IRQ path).
+   Input_Size : constant := 128;
+
+   Input_Buf   : String (1 .. Input_Size);
+   Input_Head  : Natural := 0;  --  next write slot (0-based)
+   Input_Count : Natural := 0;
+
+   procedure Input_Put (Ch : Character) is
+   begin
+      if Input_Count = Input_Size then
+         return;  --  full: drop
+      end if;
+      Input_Buf (Input_Head + 1) := Ch;
+      Input_Head := (Input_Head + 1) mod Input_Size;
+      Input_Count := Input_Count + 1;
+   end Input_Put;
+
+   function Input_Get (Ch : out Character) return Boolean is
+      Tail : Natural;
+   begin
+      if Input_Count = 0 then
+         Ch := Character'Val (0);
+         return False;
+      end if;
+      Tail := (Input_Head + Input_Size - Input_Count) mod Input_Size;
+      Ch := Input_Buf (Tail + 1);
+      Input_Count := Input_Count - 1;
+      return True;
+   end Input_Get;
+
+   --  Drain input: feed the FIFO and echo back; interrupt clears
+   --  once RBR is empty.
    procedure Drain_RX is
    begin
       loop
          Reg := Akernel_User.MMIO.Read8 (LSR);
          exit when (Reg and LSR_DR) = 0;
          Reg := Akernel_User.MMIO.Read8 (RBR);
+         Input_Put (Character'Val (Natural (Reg)));
          Akernel_User.MMIO.Write8 (THR, Reg);
       end loop;
    end Drain_RX;
@@ -132,6 +172,12 @@ procedure Serial is
 
       if Ch = Character'Val (10) then
          Flush_Line (Slot);
+         --  Release the slot: a badge only needs one while a
+         --  partial line pends. With more console clients than
+         --  slots (devmgr-spawned drivers print too), pinning the
+         --  slot forever pushed steady-state writers onto the
+         --  table-full bypass and lines interleaved character-wise.
+         Lines (Slot).Badge := U64'Last;
       end if;
    end Buffer_Write;
 begin
@@ -179,8 +225,38 @@ begin
                  (Badge, Character'Val (Natural (Request.Data (I))));
             end loop;
             Response := (Count => Request.Count, Data => (others => 0));
+         elsif Label = Akernel_User.Streams.Op_Input then
+            --  Source-driver input injection (virtio-input
+            --  keyboard): into the FIFO, not the display.
+            Response.Count := 0;
+            Response.Data := (others => 0);
+            for I in 1 .. Ada.Streams.Stream_Element_Offset (Request.Count) loop
+               exit when Input_Count = Input_Size;
+               Input_Put (Character'Val (Natural (Request.Data (I))));
+               Response.Count := Response.Count + 1;
+            end loop;
+         elsif Label = Akernel_User.Streams.Op_Read then
+            --  Drain the input FIFO (Count = 0 when empty).
+            Response.Count := 0;
+            Response.Data := (others => 0);
+            declare
+               Ch : Character;
+            begin
+               while Response.Count <
+                 Akernel_User.Syscalls.U64 (Request.Count)
+                 and then Response.Count <
+                   Akernel_User.Syscalls.U64
+                     (Akernel_User.Streams.Max_Chunk)
+                 and then Input_Get (Ch)
+               loop
+                  Response.Count := Response.Count + 1;
+                  Response.Data
+                    (Ada.Streams.Stream_Element_Offset (Response.Count)) :=
+                    Ada.Streams.Stream_Element (Character'Pos (Ch));
+               end loop;
+            end;
          else
-            --  Op_Read and unknown ops: console is output-only, no data.
+            --  Unknown ops: no data.
             Response := (Count => 0, Data => (others => 0));
          end if;
 

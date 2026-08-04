@@ -13,6 +13,11 @@ with Akernel_User.Syscalls;
 --              reply carries the number of bytes consumed.
 --    Op_Read:  request carries the wanted byte count; reply carries
 --              Count bytes in Data (Count = 0 means EOF/no data).
+--    Op_Input: device -> server direction: the request carries
+--              Count input bytes a source driver (virtio-input
+--              keyboard, later others) injects into the server's
+--              input FIFO; a client Op_Read drains that FIFO. The
+--              reply carries the number of bytes accepted.
 --  Caps slots are unused; badges are not interpreted (any client with
 --  a Send cap may write).
 
@@ -22,6 +27,7 @@ package Akernel_User.Streams is
 
    Op_Write  : constant U64 := 1;
    Op_Read   : constant U64 := 2;
+   Op_Input  : constant U64 := 3;
    Max_Chunk : constant := 40;  --  6 message words - Count word
 
    type Stream_Request is record

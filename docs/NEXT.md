@@ -449,6 +449,37 @@ Next candidates (order open):
     traffic) runs translated. 167/167 directed PASS at QEMU_SMP
     1/4/8, fuzz failures=0, host fsck.fat clean.
 
+26. ~~virtio-input (keyboard + tablet)~~ — done: one VirtioInput
+    driver image serves every virtio-input function (qemu
+    -device virtio-keyboard-pci,addr=0x5 + virtio-tablet-pci,addr=0x6;
+    System/Drivers line class 18 spawns one instance per
+    function, role discovered from the ID_NAME config string).
+    Eventq only (8 posted 8-byte event buffers, descriptor id ==
+    slot id, reposted on completion), IRQ-driven over INTx. Burned:
+    QEMU implements the LINUX virtio_input.h config layout — the
+    device config region is the CURRENTLY SELECTED blob
+    (select/subsel/size at 0x00..0x02, payload at 0x08;
+    EV_BITS=0x11, ABS_INFO=0x12), not the ids-at-0x00 draft
+    layout, and there is NO event-type bitmap at EV_BITS subsel 0
+    (probe concrete types: EV_KEY bitmap has KEY_A, EV_ABS bitmap
+    has ABS_X, ABS_INFO max != 0). Keyboard: US keymap + shift/
+    capslock, chars delivered to the console server through a new
+    stream-protocol label Op_Input (3) into a bounded input FIFO
+    the UART RX now also feeds; client Op_Read drains it (was
+    output-only). Pointer (tablet = absolute, right for a display
+    console; mouse supported via EV_REL if ever plugged): events
+    debug-logged on the serial log until the GPU console lands a
+    structured channel. Verified live with qemu monitor sendkey
+    over a unix socket (kept in the run target): keys flow
+    eventq -> INTx -> keymap -> Op_Input -> console FIFO.
+    Console server fix burned: badge line-buffer slots are now
+    RELEASED on newline flush — with 10+ console clients the
+    8-slot pinned table filled permanently and the table-full
+    bypass interleaved lines character-wise at SMP8 (PASSprogram
+    spawned glue); a badge needs a slot only while a partial
+    line pends. 169/169 directed PASS at QEMU_SMP 1/4/8 (three
+    SMP8 runs), fuzz failures=0, host fsck.fat clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -462,8 +493,11 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- Tasking runtime; virtio-gpu; MSI-X for virtio-pci (INTx
-  today); per-device IOVA spaces (IOVA = PA identity today).
+- Tasking runtime; virtio-gpu (console migrates to the display;
+  serial becomes debug/logging — stream protocol already carries
+  input both directions, console input FIFO in place); per-device
+  IOVA spaces (IOVA = PA identity today); MSI-X for virtio-pci
+  (INTx today).
 
 ## Start by reading
 
