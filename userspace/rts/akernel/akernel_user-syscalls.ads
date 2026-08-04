@@ -130,6 +130,15 @@ package Akernel_User.Syscalls is
    --  UP vs SMP (Tests/Spin skips itself on UP).
    function CPU_Count return U64;
 
+   --  Cap_Mint (syscall 28) derives a cap in the caller's own
+   --  table with attenuated rights (subset of the source's) and a
+   --  badge. Same validation as spawn grant lists. The badge rides
+   --  the endpoint when the holder calls it (session-manager
+   --  pattern: e.g. init mints partN-badged partition-service
+   --  caps). Returns the new handle or Syscall_Failed.
+   function Cap_Mint (Source : U64; Rights_Mask : U64; Badge : U64)
+                      return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

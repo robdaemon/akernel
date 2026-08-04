@@ -6,22 +6,21 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates: partition enumeration/query op + per-partition
-raw VFS volumes + MBR fallback (21 remainder), block device
-caches + explicit sync op/ecall, SMP hardening, IOMMU, kernel
-introspection syscalls, plain send, register fast path.
+Open candidates: block device caches + explicit sync op/ecall
+(next up — agreed order), SMP hardening, IOMMU, kernel
+introspection syscalls for init state reconstruction, plain
+send, register fast path.
 
-Recently landed: SMP1 speedup — quantum 100 -> 50 ms, syscall 27
-cpu_count (first introspection syscall, Kernel.CPUs.Count),
-Tests/Spin skips itself on UP ("spin skipped (UP)" + exit):
-full fuzz suite 474 s -> 3.3 s at QEMU_SMP=1, now matching SMP4.
-Before that: FAT32 write path complete (20b: writes, subdirs,
-LFN reads; 20c: delete/truncate/mkdir/rmdir, LFN creation via
-numeric-tail alias, fixed timestamps) and the GPT partition
-layer (21: System/Partmgr between virtio-blk and fs drivers,
-badge-selected partition, superfloppy fallback). 158/158
-directed PASS at QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat
-clean.
+Recently landed: partmgr 21 remainder — MBR read fallback,
+part_query op (slot -> first/size/count), per-partition raw PDn
+VFS volumes, and syscall 28 cap_mint (attenuate + badge a cap in
+the caller's own table; a cap transferred in a message must
+carry the Transfer right — a Send-only mint rolled back the
+rendezvous with Transfer_Failed). Before that: SMP1 speedup
+(quantum 50 ms, syscall 27 cpu_count, UP-aware Spin; fuzz suite
+474 s -> 3.3 s at QEMU_SMP=1), FAT32 write path complete (20b +
+20c), GPT partition layer (21). 163/163 directed PASS at
+QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat clean.
 
 Working rules burned in (details in NEXT.md):
 - Commit per milestone; docs current-state only.

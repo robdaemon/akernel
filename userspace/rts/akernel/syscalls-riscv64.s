@@ -227,3 +227,11 @@ akernel_sys_cpu_count:
     ecall
     ret
 .size akernel_sys_cpu_count, . - akernel_sys_cpu_count
+
+.global akernel_sys_cap_mint
+.type akernel_sys_cap_mint, @function
+akernel_sys_cap_mint:
+    li a7, 28
+    ecall
+    ret
+.size akernel_sys_cap_mint, . - akernel_sys_cap_mint

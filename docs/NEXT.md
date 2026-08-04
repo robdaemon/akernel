@@ -322,8 +322,21 @@ Next candidates (order open):
     gap sector. Kernel Max_Process_Slots 8 -> 16 (partmgr pushed
     peak concurrent processes past 8; spawn failed No_Slot).
     130/130 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
-    Remaining: MBR read fallback, partition enumeration/query op,
-    per-partition raw volumes on the VFS.
+    Remainder done: MBR read fallback (no GPT -> 0x55AA signature
+    at LBA 0 -> up to 4 primary entries, else superfloppy slot 0),
+    part_query op (3: slot in words 0 -> status/first-LBA/size/
+    populated-count), per-partition raw volumes (init enumerates
+    slots via a minted query cap and pushes Op_Add_Block per slot:
+    device "PDN", label "PartN", partN-badged Send cap).
+    New syscall 28 cap_mint(source, rights_mask, badge) derives an
+    attenuated + badged cap in the caller's own table (same
+    validation as spawn grant lists) — the session-manager pattern
+    needed a way to badge caps after spawn. Bug burned: a cap
+    handed over in a message must carry the Transfer right; a
+    Send-only minted cap failed the kernel's transfer check and
+    rolled back the whole rendezvous (fileserver recv returned
+    Transfer_Failed mid-boot). 163/163 directed PASS at QEMU_SMP
+    1/4/8, fuzz failures=0.
 
 Commit between each milestone.
 

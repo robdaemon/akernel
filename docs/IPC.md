@@ -217,6 +217,20 @@ Op_Rmdir    = 11 words = name[48] -> (status, 0); empty dirs only
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
 
+Block layer (virtio-blk driver and System/Partmgr speak the same
+protocol on their service endpoints; partmgr adds op 3):
+
+```text
+Blk_Info  = 0  -> (status, capacity in sectors)
+Blk_Read  = 1  (sector, count) + buffer cap -> (status, 0);
+               count <= 8 (one page)
+Blk_Write = 2  (sector, count) + buffer cap -> (status, 0)
+part_query = 3 (slot) -> (status, first LBA, size in sectors,
+               populated slot count); partmgr only. Clients select
+               the partition by cap badge 16#1000#+N (manifest
+               partN tokens, or cap_mint'd caps)
+```
+
 Volumes are Amiga-style: a device name (`RD0`) and a volume label
 (`Initrd`) both resolve to the mounted file set. Wire names are
 qualified (`RD0:System/Init` or `Initrd:System/Init`); volume
@@ -363,6 +377,12 @@ irq_bind_ntfn(irq_cap, ntfn_cap, badge)      (syscall 22)
 cpu_count() -> online harts                  (syscall 27)
   -> 1..64; first introspection syscall, lets programs adapt to
   UP vs SMP (Tests/Spin skips itself on UP)
+cap_mint(cap, rights_mask, badge) -> cap     (syscall 28)
+  derives an attenuated (rights subset) + badged cap in the
+  caller's own table; same validation as spawn grant lists.
+  Session-manager pattern: badging caps after spawn (init mints
+  partN-badged partition-service caps). Note a cap transferred
+  in a message must carry the Transfer right.
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks

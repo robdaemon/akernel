@@ -57,6 +57,10 @@ procedure Init is
    --  offset translation (zero-copy cap forwarding).
    PARTMGR_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  True once the manifest granted the part_server token, i.e. a
+   --  partition manager will serve the partition endpoint.
+   Partmgr_Seen : Boolean := False;
+
    --  Volume directive state (manifest: "volume RD0 Initrd ci"):
    --  sent to the file server as Op_Mount right after spawn,
    --  before the name table.
@@ -189,13 +193,15 @@ procedure Init is
       end if;
    end Push_FS_Mount;
 
-   --  Send Op_Add_Block (device "BD0", label "Disk") with the blk
-   --  driver's service endpoint (Send side, transferred in cap
-   --  slot 0) so the file server mounts the block-backed volume.
-   procedure Push_Block_Mount (Blk_EP : Akernel_User.Syscalls.U64) is
+   --  Send Op_Add_Block with the given device/label and a block
+   --  service endpoint (Send side, transferred in cap slot 0) so
+   --  the file server mounts a block-backed volume.
+   procedure Push_Block_Mount_As
+     (Dev   : String;
+      Lab   : String;
+      EP    : Akernel_User.Syscalls.U64)
+   is
       use Akernel_User.Syscalls;
-      Dev   : constant String := "BD0";
-      Lab   : constant String := "Disk";
       Chars : constant String := Dev & Lab;
    begin
       Message.Label := 5;  --  Files.Op_Add_Block
@@ -209,11 +215,76 @@ procedure Init is
              or Shl (U64 (Character'Pos (Chars (P))),
                      ((P - 1) mod 8) * 8);
       end loop;
-      Message.Caps := (0 => Blk_EP, others => 0);
+      Message.Caps := (0 => EP, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("block mount push failed");
       end if;
+   end Push_Block_Mount_As;
+
+   --  Send Op_Add_Block (device "BD0", label "Disk") with the blk
+   --  driver's service endpoint.
+   procedure Push_Block_Mount (Blk_EP : Akernel_User.Syscalls.U64) is
+   begin
+      Push_Block_Mount_As ("BD0", "Disk", Blk_EP);
    end Push_Block_Mount;
+
+   --  Enumerate populated partition slots via the part_query op
+   --  and mount each as a raw volume (device "PDN", label
+   --  "PartN") on the file server, handing over a partN-badged
+   --  Send cap minted from the partition service endpoint. Init
+   --  deletes its own copy of each minted cap after the push;
+   --  the file server keeps the volume's.
+   procedure Push_Part_Mounts is
+      use Akernel_User.Syscalls;
+      Badge_Base : constant U64 := 16#1000#;
+      Query_Cap  : U64;
+      Part_Cap   : U64;
+      Count      : U64;
+      Dev        : String (1 .. 3) := "PD0";
+      Lab        : String (1 .. 5) := "Part0";
+   begin
+      Query_Cap := Cap_Mint (PARTMGR_EP, Right_Send, Badge_Base);
+      if Query_Cap = Syscall_Failed then
+         Debug_Put_Line ("part query mint failed");
+         return;
+      end if;
+
+      Message.Label := 3;  --  part_query
+      Message.Words := (others => 0);
+      Message.Caps := (others => 0);
+      if IPC_Call (Query_Cap) /= IPC_Ok
+        or else Message.Words (0) /= 0
+      then
+         Debug_Put_Line ("part query failed");
+         if Cap_Delete (Query_Cap) /= 0 then
+            Debug_Put_Line ("part query cap delete failed");
+         end if;
+         return;
+      end if;
+      Count := Message.Words (3);
+
+      --  Probe fills slots 0 .. Count-1 in order.
+      --  Caps handed to the file server need Transfer as well as
+      --  Send: the kernel's message cap transfer requires the
+      --  sender's cap to carry the Transfer right.
+      for N in 0 .. 7 loop
+         exit when U64 (N) >= Count;
+         Part_Cap := Cap_Mint (PARTMGR_EP, Right_Send + Right_Transfer,
+                               Badge_Base + U64 (N));
+         if Part_Cap /= Syscall_Failed then
+            Dev (3) := Character'Val (Character'Pos ('0') + N);
+            Lab (5) := Character'Val (Character'Pos ('0') + N);
+            Push_Block_Mount_As (Dev, Lab, Part_Cap);
+            if Cap_Delete (Part_Cap) /= 0 then
+               Debug_Put_Line ("part cap delete failed");
+            end if;
+         end if;
+      end loop;
+
+      if Cap_Delete (Query_Cap) /= 0 then
+         Debug_Put_Line ("part query cap delete failed");
+      end if;
+   end Push_Part_Mounts;
 
    --  Send Op_Add_FS (device "HD0", label "AKDISK") with the
    --  FAT32 driver's service endpoint (Send side, transferred in
@@ -412,6 +483,7 @@ procedure Init is
             Is_Fat32 := True;
             Grant (FAT32_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "part_server") then
+            Partmgr_Seen := True;
             Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Length = 5
            and then Token (1 .. 4) = "part"
@@ -554,6 +626,13 @@ begin
    --  the devmgr spawned a class-2 (block) driver.
    if Device_Manager.Block_Service /= 0 then
       Push_Block_Mount (Device_Manager.Block_Service);
+   end if;
+
+   --  Per-partition raw volumes (PD0:disk ...) if the manifest ran
+   --  a partition manager; blocks until partmgr has probed and
+   --  serves (rendezvous orders this naturally).
+   if Partmgr_Seen then
+      Push_Part_Mounts;
    end if;
 
    Akernel_User.Syscalls.Yield;

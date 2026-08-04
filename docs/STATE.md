@@ -65,11 +65,11 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 157/157 directed PASS (console stream RPC, echo IPC rounds,
+... 163/163 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
 FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
-VFS) ...
+VFS, partition query + per-partition raw volumes) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -139,9 +139,13 @@ QEMU virt RAM base:     0x80000000
   virtio-mmio devices run as user-mode drivers (virtio-rng live;
   virtio-blk live with a block-backed BD0 raw volume). The block
   stack is driver -> partition -> filesystem: System/Partmgr
-  probes GPT (slot 0 = whole disk without a header) and serves
-  block protocol with badge-selected partition offset
-  translation, zero-copy cap forwarding; System/Fat32 serves
+  probes GPT (MBR primary entries as fallback, slot 0 = whole
+  disk without either) and serves block protocol with
+  badge-selected partition offset translation, zero-copy cap
+  forwarding, plus a part_query op (slot -> first LBA / size /
+  populated count); init enumerates the slots and mounts each as
+  a raw PDN volume on the VFS (Op_Add_Block with a cap_mint'd
+  partN-badged cap). System/Fat32 serves
   partition 1 of the GPT disk as HD0/AKDISK (reads + writes:
   subdirectory traversal, LFN matching, file create (8.3 or
   LFN + numeric-tail alias), cluster chain extension with

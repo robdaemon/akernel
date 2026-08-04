@@ -113,6 +113,11 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_cpu_count";
 
+   function Raw_Cap_Mint (Source : U64; Rights_Mask : U64; Badge : U64)
+                          return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_cap_mint";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -278,6 +283,12 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_CPU_Count;
    end CPU_Count;
+
+   function Cap_Mint (Source : U64; Rights_Mask : U64; Badge : U64)
+                      return U64 is
+   begin
+      return Raw_Cap_Mint (Source, Rights_Mask, Badge);
+   end Cap_Mint;
 
    function Mem_Map_File
      (Address_Space : U64;

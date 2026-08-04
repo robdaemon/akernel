@@ -58,7 +58,7 @@ procedure Fileserver is
    --  Volumes (Amiga-style device/label mounts): the boot-file set
    --  is mounted under a device name and a volume label, either
    --  resolves on the wire.
-   Max_Volumes : constant := 4;
+   Max_Volumes : constant := 8;
 
    type Volume_Entry is record
       Valid   : Boolean := False;

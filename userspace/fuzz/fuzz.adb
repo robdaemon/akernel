@@ -507,6 +507,64 @@ begin
       end;
       Check (Match, "blk volume unaligned read ok");
 
+      --  Partition query op (part0 token = handle 6, badge
+      --  16#1000#): slot 0 is the FAT32 partition at LBA 2048,
+      --  122880 sectors; the image has exactly one partition.
+      declare
+         Part_EP : constant U64 := 6;  --  manifest grant order
+      begin
+         Akernel_User.Syscalls.Message.Label := 3;  --  part_query
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Akernel_User.Syscalls.IPC_Ok
+                and then Akernel_User.Syscalls.Message.Words (0) = 0
+                and then Akernel_User.Syscalls.Message.Words (1) = 2048
+                and then Akernel_User.Syscalls.Message.Words (2) = 122880
+                and then Akernel_User.Syscalls.Message.Words (3) = 1,
+                "part query slot 0 ok");
+
+         Akernel_User.Syscalls.Message.Label := 3;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Words (0) := 1;
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Akernel_User.Syscalls.IPC_Ok
+                and then Akernel_User.Syscalls.Message.Words (0) = 1
+                and then Akernel_User.Syscalls.Message.Words (3) = 1,
+                "part query empty slot rejected");
+      end;
+
+      --  Per-partition raw volume (PD0, mounted by init from the
+      --  query results): the partition resolves as "disk" through
+      --  the file server -> partmgr -> blk chain.
+      Status := Akernel_User.Files.Stat ("PD0:disk", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 122880 * 512,
+             "part volume stat ok");
+
+      Status := Akernel_User.Files.Stat ("Part0:disk", Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "part volume label resolves");
+
+      --  FAT32 BPB at the partition start: 0xEB jump, OEM
+      --  "mkfs.fat" (8 chars at offset 3).
+      Status := Akernel_User.Files.Read
+        ("PD0:disk", 0, Buf'Address, 12, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 12
+        and then Buf (0) = 16#EB#;
+      declare
+         Sig : constant String := "mkfs.fat";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (3 + I) =
+                Interfaces.Unsigned_8 (Character'Pos (Sig (I + 1)));
+         end loop;
+      end;
+      Check (Match, "part volume read bpb ok");
+
       --  FAT32 volume (HD0, System/Fat32 behind the VFS): real
       --  files resolve and read through the file server -> fs
       --  driver -> block driver RPC chain.

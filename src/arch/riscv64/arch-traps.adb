@@ -70,6 +70,7 @@ package body Arch.Traps is
    Sys_Mem_Object_PA     : constant U64 := 25;
    Sys_Cap_Delete        : constant U64 := 26;
    Sys_CPU_Count         : constant U64 := 27;
+   Sys_Cap_Mint          : constant U64 := 28;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1615,6 +1616,75 @@ package body Arch.Traps is
    --  (e.g. the blk driver's client buffer) — without it each
    --  transfer leaks a table slot. 0 on success, U64'Last on an
    --  invalid/unopened handle.
+   procedure Handle_Cap_Mint (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Capabilities.Object_Kind;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Source_Handle : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+      Requested    : Kernel.Capabilities.Rights;
+      New_Cap      : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Rights_Mask  : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Badge        : constant U64 := Trap_Frame_Get_A2 (Frame);
+   begin
+      --  cap_mint(source, rights_mask, badge): derive a cap in the
+      --  caller's own table with attenuated rights and a badge.
+      --  Same validation as spawn grant lists; the badge rides the
+      --  endpoint when the holder calls it (session-manager
+      --  pattern, e.g. init minting partN-badged partition caps).
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Source_Handle,
+                     Handle_Valid);
+      if not Handle_Valid or else Current = null
+        or else (Rights_Mask
+                 and not Kernel.Capabilities.Valid_Rights_Mask) /= 0
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Source_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind = Kernel.Capabilities.Reply_Object
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Requested := Kernel.Capabilities.To_Rights (Rights_Mask);
+      if not Kernel.Capabilities.Has_Rights (Cap_Info.Rights, Requested)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Cap_Info.Kind,
+         Object => Cap_Info.Object,
+         Rights => Requested,
+         Badge  => Badge,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+   end Handle_Cap_Mint;
+
    procedure Handle_Cap_Delete (Frame : System.Address) is
       use type Kernel.Capabilities.Status;
 
@@ -1762,6 +1832,8 @@ package body Arch.Traps is
          --  itself on UP, where its preemption-canary role just
          --  steals quanta from rendezvous handoffs).
          Trap_Frame_Set_A0 (Frame, U64 (Kernel.CPUs.Count));
+      elsif Number = Sys_Cap_Mint then
+         Handle_Cap_Mint (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

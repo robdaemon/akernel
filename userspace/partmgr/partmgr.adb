@@ -16,8 +16,14 @@ with System.Storage_Elements;
 --
 --  Probe: GPT header at LBA 1 ("EFI PART", entry array walk, up
 --  to 8 non-empty entries become slots in order). Without a GPT
---  header slot 0 maps the whole device (legacy superfloppy
---  images keep working).
+--  header, an MBR with a 0x55AA signature at LBA 0 contributes up
+--  to 4 primary entries; with neither, slot 0 maps the whole
+--  device (legacy superfloppy images keep working).
+--
+--  Op 3 (part_query): words(0) = slot index -> words(0) = status
+--  (0 ok, 1 empty/bad slot), words(1) = first LBA, words(2) =
+--  size in sectors, words(3) = populated slot count. Available
+--  from any valid partN badge.
 --
 --  Handles: 1 = console endpoint, 2 = blk service EP, 3 = part
 --  service EP.
@@ -36,6 +42,7 @@ procedure Partmgr is
    Blk_Info  : constant U64 := 0;
    Blk_Read  : constant U64 := 1;
    Blk_Write : constant U64 := 2;
+   Blk_Part_Query : constant U64 := 3;
 
    Max_Parts   : constant := 8;
    Badge_Base  : constant U64 := 16#1000#;
@@ -137,10 +144,38 @@ procedure Partmgr is
 
          Akernel_User.Console.Put_Line ("partmgr gpt online");
       else
-         --  No GPT: whole device as slot 0 (superfloppy images).
-         First_LBA (0) := 0;
-         Part_Size (0) := Capacity;
-         Akernel_User.Console.Put_Line ("partmgr raw online");
+         --  No GPT: try the MBR (0x55AA signature, up to 4
+         --  primary entries), else whole device as slot 0
+         --  (superfloppy images).
+         if not Blk_Read_Sectors (0, 1) then
+            Fail ("partmgr mbr probe read failed");
+         end if;
+
+         if Bounce (510) = 16#55# and then Bounce (511) = 16#AA# then
+            for I in 0 .. 3 loop
+               Off := 446 + U64 (I) * 16;
+               if Bounce (Off + 4) /= 0
+                 and then LE32 (Off + 12) /= 0
+                 and then Slot < Max_Parts
+               then
+                  First_LBA (Slot) := LE32 (Off + 8);
+                  Part_Size (Slot) := LE32 (Off + 12);
+                  Slot := Slot + 1;
+               end if;
+            end loop;
+            Akernel_User.Console.Put_Line ("partmgr mbr online");
+         else
+            First_LBA (0) := 0;
+            Part_Size (0) := Capacity;
+            Akernel_User.Console.Put_Line ("partmgr raw online");
+         end if;
+
+         if Slot = 0 then
+            --  Signature present but no usable entries: fall back
+            --  to the whole device rather than serve nothing.
+            First_LBA (0) := 0;
+            Part_Size (0) := Capacity;
+         end if;
       end if;
    end Probe;
 
@@ -194,11 +229,36 @@ begin
          Sector : constant U64 := Syscalls.Message.Words (0);
          Count  : constant U64 := Syscalls.Message.Words (1);
          Buf    : constant U64 := Syscalls.Message.Caps (0);
+         Populated : U64 := 0;
       begin
          if Badge < Badge_Base
            or else Badge >= Badge_Base + U64 (Max_Parts)
-           or else Part_Size (Natural (P)) = 0
          then
+            Reply2 (1, 0);
+         elsif Op = Blk_Part_Query then
+            --  Slot in words(0); reply status/first/size/count.
+            for I in 0 .. Max_Parts - 1 loop
+               if Part_Size (I) /= 0 then
+                  Populated := Populated + 1;
+               end if;
+            end loop;
+            if Sector >= U64 (Max_Parts)
+              or else Part_Size (Natural (Sector)) = 0
+            then
+               Syscalls.Message.Words (0) := 1;
+               Syscalls.Message.Words (1) := 0;
+               Syscalls.Message.Words (2) := 0;
+            else
+               Syscalls.Message.Words (0) := 0;
+               Syscalls.Message.Words (1) := First_LBA (Natural (Sector));
+               Syscalls.Message.Words (2) := Part_Size (Natural (Sector));
+            end if;
+            Syscalls.Message.Words (3) := Populated;
+            Syscalls.Message.Caps := (others => 0);
+            if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+               Fail ("partmgr reply failed");
+            end if;
+         elsif Part_Size (Natural (P)) = 0 then
             Reply2 (1, 0);
          elsif Op = Blk_Info then
             Reply2 (0, Part_Size (Natural (P)));
