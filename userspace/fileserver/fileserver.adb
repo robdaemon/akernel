@@ -365,6 +365,27 @@ procedure Fileserver is
    end Handle_Add_Block;
 
 
+   --  Op_Sync: fan the flush out to every fs-driver volume and
+   --  report the first failure.  Block-backed raw volumes and
+   --  boot files are write-through / read-only — nothing to do.
+   procedure Handle_Sync is
+      Status : U64 := Files.Status_Ok;
+   begin
+      for V in Volumes'Range loop
+         if Volumes (V).Valid and then Volumes (V).Is_FS then
+            Syscalls.Message.Label := Files.Op_Sync;
+            Syscalls.Message.Words := (others => 0);
+            Syscalls.Message.Caps := (others => 0);
+            if Syscalls.IPC_Call (Volumes (V).FS_EP) /= Syscalls.IPC_Ok
+              or else Syscalls.Message.Words (0) /= Files.Status_Ok
+            then
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end loop;
+      Reply2 (Status, 0);
+   end Handle_Sync;
+
    --  Op_Add_FS: like Op_Add_Block but the endpoint speaks the
    --  client file protocol (stat/open/read by path) instead of the
    --  block protocol — the fs driver probed and mounted the
@@ -1012,6 +1033,8 @@ begin
          else
             Handle_Set_Name;
          end if;
+      elsif Syscalls.Message.Label = Files.Op_Sync then
+         Handle_Sync;
       elsif Syscalls.Message.Label = Files.Op_Stat
         or else Syscalls.Message.Label = Files.Op_Open
       then

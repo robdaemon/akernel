@@ -267,4 +267,15 @@ package body Akernel_User.Files is
    function Rmdir (Name : String) return U64 is
      (Path_Op (Op_Rmdir, Name));
 
+   function Sync return U64 is
+   begin
+      Syscalls.Message.Label := Op_Sync;
+      Syscalls.Message.Words := (others => 0);
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Sync;
+
 end Akernel_User.Files;

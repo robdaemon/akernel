@@ -565,6 +565,11 @@ begin
       end;
       Check (Match, "part volume read bpb ok");
 
+      --  Sync fans out to the fs-driver volumes; write-through
+      --  today, so a no-op passthrough that must report ok.
+      Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
+             "fs sync accepted");
+
       --  FAT32 volume (HD0, System/Fat32 behind the VFS): real
       --  files resolve and read through the file server -> fs
       --  driver -> block driver RPC chain.

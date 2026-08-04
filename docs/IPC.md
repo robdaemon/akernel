@@ -214,6 +214,10 @@ Op_Delete   = 8  words = name[48] -> (status, 0); deletes a file
 Op_Truncate = 9  words = name[48] -> (status, 0); truncates to 0
 Op_Mkdir    = 10 words = name[48] -> (status, 0)
 Op_Rmdir    = 11 words = name[48] -> (status, 0); empty dirs only
+Op_Sync     = 12 no words -> (status, 0); server fans out to every
+                 fs-driver volume. Write-through everywhere today,
+                 so a verified no-op passthrough; becomes a real
+                 flush with write-back caches / device flush.
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
 
@@ -230,6 +234,12 @@ part_query = 3 (slot) -> (status, first LBA, size in sectors,
                the partition by cap badge 16#1000#+N (manifest
                partN tokens, or cap_mint'd caps)
 ```
+
+The FAT32 driver keeps an 8-slot write-through metadata sector
+cache (FAT/directory/FSInfo) refreshed from the bounce on every
+write; file data bypasses it. Coherence caveat: a raw PDn write
+to a mounted partition bypasses the fs driver's cache — do not
+raw-write a mounted partition (same rule as host OSes).
 
 Volumes are Amiga-style: a device name (`RD0`) and a volume label
 (`Initrd`) both resolve to the mounted file set. Wire names are

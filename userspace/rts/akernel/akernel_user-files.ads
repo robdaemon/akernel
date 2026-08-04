@@ -42,6 +42,10 @@ with Akernel_User.Syscalls;
 --                      directory (one cluster, "."/".." entries)
 --    Op_Rmdir   = 11   words = name[48] -> (status, 0); removes an
 --                      EMPTY directory (bad args otherwise)
+--    Op_Sync    = 12   no words -> (status, 0); flush all volumes
+--                      (write-through today: verified no-op
+--                      passthrough; real flush with write-back
+--                      caches or a device flush later)
 --
 --  Mutating ops (7..11) are rejected by boot-file volumes (read-
 --  only) and raw block volumes; fs-driver volumes receive them
@@ -86,6 +90,7 @@ package Akernel_User.Files is
    Op_Truncate : constant U64 := 9;
    Op_Mkdir    : constant U64 := 10;
    Op_Rmdir    : constant U64 := 11;
+   Op_Sync     : constant U64 := 12;
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;
@@ -145,5 +150,8 @@ package Akernel_User.Files is
    function Truncate (Name : String) return U64;
    function Mkdir (Name : String) return U64;
    function Rmdir (Name : String) return U64;
+
+   --  Flush all volumes (write-through today: no-op passthrough).
+   function Sync return U64;
 
 end Akernel_User.Files;

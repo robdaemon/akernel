@@ -65,11 +65,11 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 163/163 directed PASS (console stream RPC, echo IPC rounds,
+... 164/164 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
 FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
-VFS, partition query + per-partition raw volumes) ...
+VFS, partition query + per-partition raw volumes, fs sync) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -150,7 +150,10 @@ QEMU virt RAM base:     0x80000000
   subdirectory traversal, LFN matching, file create (8.3 or
   LFN + numeric-tail alias), cluster chain extension with
   mirrored FAT + FSInfo updates, delete/truncate/mkdir/rmdir
-  (Op 8..11), fixed dirent timestamps; no sparse writes). The
+  (Op 8..11), fixed dirent timestamps; no sparse writes), over
+  an 8-slot write-through metadata sector cache (FAT/dir/
+  FSInfo; file data bypasses) — Op_Sync = 12 is a write-through
+  no-op passthrough today, flush hook for later. The
   file server is a VFS in front, forwarding verbatim with
   per-op buffer caps cap_delete'd at every layer.
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa

@@ -47,6 +47,7 @@ procedure Fat32 is
    Op_Truncate : constant U64 := 9;
    Op_Mkdir    : constant U64 := 10;
    Op_Rmdir    : constant U64 := 11;
+   Op_Sync     : constant U64 := 12;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -142,6 +143,100 @@ procedure Fat32 is
    end Blk_Write_Sectors;
 
    ------------------------------------------------------------------
+   --  Metadata sector cache (write-through)
+   --
+   --  FAT/directory/FSInfo sectors are re-read constantly (chain
+   --  walks re-fetch the same FAT sector once per entry; lookup
+   --  scans re-read directory clusters), so a handful of cached
+   --  copies kills the repeated block RPCs.  Writes stay
+   --  write-through; after every successful write the cached copy
+   --  of each written sector is refreshed from the bounce, so the
+   --  cache is always coherent with this driver's own writes (the
+   --  driver is the sole writer through this path — a raw PDN
+   --  volume write to the same partition bypasses and can stale
+   --  the cache; do not raw-write a mounted partition).
+   --  File data sectors deliberately bypass the cache on reads
+   --  (streaming, never repeated).
+   ------------------------------------------------------------------
+
+   Cache_Slots : constant := 8;
+   type Cache_Range is range 0 .. Cache_Slots - 1;
+   subtype Sector_Bytes is Byte_Array (0 .. 511);
+
+   Cache_Tag  : array (Cache_Range) of U64 := (others => U64'Last);
+   Cache_Age  : array (Cache_Range) of U64 := (others => 0);
+   Cache_Data : array (Cache_Range) of Sector_Bytes;
+   Cache_Tick : U64 := 0;
+
+   function Meta_Read (Sector : U64) return Boolean is
+      Victim : Cache_Range := Cache_Range'First;
+   begin
+      for I in Cache_Range loop
+         if Cache_Tag (I) = Sector then
+            Cache_Tick := Cache_Tick + 1;
+            Cache_Age (I) := Cache_Tick;
+            Bounce (0 .. 511) := Cache_Data (I);
+            return True;
+         end if;
+         if Cache_Age (I) < Cache_Age (Victim) then
+            Victim := I;
+         end if;
+      end loop;
+
+      if not Blk_Read_Sectors (Sector, 1) then
+         return False;
+      end if;
+
+      --  Prefer an unused slot; otherwise evict the oldest.
+      for I in Cache_Range loop
+         if Cache_Tag (I) = U64'Last then
+            Victim := I;
+            exit;
+         end if;
+      end loop;
+
+      Cache_Tick := Cache_Tick + 1;
+      Cache_Tag (Victim) := Sector;
+      Cache_Age (Victim) := Cache_Tick;
+      Cache_Data (Victim) := Bounce (0 .. 511);
+      return True;
+   end Meta_Read;
+
+   --  Cluster-granularity metadata reads cache the single-sector
+   --  case (our images use 1-sector clusters); wider reads pass
+   --  through uncached.
+   function Meta_Read_Sectors (Sector : U64; Count : U64) return Boolean is
+   begin
+      if Count = 1 then
+         return Meta_Read (Sector);
+      end if;
+      return Blk_Read_Sectors (Sector, Count);
+   end Meta_Read_Sectors;
+
+   --  Write-through with cache refresh: every write in the driver
+   --  funnels here so a cached sector never goes stale against
+   --  our own writes.
+   function Meta_Write (Sector : U64; Count : U64) return Boolean is
+   begin
+      if not Blk_Write_Sectors (Sector, Count) then
+         return False;
+      end if;
+      for I in Cache_Range loop
+         if Cache_Tag (I) /= U64'Last
+           and then Cache_Tag (I) >= Sector
+           and then Cache_Tag (I) < Sector + Count
+         then
+            declare
+               Off : constant U64 := (Cache_Tag (I) - Sector) * 512;
+            begin
+               Cache_Data (I) := Bounce (Off .. Off + 511);
+            end;
+         end if;
+      end loop;
+      return True;
+   end Meta_Write;
+
+   ------------------------------------------------------------------
    --  FAT chain operations
    ------------------------------------------------------------------
 
@@ -153,7 +248,7 @@ procedure Fat32 is
       Fat_Off : constant U64 := C * 4;
       V       : U64;
    begin
-      if not Blk_Read_Sectors (Fat_Start + Fat_Off / 512, 1) then
+      if not Meta_Read (Fat_Start + Fat_Off / 512) then
          return 0;
       end if;
       V := LE32 (Fat_Off mod 512) and 16#0FFF_FFFF#;
@@ -172,13 +267,13 @@ procedure Fat32 is
       Sec_In    : constant U64 := Fat_Off / 512;
       Ent_Off   : constant U64 := Fat_Off mod 512;
    begin
-      if not Blk_Read_Sectors (Fat_Start + Sec_In, 1) then
+      if not Meta_Read (Fat_Start + Sec_In) then
          return False;
       end if;
       Put32 (Ent_Off, (LE32 (Ent_Off) and 16#F000_0000#)
                or (Val and 16#0FFF_FFFF#));
       for I in 0 .. Num_Fats - 1 loop
-         if not Blk_Write_Sectors
+         if not Meta_Write
            (Fat_Start + I * Fat_Sectors + Sec_In, 1)
          then
             return False;
@@ -192,7 +287,7 @@ procedure Fat32 is
       for I in 0 .. Clus_Bytes - 1 loop
          Bounce (I) := 0;
       end loop;
-      return Blk_Write_Sectors (Cluster_Sector (C), Sec_Per_Clus);
+      return Meta_Write (Cluster_Sector (C), Sec_Per_Clus);
    end Zero_Cluster;
 
    --  Allocate one free cluster: free-entry scan from the Next_Free
@@ -212,7 +307,7 @@ procedure Fat32 is
          declare
             Fat_Off : constant U64 := C * 4;
          begin
-            if not Blk_Read_Sectors (Fat_Start + Fat_Off / 512, 1) then
+            if not Meta_Read (Fat_Start + Fat_Off / 512) then
                return False;
             end if;
             if LE32 (Fat_Off mod 512) = 0 then
@@ -237,12 +332,12 @@ procedure Fat32 is
       Next_Free := Found + 1;
 
       --  FSInfo (sector 1): free count at 488, next-free at 492.
-      if Blk_Read_Sectors (1, 1) then
+      if Meta_Read (1) then
          if LE32 (488) /= 16#FFFF_FFFF# and then LE32 (488) > 0 then
             Put32 (488, LE32 (488) - 1);
          end if;
          Put32 (492, Next_Free);
-         if not Blk_Write_Sectors (1, 1) then
+         if not Meta_Write (1, 1) then
             return False;
          end if;
       end if;
@@ -418,7 +513,7 @@ procedure Fat32 is
       Run_Ent := 0;
 
       for Guard in 0 .. 512 loop
-         if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
+         if not Meta_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
             return False;
          end if;
 
@@ -808,7 +903,7 @@ procedure Fat32 is
       Run_Ent := 0;
 
       for Guard in 0 .. 512 loop
-         if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
+         if not Meta_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
             return False;
          end if;
 
@@ -904,7 +999,7 @@ procedure Fat32 is
       for K in 0 .. N_LFN loop
          Sec := Cluster_Sector (CC) + EE / 16;
          Off := (EE mod 16) * 32;
-         if not Blk_Read_Sectors (Sec, 1) then
+         if not Meta_Read (Sec) then
             return False;
          end if;
 
@@ -929,7 +1024,7 @@ procedure Fat32 is
             end if;
          end if;
 
-         if not Blk_Write_Sectors (Sec, 1) then
+         if not Meta_Write (Sec, 1) then
             return False;
          end if;
 
@@ -950,7 +1045,7 @@ procedure Fat32 is
          --  root child conventionally points at cluster 0.
          Parent_Dot :=
            (if Parent_Clus = Root_Clus then 0 else Parent_Clus);
-         if not Blk_Read_Sectors (Cluster_Sector (New_Clus), 1) then
+         if not Meta_Read (Cluster_Sector (New_Clus)) then
             return False;
          end if;
          for I in 0 .. 10 loop
@@ -976,7 +1071,7 @@ procedure Fat32 is
          Put16 (32 + 24, Fixed_Date);
          Put16 (32 + 20, Parent_Dot / 16#1_0000#);
          Put16 (32 + 26, Parent_Dot mod 16#1_0000#);
-         if not Blk_Write_Sectors (Cluster_Sector (New_Clus), 1) then
+         if not Meta_Write (Cluster_Sector (New_Clus), 1) then
             return False;
          end if;
       end if;
@@ -998,12 +1093,12 @@ procedure Fat32 is
          exit when C < 2;
          N := Next_Cluster (C);
          Fat_Off := C * 4;
-         if not Blk_Read_Sectors (Fat_Start + Fat_Off / 512, 1) then
+         if not Meta_Read (Fat_Start + Fat_Off / 512) then
             return Count;
          end if;
          Put32 (Fat_Off mod 512, 0);
          for I in 0 .. Num_Fats - 1 loop
-            Ignore := Blk_Write_Sectors
+            Ignore := Meta_Write
               (Fat_Start + I * Fat_Sectors + Fat_Off / 512, 1);
          end loop;
          Count := Count + 1;
@@ -1011,12 +1106,12 @@ procedure Fat32 is
       end loop;
 
       if Count > 0 then
-         if Blk_Read_Sectors (1, 1) then
+         if Meta_Read (1) then
             if LE32 (488) /= 16#FFFF_FFFF# then
                Put32 (488, LE32 (488) + Count);
             end if;
             Put32 (492, Start);
-            Ignore := Blk_Write_Sectors (1, 1);
+            Ignore := Meta_Write (1, 1);
          end if;
          Next_Free := Start;
       end if;
@@ -1036,14 +1131,14 @@ procedure Fat32 is
       Total : U64;
    begin
       for Guard in 0 .. 512 loop
-         if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
+         if not Meta_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
             return False;
          end if;
          Total := Sec_Per_Clus * 16;
          while Ent < Total loop
             Bounce (Ent * 32) := 16#E5#;
             if C = Found_Clus and then Ent = Found_Ent then
-               return Blk_Write_Sectors
+               return Meta_Write
                  (Cluster_Sector (C), Sec_Per_Clus);
             end if;
             Ent := Ent + 1;
@@ -1051,7 +1146,7 @@ procedure Fat32 is
          --  Dirent is in a later cluster: flush this cluster's
          --  marks first — the Next_Cluster FAT read clobbers the
          --  bounce page.
-         if not Blk_Write_Sectors (Cluster_Sector (C), Sec_Per_Clus)
+         if not Meta_Write (Cluster_Sector (C), Sec_Per_Clus)
          then
             return False;
          end if;
@@ -1073,7 +1168,7 @@ procedure Fat32 is
       Size       : U64) return Boolean
    is
    begin
-      if not Blk_Read_Sectors (Dir_Sector, 1) then
+      if not Meta_Read (Dir_Sector) then
          return False;
       end if;
       Put16 (Dir_Off + 18, Fixed_Date);
@@ -1082,7 +1177,7 @@ procedure Fat32 is
       Put16 (Dir_Off + 20, Cluster / 16#1_0000#);
       Put16 (Dir_Off + 26, Cluster mod 16#1_0000#);
       Put32 (Dir_Off + 28, Size);
-      return Blk_Write_Sectors (Dir_Sector, 1);
+      return Meta_Write (Dir_Sector, 1);
    end Update_Dirent;
 
    ------------------------------------------------------------------
@@ -1424,7 +1519,7 @@ procedure Fat32 is
                Dst := Src;
             end;
 
-            if not Blk_Write_Sectors
+            if not Meta_Write
               (Cluster_Sector (C) + (Pos mod Clus_Bytes) / 512, 1)
             then
                Status := Status_Not_Found;
@@ -1678,7 +1773,7 @@ procedure Fat32 is
          --  remain (orphan LFN entries count as content).
          C := Entry_Clus;
          Scan : for Guard in 0 .. 512 loop
-            if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus)
+            if not Meta_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus)
             then
                Empty := False;
                exit Scan;
@@ -1800,6 +1895,10 @@ begin
          Handle_Mkdir;
       elsif Syscalls.Message.Label = Op_Rmdir then
          Handle_Rmdir;
+      elsif Syscalls.Message.Label = Op_Sync then
+         --  Write-through cache: nothing dirty to flush (the hook
+         --  exists for future write-back or device flush).
+         Reply2 (Status_Ok, 0);
       else
          Reply2 (Status_Bad_Args, 0);
       end if;

@@ -337,13 +337,39 @@ Next candidates (order open):
     rolled back the whole rendezvous (fileserver recv returned
     Transfer_Failed mid-boot). 163/163 directed PASS at QEMU_SMP
     1/4/8, fuzz failures=0.
+22. ~~FAT32 metadata cache + sync op~~ — done: fat32 gained an
+    8-slot write-through sector cache (MRU/LRU eviction) for
+    metadata only: FAT sectors (chain walks re-fetched the same
+    FAT sector once per entry — with 1-sector clusters BIG.BIN's
+    whole ~110-entry chain lives in ONE sector), directory
+    clusters (lookup scans), FSInfo. Every driver write funnels
+    through Meta_Write, which refreshes any cached copy of the
+    written sectors from the bounce, so the cache can never go
+    stale against the driver's own writes (sole-writer
+    invariant; a raw PDN write to a mounted partition bypasses
+    and can stale it — do not raw-write a mounted partition).
+    File data reads/writes bypass the cache (streaming, never
+    repeated). Placement was the design question: a fat32-local
+    cache beats partmgr/blk-level caches here because the pain
+    was repeated metadata fetches, not streaming, and lower
+    layers would lose the zero-copy buffer-cap DMA path and
+    inherit BD0-vs-partition aliasing; revisit when a second fs
+    driver appears. New file-protocol op Op_Sync = 12 (no words;
+    fileserver fans out to all fs-driver volumes; fat32 replies
+    ok — write-through no-op today, flush hook for future
+    write-back or VIRTIO_BLK_F_FLUSH). SMP1 guest test window
+    (fuzz online -> complete) ~0.28 s. 164/164 directed PASS at
+    QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat clean.
 
 Commit between each milestone.
 
 ## Deferred (do not build yet)
 
 - Block device caches, and an explicit sync op/ecall (noted during
-  20c: the FAT driver writes through on every op).
+  20c: the FAT driver writes through on every op). FAT32 metadata
+  cache + Op_Sync passthrough landed in 22; still open: write-back
+  policy, device-level cache shared across fs drivers, real flush
+  (VIRTIO_BLK_F_FLUSH), block-layer sync op.
 - Plain `send`, register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
