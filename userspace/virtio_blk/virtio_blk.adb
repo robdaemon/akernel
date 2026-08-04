@@ -4,25 +4,30 @@ with Interfaces;
 with Akernel_User.Console;
 with Akernel_User.Syscalls;
 with Virtio;
-with Virtio.MMIO;
+with Virtio.PCI;
 with Virtio.Queues;
 
---  Virtio block driver (device id 2 over the MMIO transport).
---  Spawned by init's device manager when a virtio,mmio DTB node
---  probes to class 2. Handle ABI (grant order): 1 = console
---  endpoint (Send), 2 = device MMIO cap, 3 = IRQ cap, 4 = block
---  service endpoint (Receive). Unlike the rng driver, completions
---  are IRQ-driven: the IRQ line signals a thread-bound notification
---  object and Ntfn_Wait blocks on it (the InterruptStatus register
---  is ACKed and the PLIC claim completed with IRQ_Ack after every
---  wait so the level-triggered line can fire again).
+--  Virtio block driver over the PCI transport (virtio-blk-pci,
+--  transitional id 1af4:1001 or modern 1041). Spawned by init's
+--  device manager when the PCI bus scan matches a System/Drivers
+--  pci line of class 2. Fixed 7-handle PCI driver ABI (grant
+--  order): 1 = console endpoint (Send), 2 = common-cfg MMIO cap,
+--  3 = notify MMIO cap, 4 = ISR MMIO cap, 5 = device-cfg MMIO cap,
+--  6 = IRQ cap, 7 = block service endpoint (Receive). The first
+--  message on the service endpoint is the devmgr's driver config
+--  (notify_off_multiplier in word 0, IRQ source in word 1, PCI
+--  device id in word 2), answered with a status-0 reply.
+--  Completions are IRQ-driven over INTx: the ISR register read
+--  clears the virtio interrupt cause, IRQ_Ack completes the PLIC
+--  claim, and the IRQ line signals a thread-bound notification
+--  object that Ntfn_Wait blocks on.
 --
 --  Boot self-test against the generated disk image (Makefile
 --  disk.img, 2048 sectors):
 --    sector 0      = "AKBLKIMG" then 0xA5 fill
 --    sector s >= 1 = byte j of (s + j) mod 256
 --  then a write/readback round-trip on sector 3. Afterwards the
---  driver serves the block protocol on handle 4:
+--  driver serves the block protocol on handle 7:
 --    Op 0 info:  -> (status, capacity in sectors)
 --    Op 1 read:  (sector, count<=8) + buffer memory-object cap in
 --                slot 0 (Manage right; the driver only queries its
@@ -34,6 +39,7 @@ with Virtio.Queues;
 procedure Virtio_Blk is
    use Akernel_User.Syscalls;
    use type U64;
+   use type Virtio.U8;
    use type Virtio.U16;
    use type Virtio.U32;
    use type Interfaces.Unsigned_8;
@@ -41,12 +47,18 @@ procedure Virtio_Blk is
    subtype U8 is Interfaces.Unsigned_8;
 
    Console_EP : constant U64 := 1;
-   MMIO_Cap   : constant U64 := 2;
-   IRQ_Cap    : constant U64 := 3;
-   Svc_EP     : constant U64 := 4;
+   Common_Cap : constant U64 := 2;
+   Notify_Cap : constant U64 := 3;
+   ISR_Cap    : constant U64 := 4;
+   Cfg_Cap    : constant U64 := 5;
+   IRQ_Cap    : constant U64 := 6;
+   Svc_EP     : constant U64 := 7;
 
-   MMIO_VA : constant U64 := 16#5000_0000#;
-   DMA_VA  : constant U64 := 16#5004_0000#;
+   Common_VA : constant U64 := 16#5000_0000#;
+   Notify_VA : constant U64 := 16#5000_1000#;
+   ISR_VA    : constant U64 := 16#5000_2000#;
+   Cfg_VA    : constant U64 := 16#5000_3000#;
+   DMA_VA    : constant U64 := 16#5004_0000#;
    --  DMA object layout: page 0 descriptors, page 1 avail ring,
    --  page 2 used ring, page 3 request header + status byte,
    --  page 4 sector data buffer.
@@ -63,28 +75,74 @@ procedure Virtio_Blk is
    Op_Read  : constant U64 := 1;
    Op_Write : constant U64 := 2;
 
+   --  First service-endpoint message from the device manager.
+   Driver_Config_Label : constant U64 := U64'Last - 1;
+
    ------------------------------------------------------------------
-   --  Device register access over the mapped MMIO page
+   --  Region register access (width-exact overlays per region)
    ------------------------------------------------------------------
 
-   type Reg_File is array (U64 range 0 .. 1023) of Virtio.U32
+   type U8_File is array (U64 range 0 .. 4095) of Virtio.U8
+     with Volatile_Components;
+   type U16_File is array (U64 range 0 .. 2047) of Virtio.U16
+     with Volatile_Components;
+   type U32_File is array (U64 range 0 .. 1023) of Virtio.U32
      with Volatile_Components;
 
-   Regs : Reg_File
-     with Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address (MMIO_VA));
+   function To_Addr (VA : U64) return System.Address is
+     (System.Storage_Elements.To_Address
+       (System.Storage_Elements.Integer_Address (VA)));
 
-   function Reg_Read (Offset : U64) return Virtio.U32 is
+   Common8  : U8_File  with Address => To_Addr (Common_VA);
+   Common16 : U16_File with Address => To_Addr (Common_VA);
+   Common32 : U32_File with Address => To_Addr (Common_VA);
+   Notify16 : U16_File with Address => To_Addr (Notify_VA);
+   ISR8     : U8_File  with Address => To_Addr (ISR_VA);
+   Cfg32    : U32_File with Address => To_Addr (Cfg_VA);
+
+   function Common_Read8 (Offset : U64) return Virtio.U8 is
+     (Common8 (Offset));
+   function Common_Read16 (Offset : U64) return Virtio.U16 is
+     (Common16 (Offset / 2));
+   function Common_Read32 (Offset : U64) return Virtio.U32 is
+     (Common32 (Offset / 4));
+
+   procedure Common_Write8 (Offset : U64; Value : Virtio.U8) is
    begin
-      return Regs (Offset / 4);
-   end Reg_Read;
+      Common8 (Offset) := Value;
+   end Common_Write8;
 
-   procedure Reg_Write (Offset : U64; Value : Virtio.U32) is
+   procedure Common_Write16 (Offset : U64; Value : Virtio.U16) is
    begin
-      Regs (Offset / 4) := Value;
-   end Reg_Write;
+      Common16 (Offset / 2) := Value;
+   end Common_Write16;
 
-   package Dev is new Virtio.MMIO (Reg_Read, Reg_Write);
+   procedure Common_Write32 (Offset : U64; Value : Virtio.U32) is
+   begin
+      Common32 (Offset / 4) := Value;
+   end Common_Write32;
+
+   function ISR_Read return Virtio.U32 is
+     (Virtio.U32 (ISR8 (0)));
+
+   --  notify_off_multiplier from the devmgr config message; raw
+   --  queue_notify_off values are scaled by it.
+   Notify_Mult : U64 := 0;
+
+   procedure Notify_Write (Notify_Offset : U64; Value : Virtio.U16) is
+   begin
+      Notify16 ((Notify_Offset * Notify_Mult) / 2) := Value;
+   end Notify_Write;
+
+   package Dev is new Virtio.PCI
+     (Common_Read8   => Common_Read8,
+      Common_Read16  => Common_Read16,
+      Common_Read32  => Common_Read32,
+      Common_Write8  => Common_Write8,
+      Common_Write16 => Common_Write16,
+      Common_Write32 => Common_Write32,
+      ISR_Read       => ISR_Read,
+      Notify_Write   => Notify_Write);
 
    ------------------------------------------------------------------
 
@@ -92,8 +150,7 @@ procedure Virtio_Blk is
      with Volatile_Components;
 
    Data_Page : Byte_Array
-     with Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address (DMA_VA + 4 * 4096));
+     with Address => To_Addr (DMA_VA + 4 * 4096);
 
    --  Request header page: words 0..1 = type/reserved, words 2..3 =
    --  sector (U64 little-endian), status byte at offset 16.
@@ -101,13 +158,10 @@ procedure Virtio_Blk is
      with Volatile_Components;
 
    Req_Words : Word_Array
-     with Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address (DMA_VA + 3 * 4096));
+     with Address => To_Addr (DMA_VA + 3 * 4096);
 
    Status_Byte : U8
-     with Volatile, Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address
-         (DMA_VA + 3 * 4096 + 16));
+     with Volatile, Address => To_Addr (DMA_VA + 3 * 4096 + 16);
 
    ------------------------------------------------------------------
 
@@ -159,8 +213,8 @@ procedure Virtio_Blk is
       Virtio.Queues.Submit (Q, H);
       Dev.Notify (0);
 
-      --  Interrupt-driven wait: ACK any pending virtio interrupt
-      --  (keeps the level-triggered PLIC line deasserted when idle),
+      --  Interrupt-driven wait: read the ISR register (clears the
+      --  virtio interrupt cause at the device, dropping INTx),
       --  complete the PLIC claim (IRQ_Ack — without it the PLIC
       --  gateways stay blocked and no further interrupt from this
       --  source is delivered), then block on the notification.
@@ -199,45 +253,51 @@ procedure Virtio_Blk is
       Process_Exit;
    end Fail;
 
+   --  Map one region cap at VA, one page.
+   procedure Map_Region (Cap : U64; VA : U64; Name : String) is
+   begin
+      Result := Map_MMIO
+        (Address_Space => Address_Space_Cap,
+         Cap           => Cap,
+         VA            => VA,
+         Offset        => 0,
+         Length        => 4096,
+         Flags         => 3);
+      if Result /= 0 then
+         Debug_Put_Line ("virtio-blk map " & Name & " failed");
+         Process_Exit;
+      end if;
+   end Map_Region;
+
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
 
-   Result := Map_MMIO
-     (Address_Space => Address_Space_Cap,
-      Cap           => MMIO_Cap,
-      VA            => MMIO_VA,
-      Offset        => 0,
-      Length        => 4096,
-      Flags         => 3);
+   Map_Region (Common_Cap, Common_VA, "common");
+   Map_Region (Notify_Cap, Notify_VA, "notify");
+   Map_Region (ISR_Cap,    ISR_VA,    "isr");
+   Map_Region (Cfg_Cap,    Cfg_VA,    "cfg");
 
-   if Result /= 0 then
-      Debug_Put_Line ("virtio-blk map mmio failed");
+   --  Devmgr driver config message (notify multiplier, IRQ source,
+   --  PCI device id); answered with status 0.
+   Result := IPC_Recv (Svc_EP);
+   if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
+      Debug_Put_Line ("virtio-blk config message missing");
+      Process_Exit;
+   end if;
+   Notify_Mult := Message.Words (0);
+   Message.Words := (others => 0);
+   if IPC_Reply /= IPC_Ok then
+      Debug_Put_Line ("virtio-blk config reply failed");
       Process_Exit;
    end if;
 
-   if not Dev.Magic_Ok then
-      Debug_Put_Line ("virtio-blk bad magic");
+   if Dev.Num_Queues = 0 then
+      Debug_Put_Line ("virtio-blk no queues");
       Process_Exit;
    end if;
 
-   if Dev.Version = 1 then
-      Debug_Put_Line ("virtio-blk version 1 (legacy)");
-      Process_Exit;
-   end if;
-
-   if Dev.Version /= 2 then
-      Debug_Put_Line ("virtio-blk bad version");
-      Process_Exit;
-   end if;
-
-   if Dev.Device_ID /= Virtio.Device_Block then
-      Debug_Put_Line ("virtio-blk bad device id");
-      Process_Exit;
-   end if;
-
-   --  Capacity lives in the device config space at 0x100 (U64).
-   Capacity := U64 (Regs (16#100# / 4))
-     or U64 (Regs (16#104# / 4)) * 16#1_0000_0000#;
+   --  Capacity lives at device-cfg offset 0 (U64 sectors).
+   Capacity := U64 (Cfg32 (0)) or U64 (Cfg32 (1)) * 16#1_0000_0000#;
 
    Dev.Reset;
    Dev.Set_Status (Virtio.Status_Acknowledge);
@@ -304,12 +364,9 @@ begin
 
    Virtio.Queues.Initialize
      (Q     => Q,
-      Desc  => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA)),
-      Avail => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA + 4096)),
-      Used  => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA + 2 * 4096)),
+      Desc  => To_Addr (DMA_VA),
+      Avail => To_Addr (DMA_VA + 4096),
+      Used  => To_Addr (DMA_VA + 2 * 4096),
       Num   => 8);
 
    Dev.Queue_Select (0);

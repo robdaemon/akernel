@@ -148,9 +148,32 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   manifest and builds a grant list per `program` line (bootinfo
   names / ipc_test / console tokens), spawns, yields, resumes.
   Mints the badged ipc_test endpoint and the console endpoint
-  (session-manager badge pattern). Driver handle ABI: 1 console
-  (Receive for class 0, Send badged with the driver id otherwise),
-  2 MMIO, 3 IRQ, 4 per-instance service endpoint (Receive).
+  (session-manager badge pattern). Driver handle ABIs:
+  platform-node drivers get 1 console (Receive for class 0, Send
+  badged with the driver id otherwise), 2 MMIO, 3 IRQ, 4
+  per-instance service endpoint (Receive). PCI drivers
+  (System/Drivers lines `driver pci,<vid4> <path> pci <virtio-id>`;
+  the devmgr scans bus 0 via per-function 4 KiB io_map probe
+  windows, assigns BARs into the host's MMIO32/MMIO64 windows —
+  no firmware PCI init on riscv virt — and discovers the virtio
+  common/notify/ISR/device-cfg regions from the vendor capability
+  list; transitional and modern PCI device ids are normalized to
+  the virtio id) get a fixed 7-handle ABI: 1 console, 2
+  common-cfg, 3 notify, 4 ISR, 5 device-cfg, 6 IRQ (INTx: PLIC
+  source 32 + (dev + pin - 1) mod 4), 7 service endpoint. The
+  devmgr's first service-endpoint message is a driver config
+  (notify_off_multiplier, IRQ source, PCI device id) answered
+  with a status-0 reply.
+- `userspace/virtio/` — lib crate: MMIO and PCI (Virtio.PCI,
+  generic over width-exact register access) transports plus
+  split-ring virtqueues; pinned by the driver projects.
+- `userspace/virtio_rng/` / `userspace/virtio_blk/` — PCI virtio
+  drivers (devmgr pci lines, class 4 / class 2). Both run a boot
+  self-test over a private DMA memory object (virtqueue rings +
+  payload); blk then serves the block protocol on its service
+  endpoint (IRQ-driven completions via a thread-bound
+  notification; the ISR register read clears the INTx cause),
+  rng stays resident as the future entropy server.
 - `userspace/serial/` — console server, an ordinary devmgr-spawned
   driver (`driver ns16550a Drivers/Serial none 0`; class 0 grants
   it the console endpoint Receive side at handle 1, UART MMIO at 2,

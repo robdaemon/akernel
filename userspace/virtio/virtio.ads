@@ -1,11 +1,13 @@
 with Interfaces;
 
---  Virtio constants and base types (virtio 1.2 spec, MMIO
---  transport). Shared by the individual virtio driver programs;
+--  Virtio constants and base types (virtio 1.2 spec), shared by
+--  the MMIO (Virtio.MMIO) and PCI (Virtio.PCI) transports.
+--  Shared by the individual virtio driver programs;
 --  deliberately free of any akernel RTS dependencies so the crate
 --  stays target-independent.
 
 package Virtio is
+   subtype U8  is Interfaces.Unsigned_8;
    subtype U16 is Interfaces.Unsigned_16;
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;

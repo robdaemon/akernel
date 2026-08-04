@@ -384,6 +384,40 @@ Next candidates (order open):
     167/167 directed PASS at QEMU_SMP 1/4/8 (x2 at 1), fuzz
     failures=0, host fsck.fat clean.
 
+24. ~~PCI virtio transport~~ — done: virtio drivers moved off
+    virtio-mmio onto virtio-pci (rng addr=0x3, blk addr=0x4,
+    transitional -> INTx, no MSI-X) because QEMU's riscv-iommu
+    translates PCI DMA only (iommu-map on the pci host node;
+    virtio-mmio nodes carry no iommus property) — PCI was a hard
+    prerequisite for IOMMU DMA isolation. New Virtio.PCI transport
+    package mirrors the MMIO API (common-config structure,
+    width-exact field accesses — no 32-bit RMW on mixed-width
+    fields; queue_enable/queue_notify_off; notify_off_multiplier
+    applied inside the driver's Notify_Write because it is a
+    runtime value from the devmgr). Devmgr matches the
+    pci-host-ecam-generic node and scans bus 0: io_map caps are
+    limited to 64 pages, so each function's 4 KiB config page is
+    io_map'd/probed then unmapped + cap_delete'd (no whole-ECAM
+    window; the ECAM never reaches drivers). BARs are assigned by
+    the devmgr itself (no firmware PCI init on riscv virt) into
+    the MMIO32/MMIO64 windows with MEM+BME command bits; the
+    vendor capability list yields the common/notify/ISR/device-cfg
+    regions granted as per-region io_map caps. System/Drivers pci
+    lines are `driver pci,<vid4> <path> pci <class>` with the
+    class field carrying the virtio device id — matching
+    normalizes transitional (legacy table: 0x1005 = rng, 0x1004 =
+    legacy SCSI, NOT 0x1000+id) and modern (0x1040+id) PCI ids.
+    Fixed PCI driver ABI: 1 console, 2 common-cfg, 3 notify,
+    4 ISR, 5 device-cfg, 6 IRQ, 7 service endpoint; the devmgr's
+    first service-endpoint message is a driver config
+    (notify_off_multiplier, IRQ source, PCI device id) answered
+    with a status-0 reply — the rendezvous also orders the devmgr
+    after driver startup. INTx via the host interrupt-map swizzle
+    (PLIC source 32 + (dev + pin - 1) mod 4); the ISR register
+    read clears the virtio interrupt cause at the device.
+    167/167 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0,
+    host fsck.fat clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -397,7 +431,7 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- IOMMU, tasking runtime; PCI virtio transport, virtio-gpu.
+- IOMMU, tasking runtime; virtio-gpu.
 
 ## Start by reading
 

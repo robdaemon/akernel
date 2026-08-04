@@ -94,8 +94,8 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virt
 	cp $(FAT32_ELF) $(INITRD_ROOT)/System/Fat32
 	cp $(PARTMGR_ELF) $(INITRD_ROOT)/System/Partmgr
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
-	printf '%s\n' 'driver virtio,mmio Drivers/VirtioRng virtio 4' >> $(INITRD_ROOT)/System/Drivers
-	printf '%s\n' 'driver virtio,mmio Drivers/VirtioBlk virtio 2' >> $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
 	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
 	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
@@ -124,10 +124,9 @@ run: all $(DISK_IMG)
 	  -nographic \
 	  -kernel $(KERNEL_ELF) \
 	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
-	  -global virtio-mmio.force-legacy=false \
-	  -device virtio-rng-device \
+	  -device virtio-rng-pci,addr=0x3 \
 	  -drive file=$(DISK_IMG),if=none,id=hd0,format=raw \
-	  -device virtio-blk-device,drive=hd0
+	  -device virtio-blk-pci,drive=hd0,addr=0x4
 
 clean: clean-kernel clean-userspace clean-initrd
 

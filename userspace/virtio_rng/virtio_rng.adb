@@ -4,17 +4,23 @@ with Interfaces;
 with Akernel_User.Console;
 with Akernel_User.Syscalls;
 with Virtio;
-with Virtio.MMIO;
+with Virtio.PCI;
 with Virtio.Queues;
 
---  Virtio RNG driver (device id 4 over the MMIO transport). Spawned
---  by init's device manager when a virtio,mmio DTB node probes to
---  class 4. Handle ABI (grant order): 1 = console endpoint (Send),
---  2 = device MMIO cap, 3 = IRQ cap (unused; entropy polls the used
---  ring). Requests the default 16 bytes of entropy at boot and
---  proves the full pipeline (io_map -> probe -> spawn -> DMA ->
---  doorbell -> completion), then stays resident as the future
---  entropy server.
+--  Virtio RNG driver over the PCI transport (virtio-rng-pci,
+--  transitional id 1af4:1004 or modern 1044). Spawned by init's
+--  device manager when the PCI bus scan matches a System/Drivers
+--  pci line of class 4. Fixed 7-handle PCI driver ABI (grant
+--  order): 1 = console endpoint (Send), 2 = common-cfg MMIO cap,
+--  3 = notify MMIO cap, 4 = ISR MMIO cap, 5 = device-cfg MMIO cap
+--  (unused), 6 = IRQ cap (unused; completion is polled and the ISR
+--  register read afterwards clears INTx), 7 = service endpoint.
+--  The first service-endpoint message is the devmgr's driver
+--  config (notify_off_multiplier in word 0), answered with a
+--  status-0 reply. Requests the default 16 bytes of entropy at
+--  boot and proves the full pipeline (ECAM -> BARs -> spawn ->
+--  DMA -> doorbell -> completion), then stays resident as the
+--  future entropy server.
 
 procedure Virtio_RNG is
    use Akernel_User.Syscalls;
@@ -26,38 +32,87 @@ procedure Virtio_RNG is
    use type Interfaces.Unsigned_8;
 
    Console_EP : constant U64 := 1;
-   MMIO_Cap   : constant U64 := 2;
+   Common_Cap : constant U64 := 2;
+   Notify_Cap : constant U64 := 3;
+   ISR_Cap    : constant U64 := 4;
+   Svc_EP     : constant U64 := 7;
 
-   MMIO_VA : constant U64 := 16#5000_0000#;
-   DMA_VA  : constant U64 := 16#5004_0000#;
+   Common_VA : constant U64 := 16#5000_0000#;
+   Notify_VA : constant U64 := 16#5000_1000#;
+   ISR_VA    : constant U64 := 16#5000_2000#;
+   DMA_VA    : constant U64 := 16#5004_0000#;
    --  DMA object layout: page 0 descriptors, page 1 avail ring,
    --  page 2 used ring, page 3 entropy buffer.
    DMA_Pages : constant U64 := 4;
 
    Entropy_Len : constant Virtio.U32 := 16;
 
+   --  First service-endpoint message from the device manager.
+   Driver_Config_Label : constant U64 := U64'Last - 1;
+
    ------------------------------------------------------------------
-   --  Device register access over the mapped MMIO page
+   --  Region register access (width-exact overlays per region)
    ------------------------------------------------------------------
 
-   type Reg_File is array (U64 range 0 .. 1023) of Virtio.U32
+   type U8_File is array (U64 range 0 .. 4095) of Virtio.U8
+     with Volatile_Components;
+   type U16_File is array (U64 range 0 .. 2047) of Virtio.U16
+     with Volatile_Components;
+   type U32_File is array (U64 range 0 .. 1023) of Virtio.U32
      with Volatile_Components;
 
-   Regs : Reg_File
-     with Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address (MMIO_VA));
+   function To_Addr (VA : U64) return System.Address is
+     (System.Storage_Elements.To_Address
+       (System.Storage_Elements.Integer_Address (VA)));
 
-   function Reg_Read (Offset : U64) return Virtio.U32 is
+   Common8  : U8_File  with Address => To_Addr (Common_VA);
+   Common16 : U16_File with Address => To_Addr (Common_VA);
+   Common32 : U32_File with Address => To_Addr (Common_VA);
+   Notify16 : U16_File with Address => To_Addr (Notify_VA);
+   ISR8     : U8_File  with Address => To_Addr (ISR_VA);
+
+   function Common_Read8 (Offset : U64) return Virtio.U8 is
+     (Common8 (Offset));
+   function Common_Read16 (Offset : U64) return Virtio.U16 is
+     (Common16 (Offset / 2));
+   function Common_Read32 (Offset : U64) return Virtio.U32 is
+     (Common32 (Offset / 4));
+
+   procedure Common_Write8 (Offset : U64; Value : Virtio.U8) is
    begin
-      return Regs (Offset / 4);
-   end Reg_Read;
+      Common8 (Offset) := Value;
+   end Common_Write8;
 
-   procedure Reg_Write (Offset : U64; Value : Virtio.U32) is
+   procedure Common_Write16 (Offset : U64; Value : Virtio.U16) is
    begin
-      Regs (Offset / 4) := Value;
-   end Reg_Write;
+      Common16 (Offset / 2) := Value;
+   end Common_Write16;
 
-   package Dev is new Virtio.MMIO (Reg_Read, Reg_Write);
+   procedure Common_Write32 (Offset : U64; Value : Virtio.U32) is
+   begin
+      Common32 (Offset / 4) := Value;
+   end Common_Write32;
+
+   function ISR_Read return Virtio.U32 is
+     (Virtio.U32 (ISR8 (0)));
+
+   --  notify_off_multiplier from the devmgr config message.
+   Notify_Mult : U64 := 0;
+
+   procedure Notify_Write (Notify_Offset : U64; Value : Virtio.U16) is
+   begin
+      Notify16 ((Notify_Offset * Notify_Mult) / 2) := Value;
+   end Notify_Write;
+
+   package Dev is new Virtio.PCI
+     (Common_Read8   => Common_Read8,
+      Common_Read16  => Common_Read16,
+      Common_Read32  => Common_Read32,
+      Common_Write8  => Common_Write8,
+      Common_Write16 => Common_Write16,
+      Common_Write32 => Common_Write32,
+      ISR_Read       => ISR_Read,
+      Notify_Write   => Notify_Write);
 
    ------------------------------------------------------------------
 
@@ -65,8 +120,7 @@ procedure Virtio_RNG is
      with Volatile_Components;
 
    Data_Page : Byte_Array
-     with Address => System.Storage_Elements.To_Address
-       (System.Storage_Elements.Integer_Address (DMA_VA + 3 * 4096));
+     with Address => To_Addr (DMA_VA + 3 * 4096);
 
    Hex : constant String := "0123456789abcdef";
 
@@ -80,42 +134,49 @@ procedure Virtio_RNG is
    D        : Virtio.U16;
    Head     : Virtio.U16;
    Written  : Virtio.U32;
+   ISR_Bits : Virtio.U32;
    Spins    : Natural;
    All_Zero : Boolean;
    Line     : String (1 .. 34);
+
+   procedure Map_Region (Cap : U64; VA : U64; Name : String) is
+   begin
+      Result := Map_MMIO
+        (Address_Space => Address_Space_Cap,
+         Cap           => Cap,
+         VA            => VA,
+         Offset        => 0,
+         Length        => 4096,
+         Flags         => 3);
+      if Result /= 0 then
+         Debug_Put_Line ("virtio-rng map " & Name & " failed");
+         Process_Exit;
+      end if;
+   end Map_Region;
+
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
 
-   Result := Map_MMIO
-     (Address_Space => Address_Space_Cap,
-      Cap           => MMIO_Cap,
-      VA            => MMIO_VA,
-      Offset        => 0,
-      Length        => 4096,
-      Flags         => 3);
+   Map_Region (Common_Cap, Common_VA, "common");
+   Map_Region (Notify_Cap, Notify_VA, "notify");
+   Map_Region (ISR_Cap,    ISR_VA,    "isr");
 
-   if Result /= 0 then
-      Debug_Put_Line ("virtio-rng map mmio failed");
+   --  Devmgr driver config message (notify multiplier, IRQ source,
+   --  PCI device id); answered with status 0.
+   Result := IPC_Recv (Svc_EP);
+   if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
+      Debug_Put_Line ("virtio-rng config message missing");
+      Process_Exit;
+   end if;
+   Notify_Mult := Message.Words (0);
+   Message.Words := (others => 0);
+   if IPC_Reply /= IPC_Ok then
+      Debug_Put_Line ("virtio-rng config reply failed");
       Process_Exit;
    end if;
 
-   if not Dev.Magic_Ok then
-      Debug_Put_Line ("virtio-rng bad magic");
-      Process_Exit;
-   end if;
-
-   if Dev.Version = 1 then
-      Debug_Put_Line ("virtio-rng version 1 (legacy)");
-      Process_Exit;
-   end if;
-
-   if Dev.Version /= 2 then
-      Debug_Put_Line ("virtio-rng bad version");
-      Process_Exit;
-   end if;
-
-   if Dev.Device_ID /= Virtio.Device_RNG then
-      Debug_Put_Line ("virtio-rng bad device id");
+   if Dev.Num_Queues = 0 then
+      Debug_Put_Line ("virtio-rng no queues");
       Process_Exit;
    end if;
 
@@ -163,12 +224,9 @@ begin
 
    Virtio.Queues.Initialize
      (Q     => Q,
-      Desc  => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA)),
-      Avail => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA + 4096)),
-      Used  => System.Storage_Elements.To_Address
-        (System.Storage_Elements.Integer_Address (DMA_VA + 2 * 4096)),
+      Desc  => To_Addr (DMA_VA),
+      Avail => To_Addr (DMA_VA + 4096),
+      Used  => To_Addr (DMA_VA + 2 * 4096),
       Num   => 8);
 
    Dev.Queue_Select (0);
@@ -199,6 +257,11 @@ begin
 
    Virtio.Queues.Pop (Q, Head, Written);
 
+   --  The device raised INTx on completion; the ISR read clears it
+   --  (the IRQ cap is unused here — nobody claims the PLIC line,
+   --  which is level-triggered and drops once the device deasserts).
+   ISR_Bits := Dev.Interrupt_Status;
+
    All_Zero := True;
    for I in 0 .. Natural (Entropy_Len) - 1 loop
       if Data_Page (I) /= 0 then
@@ -207,7 +270,7 @@ begin
       end if;
    end loop;
 
-   if Written = Entropy_Len and then not All_Zero then
+   if Written = Entropy_Len and then not All_Zero and then ISR_Bits /= 0 then
       Akernel_User.Console.Put_Line ("PASS virtio-rng entropy ok");
    else
       Akernel_User.Console.Put_Line ("FAIL virtio-rng entropy bad data");

@@ -86,7 +86,7 @@ src/arch/riscv64/               RISC-V64 arch code
 src/board/qemu_virt_riscv64/    QEMU virt board/platform code
 userspace/rts/akernel/          user-mode Ada syscall/RTS scaffold
 userspace/init|serial|fuzz/     standalone Alire projects
-userspace/virtio/               virtio lib crate (MMIO + virtqueues)
+userspace/virtio/               virtio lib crate (MMIO + PCI transports, virtqueues)
 userspace/virtio_rng/           virtio-rng driver (pins the lib)
 initrd/                         generated initrd root/output
 tools/mkinitrd.py               wraps cpio in AKRD header
@@ -139,8 +139,11 @@ QEMU virt RAM base:     0x80000000
   database, with per-instance MMIO/IRQ caps minted via
   io_map/irq_create (device_resource authority). Drivers/Serial is
   an ordinary spawned driver (class 0: console endpoint Receive);
-  virtio-mmio devices run as user-mode drivers (virtio-rng live;
-  virtio-blk live with a block-backed BD0 raw volume). The block
+  virtio devices run as user-mode drivers over virtio-pci
+  (devmgr-scanned bus 0, devmgr-assigned BARs, per-region caps from
+  the vendor capability list, INTx via the host interrupt-map;
+  virtio-rng live; virtio-blk live with a block-backed BD0 raw
+  volume). The block
   stack is driver -> partition -> filesystem: System/Partmgr
   probes GPT (MBR primary entries as fallback, slot 0 = whole
   disk without either) and serves block protocol with
