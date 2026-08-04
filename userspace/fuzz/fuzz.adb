@@ -150,6 +150,24 @@ procedure Fuzz is
       Put_Line (Label_Text);
    end Check;
 
+   --  Volumes appear asynchronously: init pushes mounts while the
+   --  suite is already running, and wakeup-boosted clients can
+   --  outrace the push.  Poll the volume's stat with yields until
+   --  it resolves (bounded; failure means the mount never came).
+   function Await_Volume (Name : String) return Boolean is
+      Size   : U64;
+      Status : U64;
+   begin
+      for Try in 1 .. 100_000 loop
+         Status := Akernel_User.Files.Stat (Name, Size);
+         if Status = Akernel_User.Files.Status_Ok then
+            return True;
+         end if;
+         Akernel_User.Syscalls.Yield;
+      end loop;
+      return False;
+   end Await_Volume;
+
    Status   : U64;
    Number   : U64;
    A0, A1, A2, A3, A4, A5 : U64;
@@ -461,6 +479,8 @@ begin
       --  raw device resolves as "disk" and reads come through the
       --  file server -> block driver RPC chain. The image is a
       --  64 MiB GPT-partitioned disk (partition 1 = FAT32).
+      --  The mount is pushed asynchronously by init; wait for it.
+      Check (Await_Volume ("BD0:disk"), "blk volume appears");
       Status := Akernel_User.Files.Stat ("BD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 131072 * 512,
@@ -513,6 +533,7 @@ begin
       declare
          Part_EP : constant U64 := 6;  --  manifest grant order
       begin
+         Check (Await_Volume ("PD0:disk"), "part volume appears");
          Akernel_User.Syscalls.Message.Label := 3;  --  part_query
          Akernel_User.Syscalls.Message.Words := (others => 0);
          Akernel_User.Syscalls.Message.Caps := (others => 0);
@@ -573,6 +594,7 @@ begin
       --  FAT32 volume (HD0, System/Fat32 behind the VFS): real
       --  files resolve and read through the file server -> fs
       --  driver -> block driver RPC chain.
+      Check (Await_Volume ("HD0:README.TXT"), "fat32 volume appears");
       Status := Akernel_User.Files.Stat ("HD0:README.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 37,

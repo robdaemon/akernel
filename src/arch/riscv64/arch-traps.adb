@@ -517,6 +517,7 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, 0);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_IRQ);
+         Kernel.Tasks.Set_Boosted (Current.all, False);
          Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       else
@@ -897,6 +898,7 @@ package body Arch.Traps is
       Advance_SEPC (Frame);
       Save_Current_Context (Frame);
       Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Notification);
+      Kernel.Tasks.Set_Boosted (Current.all, False);
       Schedule_Saved_Context (Frame, Scheduler_Result);
    end Handle_Ntfn_Wait;
 
@@ -1106,6 +1108,7 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
+         Kernel.Tasks.Set_Boosted (Current.all, False);
          Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       end if;
@@ -1159,6 +1162,7 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Receive);
+         Kernel.Tasks.Set_Boosted (Current.all, False);
          Schedule_Saved_Context (Frame, Scheduler_Result);
          return;
       end if;

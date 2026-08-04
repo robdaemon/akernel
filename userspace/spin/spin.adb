@@ -7,18 +7,14 @@ with Akernel_User.Syscalls;
 --  the system keeps running (init prints "init resumed", the kernel
 --  keeps ticking). Granted the console Send cap at handle 1.
 --
---  Skips itself on UP: with one hart the canary's quanta only steal
---  CPU from rendezvous handoffs (the kernel still preempts it, so
---  nothing hangs — it is purely a slowdown), while the canary's real
---  value is proving preemption against concurrent load on SMP.
+--  Also the wakeup-boost regression test: on UP the hog must only
+--  fill idle time — the fuzz suite's rendezvous handoffs are boosted
+--  ahead of it, so the suite completes promptly even with this
+--  thread spinning forever. If boost regresses, QEMU_SMP=1 runs go
+--  back to ~600 ms per IPC-heavy test line.
 procedure Spin is
-   use type Akernel_User.Syscalls.U64;
 begin
    Akernel_User.Console.Set_Endpoint (1);
-   if Akernel_User.Syscalls.CPU_Count = 1 then
-      Akernel_User.Console.Put_Line ("spin skipped (UP)");
-      Akernel_User.Syscalls.Process_Exit;
-   end if;
    Akernel_User.Console.Put_Line ("spin online");
    loop
       null;

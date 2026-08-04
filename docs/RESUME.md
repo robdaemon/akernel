@@ -6,24 +6,26 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates: SMP hardening, IOMMU, kernel introspection
-syscalls for init state reconstruction, plain send, register fast
-path, write-back cache policy + device-level cache + real flush
-(VIRTIO_BLK_F_FLUSH) when more filesystems appear.
+Open candidates: kernel introspection syscalls for init state
+reconstruction, plain send, register fast path, IOMMU, virtio-net,
+write-back cache policy + device-level cache + real flush
+(VIRTIO_BLK_F_FLUSH) when more filesystems appear, true scheduler
+priorities (wakeup boost covers the IPC case).
 
-Recently landed: FAT32 metadata cache + sync op — 8-slot
-write-through sector cache for FAT/dir/FSInfo in the fat32
-driver (chain walks re-fetched one FAT sector per entry; file
-data bypasses), every write refreshes cached copies from the
-bounce (sole-writer invariant; do not raw-write a mounted
-partition), Op_Sync = 12 no-op passthrough (flush hook for
-later). SMP1 guest test window ~0.28 s. Before that: partmgr 21
-remainder (MBR fallback, part_query, PDn raw volumes, syscall
-28 cap_mint — message-transferred caps need the Transfer
-right), SMP1 speedup (quantum 50 ms, syscall 27 cpu_count,
-UP-aware Spin), FAT32 write path (20b + 20c), GPT partition
-layer (21). 164/164 directed PASS at QEMU_SMP 1/4/8, fuzz
-failures=0, host fsck.fat clean.
+Recently landed: scheduler wakeup boost — a thread woken by
+IPC/notification re-enters at the FRONT of the ready queue (TCB
+Boosted flag cleared on every block path); Spin's UP self-skip
+removed, it now spins forever on all configs as the boost
+regression canary, and the SMP1 suite completes in ~21 s wall
+with the hog running (was 474 s pre-boost; residual is fair
+50/50 in the syscall-only random phase). Burned: boost must be
+"run promptly once after wake", never a persistent priority
+(permanent boost starved init at boot); fuzz now awaits async
+volume mounts (latent boot race). Before that: FAT32 metadata
+cache + Op_Sync (22), partmgr 21 remainder (MBR, part_query,
+PDn volumes, cap_mint), SMP1 speedup (50 ms quantum, cpu_count),
+FAT32 write path (20b+20c), GPT layer (21). 167/167 directed
+PASS at QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat clean.
 
 Working rules burned in (details in NEXT.md):
 - Commit per milestone; docs current-state only.
@@ -33,7 +35,7 @@ Working rules burned in (details in NEXT.md):
 - Every op that transfers a buffer cap must cap_delete its copy
   per op at every layer or cap-table slots leak.
 - QEMU_SMP=4 is a fine iteration config; SMP1 is no longer slow
-  (Spin self-skips on UP).
+  (wakeup boost keeps rendezvous handoffs ahead of Spin's hog).
 - kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock.
 

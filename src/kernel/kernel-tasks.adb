@@ -59,6 +59,7 @@ package body Kernel.Tasks is
       TCB.Call_Badge := 0;
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
+      TCB.Boosted := False;
       TCB.Bound_Ntfn := System.Null_Address;
       TCB.Recv_EP := System.Null_Address;
       TCB.Debug_Len := 0;
@@ -258,6 +259,19 @@ package body Kernel.Tasks is
    begin
       TCB.Queued := Queued;
    end Set_Queued;
+
+   function Is_Boosted (TCB : Thread_Control_Block) return Boolean is
+   begin
+      return TCB.Boosted;
+   end Is_Boosted;
+
+   procedure Set_Boosted
+     (TCB     : in out Thread_Control_Block;
+      Boosted : Boolean)
+   is
+   begin
+      TCB.Boosted := Boosted;
+   end Set_Boosted;
 
    procedure Set_State
      (TCB       : in out Thread_Control_Block;

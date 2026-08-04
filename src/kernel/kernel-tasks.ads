@@ -118,6 +118,16 @@ package Kernel.Tasks is
      (TCB    : in out Thread_Control_Block;
       Queued : Boolean);
 
+   --  Wakeup boost: set when a blocked thread is woken (IPC
+   --  transfer, notification), cleared when it blocks again.
+   --  Boosted threads requeue at the FRONT of the ready queue so
+   --  a CPU hog cannot steal quanta from rendezvous handoffs.
+   function Is_Boosted (TCB : Thread_Control_Block) return Boolean;
+
+   procedure Set_Boosted
+     (TCB     : in out Thread_Control_Block;
+      Boosted : Boolean);
+
    procedure Set_State
      (TCB       : in out Thread_Control_Block;
       New_State : Thread_State);
@@ -276,6 +286,7 @@ private
       Call_Badge       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
+      Boosted          : Boolean;
       Bound_Ntfn       : System.Address;
       Recv_EP          : System.Address;
       Debug_Line       : String (1 .. Debug_Line_Max);

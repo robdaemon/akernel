@@ -65,7 +65,7 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 164/164 directed PASS (console stream RPC, echo IPC rounds,
+... 167/167 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
 FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
@@ -116,7 +116,10 @@ QEMU virt RAM base:     0x80000000
 
 ## Current limitations
 
-- Preemptive scheduler (50 ms user-thread timeslice); kernel itself
+- Preemptive scheduler (50 ms user-thread timeslice) with wakeup
+  boost: a thread woken by IPC/notification re-enters at the FRONT
+  of the ready queue (boost flag cleared on every block path), so
+  rendezvous handoffs never wait behind a CPU hog; kernel itself
   serialized by a big kernel lock (SMP: all harts run user code in
   parallel, kernel execution single-file; shared ready queue + IPI
   wakeup); small fixed process/thread tables.

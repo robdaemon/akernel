@@ -30,7 +30,8 @@ package body Kernel.Scheduler is
    procedure Push
      (TCB    : Kernel.Tasks.Thread_Access;
       Result : out Status;
-      Notify : Boolean := True)
+      Notify : Boolean := True;
+      Boost  : Boolean := False)
    is
       Was_Empty : constant Boolean := Count = 0;
    begin
@@ -51,13 +52,25 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      Queue (Tail) := TCB;
-      Kernel.Tasks.Set_Queued (TCB.all, True);
-      if Tail = Queue_Index'Last then
-         Tail := Queue_Index'First;
+      --  Boosted threads (freshly woken by IPC/notification, or
+      --  preempted while still boosted) jump the queue: a CPU hog
+      --  then only runs when nobody interactive is ready.
+      if Boost then
+         if Head = Queue_Index'First then
+            Head := Queue_Index'Last;
+         else
+            Head := Queue_Index'Pred (Head);
+         end if;
+         Queue (Head) := TCB;
       else
-         Tail := Queue_Index'Succ (Tail);
+         Queue (Tail) := TCB;
+         if Tail = Queue_Index'Last then
+            Tail := Queue_Index'First;
+         else
+            Tail := Queue_Index'Succ (Tail);
+         end if;
       end if;
+      Kernel.Tasks.Set_Queued (TCB.all, True);
       Count := Count + 1;
 
       --  Empty -> nonempty: an idle hart may be sleeping in wfi;
@@ -188,6 +201,8 @@ package body Kernel.Scheduler is
       end if;
 
       Kernel.Tasks.Set_State (My_Current.all, New_State);
+      --  Voluntary block ends the boost: the next wake re-earns it.
+      Kernel.Tasks.Set_Boosted (My_Current.all, False);
       Set_My_Current (null);
       Yield (Result);
    end Block_Current;
@@ -226,7 +241,8 @@ package body Kernel.Scheduler is
       end if;
 
       Kernel.Tasks.Set_State (TCB.all, Kernel.Tasks.Ready);
-      Push (TCB, Result);
+      Kernel.Tasks.Set_Boosted (TCB.all, True);
+      Push (TCB, Result, Boost => True);
    end Wake;
 
    procedure Remove_Thread

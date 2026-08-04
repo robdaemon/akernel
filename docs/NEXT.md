@@ -360,6 +360,29 @@ Next candidates (order open):
     write-back or VIRTIO_BLK_F_FLUSH). SMP1 guest test window
     (fuzz online -> complete) ~0.28 s. 164/164 directed PASS at
     QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat clean.
+23. ~~Scheduler wakeup boost~~ — done: a thread woken by IPC or
+    notification re-enters at the FRONT of the shared ready queue
+    (Scheduler.Push Boost param; Wake boosts; per-thread Boosted
+    flag in the TCB, cleared on EVERY block path — including the
+    four arch-traps sites that block directly and bypass
+    Scheduler.Block_Current). Rendezvous handoffs no longer queue
+    behind a CPU hog: on UP a spinning thread used to steal a
+    50 ms quantum per handoff (~600 ms per IPC-heavy test line,
+    474 s suite). Spin's UP self-skip is removed — it now spins
+    forever on every config as the boost regression canary, and
+    the SMP1 suite completes in ~21 s wall with the hog running
+    (residual cost is fair 50/50 sharing in the syscall-only
+    fuzz random phase, zero per-rendezvous stalls). Bugs burned:
+    (1) boost preserved across timer preemption + never cleared
+    on the direct arch-traps block paths = PERMANENT boost —
+    boosted ping-pong starved init/fat32 at boot (SMP1 boot
+    stall, SMP4 memstage reap starvation FAIL); boost must be
+    "run promptly once after wake", not a persistent priority.
+    (2) Latent boot race exposed: fuzz outraced init's async
+    volume pushes; the suite now awaits each volume's stat with
+    yields before probing it (3 new directed checks).
+    167/167 directed PASS at QEMU_SMP 1/4/8 (x2 at 1), fuzz
+    failures=0, host fsck.fat clean.
 
 Commit between each milestone.
 
