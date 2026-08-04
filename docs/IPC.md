@@ -360,6 +360,9 @@ ntfn_signal(cap, bits) -> 0/1                (syscall 20)
 ntfn_bind_thread(cap) -> 0/1                 (syscall 21)
 irq_bind_ntfn(irq_cap, ntfn_cap, badge)      (syscall 22)
   -> 0/1; IRQ cap needs Ack, ntfn needs Write
+cpu_count() -> online harts                  (syscall 27)
+  -> 1..64; first introspection syscall, lets programs adapt to
+  UP vs SMP (Tests/Spin skips itself on UP)
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks

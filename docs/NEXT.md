@@ -30,6 +30,12 @@ kernel cap tables.
     threads (SPP check; kernel threads/idle stay cooperative), reusing
     blocking-syscall context machinery; `Tests/Spin` canary proves a
     forever-spinner no longer hangs the system.
+    Amended later (SMP1 speedup): quantum 100 -> 50 ms; syscall 27
+    cpu_count (first kernel introspection, returns
+    Kernel.CPUs.Count); Tests/Spin prints "spin skipped (UP)" and
+    exits on a single hart — its canary role there only stole
+    quanta from rendezvous handoffs (full fuzz suite 474 s ->
+    3.3 s at QEMU_SMP=1, ~140x, matching SMP4 wall time).
 5b. ~~SMP~~ — done: seL4-style big kernel lock (Kernel.Lock) taken at
     trap entry and released by the trap trampoline itself; user code
     runs truly in parallel. DTB /cpus enumeration drives topology

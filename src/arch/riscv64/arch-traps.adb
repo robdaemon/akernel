@@ -33,7 +33,7 @@ package body Arch.Traps is
    use type System.Address;
 
    Timer_Ticks_Per_Second : constant U64 := 10_000_000;
-   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second / 10;
+   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second / 20;
    Interrupt_Bit         : constant U64 := 16#8000_0000_0000_0000#;
    Sstatus_SPP           : constant U64 := 16#100#;  --  trap from S-mode
    User_Ecall            : constant U64 := 8;
@@ -69,6 +69,7 @@ package body Arch.Traps is
    Sys_IRQ_Create        : constant U64 := 24;
    Sys_Mem_Object_PA     : constant U64 := 25;
    Sys_Cap_Delete        : constant U64 := 26;
+   Sys_CPU_Count         : constant U64 := 27;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1755,6 +1756,12 @@ package body Arch.Traps is
          Handle_Mem_Object_PA (Frame);
       elsif Number = Sys_Cap_Delete then
          Handle_Cap_Delete (Frame);
+      elsif Number = Sys_CPU_Count then
+         --  Introspection: number of online harts. Lets programs
+         --  adapt behaviour to UP vs SMP (e.g. Tests/Spin skips
+         --  itself on UP, where its preemption-canary role just
+         --  steals quanta from rendezvous handoffs).
+         Trap_Frame_Set_A0 (Frame, U64 (Kernel.CPUs.Count));
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

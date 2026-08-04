@@ -219,3 +219,11 @@ akernel_sys_debug_putchar:
     ecall
     ret
 .size akernel_sys_debug_putchar, . - akernel_sys_debug_putchar
+
+.global akernel_sys_cpu_count
+.type akernel_sys_cpu_count, @function
+akernel_sys_cpu_count:
+    li a7, 27
+    ecall
+    ret
+.size akernel_sys_cpu_count, . - akernel_sys_cpu_count

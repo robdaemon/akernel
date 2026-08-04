@@ -125,6 +125,11 @@ package Akernel_User.Syscalls is
    --  unopened handle.
    function Cap_Delete (Cap : U64) return U64;
 
+   --  CPU_Count (syscall 27) returns the number of online harts.
+   --  First kernel-introspection syscall; lets programs adapt to
+   --  UP vs SMP (Tests/Spin skips itself on UP).
+   function CPU_Count return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

@@ -60,8 +60,9 @@ procedure Fuzz is
    Sys_Mem_Map        : constant U64 := 16;
    Sys_Mem_Unmap      : constant U64 := 17;
    Sys_Cap_Delete     : constant U64 := 26;
+   Sys_CPU_Count      : constant U64 := 27;
 
-   Highest_Known      : constant U64 := 22;
+   Highest_Known      : constant U64 := 27;
 
    Failed : constant U64 := U64'Last;
 
@@ -189,6 +190,10 @@ begin
    Check (Status = Failed, "unknown syscall 255 rejected");
    Status := Raw_Ecall (Number => U64'Last);
    Check (Status = Failed, "unknown syscall max rejected");
+
+   --  cpu_count introspection: at least the boot hart is online.
+   Status := Raw_Ecall (Number => Sys_CPU_Count);
+   Check (Status >= 1 and then Status <= 64, "cpu_count reports online harts");
 
    --  ep_create returns fresh distinct endpoint cap handles.
    Status := Raw_Ecall (Number => Sys_EP_Create);

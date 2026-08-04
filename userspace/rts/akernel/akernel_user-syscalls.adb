@@ -109,6 +109,10 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_cap_delete";
 
+   function Raw_CPU_Count return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_cpu_count";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -269,6 +273,11 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Cap_Delete (Cap);
    end Cap_Delete;
+
+   function CPU_Count return U64 is
+   begin
+      return Raw_CPU_Count;
+   end CPU_Count;
 
    function Mem_Map_File
      (Address_Space : U64;
