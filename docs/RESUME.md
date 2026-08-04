@@ -19,6 +19,20 @@ badge-selected partition, superfloppy fallback). 157/157
 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0, host fsck.fat
 clean.
 
+IN FLIGHT (agreed, not started): SMP1 speedup. Evidence:
+timestamped runs — full fuzz suite 0.53s at SMP4 vs 474s at SMP1
+(~900x). Cause: Tests/Spin's 100ms quantum alternates with every
+rendezvous handoff on UP (~600ms per IPC round trip; BIG.BIN tail
+read alone 65s via uncached FAT chain walk; random phase 23s with
+no IPC at all = pure spin-theft). Plan: (1) preemption quantum
+100 -> 50ms (src/arch/riscv64/arch-traps.adb Timer_Interval,
+NOT 10ms — context-switch thrash risk); (2) syscall 27
+cpu_count returning Kernel.CPUs.Count (first kernel-introspection
+syscall); Tests/Spin prints "spin skipped (UP)" and exits when
+count = 1 — cleaner than per-hart-count manifests; (3) fuzz
+Highest_Known 22 -> 27 + directed test cpu_count >= 1. Then full
+re-validation at QEMU_SMP 1/4/8 + fsck, commit.
+
 Working rules burned in (details in NEXT.md):
 - Commit per milestone; docs current-state only.
 - Fuzz tests must be idempotent across reused disk images;
