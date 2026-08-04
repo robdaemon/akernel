@@ -65,10 +65,11 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 130/130 directed PASS (console stream RPC, echo IPC rounds,
+... 157/157 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
-FAT32 reads + writes through the VFS) ...
+FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
+VFS) ...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -142,11 +143,12 @@ QEMU virt RAM base:     0x80000000
   block protocol with badge-selected partition offset
   translation, zero-copy cap forwarding; System/Fat32 serves
   partition 1 of the GPT disk as HD0/AKDISK (reads + writes:
-  subdirectory traversal, LFN matching, 8.3 file create, cluster
-  chain extension with mirrored FAT + FSInfo updates; no sparse
-  writes, no delete/mkdir yet). The file server is a VFS in
-  front, forwarding verbatim with per-op buffer caps
-  cap_delete'd at every layer.
+  subdirectory traversal, LFN matching, file create (8.3 or
+  LFN + numeric-tail alias), cluster chain extension with
+  mirrored FAT + FSInfo updates, delete/truncate/mkdir/rmdir
+  (Op 8..11), fixed dirent timestamps; no sparse writes). The
+  file server is a VFS in front, forwarding verbatim with
+  per-op buffer caps cap_delete'd at every layer.
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
   exposes memory-object frame PAs for DMA; spawned processes get
   4 user stack pages.

@@ -770,6 +770,219 @@ begin
       end;
       Check (Match, "blk volume write readback ok");
 
+      --  20c: delete / truncate / mkdir / rmdir / LFN creation.
+      --  Idempotent across reused images: the prelude drops any
+      --  leftover MKTEST state from a prior boot.
+      Status := Akernel_User.Files.Delete ("HD0:MKTEST/INNER.TXT");
+      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+
+      Status := Akernel_User.Files.Mkdir ("HD0:MKTEST");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat mkdir ok");
+
+      Status := Akernel_User.Files.Mkdir ("HD0:MKTEST");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat mkdir exists rejected");
+
+      Status := Akernel_User.Files.Stat ("HD0:MKTEST", Size);
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat dir stat rejected");
+
+      Status := Akernel_User.Files.Mkdir ("HD0:NODIR/SUB");
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat mkdir bad parent rejected");
+
+      declare
+         Text : constant String := "AKINNER!";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat mkdir file write ok");
+
+      for I in 0 .. 7 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("HD0:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      declare
+         Text : constant String := "AKINNER!";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat mkdir file read ok");
+
+      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat rmdir non-empty rejected");
+
+      Status := Akernel_User.Files.Delete ("HD0:MKTEST/INNER.TXT");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat delete inner ok");
+
+      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rmdir ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:MKTEST", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat rmdir gone");
+
+      --  Delete: create, delete, gone; directories rejected.
+      declare
+         Text : constant String := "AKDELME!";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:DELME.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat delete setup write ok");
+
+      Status := Akernel_User.Files.Delete ("HD0:DELME.TXT");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat file delete ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:DELME.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat deleted stat rejected");
+
+      Status := Akernel_User.Files.Delete ("HD0:DELME.TXT");
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat delete twice rejected");
+
+      Status := Akernel_User.Files.Delete ("HD0:SUBDIR");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat delete dir rejected");
+
+      --  Truncate: chain freed, size zeroed, file writable again.
+      declare
+         Text : constant String := "AKTRUNC!";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat truncate setup write ok");
+
+      Status := Akernel_User.Files.Truncate ("HD0:TRUNC.TXT");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat truncate ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:TRUNC.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 0,
+             "fat truncate zeroes size");
+
+      Status := Akernel_User.Files.Write
+        ("HD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat truncate rewrite ok");
+
+      for I in 0 .. 7 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("HD0:TRUNC.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      declare
+         Text : constant String := "AKTRUNC!";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat truncate readback ok");
+
+      --  LFN creation: a component too long for 8.3 gets a
+      --  numeric-tail alias plus LFN entries; reads resolve
+      --  through the long name (case-insensitively).
+      declare
+         Text : constant String := "AKLFN-CREATE OK!";
+      begin
+         for I in 0 .. 15 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:CreatedLongName.dat", 0, Buf'Address, 16, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 16,
+             "fat lfn create write ok");
+
+      Status := Akernel_User.Files.Stat
+        ("hd0:createdlongname.dat", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 16,
+             "fat lfn create stat ok");
+
+      for I in 0 .. 15 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("HD0:CreatedLongName.dat", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 16;
+      declare
+         Text : constant String := "AKLFN-CREATE OK!";
+      begin
+         for I in 0 .. 15 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat lfn create read ok");
+
+      --  Deleting an LFN file marks the whole LFN run 0xE5.
+      declare
+         Text : constant String := "AKDELLFN";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("HD0:DeleteLongName.dat", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat lfn delete setup write ok");
+
+      Status := Akernel_User.Files.Delete ("HD0:DeleteLongName.dat");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat lfn delete ok");
+
+      Status := Akernel_User.Files.Stat ("HD0:DeleteLongName.dat", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat lfn delete gone");
+
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap
       --  involved), reap the exited child.

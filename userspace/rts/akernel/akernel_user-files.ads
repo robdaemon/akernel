@@ -31,7 +31,21 @@ with Akernel_User.Syscalls;
 --                      volumes are read-only; raw "disk" files and
 --                      fs-driver volumes accept writes (create when
 --                      the parent directory exists, 8.3 component
---                      names only; sparse writes rejected)
+--                      names or LFN-with-alias; sparse writes
+--                      rejected)
+--    Op_Delete  = 8    words = name[48] -> (status, 0); file only
+--                      (directories: Op_Rmdir); frees the cluster
+--                      chain, dirent + LFN run marked deleted
+--    Op_Truncate = 9   words = name[48] -> (status, 0); file
+--                      truncated to zero length (chain freed)
+--    Op_Mkdir   = 10   words = name[48] -> (status, 0); creates a
+--                      directory (one cluster, "."/".." entries)
+--    Op_Rmdir   = 11   words = name[48] -> (status, 0); removes an
+--                      EMPTY directory (bad args otherwise)
+--
+--  Mutating ops (7..11) are rejected by boot-file volumes (read-
+--  only) and raw block volumes; fs-driver volumes receive them
+--  forwarded verbatim (path repacked, buffer cap onward for 7).
 --
 --  Block volumes speak the block protocol to the driver (labels):
 --    0 info  -> (status, capacity in sectors)
@@ -68,6 +82,10 @@ package Akernel_User.Files is
    Op_Add_Block : constant U64 := 5;
    Op_Add_FS   : constant U64 := 6;
    Op_Write    : constant U64 := 7;
+   Op_Delete   : constant U64 := 8;
+   Op_Truncate : constant U64 := 9;
+   Op_Mkdir    : constant U64 := 10;
+   Op_Rmdir    : constant U64 := 11;
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;
@@ -118,5 +136,14 @@ package Akernel_User.Files is
       Buffer_Address : System.Address;
       Length         : U64;
       Count          : out U64) return U64;
+
+   --  Path-only mutating ops (protocol status): Delete removes a
+   --  file, Truncate cuts a file to zero length, Mkdir creates a
+   --  directory, Rmdir removes an empty one. Boot-file and raw
+   --  block volumes answer Status_Bad_Args.
+   function Delete (Name : String) return U64;
+   function Truncate (Name : String) return U64;
+   function Mkdir (Name : String) return U64;
+   function Rmdir (Name : String) return U64;
 
 end Akernel_User.Files;

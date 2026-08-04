@@ -2,11 +2,38 @@
 
 ```text
 Read docs/STATE.md, docs/NEXT.md, docs/IPC.md. Pick next steps from
-NEXT.md's deferred list or the open candidates: FAT32
-delete/truncate/mkdir/LFN-create/timestamps (20c), partition
+NEXT.md's deferred list or the open candidates: partition
 enumeration/query op + per-partition raw VFS volumes + MBR
-fallback (21 remaining), SMP hardening, IOMMU, kernel
-introspection syscalls, plain send, register fast path.
+fallback (21 remaining), SMP hardening, IOMMU, block device
+caches + explicit sync op, kernel introspection syscalls, plain
+send, register fast path.
+
+FAT32 20c landed (delete/truncate, mkdir/rmdir, LFN creation,
+timestamps): Op_Delete/Truncate/Mkdir/Rmdir = 8..11 (path in words
+0..5 like Op_Stat, no buffer cap). VFS forwards them to fs-driver
+volumes, rejects them for boot-file and raw block volumes; client
+wrappers Files.Delete/Truncate/Mkdir/Rmdir. Delete frees the FAT
+chain (raw zero entries + FSInfo) and marks the dirent plus its
+LFN run 0xE5 (Find_In_Dir tracks the run start chain-wise);
+truncate zeroes start cluster + size. Mkdir = entry + one cluster
+with "."/".." (root child's ".." = 0); rmdir needs an empty chain.
+Non-8.3 components create via numeric-tail alias ("NAME~1.EXT",
+collision scan) + LFN entries (VFAT checksum, UCS-2, 0x0000
+terminator / 0xFFFF fill). Dirent timestamps fixed at 2025-01-01
+(no RTC). Three FAT-semantics bugs burned: (1) directory
+extension must not place new entries behind a 0x00
+end-of-directory terminator in the old last cluster — unreachable
+to readers, orphan chain to fsck; free-slot runs span the cluster
+link and overwrite the terminator, entries written chain-wise
+with per-sector RMW. (2) Delete_Dirent marked LFN entries in the
+bounce page and Next_Cluster's FAT read clobbered the unwritten
+marks (orphaned LFN parts at fsck) — flush each cluster before
+advancing. (3) 20b latent: Set_Fat_Entry wrote links as
+Val | 0x0F000000, reserved top nibble set on non-EOC entries —
+mtools/fsck flag the chain corrupt; only low 28 bits written now.
+Fuzz gains 27 directed tests, idempotent across reused images;
+host fsck.fat clean. 157/157 directed PASS at QEMU_SMP 1/4/8,
+fuzz failures=0.
 
 GPT partition layer landed (21): System/Partmgr sits between
 virtio-blk and the fs drivers — `console blk part_server`, probes

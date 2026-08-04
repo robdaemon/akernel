@@ -235,4 +235,36 @@ package body Akernel_User.Files is
       return Status_Ok;
    end Write;
 
+   --  Shared body for the path-only mutating ops.
+   function Path_Op (Op : U64; Name : String) return U64 is
+      Q   : String (1 .. 48);
+      Len : Natural;
+   begin
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op;
+      Pack_Name (Q (1 .. Len), 0, 5);
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Path_Op;
+
+   function Delete (Name : String) return U64 is
+     (Path_Op (Op_Delete, Name));
+
+   function Truncate (Name : String) return U64 is
+     (Path_Op (Op_Truncate, Name));
+
+   function Mkdir (Name : String) return U64 is
+     (Path_Op (Op_Mkdir, Name));
+
+   function Rmdir (Name : String) return U64 is
+     (Path_Op (Op_Rmdir, Name));
+
 end Akernel_User.Files;

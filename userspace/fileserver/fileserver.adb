@@ -936,6 +936,49 @@ procedure Fileserver is
       Reply2 (Status, Count);
    end Handle_Read;
 
+   --  Op_Delete/Truncate/Mkdir/Rmdir: path-only mutating ops
+   --  (path rides words 0..5 like Op_Stat, no buffer cap).
+   --  Forwarded verbatim to fs-driver volumes; boot-file volumes
+   --  are read-only and raw block volumes have no files.
+   procedure Handle_Path_Op is
+      Op   : constant U64 := Syscalls.Message.Label;
+      Name : String (1 .. 48);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+   begin
+      if not Names_Done then
+         Reply2 (Files.Status_Not_Ready, 0);
+         return;
+      end if;
+
+      if not Name_Of (0, 5, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      V := Resolve_Volume (Name, Len, Pos);
+      if V = 0 then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_FS then
+         Pack_Path (Name, Pos, Len, 0);
+         Syscalls.Message.Label := Op;
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+            Reply2 (Syscalls.Message.Words (0),
+                    Syscalls.Message.Words (1));
+         else
+            Reply2 (Files.Status_Not_Found, 0);
+         end if;
+         return;
+      end if;
+
+      Reply2 (Files.Status_Bad_Args, 0);
+   end Handle_Path_Op;
+
 begin
    Akernel_User.Console.Set_Endpoint (2);  --  console grant
    Akernel_User.Console.Put_Line ("fileserver online");
@@ -956,6 +999,12 @@ begin
          Handle_Add_FS;
       elsif Syscalls.Message.Label = Files.Op_Write then
          Handle_Write;
+      elsif Syscalls.Message.Label = Files.Op_Delete
+        or else Syscalls.Message.Label = Files.Op_Truncate
+        or else Syscalls.Message.Label = Files.Op_Mkdir
+        or else Syscalls.Message.Label = Files.Op_Rmdir
+      then
+         Handle_Path_Op;
       elsif Syscalls.Message.Label = Files.Op_Set_Name then
          if Syscalls.Message.Words (0) = 0 then
             Names_Done := True;

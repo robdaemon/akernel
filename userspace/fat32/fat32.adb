@@ -18,8 +18,11 @@ with System.Storage_Elements;
 --  reads streaming cluster-by-cluster into the mapped client
 --  buffer, writes with read-modify-write sectors, cluster chain
 --  extension (free-cluster scan, FAT mirrors, FSInfo hint) and
---  directory-entry create/update. 8.3 component names only for
---  file creation; no sparse writes.
+--  directory-entry create/update/delete. Creation takes 8.3
+--  component names directly and other valid components via a
+--  numeric-tail alias plus LFN entries; mkdir/rmdir, file delete
+--  and truncate (to zero) round out the write path. Dirent
+--  timestamps carry a fixed date (no RTC). No sparse writes.
 
 procedure Fat32 is
    package Syscalls renames Akernel_User.Syscalls;
@@ -36,15 +39,25 @@ procedure Fat32 is
    Blk_Read  : constant U64 := 1;
    Blk_Write : constant U64 := 2;
 
-   Op_Stat  : constant U64 := 1;
-   Op_Open  : constant U64 := 2;
-   Op_Read  : constant U64 := 3;
-   Op_Write : constant U64 := 7;
+   Op_Stat     : constant U64 := 1;
+   Op_Open     : constant U64 := 2;
+   Op_Read     : constant U64 := 3;
+   Op_Write    : constant U64 := 7;
+   Op_Delete   : constant U64 := 8;
+   Op_Truncate : constant U64 := 9;
+   Op_Mkdir    : constant U64 := 10;
+   Op_Rmdir    : constant U64 := 11;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
    Status_Bad_Args     : constant U64 := 3;
    Status_Out_Of_Range : constant U64 := 4;
+
+   --  No RTC in the kernel: dirent create/write/access timestamps
+   --  all carry this fixed date (FAT epoch encoding: year-1980 in
+   --  bits 9..15, month 5..8, day 0..4) = 2025-01-01 00:00:00.
+   Fixed_Date : constant U64 := 16#5A21#;
+   Fixed_Time : constant U64 := 0;
 
    Buf_Win_VA : constant U64 := 16#5400_0000#;
    Blk_Buf_VA : constant U64 := 16#5000_0000#;
@@ -150,7 +163,10 @@ procedure Fat32 is
       return V;
    end Next_Cluster;
 
-   --  Set one FAT entry, mirrored into every FAT copy.
+   --  Set one FAT entry, mirrored into every FAT copy. The top 4
+   --  reserved bits of the existing entry are preserved; only the
+   --  low 28 bits carry the value (writing them set on a link
+   --  entry makes mtools/fsck flag the chain as corrupt).
    function Set_Fat_Entry (C : U64; Val : U64) return Boolean is
       Fat_Off   : constant U64 := C * 4;
       Sec_In    : constant U64 := Fat_Off / 512;
@@ -159,7 +175,8 @@ procedure Fat32 is
       if not Blk_Read_Sectors (Fat_Start + Sec_In, 1) then
          return False;
       end if;
-      Put32 (Ent_Off, Val or 16#0F00_0000#);
+      Put32 (Ent_Off, (LE32 (Ent_Off) and 16#F000_0000#)
+               or (Val and 16#0FFF_FFFF#));
       for I in 0 .. Num_Fats - 1 loop
          if not Blk_Write_Sectors
            (Fat_Start + I * Fat_Sectors + Sec_In, 1)
@@ -366,6 +383,10 @@ procedure Fat32 is
    --  Find component Comp in the directory chain at Dir_Clus. On
    --  success returns the entry's cluster/size/kind and the on-disk
    --  location (sector + offset) of its short directory entry.
+   --  Found_Clus/Found_Ent locate the entry chain-wise and
+   --  Run_Clus/Run_Ent the start of its LFN run (the first entry
+   --  after the previous plain or deleted entry) so a delete can
+   --  mark the whole sequence 0xE5.
    function Find_In_Dir
      (Dir_Clus    : U64;
       Comp        : String;
@@ -374,7 +395,11 @@ procedure Fat32 is
       Is_Dir      : out Boolean;
       Dir_Sector  : out U64;
       Dir_Off     : out U64;
-      Last_Clus   : out U64) return Boolean
+      Last_Clus   : out U64;
+      Found_Clus  : out U64;
+      Found_Ent   : out U64;
+      Run_Clus    : out U64;
+      Run_Ent     : out U64) return Boolean
    is
       C    : U64 := Dir_Clus;
       B0   : Interfaces.Unsigned_8;
@@ -387,10 +412,19 @@ procedure Fat32 is
       Dir_Sector := 0;
       Dir_Off := 0;
       Last_Clus := C;
+      Found_Clus := 0;
+      Found_Ent := 0;
+      Run_Clus := C;
+      Run_Ent := 0;
 
       for Guard in 0 .. 512 loop
          if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
             return False;
+         end if;
+
+         if Run_Ent >= Sec_Per_Clus * 16 then
+            Run_Clus := C;  --  run continues at this cluster's head
+            Run_Ent := 0;
          end if;
 
          for Ent in 0 .. Sec_Per_Clus * 16 - 1 loop
@@ -402,10 +436,14 @@ procedure Fat32 is
             Attr := Bounce (Base + 11);
             if B0 = 16#E5# then
                LFN_Len := 0;
+               Run_Clus := C;
+               Run_Ent := Ent + 1;
             elsif Attr = 16#0F# then
                Collect_LFN (Base);
             elsif (Attr and 16#08#) /= 0 then
                LFN_Len := 0;  --  volume label
+               Run_Clus := C;
+               Run_Ent := Ent + 1;
             else
                if Match_Component (Comp, Base) then
                   Entry_Clus := LE16 (Base + 20) * 16#1_0000#
@@ -414,9 +452,13 @@ procedure Fat32 is
                   Is_Dir := (Attr and 16#10#) /= 0;
                   Dir_Sector := Cluster_Sector (C) + Ent / 16;
                   Dir_Off := (Ent mod 16) * 32;
+                  Found_Clus := C;
+                  Found_Ent := Ent;
                   return True;
                end if;
                LFN_Len := 0;
+               Run_Clus := C;
+               Run_Ent := Ent + 1;
             end if;
          end loop;
 
@@ -440,7 +482,11 @@ procedure Fat32 is
       Dir_Off     : out U64;
       Parent_Clus : out U64;
       Parent_Last : out U64;
-      Comp_First  : out Natural) return Boolean
+      Comp_First  : out Natural;
+      Found_Clus  : out U64;
+      Found_Ent   : out U64;
+      Run_Clus    : out U64;
+      Run_Ent     : out U64) return Boolean
    is
       Cur    : U64 := Root_Clus;
       Pos    : Natural := Path'First;
@@ -456,6 +502,10 @@ procedure Fat32 is
       Parent_Clus := 0;
       Parent_Last := 0;
       Comp_First := 0;
+      Found_Clus := 0;
+      Found_Ent := 0;
+      Run_Clus := 0;
+      Run_Ent := 0;
 
       if Path'Length = 0 then
          return False;
@@ -474,7 +524,7 @@ procedure Fat32 is
          Found := Find_In_Dir
            (Cur, Path (Pos .. Stop - 1),
             Entry_Clus, Entry_Size, Is_Dir, Dir_Sector, Dir_Off,
-            Parent_Last);
+            Parent_Last, Found_Clus, Found_Ent, Run_Clus, Run_Ent);
 
          if Stop > Path'Last then
             --  Final component.
@@ -538,6 +588,7 @@ procedure Fat32 is
            and then Ch not in '0' .. '9'
            and then Ch /= '_'
            and then Ch /= '-'
+           and then Ch /= '~'
          then
             return False;
          end if;
@@ -551,6 +602,7 @@ procedure Fat32 is
            and then Ch not in '0' .. '9'
            and then Ch /= '_'
            and then Ch /= '-'
+           and then Ch /= '~'
          then
             return False;
          end if;
@@ -560,20 +612,200 @@ procedure Fat32 is
       return True;
    end Make_Short_Name;
 
-   --  Locate a free 32-byte slot in the directory chain, extending
-   --  the chain with a fresh cluster when full.
-   function Find_Free_Dirent
-     (Dir_Clus    : U64;
-      Last_Clus   : U64;
-      Dir_Sector  : out U64;
-      Dir_Off     : out U64) return Boolean
-   is
-      C   : U64 := Dir_Clus;
-      Fresh : U64;
-      B0  : Interfaces.Unsigned_8;
+   --  LFN-legal component: printable ASCII (no FAT-forbidden
+   --  punctuation), <= 64 chars (the LFN assembly buffer bound),
+   --  no trailing dot/space.
+   function Valid_LFN (Comp : String) return Boolean is
    begin
-      Dir_Sector := 0;
-      Dir_Off := 0;
+      if Comp'Length = 0 or else Comp'Length > 64 then
+         return False;
+      end if;
+      if Comp (Comp'Last) = ' ' or else Comp (Comp'Last) = '.' then
+         return False;
+      end if;
+      for C of Comp loop
+         if C < ' '
+           or else C = '"'
+           or else C = '*'
+           or else C = '/'
+           or else C = ':'
+           or else C = '<'
+           or else C = '>'
+           or else C = '?'
+           or else C = '\'
+           or else C = '|'
+         then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Valid_LFN;
+
+   --  VFAT short-name checksum over the 11-byte on-disk name.
+   function LFN_Checksum
+     (Short : Byte_Array) return Interfaces.Unsigned_8
+   is
+      Sum : Interfaces.Unsigned_8 := 0;
+   begin
+      for I in 0 .. 10 loop
+         Sum := Interfaces.Shift_Right (Sum, 1)
+           + (if (Sum and 1) = 1 then 16#80# else 0)
+           + Short (U64 (I));
+      end loop;
+      return Sum;
+   end LFN_Checksum;
+
+   --  Numeric-tail short alias for an LFN component: up to 6 base
+   --  chars (uppercased, illegal chars mapped to '_'), "~N",
+   --  optional 3-char extension; N sweeps 1..9 until the alias is
+   --  free in the parent directory.
+   function Make_Alias
+     (Parent_Clus : U64;
+      Comp        : String;
+      Out_Name    : out Byte_Array) return Boolean
+   is
+      function Short_Char (C : Character) return Character is
+        (if C in 'a' .. 'z' then Upper (C)
+         elsif C in 'A' .. 'Z'
+           or else C in '0' .. '9'
+           or else C = '_'
+           or else C = '-'
+         then C
+         else '_');
+
+      Dot   : Natural := 0;
+      Base  : String (1 .. 6);
+      BL    : Natural := 0;
+      Ext   : String (1 .. 3);
+      EL    : Natural := 0;
+      Alias : String (1 .. 12);
+      AL    : Natural;
+      Found : Boolean;
+      D1, D2, D3, D4, D5, D6, D7, D8, D9 : U64;
+      DB    : Boolean;
+   begin
+      Out_Name := (others => 16#20#);
+      for I in Comp'Range loop
+         if Comp (I) = '.' then
+            Dot := I;
+         end if;
+      end loop;
+
+      declare
+         Base_Last : constant Natural :=
+           (if Dot = 0 then Comp'Last else Dot - 1);
+      begin
+         for I in Comp'First .. Base_Last loop
+            exit when BL = 6;
+            if Comp (I) /= ' ' and then Comp (I) /= '.' then
+               BL := BL + 1;
+               Base (BL) := Short_Char (Comp (I));
+            end if;
+         end loop;
+         if Dot /= 0 then
+            for I in Dot + 1 .. Comp'Last loop
+               exit when EL = 3;
+               if Comp (I) /= ' ' and then Comp (I) /= '.' then
+                  EL := EL + 1;
+                  Ext (EL) := Short_Char (Comp (I));
+               end if;
+            end loop;
+         end if;
+      end;
+
+      if BL = 0 then
+         return False;
+      end if;
+
+      for N in 1 .. 9 loop
+         AL := BL;
+         Alias (1 .. AL) := Base (1 .. BL);
+         AL := AL + 1;
+         Alias (AL) := '~';
+         AL := AL + 1;
+         Alias (AL) := Character'Val (Character'Pos ('0') + N);
+         if EL > 0 then
+            AL := AL + 1;
+            Alias (AL) := '.';
+            Alias (AL + 1 .. AL + EL) := Ext (1 .. EL);
+            AL := AL + EL;
+         end if;
+
+         Found := Find_In_Dir
+           (Parent_Clus, Alias (1 .. AL),
+            D1, D2, DB, D3, D4, D5, D6, D7, D8, D9);
+         if not Found then
+            return Make_Short_Name (Alias (1 .. AL), Out_Name);
+         end if;
+      end loop;
+      return False;
+   end Make_Alias;
+
+   --  Write one LFN directory entry into the bounce page at Off.
+   --  Seq counts from 1; the entry holding the name's tail carries
+   --  the 0x40 last flag. Character slots past the name get a
+   --  0x0000 terminator then 0xFFFF fill.
+   procedure Put_LFN_Entry
+     (Off       : U64;
+      Seq       : Natural;
+      Last_Flag : Boolean;
+      Comp      : String;
+      Check     : Interfaces.Unsigned_8)
+   is
+      Base_Char : constant Natural := (Seq - 1) * 13;
+      EOff      : U64;
+      Pos       : Natural;
+   begin
+      Bounce (Off) := Interfaces.Unsigned_8
+        (Seq + (if Last_Flag then 16#40# else 0));
+      Bounce (Off + 11) := 16#0F#;
+      Bounce (Off + 12) := 0;
+      Bounce (Off + 13) := Check;
+      Bounce (Off + 26) := 0;
+      Bounce (Off + 27) := 0;
+      for J in 0 .. 12 loop
+         EOff := Off + (case J is
+                          when 0 .. 4  => 1 + U64 (J) * 2,
+                          when 5 .. 10 => 14 + U64 (J - 5) * 2,
+                          when others  => 28 + U64 (J - 11) * 2);
+         Pos := Base_Char + J;
+         if Pos < Comp'Length then
+            Bounce (EOff) :=
+              Interfaces.Unsigned_8 (Character'Pos (Comp (Comp'First + Pos)));
+            Bounce (EOff + 1) := 0;
+         elsif Pos = Comp'Length then
+            Bounce (EOff) := 0;
+            Bounce (EOff + 1) := 0;
+         else
+            Bounce (EOff) := 16#FF#;
+            Bounce (EOff + 1) := 16#FF#;
+         end if;
+      end loop;
+   end Put_LFN_Entry;
+
+   --  Locate a run of Need consecutive free 32-byte entries in
+   --  the directory chain, extending the chain once when nothing
+   --  fits. Runs may span a cluster link: a 0x00 "end of
+   --  directory" entry must never precede live entries (readers
+   --  stop scanning there), so when the old last cluster
+   --  terminates early the run continues into the fresh cluster
+   --  and overwrites the terminator. Returns the run start
+   --  chain-wise (cluster + entry index); callers walk from there.
+   function Find_Free_Dirents
+     (Dir_Clus    : U64;
+      Need        : U64;
+      Run_Clus    : out U64;
+      Run_Ent     : out U64) return Boolean
+   is
+      C        : U64 := Dir_Clus;
+      Fresh    : U64;
+      B0       : Interfaces.Unsigned_8;
+      Run      : U64 := 0;
+      N        : U64;
+      Extended : Boolean := False;
+   begin
+      Run_Clus := 0;
+      Run_Ent := 0;
 
       for Guard in 0 .. 512 loop
          if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
@@ -583,69 +815,257 @@ procedure Fat32 is
          for Ent in 0 .. Sec_Per_Clus * 16 - 1 loop
             B0 := Bounce (Ent * 32);
             if B0 = 0 or else B0 = 16#E5# then
-               Dir_Sector := Cluster_Sector (C) + Ent / 16;
-               Dir_Off := (Ent mod 16) * 32;
-               return True;
+               if Run = 0 then
+                  Run_Clus := C;
+                  Run_Ent := Ent;
+               end if;
+               Run := Run + 1;
+               if Run = Need then
+                  return True;
+               end if;
+            else
+               Run := 0;
             end if;
          end loop;
 
-         declare
-            N : constant U64 := Next_Cluster (C);
-         begin
-            if N = 0 then
-               exit;
+         N := Next_Cluster (C);
+         if N = 0 then
+            if Extended then
+               return False;  --  unreachable: a fresh cluster is 16
+            end if;           --  free entries and Need <= 6
+            if not Alloc_Cluster (C, Fresh) then
+               return False;
             end if;
-            C := N;
-         end;
+            N := Fresh;
+            Extended := True;
+         end if;
+         C := N;
       end loop;
+      return False;
+   end Find_Free_Dirents;
 
-      --  Directory full: extend its chain.
-      if not Alloc_Cluster (Last_Clus, Fresh) then
-         return False;
-      end if;
-      Dir_Sector := Cluster_Sector (Fresh);
-      Dir_Off := 0;
-      return True;
-   end Find_Free_Dirent;
-
-   --  Create an empty file entry for Comp in Parent_Clus.
-   function Create_File
+   --  Create an empty entry for Comp in Parent_Clus. Components
+   --  that are not valid 8.3 names get a numeric-tail short alias
+   --  plus LFN entries (Valid_LFN components only). Directories
+   --  come with one allocated cluster holding "." and "..".
+   --  Dir_Sector/Dir_Off locate the new SHORT entry on disk.
+   function Create_Entry
      (Parent_Clus : U64;
-      Parent_Last : U64;
       Comp        : String;
+      Is_Dir      : Boolean;
       Dir_Sector  : out U64;
-      Dir_Off     : out U64) return Boolean
+      Dir_Off     : out U64;
+      New_Clus    : out U64) return Boolean
    is
-      Short : Byte_Array (0 .. 10);
+      Short   : Byte_Array (0 .. 10);
+      N_LFN   : Natural := 0;
+      Run_C   : U64;
+      Run_E   : U64;
+      CC      : U64;
+      EE      : U64;
+      Sec     : U64;
+      Off     : U64;
+      Check   : Interfaces.Unsigned_8;
+      Parent_Dot : U64;
    begin
       Dir_Sector := 0;
       Dir_Off := 0;
+      New_Clus := 0;
 
       if not Make_Short_Name (Comp, Short) then
-         return False;
+         if not Valid_LFN (Comp) then
+            return False;
+         end if;
+         N_LFN := (Comp'Length + 12) / 13;
+         if not Make_Alias (Parent_Clus, Comp, Short) then
+            return False;
+         end if;
       end if;
 
-      if not Find_Free_Dirent (Parent_Clus, Parent_Last,
-                               Dir_Sector, Dir_Off)
+      if Is_Dir
+        and then not Alloc_Cluster (0, New_Clus)
       then
          return False;
       end if;
 
-      if not Blk_Read_Sectors (Dir_Sector, 1) then
+      if not Find_Free_Dirents (Parent_Clus, U64 (N_LFN) + 1,
+                                Run_C, Run_E)
+      then
          return False;
       end if;
 
-      for I in 0 .. 31 loop
-         Bounce (Dir_Off + U64 (I)) := 0;
-      end loop;
-      for I in 0 .. 10 loop
-         Bounce (Dir_Off + U64 (I)) := Short (U64 (I));
-      end loop;
-      Bounce (Dir_Off + 11) := 16#20#;  --  archive
-      return Blk_Write_Sectors (Dir_Sector, 1);
-   end Create_File;
+      --  Write the run entry by entry (each a read-modify-write of
+      --  its sector): LFN entries in reverse order, then the short
+      --  entry. The run may span a cluster link, so positions
+      --  advance chain-wise (contiguity was verified by the scan).
+      Check := LFN_Checksum (Short);
+      CC := Run_C;
+      EE := Run_E;
+      for K in 0 .. N_LFN loop
+         Sec := Cluster_Sector (CC) + EE / 16;
+         Off := (EE mod 16) * 32;
+         if not Blk_Read_Sectors (Sec, 1) then
+            return False;
+         end if;
 
-   --  Write back start cluster + size of an existing entry.
+         if K < N_LFN then
+            Put_LFN_Entry (Off, N_LFN - K, K = 0, Comp, Check);
+         else
+            for I in 0 .. 31 loop
+               Bounce (Off + U64 (I)) := 0;
+            end loop;
+            for I in 0 .. 10 loop
+               Bounce (Off + U64 (I)) := Short (U64 (I));
+            end loop;
+            Bounce (Off + 11) := (if Is_Dir then 16#10# else 16#20#);
+            Put16 (Off + 14, Fixed_Time);
+            Put16 (Off + 16, Fixed_Date);
+            Put16 (Off + 18, Fixed_Date);
+            Put16 (Off + 22, Fixed_Time);
+            Put16 (Off + 24, Fixed_Date);
+            if Is_Dir then
+               Put16 (Off + 20, New_Clus / 16#1_0000#);
+               Put16 (Off + 26, New_Clus mod 16#1_0000#);
+            end if;
+         end if;
+
+         if not Blk_Write_Sectors (Sec, 1) then
+            return False;
+         end if;
+
+         Dir_Sector := Sec;  --  loop ends on the short entry
+         Dir_Off := Off;
+
+         if K < N_LFN then
+            EE := EE + 1;
+            if EE >= Sec_Per_Clus * 16 then
+               EE := 0;
+               CC := Next_Cluster (CC);
+            end if;
+         end if;
+      end loop;
+
+      if Is_Dir then
+         --  "." and ".." in the fresh (zeroed) cluster; ".." of a
+         --  root child conventionally points at cluster 0.
+         Parent_Dot :=
+           (if Parent_Clus = Root_Clus then 0 else Parent_Clus);
+         if not Blk_Read_Sectors (Cluster_Sector (New_Clus), 1) then
+            return False;
+         end if;
+         for I in 0 .. 10 loop
+            Bounce (U64 (I)) := 16#20#;
+            Bounce (32 + U64 (I)) := 16#20#;
+         end loop;
+         Bounce (0) := Character'Pos ('.');
+         Bounce (11) := 16#10#;
+         Put16 (14, Fixed_Time);
+         Put16 (16, Fixed_Date);
+         Put16 (18, Fixed_Date);
+         Put16 (22, Fixed_Time);
+         Put16 (24, Fixed_Date);
+         Put16 (20, New_Clus / 16#1_0000#);
+         Put16 (26, New_Clus mod 16#1_0000#);
+         Bounce (32) := Character'Pos ('.');
+         Bounce (33) := Character'Pos ('.');
+         Bounce (32 + 11) := 16#10#;
+         Put16 (32 + 14, Fixed_Time);
+         Put16 (32 + 16, Fixed_Date);
+         Put16 (32 + 18, Fixed_Date);
+         Put16 (32 + 22, Fixed_Time);
+         Put16 (32 + 24, Fixed_Date);
+         Put16 (32 + 20, Parent_Dot / 16#1_0000#);
+         Put16 (32 + 26, Parent_Dot mod 16#1_0000#);
+         if not Blk_Write_Sectors (Cluster_Sector (New_Clus), 1) then
+            return False;
+         end if;
+      end if;
+      return True;
+   end Create_Entry;
+
+   --  Free every cluster of the chain at Start (raw zero entries —
+   --  Set_Fat_Entry's preserve-bits mask would not mark them
+   --  free), FSInfo free count / next-free and the allocation hint
+   --  updated. Returns the number freed.
+   function Free_Chain (Start : U64) return U64 is
+      C       : U64 := Start;
+      N       : U64;
+      Count   : U64 := 0;
+      Fat_Off : U64;
+      Ignore  : Boolean;
+   begin
+      for Guard in 0 .. 65536 loop
+         exit when C < 2;
+         N := Next_Cluster (C);
+         Fat_Off := C * 4;
+         if not Blk_Read_Sectors (Fat_Start + Fat_Off / 512, 1) then
+            return Count;
+         end if;
+         Put32 (Fat_Off mod 512, 0);
+         for I in 0 .. Num_Fats - 1 loop
+            Ignore := Blk_Write_Sectors
+              (Fat_Start + I * Fat_Sectors + Fat_Off / 512, 1);
+         end loop;
+         Count := Count + 1;
+         C := N;
+      end loop;
+
+      if Count > 0 then
+         if Blk_Read_Sectors (1, 1) then
+            if LE32 (488) /= 16#FFFF_FFFF# then
+               Put32 (488, LE32 (488) + Count);
+            end if;
+            Put32 (492, Start);
+            Ignore := Blk_Write_Sectors (1, 1);
+         end if;
+         Next_Free := Start;
+      end if;
+      return Count;
+   end Free_Chain;
+
+   --  Mark the dirent at Found_Clus/Found_Ent and the LFN entries
+   --  of its run (Run_Clus/Run_Ent .. dirent) deleted (0xE5).
+   function Delete_Dirent
+     (Run_Clus   : U64;
+      Run_Ent    : U64;
+      Found_Clus : U64;
+      Found_Ent  : U64) return Boolean
+   is
+      C     : U64 := Run_Clus;
+      Ent   : U64 := Run_Ent;
+      Total : U64;
+   begin
+      for Guard in 0 .. 512 loop
+         if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus) then
+            return False;
+         end if;
+         Total := Sec_Per_Clus * 16;
+         while Ent < Total loop
+            Bounce (Ent * 32) := 16#E5#;
+            if C = Found_Clus and then Ent = Found_Ent then
+               return Blk_Write_Sectors
+                 (Cluster_Sector (C), Sec_Per_Clus);
+            end if;
+            Ent := Ent + 1;
+         end loop;
+         --  Dirent is in a later cluster: flush this cluster's
+         --  marks first — the Next_Cluster FAT read clobbers the
+         --  bounce page.
+         if not Blk_Write_Sectors (Cluster_Sector (C), Sec_Per_Clus)
+         then
+            return False;
+         end if;
+         C := Next_Cluster (C);
+         if C = 0 then
+            return False;
+         end if;
+         Ent := 0;
+      end loop;
+      return False;
+   end Delete_Dirent;
+
+   --  Write back start cluster + size of an existing entry (and
+   --  touch its access/write timestamps).
    function Update_Dirent
      (Dir_Sector : U64;
       Dir_Off    : U64;
@@ -656,6 +1076,9 @@ procedure Fat32 is
       if not Blk_Read_Sectors (Dir_Sector, 1) then
          return False;
       end if;
+      Put16 (Dir_Off + 18, Fixed_Date);
+      Put16 (Dir_Off + 22, Fixed_Time);
+      Put16 (Dir_Off + 24, Fixed_Date);
       Put16 (Dir_Off + 20, Cluster / 16#1_0000#);
       Put16 (Dir_Off + 26, Cluster mod 16#1_0000#);
       Put32 (Dir_Off + 28, Size);
@@ -720,6 +1143,7 @@ procedure Fat32 is
       Parent      : U64;
       Parent_Last : U64;
       Comp_First  : Natural;
+      F1, F2, F3, F4 : U64;
    begin
       if not Fat_Ok then
          Reply2 (Status_Not_Found, 0);
@@ -736,7 +1160,7 @@ procedure Fat32 is
 
          if Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
                           Dir_Sector, Dir_Off, Parent, Parent_Last,
-                          Comp_First)
+                          Comp_First, F1, F2, F3, F4)
          then
             if Is_Dir then
                Reply2 (Status_Bad_Args, 0);  --  no dir stat/open
@@ -770,6 +1194,7 @@ procedure Fat32 is
          Parent      : U64;
          Parent_Last : U64;
          Comp_First  : Natural;
+         F1, F2, F3, F4 : U64;
          Done        : U64 := 0;
          C           : U64;
          Pos         : U64;
@@ -792,7 +1217,8 @@ procedure Fat32 is
 
             if not Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
                                  Dir_Sector, Dir_Off, Parent,
-                                 Parent_Last, Comp_First)
+                                 Parent_Last, Comp_First,
+                                 F1, F2, F3, F4)
               or else Is_Dir
             then
                Status := Status_Not_Found;
@@ -898,6 +1324,8 @@ procedure Fat32 is
          Parent      : U64;
          Parent_Last : U64;
          Comp_First  : Natural;
+         F1, F2, F3, F4 : U64;
+         Fresh_Clus  : U64;
          Done        : U64 := 0;
          C           : U64;
          Pos         : U64;
@@ -920,18 +1348,20 @@ procedure Fat32 is
 
             if Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
                              Dir_Sector, Dir_Off, Parent, Parent_Last,
-                             Comp_First)
+                             Comp_First, F1, F2, F3, F4)
             then
                if Is_Dir then
                   Status := Status_Bad_Args;
                   return;
                end if;
             else
-               --  Create in the resolved parent (8.3 names only).
+               --  Create in the resolved parent (8.3 names get a
+               --  plain short entry, other valid components an LFN
+               --  run plus numeric-tail alias).
                if Parent = 0
-                 or else not Create_File
-                   (Parent, Parent_Last, Path (Comp_First .. Path'Last),
-                    Dir_Sector, Dir_Off)
+                 or else not Create_Entry
+                   (Parent, Path (Comp_First .. Path'Last),
+                    False, Dir_Sector, Dir_Off, Fresh_Clus)
                then
                   Status := Status_Not_Found;
                   return;
@@ -1036,6 +1466,259 @@ procedure Fat32 is
       Reply2 (Status, Count);
    end Handle_Write;
 
+   ------------------------------------------------------------------
+   --  Op_Delete / Op_Truncate / Op_Mkdir / Op_Rmdir
+   ------------------------------------------------------------------
+
+   --  Shared resolve record for the path-only mutating ops: path
+   --  rides message words 0..5 like Op_Stat (no buffer cap).
+   procedure Handle_Delete is
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      Found_Clus  : U64;
+      Found_Ent   : U64;
+      Run_Clus    : U64;
+      Run_Ent     : U64;
+      Ignore      : U64;
+   begin
+      if not Fat_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         if not Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                              Dir_Sector, Dir_Off, Parent, Parent_Last,
+                              Comp_First, Found_Clus, Found_Ent,
+                              Run_Clus, Run_Ent)
+         then
+            Reply2 (Status_Not_Found, 0);
+            return;
+         end if;
+
+         if Is_Dir then
+            Reply2 (Status_Bad_Args, 0);  --  directories: Op_Rmdir
+            return;
+         end if;
+
+         Ignore := Free_Chain (Entry_Clus);
+         if Delete_Dirent (Run_Clus, Run_Ent, Found_Clus, Found_Ent) then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Not_Found, 0);
+         end if;
+      end;
+   end Handle_Delete;
+
+   procedure Handle_Truncate is
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      Found_Clus  : U64;
+      Found_Ent   : U64;
+      Run_Clus    : U64;
+      Run_Ent     : U64;
+      Ignore      : U64;
+   begin
+      if not Fat_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         if not Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                              Dir_Sector, Dir_Off, Parent, Parent_Last,
+                              Comp_First, Found_Clus, Found_Ent,
+                              Run_Clus, Run_Ent)
+         then
+            Reply2 (Status_Not_Found, 0);
+            return;
+         end if;
+
+         if Is_Dir then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         Ignore := Free_Chain (Entry_Clus);
+         if Update_Dirent (Dir_Sector, Dir_Off, 0, 0) then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Not_Found, 0);
+         end if;
+      end;
+   end Handle_Truncate;
+
+   procedure Handle_Mkdir is
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      Found_Clus  : U64;
+      Found_Ent   : U64;
+      Run_Clus    : U64;
+      Run_Ent     : U64;
+      Fresh_Clus  : U64;
+   begin
+      if not Fat_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         if Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                          Dir_Sector, Dir_Off, Parent, Parent_Last,
+                          Comp_First, Found_Clus, Found_Ent,
+                          Run_Clus, Run_Ent)
+         then
+            Reply2 (Status_Bad_Args, 0);  --  already exists
+            return;
+         end if;
+
+         if Parent = 0 then
+            Reply2 (Status_Not_Found, 0);  --  bad intermediate
+            return;
+         end if;
+
+         if Create_Entry (Parent,
+                          Path (Comp_First .. Path'Last), True,
+                          Dir_Sector, Dir_Off, Fresh_Clus)
+         then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Bad_Args, 0);  --  invalid component
+         end if;
+      end;
+   end Handle_Mkdir;
+
+   procedure Handle_Rmdir is
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      Found_Clus  : U64;
+      Found_Ent   : U64;
+      Run_Clus    : U64;
+      Run_Ent     : U64;
+      Ignore      : U64;
+      C           : U64;
+      B0          : Interfaces.Unsigned_8;
+      Attr        : Interfaces.Unsigned_8;
+      Is_Dot      : Boolean;
+      Empty       : Boolean := True;
+   begin
+      if not Fat_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         if not Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                              Dir_Sector, Dir_Off, Parent, Parent_Last,
+                              Comp_First, Found_Clus, Found_Ent,
+                              Run_Clus, Run_Ent)
+         then
+            Reply2 (Status_Not_Found, 0);
+            return;
+         end if;
+
+         if not Is_Dir then
+            Reply2 (Status_Bad_Args, 0);  --  files: Op_Delete
+            return;
+         end if;
+
+         --  Empty check: only ".", ".." and deleted entries may
+         --  remain (orphan LFN entries count as content).
+         C := Entry_Clus;
+         Scan : for Guard in 0 .. 512 loop
+            if not Blk_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus)
+            then
+               Empty := False;
+               exit Scan;
+            end if;
+            for Ent in 0 .. Sec_Per_Clus * 16 - 1 loop
+               B0 := Bounce (Ent * 32);
+               exit Scan when B0 = 0;
+               if B0 /= 16#E5# then
+                  Attr := Bounce (Ent * 32 + 11);
+                  Is_Dot := Attr /= 16#0F#
+                    and then Bounce (Ent * 32) = Character'Pos ('.')
+                    and then (Bounce (Ent * 32 + 1) = 16#20#
+                              or else
+                                (Bounce (Ent * 32 + 1) =
+                                   Character'Pos ('.')
+                                 and then Bounce (Ent * 32 + 2) = 16#20#));
+                  if not Is_Dot then
+                     Empty := False;
+                     exit Scan;
+                  end if;
+               end if;
+            end loop;
+            C := Next_Cluster (C);
+            exit Scan when C = 0;
+         end loop Scan;
+
+         if not Empty then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+
+         Ignore := Free_Chain (Entry_Clus);
+         if Delete_Dirent (Run_Clus, Run_Ent, Found_Clus, Found_Ent) then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Not_Found, 0);
+         end if;
+      end;
+   end Handle_Rmdir;
+
 begin
    Akernel_User.Console.Set_Endpoint (Console_Cap);
    Akernel_User.Console.Put_Line ("fat32 starting");
@@ -1109,6 +1792,14 @@ begin
          Handle_Read;
       elsif Syscalls.Message.Label = Op_Write then
          Handle_Write;
+      elsif Syscalls.Message.Label = Op_Delete then
+         Handle_Delete;
+      elsif Syscalls.Message.Label = Op_Truncate then
+         Handle_Truncate;
+      elsif Syscalls.Message.Label = Op_Mkdir then
+         Handle_Mkdir;
+      elsif Syscalls.Message.Label = Op_Rmdir then
+         Handle_Rmdir;
       else
          Reply2 (Status_Bad_Args, 0);
       end if;

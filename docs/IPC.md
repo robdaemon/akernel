@@ -201,6 +201,19 @@ Op_Mount    = 4  init -> server: (devlen, labellen, ci-flag,
                  device ++ label chars[24]) from the manifest's
                  volume directive; binds device name + volume label
                  + case-sensitivity to the boot-file set
+Op_Add_Block = 5 Op_Mount words + block-driver service endpoint
+                 cap; mounts a raw block-backed volume ("disk")
+Op_Add_FS   = 6  Op_Mount words + fs-driver service endpoint cap;
+                 mounts a VFS-forwarded volume (e.g. System/Fat32)
+Op_Write    = 7  (offset, length, name[32]) + buffer memory cap ->
+                 (status, count); server consumes the buffer.
+                 Boot-file volumes read-only; raw "disk" and
+                 fs-driver volumes writable (create in an existing
+                 directory; sparse writes rejected)
+Op_Delete   = 8  words = name[48] -> (status, 0); deletes a file
+Op_Truncate = 9  words = name[48] -> (status, 0); truncates to 0
+Op_Mkdir    = 10 words = name[48] -> (status, 0)
+Op_Rmdir    = 11 words = name[48] -> (status, 0); empty dirs only
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
 

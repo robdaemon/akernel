@@ -260,8 +260,41 @@ Next candidates (order open):
          write+readback) — idempotent across reused images.
          Host fsck.fat validates the driver's writes clean.
          130/130 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0.
-    20c. Remaining: file delete/truncate, mkdir/rmdir, LFN
-         creation (writes are 8.3-only), timestamps.
+    20c. ~~Delete/truncate, mkdir/rmdir, LFN creation,
+         timestamps~~ — done: Op_Delete/Truncate/Mkdir/Rmdir =
+         8..11 (path in words 0..5 like Op_Stat, no buffer cap;
+         VFS forwards to fs-driver volumes, boot-file and raw
+         block volumes reject). Client wrappers
+         Files.Delete/Truncate/Mkdir/Rmdir. Delete frees the FAT
+         chain (raw zero entries, FSInfo free count/next-free
+         updated) and marks the dirent AND its LFN run 0xE5
+         (Find_In_Dir now tracks the run start chain-wise);
+         truncate additionally zeroes start cluster + size.
+         Mkdir creates an entry with one cluster holding "." and
+         ".." (root child's ".." = 0); rmdir requires an empty
+         chain (only dot entries and deleted slots). Creation
+         takes non-8.3 components via a numeric-tail alias
+         ("NAME~1.EXT", collision scan 1..9) plus LFN entries
+         (VFAT checksum, UCS-2, 0x0000 terminator + 0xFFFF fill).
+         Dirent timestamps carry a fixed 2025-01-01 (no RTC).
+         Two FAT-semantics bugs burned: (1) extending a directory
+         whose last cluster ends in a 0x00 terminator and writing
+         the new entries into the fresh cluster puts them behind
+         the end-of-directory marker — unreachable to every
+         reader, orphan chain to fsck; free-slot runs must span
+         the cluster link and overwrite the terminator (entries
+         now written chain-wise with per-sector RMW). (2)
+         Delete_Dirent marked the LFN run in the bounce page,
+         then Next_Cluster's FAT read clobbered the unwritten
+         marks (orphaned LFN parts at fsck); each cluster's
+         marks are flushed before advancing. Also fixed a 20b
+         latent bug: Set_Fat_Entry wrote links as
+         Val | 0x0F000000 — reserved top nibble set on non-EOC
+         entries makes mtools/fsck flag the chain; only the low
+         28 bits are written now (top preserved). Fuzz gains 27
+         directed tests, idempotent across reused images. Host
+         fsck.fat clean. 157/157 directed PASS at QEMU_SMP 1/4/8,
+         fuzz failures=0.
 
 21. ~~GPT partition layer~~ — done: System/Partmgr sits between the
     virtio-blk driver and filesystem drivers. Manifest `program 5
@@ -290,6 +323,8 @@ Commit between each milestone.
 
 ## Deferred (do not build yet)
 
+- Block device caches, and an explicit sync op/ecall (noted during
+  20c: the FAT driver writes through on every op).
 - Plain `send`, register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
