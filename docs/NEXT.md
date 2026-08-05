@@ -783,7 +783,18 @@ Next candidates (order open):
     (frame pixel at the overlap), QMP click in the
     terminal pane raises it (blue title, pane over demo),
     key forwards to the focused window, 173/173 SMP1,
-    fuzz failures=0. 30c = title-bar dragging. 31 =
+    fuzz failures=0. ~~30c title-bar dragging~~ — DONE
+    (committed): press in the title band grabs the window
+    (offset recorded), motion while held moves it (union
+    band of old+new frames repainted), release drops;
+    the pointer handler now erases the cursor BEFORE any
+    press/drag repaint and redraws after (a repaint makes
+    the saved under-rect stale). Ada declaration-order
+    burn AGAIN: drag state must sit with the cursor state
+    above Drag_Move/Pointer_Press. Verified: QMP drag
+    moved the demo window origin exactly with the grab
+    offset, the vacated area repainted to the terminal
+    pane beneath. MILESTONE 30 COMPLETE. 31 =
     interactive shell in the terminal (launched from
     Sys:).
 

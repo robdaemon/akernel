@@ -15,7 +15,22 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: MILESTONE 29 COMPLETE — boot from the Sys
+Recently landed: MILESTONE 30 COMPLETE — multi-window +
+focus: window protocol v2 (4 slots, per-window geometry +
+input EP at Surface_Create cap slot 0 + Op_Set_Title=25,
+real Destroy), Bureau z-order band compositor (all drawing
+clipped to the damage band), click-to-focus/raise, title-bar
+dragging, Demo second client (Sys:System/Demo, generic GUI
+grant ABI 1=Bureau svc / 2=sink Receive / 3=sink Send).
+Burns: 29b left nothing rebuilding bureau/terminal (disk.img
+depended on rule-less ELF files -> stale v1 Bureau booted);
+phony disk.img deps rebuilt onto the existing GPT (recipe
+now rm -f's); terminal requests 87x29 cells explicitly (v2
+clamps to screen bounds, 1024x768 exceeds the 8-chunk cap);
+Ada declaration-order again for the drag state. Next:
+milestone 31 = interactive shell in the terminal (console
+FIFO + Op_Read + seat already in place; remove the interim
+"bureau key" serial log). Before that: MILESTONE 29 COMPLETE — boot from the Sys
 filesystem: FAT32 partition is BD0/Sys (raw whole-device
 volume moved to WD0:disk after a device-name collision hung
 the boot; raw partitions stay PD0); disk.img carries

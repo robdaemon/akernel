@@ -169,6 +169,13 @@ procedure Bureau is
    Cur_Vis : Boolean := False;
    procedure Cursor_Draw (NX, NY : U64);
 
+   Prev_Buttons : U64 := 0;
+   --  Title-bar drag state (slice c): grabbed slot + pointer
+   --  offset inside the window frame at grab time.
+   Drag_Slot : Natural := 0;
+   Drag_DX   : U64 := 0;
+   Drag_DY   : U64 := 0;
+
    ------------------------------------------------------------------
    --  Pixel plumbing. All drawing is clipped to the active band
    --  (Clip_*) AND the screen.
@@ -499,16 +506,35 @@ procedure Bureau is
         (Display_EP, Cur_X, Cur_Y, Cur_W, Cur_H);
    end Cursor_Erase;
 
-   procedure Cursor_Move (NX, NY : U64) is
+   --  Drag the grabbed window to follow the pointer; repaint
+   --  the union band of the old and new frames.
+   procedure Drag_Move (PX, PY : U64) is
+      S : constant Natural := Drag_Slot;
+      NX : constant U64 := U64'Min
+        ((if PX > Drag_DX then PX - Drag_DX else 0),
+         Width - Wins (S).FW);
+      NY : constant U64 := U64'Min
+        ((if PY > Drag_DY then PY - Drag_DY else 0),
+         Height - Wins (S).FH);
+      X0 : constant U64 := U64'Min (Wins (S).X, NX);
+      Y0 : constant U64 := U64'Min (Wins (S).Y, NY);
+      X1 : constant U64 := U64'Max (Wins (S).X + Wins (S).FW,
+                                    NX + Wins (S).FW);
+      Y1 : constant U64 := U64'Max (Wins (S).Y + Wins (S).FH,
+                                    NY + Wins (S).FH);
    begin
-      Cursor_Erase;
-      Cursor_Draw (NX, NY);
-   end Cursor_Move;
-
-   Prev_Buttons : U64 := 0;
+      if NX = Wins (S).X and then NY = Wins (S).Y then
+         return;
+      end if;
+      Wins (S).X := NX;
+      Wins (S).Y := NY;
+      Paint_Band (X0, Y0, X1, Y1);
+      Present_Band (X0, Y0, X1 - X0, Y1 - Y0);
+   end Drag_Move;
 
    --  Click-to-focus (slice b): button0 press inside a window
-   --  raises it to the top and gives it the keys.
+   --  raises it to the top and gives it the keys; a press in
+   --  the title band also grabs the window for dragging.
    procedure Pointer_Press (PX, PY : U64) is
    begin
       for I in reverse 1 .. Z_N loop
@@ -525,6 +551,11 @@ procedure Bureau is
                   Repaint_Window (S);
                end if;
                Focus_Slot (S);
+               if PY < Wins (S).Y + Frame + Title_H then
+                  Drag_Slot := S;
+                  Drag_DX := PX - Wins (S).X;
+                  Drag_DY := PY - Wins (S).Y;
+               end if;
                return;
             end if;
          end;
@@ -943,13 +974,20 @@ begin
               Message.Words (1) * Height / 32768;
             Buttons : constant U64 := Message.Words (2);
          begin
+            --  Erase first: a drag repaint would make the
+            --  saved under-rect stale.
+            Cursor_Erase;
             if (Buttons and 1) = 1
               and then (Prev_Buttons and 1) = 0
             then
                Pointer_Press (NX, NY);
+            elsif (Buttons and 1) = 1 and then Drag_Slot /= 0 then
+               Drag_Move (NX, NY);
+            elsif (Buttons and 1) = 0 then
+               Drag_Slot := 0;
             end if;
             Prev_Buttons := Buttons;
-            Cursor_Move (NX, NY);
+            Cursor_Draw (NX, NY);
          end;
          Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
 
