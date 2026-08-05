@@ -60,6 +60,7 @@ package body Device_Manager is
    Console_Handle  : U64 := 0;
    Resource_Handle : U64 := 0;
    Block_EP        : U64 := 0;
+   Bureau_Svc      : U64 := 0;  --  Bureau window service (Send)
 
    function Block_Service return U64 is (Block_EP);
    Next_Id         : U64 := First_Driver_Id;
@@ -620,58 +621,94 @@ package body Device_Manager is
          Log ("devmgr: driver config push failed");
       end if;
 
-      --  GPU (class 16): register the driver endpoint as a console
-      --  output sink so the console server mirrors its line-atomic
-      --  stream onto the display. The minted Send cap is
-      --  transferred in cap slot 0; devmgr's copy is deleted (the
-      --  console holds its own duplicate).
+      --  GPU (class 16): spawn the Bureau compositor, then the
+      --  terminal client. Bureau takes over the scanout through
+      --  the display-service protocol (the GPU driver's text
+      --  console goes dark — it is NOT attached as a sink); the
+      --  terminal's stream endpoint is the console sink (the
+      --  Startup-Sequence CLI look: boot output scrolls in the
+      --  terminal window's pane). Bureau handles: 1 = console
+      --  Send (badged), 2 = display endpoint Send, 3 = window
+      --  service Receive. Terminal handles: 1 = console Send
+      --  (badged), 2 = Bureau window service Send, 3 = sink
+      --  endpoint Receive.
       if L.Class_Id = 16 then
          declare
-            Sink : constant U64 :=
-              Cap_Mint (Svc_EP, Right_Send + Right_Transfer, 0);
-         begin
-            if Sink = Syscall_Failed then
-               Log ("devmgr: gpu sink mint failed");
-            else
-               Message.Label := Op_Attach_Sink_Label;
-               Message.Words := (others => 0);
-               Message.Caps := (others => 0);
-               Message.Caps (0) := Sink;
-               if IPC_Call (Console_Handle) /= IPC_Ok
-                 or else Message.Words (0) /= 0
-               then
-                  Log ("devmgr: gpu sink attach failed");
-               end if;
-               Result := Cap_Delete (Sink);
-            end if;
-         end;
-
-         --  Bureau compositor (milestone 28): spawned right after
-         --  the GPU comes up; it takes over the scanout through
-         --  the display-service protocol (the GPU driver's text
-         --  console goes dark; Bureau's terminal client retakes
-         --  the sink in slice 3). Handles: 1 = console Send
-         --  (badged), 2 = display endpoint Send.
-         declare
             Bureau_Img : constant U64 := Boot_Cap ("System/Bureau");
+            Term_Img   : constant U64 := Boot_Cap ("System/Terminal");
+            Term_Sink  : U64;
+            Sink       : U64;
          begin
             if Bureau_Img = 0 then
                Log ("devmgr: bureau image unknown");
             else
-               Grant_Count := 0;
-               Set_Grant (Grant_Count, Console_Handle, Right_Send,
-                          Next_Id);
-               Grant_Count := Grant_Count + 1;
-               Set_Grant (Grant_Count, Svc_EP, Right_Send, 0);
-               Grant_Count := Grant_Count + 1;
-               if Spawn (Bureau_Img, Grant_Count, Process_Cap) = Spawn_Ok
-                 and then Process_Cap /= 0
-               then
-                  Next_Id := Next_Id + 1;
-                  Log ("devmgr: spawned System/Bureau");
+               Bureau_Svc := EP_Create;
+               if Bureau_Svc = Syscall_Failed then
+                  Log ("devmgr: bureau svc ep failed");
                else
-                  Log ("devmgr: bureau spawn failed");
+                  Grant_Count := 0;
+                  Set_Grant (Grant_Count, Console_Handle, Right_Send,
+                             Next_Id);
+                  Grant_Count := Grant_Count + 1;
+                  Set_Grant (Grant_Count, Svc_EP, Right_Send, 0);
+                  Grant_Count := Grant_Count + 1;
+                  Set_Grant (Grant_Count, Bureau_Svc, Right_Receive,
+                             0);
+                  Grant_Count := Grant_Count + 1;
+                  if Spawn (Bureau_Img, Grant_Count, Process_Cap) =
+                       Spawn_Ok
+                    and then Process_Cap /= 0
+                  then
+                     Next_Id := Next_Id + 1;
+                     Log ("devmgr: spawned System/Bureau");
+                  else
+                     Log ("devmgr: bureau spawn failed");
+                  end if;
                end if;
+            end if;
+
+            if Bureau_Svc /= 0 and then Term_Img /= 0 then
+               Term_Sink := EP_Create;
+               if Term_Sink = Syscall_Failed then
+                  Log ("devmgr: terminal sink ep failed");
+               else
+                  Grant_Count := 0;
+                  Set_Grant (Grant_Count, Console_Handle, Right_Send,
+                             Next_Id);
+                  Grant_Count := Grant_Count + 1;
+                  Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
+                  Grant_Count := Grant_Count + 1;
+                  Set_Grant (Grant_Count, Term_Sink, Right_Receive,
+                             0);
+                  Grant_Count := Grant_Count + 1;
+                  if Spawn (Term_Img, Grant_Count, Process_Cap) =
+                       Spawn_Ok
+                    and then Process_Cap /= 0
+                  then
+                     Next_Id := Next_Id + 1;
+                     Log ("devmgr: spawned System/Terminal");
+                     Sink := Cap_Mint
+                       (Term_Sink, Right_Send + Right_Transfer, 0);
+                     if Sink = Syscall_Failed then
+                        Log ("devmgr: terminal sink mint failed");
+                     else
+                        Message.Label := Op_Attach_Sink_Label;
+                        Message.Words := (others => 0);
+                        Message.Caps := (others => 0);
+                        Message.Caps (0) := Sink;
+                        if IPC_Call (Console_Handle) /= IPC_Ok
+                          or else Message.Words (0) /= 0
+                        then
+                           Log ("devmgr: terminal sink attach failed");
+                        end if;
+                        Result := Cap_Delete (Sink);
+                     end if;
+                  else
+                     Log ("devmgr: terminal spawn failed");
+                  end if;
+               end if;
+            elsif Bureau_Svc /= 0 then
+               Log ("devmgr: terminal image unknown");
             end if;
          end;
       end if;

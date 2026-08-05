@@ -1,9 +1,9 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Console;
 with Akernel_User.Syscalls;
 with Akernel_User.Display;
+with Akernel_User.Window;
 with Font8x8;
 
 --  Bureau: the compositor / window server (milestone 28, slice 2).
@@ -25,6 +25,14 @@ with Font8x8;
 --
 --  Slice 2 stops here: no clients, no seat. Bureau blocks on an
 --  endpoint nobody calls (slice 3 adds the window protocol).
+--
+--  Slice 3: window protocol v1 (Akernel_User.Window, labels 20+)
+--  on handle 3. Exactly one surface slot: the first
+--  Op_Surface_Create binds the window drawn above; the client
+--  pushes its surface chunk caps, Bureau maps them read-only
+--  and copies Op_Surface_Update bands into the compositing
+--  buffer at the pane origin, presenting each band to the
+--  display service (wl_shm model).
 
 procedure Bureau is
    use Akernel_User.Syscalls;
@@ -33,8 +41,10 @@ procedure Bureau is
 
    Console_EP : constant U64 := 1;
    Display_EP : constant U64 := 2;
+   Win_Svc    : constant U64 := 3;
 
-   Buf_VA : constant U64 := 16#6000_0000#;
+   Buf_VA   : constant U64 := 16#6000_0000#;
+   Surf_VA  : constant U64 := 16#6800_0000#;
 
    Max_W : constant := 1024;
    Max_H : constant := 768;
@@ -84,9 +94,73 @@ procedure Bureau is
 
    Result : U64;
 
+   ------------------------------------------------------------------
+   --  Window protocol v1 state: exactly one surface slot
+   ------------------------------------------------------------------
+
+   package Win renames Akernel_User.Window;
+
+   Surf_Max_Objects : constant := 8;
+   Surf_Id     : U64 := 0;  --  0 = slot free
+   Surf_W      : U64 := 0;
+   Surf_H      : U64 := 0;
+   Surf_Pages  : U64 := 0;
+   Surf_Got    : Natural := 0;
+   Surf_Mapped : Boolean := False;
+   Surf_Caps   : array (0 .. Surf_Max_Objects - 1) of U64 :=
+     (others => 0);
+
+   Surf : Pixel_Array
+     with Address => System.Storage_Elements.To_Address
+       (System.Storage_Elements.Integer_Address (Surf_VA));
+
+   Pane_X0 : constant U64 := Win_X + Frame;
+   Pane_Y0 : constant U64 := Win_Y + Frame + Title_H;
+   Pane_W  : constant U64 := Win_W - 2 * Frame;
+   Pane_H  : constant U64 := Win_H - 2 * Frame - Title_H;
+
+   --  Raw word reply (same pattern as the display driver).
+   procedure Win_Reply (Req_Label : U64; W0, W1, W2, W3, W4 : U64) is
+   begin
+      Message.Label := Req_Label;
+      Message.Words (0) := W0;
+      Message.Words (1) := W1;
+      Message.Words (2) := W2;
+      Message.Words (3) := W3;
+      Message.Words (4) := W4;
+      Message.Words (5) := 0;
+      if IPC_Reply /= IPC_Ok then
+         Debug_Put_Line ("bureau reply failed");
+         Process_Exit;
+      end if;
+   end Win_Reply;
+
+   --  Copy a damaged band from the client surface into the
+   --  compositing buffer at the pane origin, then present it.
+   procedure Update_Band (X, Y, W, H : U64) is
+      CX : constant U64 := U64'Min (X, Surf_W);
+      CY : constant U64 := U64'Min (Y, Surf_H);
+      CW : constant U64 := U64'Min (W, Surf_W - CX);
+      CH : constant U64 := U64'Min (H, Surf_H - CY);
+      Stride_Px : constant U64 := Stride / 4;
+   begin
+      if CW = 0 or else CH = 0 then
+         return;
+      end if;
+      for Row in 0 .. CH - 1 loop
+         for Col in 0 .. CW - 1 loop
+            Buf ((Pane_Y0 + CY + Row) * Stride_Px +
+                   Pane_X0 + CX + Col) :=
+              Surf ((CY + Row) * Surf_W + CX + Col);
+         end loop;
+      end loop;
+      Result := Akernel_User.Display.Present
+        (Display_EP, Pane_X0 + CX, Pane_Y0 + CY, CW, CH);
+   end Update_Band;
+
    procedure Fail (S : String) is
    begin
-      Akernel_User.Console.Put_Line ("FAIL bureau " & S);
+      Debug_Put_Line ("FAIL bureau " & S);
       Process_Exit;
    end Fail;
 
@@ -213,11 +287,9 @@ procedure Bureau is
    This       : U64;
    Count      : Natural;
    Minted     : U64;
-   Idle_EP    : U64;
+   Label      : U64;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
-
    --  1. Mode geometry from the display service.
    if Akernel_User.Display.Get_Info
      (Display_EP, Width, Height, Stride, Pages) /=
@@ -230,7 +302,7 @@ begin
    then
       Fail ("display geometry unsupported");
    end if;
-   Akernel_User.Console.Put_Line ("PASS bureau display info ok");
+   Debug_Put_Line ("PASS bureau display info ok");
 
    --  2. Compositing buffer: chunks of at most 64 pages, mapped
    --  contiguously at Buf_VA.
@@ -304,7 +376,7 @@ begin
    then
       Fail ("buffer commit failed");
    end if;
-   Akernel_User.Console.Put_Line ("PASS bureau display commit ok");
+   Debug_Put_Line ("PASS bureau display commit ok");
 
    --  5. Compose and present the full frame.
    Compose;
@@ -313,11 +385,108 @@ begin
    then
       Fail ("present failed");
    end if;
-   Akernel_User.Console.Put_Line ("bureau desktop online");
+   Debug_Put_Line ("bureau desktop online");
 
-   --  Slice 2 stops here: block forever (no clients yet).
-   Idle_EP := EP_Create;
+   --  Window-protocol service loop: one surface slot (v1).
    loop
-      Result := IPC_Recv (Idle_EP);
+      if IPC_Recv (Win_Svc) /= IPC_Ok then
+         Debug_Put_Line ("bureau recv failed");
+         Process_Exit;
+      end if;
+      Label := Message.Label;
+
+      if Label = Win.Op_Surface_Create then
+         if Surf_Id /= 0 then
+            Win_Reply (Label, Win.Status_No_Slot, 0, 0, 0, 0);
+         elsif Message.Words (0) = 0 or else Message.Words (1) = 0 then
+            Win_Reply (Label, Win.Status_Bad_Index, 0, 0, 0, 0);
+         else
+            Surf_W := U64'Min (Message.Words (0), Pane_W);
+            Surf_H := U64'Min (Message.Words (1), Pane_H);
+            Surf_Pages := (Surf_W * Surf_H * 4 + 4095) / 4096;
+            if (Surf_Pages + 63) / 64 > Surf_Max_Objects then
+               Win_Reply (Label, Win.Status_No_Slot, 0, 0, 0, 0);
+            else
+               Surf_Id := 1;
+               Surf_Got := 0;
+               Surf_Mapped := False;
+               Surf_Caps := (others => 0);
+               Win_Reply (Label, Win.Status_Ok,
+                          Surf_Id, Surf_Pages, Surf_W, Surf_H);
+            end if;
+         end if;
+
+      elsif Label = Win.Op_Surface_Set_Buffer then
+         if Message.Words (0) /= Surf_Id or else Surf_Id = 0
+           or else Surf_Mapped
+         then
+            Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+         else
+            declare
+               Base : constant U64 := Message.Words (1);
+               St   : U64 := Win.Status_Ok;
+               Idx  : U64;
+            begin
+               for I in 0 .. 3 loop
+                  exit when Message.Caps (I) = 0;
+                  Idx := Base + U64 (I);
+                  if Idx >= U64 (Surf_Max_Objects)
+                    or else Surf_Caps (Natural (Idx)) /= 0
+                  then
+                     St := Win.Status_Bad_Index;
+                     Result := Cap_Delete (Message.Caps (I));
+                  else
+                     Surf_Caps (Natural (Idx)) := Message.Caps (I);
+                     Surf_Got := Surf_Got + 1;
+                  end if;
+               end loop;
+               Win_Reply (Label, St, 0, 0, 0, 0);
+            end;
+         end if;
+
+      elsif Label = Win.Op_Surface_Commit_Buffer then
+         if Message.Words (0) /= Surf_Id or else Surf_Id = 0
+           or else Surf_Mapped
+         then
+            Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+         elsif U64 (Surf_Got) /= (Surf_Pages + 63) / 64 then
+            Win_Reply (Label, Win.Status_Bad_Index, 0, 0, 0, 0);
+         else
+            declare
+               St : U64 := Win.Status_Ok;
+            begin
+               for I in 0 .. Surf_Got - 1 loop
+                  This := U64'Min (Surf_Pages - U64 (I) * 64, 64);
+                  if Mem_Map
+                    (Address_Space => Address_Space_Cap,
+                     Cap           => Surf_Caps (I),
+                     VA            => Surf_VA + U64 (I) * 64 * 4096,
+                     Offset        => 0,
+                     Length        => This * 4096,
+                     Flags         => 1) /= 0
+                  then
+                     St := Win.Status_Bad_Caps;
+                  end if;
+               end loop;
+               if St = Win.Status_Ok then
+                  Surf_Mapped := True;
+               end if;
+               Win_Reply (Label, St, 0, 0, 0, 0);
+            end;
+         end if;
+
+      elsif Label = Win.Op_Surface_Update then
+         if Message.Words (0) = Surf_Id and then Surf_Mapped then
+            Update_Band (Message.Words (1), Message.Words (2),
+                         Message.Words (3), Message.Words (4));
+            Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+         else
+            Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+         end if;
+
+      else
+         --  Op_Surface_Destroy (no-op in v1) and unknown labels.
+         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+      end if;
    end loop;
 end Bureau;

@@ -18,13 +18,14 @@ VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 VIRTIO_GPU_ELF := bin/userspace/virtio_gpu.elf
 BUREAU_ELF := bin/userspace/bureau.elf
+TERMINAL_ELF := bin/userspace/terminal.elf
 DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd
 
@@ -75,6 +76,9 @@ virtio_gpu:
 bureau:
 	$(MAKE) -C userspace/bureau
 
+terminal:
+	$(MAKE) -C userspace/terminal
+
 #  64 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
@@ -98,7 +102,7 @@ $(DISK_IMG):
 
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
@@ -115,6 +119,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virt
 	cp $(VIRTIO_INPUT_ELF) $(INITRD_ROOT)/Drivers/VirtioInput
 	cp $(VIRTIO_GPU_ELF) $(INITRD_ROOT)/Drivers/VirtioGpu
 	cp $(BUREAU_ELF) $(INITRD_ROOT)/System/Bureau
+	cp $(TERMINAL_ELF) $(INITRD_ROOT)/System/Terminal
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin

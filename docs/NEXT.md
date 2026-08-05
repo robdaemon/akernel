@@ -579,8 +579,25 @@ Next candidates (order open):
       red; white/black text never noticed. Verify colors by
       EXACT channel decode of a screendump. Client display
       helpers live in akernel_user-display.adb (raw IPC_Call;
-      replies are words-only). Slice 3 = terminal client,
-      4 = seat + hw cursor.
+      replies are words-only). SLICE 3 DONE (committed):
+      window protocol v1 (akernel_user-window.ads, labels
+      20-24, ONE surface slot bound to Bureau's startup window;
+      client allocates surface, pushes chunks, Bureau maps
+      read-only and copies Op_Surface_Update bands into the
+      compositing buffer at the pane origin — wl_shm model);
+      userspace/terminal (System/Terminal, devmgr-spawned after
+      Bureau) renders the console mirror into its surface
+      (scroll = surface memmove + one band update) — boot
+      output scrolls in the window pane, screendump decode
+      err=0 on all cells. devmgr attaches the TERMINAL's sink
+      EP (GPU driver EP is no longer a sink). Burned: the
+      Debug_Put_Line-only rule covers the WHOLE display stack
+      (Bureau + terminal too, not just GPU init): any console
+      print by a display-stack process deadlocks — the console
+      server mirrors to the terminal sink, and a terminal
+      blocked in its own console RPC can never Receive (Bureau
+      <-> terminal cycle proven live). 173/173 at SMP1, fuzz
+      failures=0. Slice 4 = seat + hw cursor.
     - Terminal = FIRST REAL CLIENT on window protocol v1:
       Create_Surface -> (surface EP + shm memobj),
       Commit(damage). Scroll = memmove inside the terminal's

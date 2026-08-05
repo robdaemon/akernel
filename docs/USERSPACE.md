@@ -258,7 +258,27 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   red; verify colors by exact channel decode of a screendump.
   font8x8 lives in rts/akernel now (shared client rendering;
   bit 0 = leftmost pixel). Client display helpers:
-  akernel_user-display.adb (raw IPC_Call).
+  akernel_user-display.adb (raw IPC_Call). Slice 3 added the
+  window-service loop on handle 3 (window protocol v1,
+  akernel_user-window.ads, labels 20-24): ONE surface slot
+  bound to the startup window; the client pushes surface
+  chunk caps, Bureau maps them read-only and copies
+  Op_Surface_Update bands into the compositing buffer at the
+  pane origin, then Presents (wl_shm model).
+- `userspace/terminal/` — Bureau's first client (image
+  System/Terminal, devmgr-spawned after Bureau; handles:
+  1 = console Send, 2 = Bureau window service Send, 3 = sink
+  EP Receive). Allocates its surface, pushes chunks, renders
+  the console mirror text grid into it (font8x8 8x16 cells,
+  dark on white; scroll = surface memmove + one
+  Op_Surface_Update band). devmgr attaches ITS sink EP via
+  Op_Attach_Sink (the GPU driver EP is no longer a sink).
+  Burned: the WHOLE display stack (GPU driver, Bureau,
+  terminal) logs via Debug_Put_Line only — any console print
+  deadlocks against the console server's mirror into the
+  terminal sink (Bureau <-> terminal cycle proven live).
+  Input arrives in slice 4 via the Bureau seat; Op_Read is
+  EOF.
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the
