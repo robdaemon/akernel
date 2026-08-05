@@ -10,12 +10,14 @@ with Akernel_User.Files;
 
 --  Shell: interactive command line (milestone 31). A plain CLI
 --  program — it opens no window; its console channel decides where
---  the session lives. The terminal (a console device, the CON:
---  analog) spawns it with:
---    handle 1 = terminal stream endpoint (Send, badge 1)
+--  the session lives. Spawned with the uniform namespace
+--  (milestone 31b):
+--    handle 1 = console stream endpoint (Send; the terminal
+--               badges it 1 — point it at the console server and
+--               the same binary is a serial shell)
 --    handle 2 = file server endpoint (Send)
---  Run standalone with handle 1 pointing at the console server and
---  the same binary is a serial shell.
+--    handle 3 = Bureau window service (Send) — a child program is
+--               GUI only once it calls Surface_Create
 --
 --  Line discipline (echo, BS erase) lives in the console device —
 --  the terminal echoes focused keys as they arrive — so the shell
@@ -26,8 +28,9 @@ with Akernel_User.Files;
 --  Commands: "help", "version"; anything else is a program path
 --  (unqualified names resolve against the default volume BD0:) —
 --  staged through the file server into a memory object (memstage
---  pattern), spawned with this shell's own console + fs caps, and
---  awaited (reap-poll) before the next prompt. "System/Shell"
+--  pattern), spawned with this shell's own console + fs + Bureau
+--  svc caps (the uniform namespace — children may open windows),
+--  and awaited (reap-poll) before the next prompt. "System/Shell"
 --  gives a nested shell on the same channel, Amiga-style.
 
 procedure Shell is
@@ -36,6 +39,7 @@ procedure Shell is
 
    Console_EP : constant U64 := 1;
    FS_EP      : constant U64 := 2;
+   Win_EP     : constant U64 := 3;  --  Bureau svc (uniform ABI)
 
    Stage_VA : constant U64 := 16#5400_0000#;
 
@@ -120,7 +124,8 @@ procedure Shell is
       end if;
       Set_Grant (0, Console_EP, Right_Send, 0);
       Set_Grant (1, FS_EP, Right_Send, 0);
-      if Spawn (Mem_Cap, 2, Proc_Cap) /= Spawn_Ok or else Proc_Cap = 0
+      Set_Grant (2, Win_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 3, Proc_Cap) /= Spawn_Ok or else Proc_Cap = 0
       then
          Akernel_User.Console.Put_Line ("spawn failed: " & Path);
          Result := Cap_Delete (Mem_Cap);

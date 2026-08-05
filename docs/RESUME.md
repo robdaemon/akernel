@@ -6,12 +6,7 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates: milestone 31b — uniform program ABI (user
-ruling: a program is GUI only once it calls Surface_Create, the
-OpenWindow analog; every Startup entry should get the same
-console+fs+Bureau-svc namespace; Spawn_Gui_Client and the
-special-case grant ABIs die, Demo migrates, the shell can then
-spawn GUI programs too). After that, the deferred list:
+Open candidates: the deferred list:
 interactive polish (pointer events to focused clients — the v3
 input queue carries keys only), kernel introspection syscalls
 for init state reconstruction, plain send, register fast path,
@@ -20,14 +15,20 @@ write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
 covers the IPC case).
 
-Recently landed: MILESTONE 31a COMPLETE — interactive shell in
-the terminal. Terminal is a console device (CON: analog):
-launching it stages + spawns System/Shell from Sys: (grant ABI
-gains 5 = fs Send; shell gets 1 = Send on the terminal's sink
-endpoint badged 1, 2 = fs). Shell is a plain CLI program —
-builtins help/version/exit, bare path = stage + spawn + reap-
-poll, "System/Shell" nests. Line discipline (echo, BS) lives in
-the terminal, never the shell. Boot mirror + shell share the
+Recently landed: MILESTONE 31 COMPLETE (a+b) — interactive
+shell + uniform program ABI. Every program spawned from Sys:
+(Startup list or shell child) gets the same namespace: 1 =
+console Send (badged), 2 = fs Send, 3 = Bureau svc Send; a
+program is GUI only once it calls Surface_Create (the
+OpenWindow analog). Spawn_Gui_Client and all special-case
+grant ABIs are gone. The terminal (a console device, the CON:
+analog — launching it starts System/Shell) runs on the uniform
+ABI and runtime-creates + self-attaches its stream sink
+endpoint (Op_Attach_Sink accepts any badge since 31b). Shell:
+builtins help/version/exit, bare path = stage+spawn+reap-poll,
+nests; children inherit all three caps — "System/Demo" typed
+at the Sys:> prompt opens its window (verified live). Line
+discipline (echo, BS) lives in the terminal, never the shell. Boot mirror + shell share the
 pane via the same sink endpoint, badge-multiplexed. Input
 became ASYNC first — window protocol v3: per-window one-page
 event queue memobj + thread-bound notification pushed at

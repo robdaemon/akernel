@@ -731,10 +731,14 @@ package body Device_Manager is
 
    --  Bureau handles: 1 = console Send (badged), 2 = display
    --  endpoint Send, 3 = window service Receive (init keeps the
-   --  Send side as Bureau_Svc).
+   --  Send side as Bureau_Svc). After the spawn: push the seat
+   --  (Bureau svc Send+Transfer) to every input driver — the
+   --  focus is Bureau-internal since window protocol v2.
    procedure Spawn_Bureau (Image_Cap : U64) is
       Grant_Count : U64 := 0;
       Process_Cap : U64;
+      Sink        : U64;
+      Result      : U64;
    begin
       Bureau_Svc := EP_Create;
       if Bureau_Svc = Syscall_Failed then
@@ -754,131 +758,62 @@ package body Device_Manager is
          Log ("devmgr: spawned System/Bureau");
       else
          Log ("devmgr: bureau spawn failed");
-      end if;
-   end Spawn_Bureau;
-
-   --  Terminal handles: 1 = console Send (badged), 2 = Bureau
-   --  window service Send, 3 = sink endpoint Receive, 4 = sink
-   --  Send+Transfer (pushed to Bureau at Surface_Create), 5 =
-   --  file server Send (shell staging authority — launching a
-   --  terminal starts the shell, milestone 31). After the spawn:
-   --  attach the sink at the console server and push the seat to
-   --  every input driver.
-   procedure Spawn_Terminal (Image_Cap : U64) is
-      Grant_Count : U64 := 0;
-      Process_Cap : U64;
-      Term_Sink   : U64;
-      Sink        : U64;
-      Result      : U64;
-   begin
-      if Bureau_Svc = 0 then
-         Log ("devmgr: terminal needs bureau first");
          return;
       end if;
-      Term_Sink := EP_Create;
-      if Term_Sink = Syscall_Failed then
-         Log ("devmgr: terminal sink ep failed");
+
+      --  Seat wiring: the input drivers learn Bureau.
+      for I in 0 .. Input_Count - 1 loop
+         Sink := Cap_Mint (Bureau_Svc, Right_Send + Right_Transfer,
+                           0);
+         if Sink = Syscall_Failed then
+            Log ("devmgr: seat mint failed");
+         else
+            Message.Label := Seat_Config_Label;
+            Message.Words := (others => 0);
+            Message.Caps := (others => 0);
+            Message.Caps (0) := Sink;
+            if IPC_Call (Input_Svc (I)) /= IPC_Ok
+              or else Message.Words (0) /= 0
+            then
+               Log ("devmgr: seat push failed");
+            end if;
+            Result := Cap_Delete (Sink);
+         end if;
+      end loop;
+   end Spawn_Bureau;
+
+   --  Uniform program ABI (milestone 31b): every program spawned
+   --  from Sys: gets the same namespace — 1 = console Send
+   --  (badged), 2 = file server Send, 3 = Bureau window service
+   --  Send. A program is GUI only once it calls Surface_Create
+   --  (the OpenWindow analog); its console endpoint, input queue
+   --  and notification are created by the program itself at
+   --  runtime. The terminal uses the same ABI — launching it
+   --  starts the shell (milestone 31).
+   procedure Spawn_Program (Path : String; Image_Cap : U64) is
+      Grant_Count : U64 := 0;
+      Process_Cap : U64;
+   begin
+      if Bureau_Svc = 0 then
+         Log ("devmgr: program needs bureau first");
          return;
       end if;
       Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
       Grant_Count := Grant_Count + 1;
-      Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
-      Grant_Count := Grant_Count + 1;
-      Set_Grant (Grant_Count, Term_Sink, Right_Receive, 0);
-      Grant_Count := Grant_Count + 1;
-      --  Handle 4: Send+Transfer copy of the sink endpoint —
-      --  grant source for the shell's console cap (a Receive-
-      --  only cap cannot mint Send).
-      Set_Grant (Grant_Count, Term_Sink, Right_Send + Right_Transfer,
-                 0);
-      Grant_Count := Grant_Count + 1;
-      --  Handle 5: file server Send — the terminal stages and
-      --  spawns System/Shell (memstage pattern) once its surface
-      --  is up.
       Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
                  Right_Send, 0);
       Grant_Count := Grant_Count + 1;
-      if Spawn (Image_Cap, Grant_Count, Process_Cap) /= Spawn_Ok
-        or else Process_Cap = 0
-      then
-         Log ("devmgr: terminal spawn failed");
-         return;
-      end if;
-      Next_Id := Next_Id + 1;
-      Log ("devmgr: spawned System/Terminal");
-
-      Sink := Cap_Mint (Term_Sink, Right_Send + Right_Transfer, 0);
-      if Sink = Syscall_Failed then
-         Log ("devmgr: terminal sink mint failed");
-      else
-         Message.Label := Op_Attach_Sink_Label;
-         Message.Words := (others => 0);
-         Message.Caps := (others => 0);
-         Message.Caps (0) := Sink;
-         if IPC_Call (Console_Handle) /= IPC_Ok
-           or else Message.Words (0) /= 0
-         then
-            Log ("devmgr: terminal sink attach failed");
-         end if;
-         Result := Cap_Delete (Sink);
-
-         --  Seat wiring: the input drivers learn Bureau (the
-         --  focus is Bureau-internal since window protocol v2 —
-         --  each client hands its input endpoint over at
-         --  Surface_Create).
-         for I in 0 .. Input_Count - 1 loop
-            Sink := Cap_Mint (Bureau_Svc, Right_Send + Right_Transfer,
-                              0);
-            if Sink = Syscall_Failed then
-               Log ("devmgr: seat mint failed");
-            else
-               Message.Label := Seat_Config_Label;
-               Message.Words := (others => 0);
-               Message.Caps := (others => 0);
-               Message.Caps (0) := Sink;
-               if IPC_Call (Input_Svc (I)) /= IPC_Ok
-                 or else Message.Words (0) /= 0
-               then
-                  Log ("devmgr: seat push failed");
-               end if;
-               Result := Cap_Delete (Sink);
-            end if;
-         end loop;
-      end if;
-   end Spawn_Terminal;
-
-   --  Generic GUI client (milestone 30b): 1 = Bureau window
-   --  service Send, 2 = input sink endpoint Receive, 3 = input
-   --  sink Send+Transfer (pushed to Bureau at Surface_Create).
-   procedure Spawn_Gui_Client (Path : String; Image_Cap : U64) is
-      Grant_Count : U64 := 0;
-      Process_Cap : U64;
-      Sink_EP     : U64;
-   begin
-      if Bureau_Svc = 0 then
-         Log ("devmgr: gui client needs bureau first");
-         return;
-      end if;
-      Sink_EP := EP_Create;
-      if Sink_EP = Syscall_Failed then
-         Log ("devmgr: gui sink ep failed");
-         return;
-      end if;
       Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
-      Grant_Count := Grant_Count + 1;
-      Set_Grant (Grant_Count, Sink_EP, Right_Receive, 0);
-      Grant_Count := Grant_Count + 1;
-      Set_Grant (Grant_Count, Sink_EP, Right_Send + Right_Transfer,
-                 0);
       Grant_Count := Grant_Count + 1;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
         and then Process_Cap /= 0
       then
+         Next_Id := Next_Id + 1;
          Log ("devmgr: spawned " & Path);
       else
-         Log ("devmgr: gui client spawn failed");
+         Log ("devmgr: spawn failed: " & Path);
       end if;
-   end Spawn_Gui_Client;
+   end Spawn_Program;
 
    --  Called by init after the FS chain is online: read
    --  Sys:System/Startup (one volume-relative program path per
@@ -938,7 +873,7 @@ package body Device_Manager is
          end if;
          Img := Boot_Cap ("System/Terminal");
          if Img /= 0 then
-            Spawn_Terminal (Img);
+            Spawn_Program ("System/Terminal", Img);
          else
             Log ("devmgr: terminal image unknown");
          end if;
@@ -964,17 +899,12 @@ package body Device_Manager is
                      Spawn_Bureau (Img);
                      Result := Cap_Delete (Img);
                   end if;
-               elsif Line = "System/Terminal" then
-                  Img := Stage_From_FS (Line);
-                  if Img /= 0 then
-                     Spawn_Terminal (Img);
-                     Result := Cap_Delete (Img);
-                  end if;
                else
-                  --  Generic GUI client (System/Demo ...).
+                  --  Uniform program (System/Terminal,
+                  --  System/Demo, ...).
                   Img := Stage_From_FS (Line);
                   if Img /= 0 then
-                     Spawn_Gui_Client (Line, Img);
+                     Spawn_Program (Line, Img);
                      Result := Cap_Delete (Img);
                   end if;
                end if;

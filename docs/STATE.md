@@ -168,7 +168,10 @@ QEMU virt RAM base:     0x80000000
   focused keys into its text grid, serves Op_Read from its input
   FIFO, and launches System/Shell from the Sys volume (plain CLI
   program on its stream endpoint; builtins + spawn-and-await of
-  FS-resident programs, nestable). The block
+  FS-resident programs, nestable). Every program spawned from
+  Sys: (Startup list or shell child) gets the same namespace —
+  1 = console Send (badged), 2 = fs Send, 3 = Bureau svc Send;
+  a program is GUI only once it calls Surface_Create. The block
   stack is driver -> partition -> filesystem: System/Partmgr
   probes GPT (MBR primary entries as fallback, slot 0 = whole
   disk without either) and serves block protocol with

@@ -20,12 +20,12 @@ with Akernel_User.Syscalls;
 --              reply carries the number of bytes accepted.
 --    Op_Attach_Sink: cap slot 0 carries an endpoint Send cap the
 --              console server mirrors its line-atomic output to
---              (e.g. the virtio-gpu text console). Only the
---              init/devmgr badge (0) may attach; reply Count is a
---              status (0 = attached, 1 = rejected). A sink whose
---              writes fail is dropped.
---  Caps slots are otherwise unused; badges are not interpreted
---  except by Op_Attach_Sink.
+--              (e.g. the virtio-gpu text console). Any badge may
+--              attach (milestone 31b: the terminal self-attaches
+--              its own endpoint); reply Count is a status (0 =
+--              attached, 1 = rejected). A sink whose writes fail
+--              is dropped.
+--  Caps slots are otherwise unused; badges are not interpreted.
 
 package Akernel_User.Streams is
    use Ada.Streams;

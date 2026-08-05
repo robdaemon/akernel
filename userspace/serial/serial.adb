@@ -24,8 +24,9 @@ with Akernel_User.Streams;
 --  (still echoed for UX) and by source drivers through the
 --  stream protocol's Op_Input (virtio-input keyboard chars).
 --  Client Op_Read drains the FIFO (Count = 0 when empty).
---  Sinks: Op_Attach_Sink (init/devmgr badge 0 only) registers an
---  endpoint Send cap (virtio-gpu text console) that each flushed
+--  Sinks: Op_Attach_Sink (any badge — a client attaches its own
+--  endpoint) registers an endpoint Send cap (virtio-gpu text
+--  console) that each flushed
 --  line is mirrored to via stream Op_Write; a sink whose write
 --  fails is dropped so a dead display server can never wedge the
 --  console. Serial output always continues (debug/logging role).
@@ -307,11 +308,13 @@ begin
                end loop;
             end;
          elsif Label = Akernel_User.Streams.Op_Attach_Sink then
-            --  Console-sink registration: only the init/devmgr
-            --  badge (0 — init's own unminted console cap) may
-            --  attach, cap slot 0 carries the sink endpoint Send
-            --  cap. Reply Count: 0 = attached, 1 = rejected.
-            if Badge = 0 and then Caps (0) /= 0 then
+            --  Console-sink registration: any client badge may
+            --  attach its own endpoint (milestone 31b: the
+            --  terminal self-attaches; console Send caps are
+            --  handed out broadly anyway — capability discipline
+            --  comes later). Cap slot 0 carries the sink endpoint
+            --  Send cap. Reply Count: 0 = attached, 1 = rejected.
+            if Caps (0) /= 0 then
                Response.Count := 1;
                for I in Sinks'Range loop
                   if Sinks (I) = 0 then

@@ -11,14 +11,13 @@ with Font8x8;
 
 --  Terminal: a console device (the CON: analog) living in a
 --  Bureau window. Spawned from the Sys filesystem by the device
---  manager right after Bureau. Grant ABI (5 handles):
---  1 = console endpoint (Send, badged), 2 = Bureau window-service
---  endpoint (Send), 3 = stream sink endpoint (Receive) — the
---  console server mirrors its line-atomic output here (devmgr
---  attaches THIS endpoint via Op_Attach_Sink), 4 = Send+Transfer
---  copy of the sink endpoint (grant source for the shell's
---  console cap — a Receive-only cap cannot mint Send), 5 = file
---  server endpoint (Send) — staging authority for the shell.
+--  manager right after Bureau under the UNIFORM program ABI
+--  (milestone 31b): 1 = console endpoint (Send, badged), 2 =
+--  file server endpoint (Send), 3 = Bureau window-service
+--  endpoint (Send). Everything else is runtime-created: the
+--  stream sink endpoint is made with EP_Create and SELF-ATTACHED
+--  to the console server (Op_Attach_Sink now accepts any badge),
+--  so the boot mirror lands in this pane without devmgr wiring.
 --
 --  The terminal allocates its surface buffer (caps move caller ->
 --  callee only), pushes chunk caps to Bureau, renders its text
@@ -40,8 +39,10 @@ with Font8x8;
 --  input FIFO; Op_Read drains that FIFO (Count = 0 when empty —
 --  single-threaded receiver, reads cannot block). Launching a
 --  terminal starts the shell: System/Shell is staged from the Sys
---  volume (memstage pattern) and spawned with 1 = Send on this
---  sink endpoint (badge 1) and 2 = the fs cap, so shell output
+--  volume (memstage pattern) and spawned with the uniform
+--  namespace — 1 = Send on this sink endpoint (badge 1, its
+--  console channel), 2 = the fs cap, 3 = the Bureau svc cap — so
+--  shell output
 --  lands in this pane alongside the boot mirror.
 
 procedure Terminal is
@@ -50,14 +51,15 @@ procedure Terminal is
    use type Interfaces.Unsigned_8;
 
    Console_EP : constant U64 := 1;
-   Win_EP     : constant U64 := 2;
-   Sink_EP    : constant U64 := 3;
-   --  Send+Transfer copy of the sink endpoint: grant source for
-   --  the shell's console cap (a Receive-only cap cannot mint
-   --  Send; the shell writes its output to this endpoint).
-   Sink_Send  : constant U64 := 4;
-   --  File server (Send): staging authority for the shell spawn.
-   FS_EP      : constant U64 := 5;
+   --  Uniform program ABI (milestone 31b): 2 = file server Send
+   --  (staging authority for the shell spawn), 3 = Bureau window
+   --  service Send.
+   FS_EP      : constant U64 := 2;
+   Win_EP     : constant U64 := 3;
+   --  Runtime-created stream sink endpoint (full rights: mints
+   --  the console-server sink attach AND the shell's console
+   --  cap). Filled in before the service loop starts.
+   Sink_EP    : U64 := 0;
 
    Buf_VA : constant U64 := 16#6000_0000#;
    --  v3 input queue (one page, shared RW with Bureau) and the
@@ -331,11 +333,15 @@ procedure Terminal is
          Result := Cap_Delete (Mem_Cap);
          return;
       end if;
-      --  Shell handles: 1 = this sink endpoint (Send, badge 1) —
-      --  its console channel — 2 = the fs endpoint (Send).
-      Set_Grant (0, Sink_Send, Right_Send, 1);
+      --  Shell handles (uniform namespace): 1 = this sink
+      --  endpoint (Send, badge 1) — its console channel — 2 =
+      --  the fs endpoint (Send), 3 = the Bureau window service
+      --  (Send; a shell child is GUI only once it calls
+      --  Surface_Create).
+      Set_Grant (0, Sink_EP, Right_Send, 1);
       Set_Grant (1, FS_EP, Right_Send, 0);
-      if Spawn (Mem_Cap, 2, Proc_Cap) /= Spawn_Ok
+      Set_Grant (2, Win_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 3, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Debug_Put_Line ("terminal shell spawn failed");
@@ -484,11 +490,38 @@ begin
    Flush_Dirty;
    Debug_Put_Line ("terminal online");
 
+   --  3. Console device wiring: create the stream sink endpoint
+   --  and self-attach it at the console server (any badge may
+   --  attach since 31b — the terminal owns this endpoint and
+   --  mints the Send cap itself).
+   Sink_EP := EP_Create;
+   if Sink_EP = Syscall_Failed then
+      Fail ("sink ep create failed");
+   end if;
+   declare
+      Sink_Mint : constant U64 := Cap_Mint
+        (Sink_EP, Right_Send + Right_Transfer, 0);
+   begin
+      if Sink_Mint = Syscall_Failed then
+         Fail ("sink mint failed");
+      end if;
+      Message.Label := Akernel_User.Streams.Op_Attach_Sink;
+      Message.Words := (others => 0);
+      Message.Caps := (others => 0);
+      Message.Caps (0) := Sink_Mint;
+      --  Reply Count (first word): 0 = attached, 1 = rejected.
+      if IPC_Call (Console_EP) /= IPC_Ok
+        or else Message.Words (0) /= 0
+      then
+         Debug_Put_Line ("terminal sink attach failed");
+      end if;
+      Result := Cap_Delete (Sink_Mint);
+   end;
+
    --  Launching a terminal starts the shell (milestone 31). Its
    --  first console write rendezvous-waits until the service loop
    --  below receives.
    Spawn_Shell;
-   Result := Cap_Delete (Sink_Send);
 
    --  4. Stream sink service: Op_Write renders text; Op_Input
    --  queues focused keys + echoes them into the grid; Op_Read

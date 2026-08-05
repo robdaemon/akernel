@@ -857,13 +857,28 @@ Next candidates (order open):
     — echo in the pane, help text, milestone banner, nested
     shell banner+prompt, all screendump-verified; keys survive
     a concurrently scrolling fuzz mirror. 174 PASS at SMP1 +
-    SMP4, fuzz failures=0, host fsck clean. Next: 31b uniform
-    program ABI (user ruling: a program is GUI only once it
-    calls Surface_Create — every Startup entry gets the same
-    console+fs+Bureau-svc namespace, Spawn_Gui_Client and the
-    special-case ABIs die; Demo migrates), then the deferred
-    list (pointer events to focused clients are still
-    Bureau-internal: focus/raise/drag only).
+    SMP4, fuzz failures=0, host fsck clean.
+
+    31b DONE (same commit series): uniform program ABI. Every
+    program spawned from Sys: (Startup list or shell child) gets
+    the SAME namespace — 1 = console Send (badged), 2 = fs Send,
+    3 = Bureau svc Send; a program is GUI only once it calls
+    Surface_Create (the OpenWindow analog). Spawn_Gui_Client and
+    every special-case grant ABI died; the terminal runs on the
+    uniform ABI too and now RUNTIME-CREATES its stream sink
+    endpoint (EP_Create) and SELF-ATTACHES it at the console
+    server — Op_Attach_Sink accepts any badge now, the
+    badge-0-only restriction was the last thing keeping sink
+    wiring in devmgr. The seat push moved from Spawn_Terminal to
+    Spawn_Bureau where it belongs. Demo creates its own receive
+    endpoint (the thread-bound notification needs any EP to
+    IPC_Recv on; nobody sends to it). The shell passes all three
+    caps to children, so a GUI program launched from the shell
+    just works — verified LIVE: "System/Demo" typed at the
+    Sys:> prompt opened its window composited over the terminal.
+    174 PASS SMP1+SMP4, fuzz failures=0, host fsck clean. Next:
+    the deferred list (pointer events to focused clients are
+    still Bureau-internal: focus/raise/drag only).
 
 Commit between each milestone.
 

@@ -6,10 +6,11 @@ with Akernel_User.Window;
 
 --  Demo: second Bureau client (milestone 30, slice b) — proves
 --  multi-window, click-to-focus and per-window key routing.
---  Spawned from Sys:System/Demo via the Startup list with the
---  generic GUI grant ABI (3 handles): 1 = Bureau window service
---  (Send), 2 = input sink endpoint (Receive), 3 = input sink
---  (Send+Transfer).
+--  Spawned from Sys:System/Demo via the Startup list under the
+--  UNIFORM program ABI (milestone 31b): 1 = console endpoint
+--  (Send, badged; unused), 2 = file server (Send; unused), 3 =
+--  Bureau window service (Send). The receive endpoint for the
+--  input-notification multiplex is runtime-created (EP_Create).
 --
 --  Draws eight color bars; every focused key paints a small
 --  block in the key strip at the bottom (colour = the character
@@ -25,8 +26,12 @@ procedure Demo is
    use type U64;
    use type Interfaces.Unsigned_8;
 
-   Win_EP    : constant U64 := 1;
-   Sink_EP   : constant U64 := 2;
+   Win_EP    : constant U64 := 3;
+   --  Runtime-created receive endpoint: the input notification
+   --  is thread-bound, so the synthetic message arrives on any
+   --  IPC_Recv of this thread — this EP exists only to receive
+   --  on (nobody sends to it).
+   Sink_EP   : U64 := 0;
 
    Buf_VA : constant U64 := 16#6000_0000#;
    Queue_VA : constant U64 := 16#5080_0000#;
@@ -120,6 +125,10 @@ begin
    Queue_Cap := Mem_Alloc (1);
    if Queue_Cap = Syscall_Failed then
       Fail ("queue alloc failed");
+   end if;
+   Sink_EP := EP_Create;
+   if Sink_EP = Syscall_Failed then
+      Fail ("recv ep create failed");
    end if;
    Result := Mem_Map
      (Address_Space => Address_Space_Cap,
