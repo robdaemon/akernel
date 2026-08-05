@@ -876,9 +876,28 @@ Next candidates (order open):
     caps to children, so a GUI program launched from the shell
     just works — verified LIVE: "System/Demo" typed at the
     Sys:> prompt opened its window composited over the terminal.
-    174 PASS SMP1+SMP4, fuzz failures=0, host fsck clean. Next:
-    the deferred list (pointer events to focused clients are
-    still Bureau-internal: focus/raise/drag only).
+    174 PASS SMP1+SMP4, fuzz failures=0, host fsck clean.
+
+    Pointer events to focused clients DONE (v3 queue kind 2):
+    one packed value (x16 | y16 | buttons8, content-relative),
+    delivered only while the pointer is inside the window
+    content and no title drag is active, and COALESCED in
+    place — Bureau overwrites an undrained newest pointer event
+    instead of growing the ring, so a fast pointer cannot flood
+    255 slots (the first enqueue signals; coalesced overwrites
+    ride the still-pending or already-woken drain). Delivery
+    happens after focus/raise/drag handling so a content click
+    lands with the new focus already in place. Demo paints a
+    5x5 marker tracking the pointer (white while button0 held,
+    black otherwise, old position restored to the bar colours);
+    terminal ignores non-key kinds. Verified LIVE by pixel
+    check, not eyeballs: press-hold at a content point, move
+    the cursor off the content, screendump shows the white 5x5
+    at exactly the pressed position. Burn: the Bureau cursor is
+    drawn ON TOP of client updates — a marker under the cursor
+    is invisible, and cursor under-rect restore can ghost over
+    freshly-updated client pixels (cosmetic, known). 174 PASS
+    SMP1+SMP4, fuzz failures=0. Next: the deferred list.
 
 Commit between each milestone.
 

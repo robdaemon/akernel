@@ -609,6 +609,66 @@ procedure Bureau is
       end if;
    end Forward_Key;
 
+   --  Enqueue the focused window's pointer state (v3, packed
+   --  content-relative) and signal. Delivered only while the
+   --  pointer is inside the window content and no title drag is
+   --  active; consecutive pointer events coalesce in place so a
+   --  fast pointer cannot flood the ring.
+   procedure Forward_Pointer (PX, PY, Buttons : U64) is
+      Q  : Word_Array
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (Queue_VA (Focus)));
+      Head : U64;
+      Tail : U64;
+      Slot : U64;
+      CX   : U64;
+      CY   : U64;
+      Res  : U64;
+   begin
+      if Focus = 0 or else Wins (Focus).Queue_Cap = 0
+        or else Drag_Slot /= 0
+      then
+         return;
+      end if;
+      --  Content-relative; outside the content nothing is
+      --  delivered (frame/title interaction stays Bureau's).
+      if PX < Wins (Focus).X + Frame
+        or else PY < Wins (Focus).Y + Frame + Title_H
+      then
+         return;
+      end if;
+      CX := PX - Wins (Focus).X - Frame;
+      CY := PY - Wins (Focus).Y - Frame - Title_H;
+      if CX >= Wins (Focus).PW or else CY >= Wins (Focus).PH then
+         return;
+      end if;
+      Head := Q (Win.Input_Queue_Head);
+      Tail := Q (Win.Input_Queue_Tail);
+      if Head > Tail then
+         --  Coalesce: overwrite the newest event if it is an
+         --  undrained pointer event.
+         Slot := Win.Input_Queue_First
+           + ((Head - 1) mod Win.Input_Queue_Events) * 2;
+         if Q (Slot) = Win.Input_Event_Pointer then
+            Q (Slot + 1) := Win.Pack_Pointer (CX, CY, Buttons);
+            return;  --  already signaled when first enqueued
+         end if;
+      end if;
+      if Head - Tail >= Win.Input_Queue_Events then
+         return;  --  full: drop
+      end if;
+      Slot := Win.Input_Queue_First
+        + (Head mod Win.Input_Queue_Events) * 2;
+      Q (Slot)     := Win.Input_Event_Pointer;
+      Q (Slot + 1) := Win.Pack_Pointer (CX, CY, Buttons);
+      Q (Win.Input_Queue_Head) := Head + 1;
+      Res := Ntfn_Signal (Wins (Focus).Ntfn_Cap,
+                          Win.Input_Signal_Bit);
+      if Res /= 0 then
+         Debug_Put_Line ("bureau input signal failed");
+      end if;
+   end Forward_Pointer;
+
    procedure Fail (S : String) is
    begin
       Debug_Put_Line ("FAIL bureau " & S);
@@ -1037,6 +1097,11 @@ begin
             end if;
             Prev_Buttons := Buttons;
             Cursor_Draw (NX, NY);
+            --  Focused-client delivery happens after focus/
+            --  raise/drag so a content click lands with the new
+            --  focus already in place. Shared-mem enqueue +
+            --  signal only — never a rendezvous.
+            Forward_Pointer (NX, NY, Buttons);
          end;
          Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
 

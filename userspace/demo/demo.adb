@@ -68,6 +68,14 @@ procedure Demo is
    Key_X   : U64 := 4;
    Key_N   : U64 := 0;
    Strip_Dirty : Boolean := False;
+   Ptr_X       : U64 := 0;
+   Ptr_Y       : U64 := 0;
+   Ptr_Drawn   : Boolean := False;
+   Ptr_Dirty   : Boolean := False;
+   Ptr_Dirty_X0 : U64 := 0;
+   Ptr_Dirty_Y0 : U64 := 0;
+   Ptr_Dirty_X1 : U64 := 0;
+   Ptr_Dirty_Y1 : U64 := 0;
 
    Queue_Cap : U64 := 0;
    Ntfn_Cap  : U64 := 0;
@@ -118,6 +126,45 @@ procedure Demo is
       end if;
       Key_N := Key_N + 1;
    end Key_Block;
+
+   --  Pointer marker (v3 pointer events): a 5x5 block tracking
+   --  the pointer inside the bar area — white while button0 is
+   --  pressed, black otherwise. The old block is restored to the
+   --  bar colours underneath.
+   procedure Pointer_Block (X, Y, Buttons : U64) is
+      BH : constant U64 := Surf_H - 28;
+      C  : constant Pixel :=
+        (if (Buttons and 1) = 1 then 16#FFFF_FFFF#
+         else 16#FF00_0000#);
+      BW : constant U64 := Surf_W / 8;
+   begin
+      if X + 4 >= Surf_W or else Y + 4 >= BH then
+         return;
+      end if;
+      if Ptr_Drawn then
+         for R in U64'(0) .. 4 loop
+            for Q in U64'(0) .. 4 loop
+               Buf ((Ptr_Y + R) * Surf_W + Ptr_X + Q) :=
+                 Bar_Colors (Natural ((Ptr_X + Q) / BW));
+            end loop;
+         end loop;
+      end if;
+      Ptr_Dirty_X0 := U64'Min ((if Ptr_Drawn then Ptr_X else X), X);
+      Ptr_Dirty_Y0 := U64'Min ((if Ptr_Drawn then Ptr_Y else Y), Y);
+      Ptr_Dirty_X1 := U64'Max
+        ((if Ptr_Drawn then Ptr_X else X), X) + 5;
+      Ptr_Dirty_Y1 := U64'Max
+        ((if Ptr_Drawn then Ptr_Y else Y), Y) + 5;
+      for R in U64'(0) .. 4 loop
+         for Q in U64'(0) .. 4 loop
+            Buf ((Y + R) * Surf_W + X + Q) := C;
+         end loop;
+      end loop;
+      Ptr_X := X;
+      Ptr_Y := Y;
+      Ptr_Drawn := True;
+      Ptr_Dirty := True;
+   end Pointer_Block;
 
 begin
    --  v3 input channel: one-page event queue + thread-bound
@@ -231,6 +278,16 @@ begin
             Debug_Put_Line ("demo update failed");
          end if;
       end if;
+      if Ptr_Dirty then
+         Ptr_Dirty := False;
+         if Win.Surface_Update
+           (Win_EP, Surf_Id, Ptr_Dirty_X0, Ptr_Dirty_Y0,
+            Ptr_Dirty_X1 - Ptr_Dirty_X0, Ptr_Dirty_Y1 - Ptr_Dirty_Y0) /=
+             Win.Status_Ok
+         then
+            Debug_Put_Line ("demo update failed");
+         end if;
+      end if;
       if IPC_Recv (Sink_EP) /= IPC_Ok then
          Debug_Put_Line ("demo recv failed");
          Process_Exit;
@@ -249,6 +306,11 @@ begin
                if Queue (Slot) = Win.Input_Event_Key then
                   Key_Block (Queue (Slot + 1) and 16#FF#);
                   Strip_Dirty := True;
+               elsif Queue (Slot) = Win.Input_Event_Pointer then
+                  Pointer_Block
+                    (Win.Pointer_X (Queue (Slot + 1)),
+                     Win.Pointer_Y (Queue (Slot + 1)),
+                     Win.Pointer_Buttons (Queue (Slot + 1)));
                end if;
                Tail := Tail + 1;
             end loop;

@@ -7,15 +7,23 @@ docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
 Open candidates: the deferred list:
-interactive polish (pointer events to focused clients — the v3
-input queue carries keys only), kernel introspection syscalls
+kernel introspection syscalls
 for init state reconstruction, plain send, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
 covers the IPC case).
 
-Recently landed: MILESTONE 31 COMPLETE (a+b) — interactive
+Recently landed: pointer events to focused clients — v3 queue
+kind 2, packed content-relative value (x16|y16|buttons8),
+delivered only inside window content, coalesced in place
+(undrained newest pointer event overwritten; moves can't flood
+the ring). Demo paints a tracking 5x5 marker (white = button0
+held); verified live by screendump pixel check. Known cosmetic:
+Bureau cursor draws on top of client updates; under-rect
+restore can ghost.
+
+Before that: MILESTONE 31 COMPLETE (a+b) — interactive
 shell + uniform program ABI. Every program spawned from Sys:
 (Startup list or shell child) gets the same namespace: 1 =
 console Send (badged), 2 = fs Send, 3 = Bureau svc Send; a

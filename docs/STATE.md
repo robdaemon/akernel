@@ -156,7 +156,9 @@ QEMU virt RAM base:     0x80000000
   virtio-rng live; virtio-blk live with a block-backed BD0 raw
   volume; virtio-input live — keyboard + tablet feed the seat:
   events go to the Bureau compositor (Op_Key/Op_Pointer), which
-  enqueues focused keys into each window's async input queue
+  enqueues focused keys AND pointer state (packed
+  content-relative, coalesced) into each window's async input
+  queue
   (window protocol v3: one-page event ring memobj + thread-bound
   notification per surface, pushed at Surface_Create; Bureau
   never calls its clients) and owns pointer focus/raise/drag;

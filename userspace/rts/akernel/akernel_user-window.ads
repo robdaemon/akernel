@@ -1,4 +1,5 @@
 with Akernel_User.Syscalls;
+use type Akernel_User.Syscalls.U64;
 
 --  Bureau window protocol v3 (milestone 31). Clients
 --  (terminal, demos) talk to Bureau's window-service endpoint.
@@ -36,6 +37,11 @@ with Akernel_User.Syscalls;
 --    slot = head mod Input_Queue_Events. Empty: head = tail.
 --    Full (head - tail = Input_Queue_Events): drop-new.
 --    kind 1 = key (value = character code).
+--    kind 2 = pointer (value = content-relative packed state:
+--    bits 0..15 = x, 16..31 = y, 32..39 = buttons; delivered
+--    only while the pointer is inside the window content and
+--    no title drag is active; consecutive pointer events are
+--    COALESCED in place so moves cannot flood the ring).
 --
 --  Up to 4 windows. Bureau owns stacking, focus
 --  (click-to-focus/raise), title dragging and per-window
@@ -105,7 +111,18 @@ package Akernel_User.Window is
    Input_Queue_First  : constant := 2;  --  first event word
    Input_Queue_Events : constant := 255;  --  (512 - 2) / 2
    Input_Event_Key    : constant U64 := 1;
+   Input_Event_Pointer : constant U64 := 2;
    Input_Signal_Bit   : constant U64 := 1;
+
+   --  Pointer event value packing (content-relative).
+   function Pack_Pointer (X, Y, Buttons : U64) return U64 is
+     ((X and 16#FFFF#) or ((Y and 16#FFFF#) * 2**16)
+      or ((Buttons and 16#FF#) * 2**32));
+   function Pointer_X (V : U64) return U64 is (V and 16#FFFF#);
+   function Pointer_Y (V : U64) return U64 is
+     ((V / 2**16) and 16#FFFF#);
+   function Pointer_Buttons (V : U64) return U64 is
+     ((V / 2**32) and 16#FF#);
 
    --  Client-side helpers (raw IPC_Call; replies are words-only).
    function Surface_Create
