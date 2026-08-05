@@ -129,7 +129,8 @@ package body Kernel.Devices is
          In_Flight  => False,
          Waiter     => null,
          Ntfn       => System.Null_Address,
-         Ntfn_Badge => 0);
+         Ntfn_Badge => 0,
+         Next       => null);
    end Create_IRQ;
 
    function Region_Of
@@ -175,6 +176,19 @@ package body Kernel.Devices is
    function Release (Object : System.Address) return Boolean is
       Slot : constant Device_Slot_Access := To_Slot (Object);
    begin
+      --  Count = 0 on a freshly allocated slot whose cap install
+      --  failed (e.g. IRQ_Create on a duplicate source): free
+      --  without decrementing or the subtraction raises and kills
+      --  the kernel in the last-chance handler.
+      if Slot.Header.Count = 0 then
+         if Slot.Kind = Slot_IRQ then
+            Kernel.Interrupts.Unregister (Slot.Line'Unchecked_Access);
+         end if;
+
+         Free_Slot (Object);
+         return True;
+      end if;
+
       Slot.Header.Count := Slot.Header.Count - 1;
 
       if Slot.Header.Count = 0 then

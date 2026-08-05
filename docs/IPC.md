@@ -405,6 +405,19 @@ traffic and IRQ notifications on one recv (Drivers/Serial: UART RX
 is IRQ-driven this way — the UART IRQ line signals the bound
 notification with badge 1, the server drains RBR and acks).
 
+IRQ lines are SHAREABLE (milestone 27): PCI INTx is swizzled onto
+four PLIC sources ((dev + pin - 1) mod 4), so the fifth device
+onward always shares. Interrupts.Register chains duplicate-source
+line objects (registration of the SAME line object still fails
+Already_Registered); Deliver walks the chain and pokes every line
+— each driver reads its own device ISR to claim the event, level
+triggering re-delivers while any partner keeps the line asserted.
+Invariant burned: EVERY thread holding an IRQ cap must eventually
+irq_ack after being poked — an unacked line holds the PLIC claim
+open and silences the source for all partners (the rng driver's
+poll-only design silently owned source 35 until the GPU landed on
+it; rng now drains + acks like every other driver).
+
 ## Deferred
 
 - Plain `send` (notify-style, no reply).

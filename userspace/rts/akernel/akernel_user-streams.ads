@@ -18,16 +18,23 @@ with Akernel_User.Syscalls;
 --              keyboard, later others) injects into the server's
 --              input FIFO; a client Op_Read drains that FIFO. The
 --              reply carries the number of bytes accepted.
---  Caps slots are unused; badges are not interpreted (any client with
---  a Send cap may write).
+--    Op_Attach_Sink: cap slot 0 carries an endpoint Send cap the
+--              console server mirrors its line-atomic output to
+--              (e.g. the virtio-gpu text console). Only the
+--              init/devmgr badge (0) may attach; reply Count is a
+--              status (0 = attached, 1 = rejected). A sink whose
+--              writes fail is dropped.
+--  Caps slots are otherwise unused; badges are not interpreted
+--  except by Op_Attach_Sink.
 
 package Akernel_User.Streams is
    use Ada.Streams;
    subtype U64 is Akernel_User.Syscalls.U64;
 
-   Op_Write  : constant U64 := 1;
-   Op_Read   : constant U64 := 2;
-   Op_Input  : constant U64 := 3;
+   Op_Write       : constant U64 := 1;
+   Op_Read        : constant U64 := 2;
+   Op_Input       : constant U64 := 3;
+   Op_Attach_Sink : constant U64 := 4;
    Max_Chunk : constant := 40;  --  6 message words - Count word
 
    type Stream_Request is record

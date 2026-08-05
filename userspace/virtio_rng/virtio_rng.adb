@@ -35,6 +35,7 @@ procedure Virtio_RNG is
    Common_Cap : constant U64 := 2;
    Notify_Cap : constant U64 := 3;
    ISR_Cap    : constant U64 := 4;
+   IRQ_Cap    : constant U64 := 6;
    Svc_EP     : constant U64 := 7;
 
    Common_VA : constant U64 := 16#5000_0000#;
@@ -135,6 +136,8 @@ procedure Virtio_RNG is
    Head     : Virtio.U16;
    Written  : Virtio.U32;
    ISR_Bits : Virtio.U32;
+   ISR      : Virtio.U32;
+   Ntfn_Cap : U64;
    Spins    : Natural;
    All_Zero : Boolean;
    Line     : String (1 .. 34);
@@ -237,6 +240,20 @@ begin
       Used_PA  => Used_PA);
    Dev.Add_Status (Virtio.Status_Driver_Ok);
 
+   --  IRQ binding: the line signals a thread-bound notification;
+   --  IPC_Recv wakes with a synthetic Notification_Label message,
+   --  the resident loop drains + acks. Required on shared INTx
+   --  sources: an unacked line holds the PLIC claim open and
+   --  blocks every partner on the source.
+   Ntfn_Cap := Ntfn_Create;
+   if Ntfn_Cap = Syscall_Failed
+     or else Ntfn_Bind_Thread (Ntfn_Cap) /= 0
+     or else IRQ_Bind_Ntfn (IRQ_Cap, Ntfn_Cap, 1) /= 0
+   then
+      Debug_Put_Line ("virtio-rng ntfn setup failed");
+      Process_Exit;
+   end if;
+
    --  One entropy request: a single device-writable descriptor
    --  covering 16 bytes of the data page.
    D := Virtio.Queues.Alloc (Q);
@@ -257,10 +274,17 @@ begin
 
    Virtio.Queues.Pop (Q, Head, Written);
 
-   --  The device raised INTx on completion; the ISR read clears it
-   --  (the IRQ cap is unused here — nobody claims the PLIC line,
-   --  which is level-triggered and drops once the device deasserts).
+   --  Drain + ack the completion interrupt (ISR captured first,
+   --  the self-test below asserts on it). The ack completes the
+   --  PLIC claim; without it the claimed-but-uncompleted source
+   --  would never deliver again — fatal now that PCI INTx sources
+   --  are SHARED (source 35 also serves the GPU at dev 7).
    ISR_Bits := Dev.Interrupt_Status;
+   if ISR_Bits /= 0 then
+      Dev.ACK_Interrupt (ISR_Bits);
+   end if;
+
+   Result := IRQ_Ack (IRQ_Cap);
 
    All_Zero := True;
    for I in 0 .. Natural (Entropy_Len) - 1 loop
@@ -287,8 +311,33 @@ begin
 
    Virtio.Queues.Free (Q, D);
 
-   --  Resident as the future entropy server.
+   --  Resident as the future entropy server. The Recv loop
+   --  doubles as the IRQ drain: a shared INTx source pokes every
+   --  registered line, so stray notifications arrive whenever a
+   --  line partner (GPU) raises interrupts. No reply cap rides a
+   --  synthetic notification message.
    loop
-      Yield;
+      Result := IPC_Recv (Svc_EP);
+      if Result /= IPC_Ok then
+         Debug_Put_Line ("virtio-rng recv failed");
+         Process_Exit;
+      end if;
+
+      if Message.Label = Notification_Label then
+         ISR := Dev.Interrupt_Status;
+         if ISR /= 0 then
+            Dev.ACK_Interrupt (ISR);
+         end if;
+
+         Result := IRQ_Ack (IRQ_Cap);
+      else
+         --  No service yet: unknown op status, like blk's 3.
+         Message.Words (0) := 3;
+         Message.Words (1) := 0;
+         if IPC_Reply /= IPC_Ok then
+            Debug_Put_Line ("virtio-rng reply failed");
+            Process_Exit;
+         end if;
+      end if;
    end loop;
 end Virtio_RNG;

@@ -480,6 +480,48 @@ Next candidates (order open):
     line pends. 169/169 directed PASS at QEMU_SMP 1/4/8 (three
     SMP8 runs), fuzz failures=0, host fsck.fat clean.
 
+27. ~~virtio-gpu (display console)~~ — done: Drivers/VirtioGpu
+    (virtio-gpu-pci addr 0x7, class 16) runs the controlq 2D
+    command set (GET_DISPLAY_INFO / CREATE_2D B8G8R8A8 /
+    ATTACH_BACKING per-page entries / SET_SCANOUT /
+    TRANSFER_TO_HOST_2D + FLUSH with a dirty pixel-row band),
+    framebuffer = a list of 64-page memory objects (kernel object
+    page cap) mapped contiguously. Text console: font8x8 (public
+    domain) stretched 2x vertically -> 8x16 cells, 128x48 at
+    1024x768, scroll + CR/LF/TAB/BS. The console server mirrors
+    every flushed line to sink endpoints registered through the
+    new stream label Op_Attach_Sink (cap slot 0, init/devmgr badge
+    0 only, failing sinks dropped + cap deleted); devmgr attaches
+    the GPU endpoint right after spawn. Burned: the GPU driver
+    must NEVER print via the console stream during init (server
+    blocked in the sink RPC -> deadlock); all its logging is
+    Debug_Put_Line. Verified end-to-end headless: qemu monitor
+    screendump (kept in the run target) of the virtio console
+    shows the mirrored boot text (60k non-black pixels, readable
+    fuzz PASS lines in a PPM crop).
+
+    Kernel changes forced by the fifth PCI device — shared INTx:
+    qemu virt swizzles (dev + pin - 1) mod 4 onto PLIC sources
+    32..35, so EVERY source was taken and any new device collides.
+    Interrupts.Register now chains duplicate-source line objects
+    (same-object registration still fails), Deliver walks the
+    chain and pokes every line (drivers claim events via their
+    own device ISR; level triggering re-delivers while any
+    partner asserts). Two latent bugs this exposed: (1)
+    Devices.Release underflowed Count (0 - 1) on the IRQ_Create
+    failure path -> Constraint_Error -> kernel last-chance
+    handler, fixed with a count-0 free path; (2) the rng driver
+    polled completions and NEVER acked its IRQ — fine while it
+    owned source 35 alone, fatal once shared: an unacked line
+    holds the PLIC claim open and silences the source for all
+    partners. Invariant burned into docs/IPC.md: every IRQ cap
+    holder must eventually irq_ack after being poked. rng now
+    binds a notification and drains + acks in its resident Recv
+    loop. Debugging note: alr's build hash can go stale across
+    interrupted builds — alr clean when a fixed error "persists".
+    171/171 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0,
+    host fsck.fat clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -493,11 +535,12 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- Tasking runtime; virtio-gpu (console migrates to the display;
-  serial becomes debug/logging — stream protocol already carries
-  input both directions, console input FIFO in place); per-device
-  IOVA spaces (IOVA = PA identity today); MSI-X for virtio-pci
-  (INTx today).
+- Tasking runtime; interactive shell on the display console
+  (input FIFO + GPU sink + stream Op_Read all in place; a shell
+  program reads console input and spawns commands); MSI-X for
+  virtio-pci (INTx today, shared chains); per-device IOVA spaces
+  (IOVA = PA identity today); pointer events into a structured
+  channel (serial-logged today).
 
 ## Start by reading
 

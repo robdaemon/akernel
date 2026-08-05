@@ -6,16 +6,30 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates: kernel introspection syscalls for init state
-reconstruction, plain send, register fast path, virtio-net,
-virtio-gpu (console migrates to the display, serial becomes
-debug/logging — input path already lands in the console input
-FIFO via Op_Input), MSI-X for virtio-pci, write-back cache
-policy + device-level cache + real flush (VIRTIO_BLK_F_FLUSH)
-when more filesystems appear, true scheduler priorities (wakeup
-boost covers the IPC case).
+Open candidates: interactive shell on the display console
+(input FIFO + GPU sink + Op_Read all in place — a shell program
+reads console input and spawns commands), kernel introspection
+syscalls for init state reconstruction, plain send, register
+fast path, virtio-net, MSI-X for virtio-pci (INTx shared chains
+today), pointer events into a structured channel, write-back
+cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
+true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: virtio-input keyboard + tablet (26) — one
+Recently landed: virtio-gpu display console (27) — controlq 2D
+driver (font8x8 text, dirty-band TRANSFER+FLUSH), console server
+mirrors lines to stream-protocol sinks (Op_Attach_Sink,
+devmgr-wired, failing sinks dropped); verified headless via qemu
+monitor screendump. Forced kernel change: shared INTx chains
+(only four PLIC sources for PCI; Register chains duplicate-source
+line objects, Deliver pokes every line). Latent bugs fixed:
+Devices.Release Count underflow -> kernel last-chance on the
+IRQ_Create failure path; rng never acked its IRQ (poll-only),
+which silently kills a SHARED source — every IRQ cap holder must
+ack after being poked (docs/IPC.md). Burned: alr build hash goes
+stale across interrupted builds (alr clean when a fixed error
+"persists"); GPU driver logs via Debug_Put_Line only (console
+print during init deadlocks the sink RPC). Before that:
+virtio-input keyboard + tablet (26) — one
 VirtioInput image per function (class 18), eventq-only IRQ-driven
 driver; keyboard chars flow keymap -> Op_Input (new stream label)
 -> console input FIFO (UART RX feeds it too, Op_Read drains);
@@ -47,8 +61,8 @@ service endpoint. Burned: transitional PCI ids are a legacy
 table (rng = 0x1005, 0x1004 = legacy SCSI), NOT 0x1000+virtio_id
 — devmgr normalizes both id spaces to the virtio id carried in
 the line's class field. 167/167 directed PASS at QEMU_SMP
-1/4/8, fuzz failures=0, host fsck.fat clean. 169/169 directed
-PASS after milestone 26.
+1/4/8, fuzz failures=0, host fsck.fat clean. 171/171 directed
+PASS after milestone 27.
 
 Working rules burned in (details in NEXT.md):
 - Commit per milestone; docs current-state only.

@@ -35,6 +35,11 @@ package body Device_Manager is
    --  rendezvous also orders the devmgr after driver startup.
    Driver_Config_Label : constant U64 := U64'Last - 1;
 
+   --  Stream-protocol sink registration (shared with the console
+   --  server and Akernel_User.Streams; kept local to avoid the
+   --  rts dependency here).
+   Op_Attach_Sink_Label : constant U64 := 4;
+
    type Probe_Kind is (Probe_None, Probe_Virtio, Probe_PCI);
 
    type Driver_Line is record
@@ -614,6 +619,33 @@ package body Device_Manager is
       if IPC_Call (Svc_EP) /= IPC_Ok or else Message.Words (0) /= 0 then
          Log ("devmgr: driver config push failed");
       end if;
+
+      --  GPU (class 16): register the driver endpoint as a console
+      --  output sink so the console server mirrors its line-atomic
+      --  stream onto the display. The minted Send cap is
+      --  transferred in cap slot 0; devmgr's copy is deleted (the
+      --  console holds its own duplicate).
+      if L.Class_Id = 16 then
+         declare
+            Sink : constant U64 :=
+              Cap_Mint (Svc_EP, Right_Send + Right_Transfer, 0);
+         begin
+            if Sink = Syscall_Failed then
+               Log ("devmgr: gpu sink mint failed");
+            else
+               Message.Label := Op_Attach_Sink_Label;
+               Message.Words := (others => 0);
+               Message.Caps := (others => 0);
+               Message.Caps (0) := Sink;
+               if IPC_Call (Console_Handle) /= IPC_Ok
+                 or else Message.Words (0) /= 0
+               then
+                  Log ("devmgr: gpu sink attach failed");
+               end if;
+               Result := Cap_Delete (Sink);
+            end if;
+         end;
+      end if;
    end Spawn_PCI_Driver;
 
    --  BARs and discovered regions for one matched function (its
@@ -720,7 +752,7 @@ package body Device_Manager is
             W0 := Cfg_Read32 (0);
             Vid := W0 and 16#FFFF#;
             Did := W0 / 16#1_0000#;
-
+   
             if Vid /= 16#FFFF# and then Vid /= 0 then
                for I in 1 .. Line_Count loop
                   declare
@@ -742,7 +774,7 @@ package body Device_Manager is
             then
                Log ("devmgr: ecam unmap failed");
             end if;
-         end if;
+            end if;
 
          if Probe_Cap /= Syscall_Failed
            and then Cap_Delete (Probe_Cap) /= 0

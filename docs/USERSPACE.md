@@ -197,11 +197,30 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   debug_putchar path buffers per thread (newline/full/exit flush).
   Input: a bounded FIFO (128 bytes, drop-new) fed by UART RX and
   by Op_Input pushes from source drivers (virtio-input keyboard);
-  client Op_Read drains it (Count = 0 when empty). UART RX is
+  client Op_Read drains it (Count = 0 when empty). Sinks:
+  Op_Attach_Sink (init/devmgr badge 0 only; cap slot 0 carries an
+  endpoint Send cap) registers output mirrors — the virtio-gpu
+  text console — that every flushed line is stream-written to;
+  a sink whose write fails is dropped and its cap deleted, so a
+  dead display server can never wedge the console. Serial output
+  always continues as the debug/logging copy. UART RX is
   IRQ-driven through a thread-bound notification (IRQ cap at
   handle 3, irq_bind_ntfn): the line signals the notification,
   IPC_Recv wakes with a synthetic Notification_Label message, the
   server drains RBR (into the FIFO, echoed) and acks.
+- `userspace/virtio_gpu/` — virtio-gpu driver (virtio-gpu-pci
+  addr 0x7, class 16). Controlq 2D only (no feature bits):
+  GET_DISPLAY_INFO -> CREATE_2D (B8G8R8A8) -> ATTACH_BACKING
+  (per-page entries; the framebuffer is a list of 64-page memory
+  objects — the kernel object page cap) -> SET_SCANOUT, then
+  TRANSFER_TO_HOST_2D + RESOURCE_FLUSH per dirty pixel-row band.
+  Text console: font8x8 (public domain) stretched 2x vertically
+  = 8x16 cells (128x48 at 1024x768), scroll/CR/LF/TAB/BS. Serves
+  the stream protocol on handle 7 as a console SINK (Op_Write
+  renders); the console server mirrors its line-atomic lines to
+  it after devmgr attaches the endpoint via Op_Attach_Sink. All
+  driver logging is Debug_Put_Line — a console print during init
+  would deadlock against the server blocked in the sink RPC.
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the
@@ -216,6 +235,12 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Tablet/mouse: absolute/relative motion and buttons are
   serial-logged for now — a structured pointer channel lands with
   the GPU console.
+- `userspace/virtio_rng/` — virtio-rng entropy driver (class 4).
+  Polls its one entropy completion, then lives in a Recv loop
+  that drains + acks stray shared-INTx notifications — EVERY IRQ
+  cap holder must ack after being poked: an unacked line holds
+  the PLIC claim open and silences the shared source for all
+  partners (burned when the GPU landed on source 35).
 - `userspace/fuzz/` — syscall fuzzer (`Tests/Fuzz`, granted ipc_test
   endpoint at cap 1, console Send cap at 2, Tests/Echo image cap at
   3): directed edge cases + console stream RPC checks + end-to-end

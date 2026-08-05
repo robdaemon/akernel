@@ -69,28 +69,58 @@ package body Kernel.Interrupts is
       Result : out Status)
    is
       Index : constant Natural := Natural (Line.Source);
+      Cur   : Kernel.Objects.IRQ_Line_Access;
    begin
       if Index >= Max_Sources then
          Result := Invalid_IRQ;
-      elsif Lines (Index) /= null then
-         Result := Already_Registered;
-      else
-         Line.Pending := False;
-         Line.In_Flight := False;
-         Line.Waiter := null;
-         Line.Ntfn := System.Null_Address;
-         Line.Ntfn_Badge := 0;
-         Lines (Index) := Line;
-         Result := Ok;
+         return;
       end if;
+
+      --  Shared-IRQ chain: duplicate registration of the SAME line
+      --  object fails; a different line for an already-claimed
+      --  source chains (PCI INTx swizzle shares four PLIC sources
+      --  across all slots — the fifth device onward always
+      --  collides).
+      Cur := Lines (Index);
+      while Cur /= null loop
+         if Cur = Line then
+            Result := Already_Registered;
+            return;
+         end if;
+         Cur := Cur.Next;
+      end loop;
+
+      Line.Pending := False;
+      Line.In_Flight := False;
+      Line.Waiter := null;
+      Line.Ntfn := System.Null_Address;
+      Line.Ntfn_Badge := 0;
+      Line.Next := Lines (Index);
+      Lines (Index) := Line;
+      Result := Ok;
    end Register;
 
    procedure Unregister (Line : not null Kernel.Objects.IRQ_Line_Access) is
       Index : constant Natural := Natural (Line.Source);
+      Cur   : Kernel.Objects.IRQ_Line_Access;
    begin
-      if Index < Max_Sources and then Lines (Index) = Line then
-         Lines (Index) := null;
+      if Index >= Max_Sources then
+         return;
       end if;
+
+      if Lines (Index) = Line then
+         Lines (Index) := Line.Next;
+      else
+         Cur := Lines (Index);
+         while Cur /= null loop
+            if Cur.Next = Line then
+               Cur.Next := Line.Next;
+               exit;
+            end if;
+            Cur := Cur.Next;
+         end loop;
+      end if;
+      Line.Next := null;
    end Unregister;
 
    procedure Deliver
@@ -112,24 +142,31 @@ package body Kernel.Interrupts is
          return;
       end if;
 
-      if Lines (Index) = null then
-         return;
-      end if;
+      --  Walk the shared-IRQ chain: every line registered for the
+      --  source is poked; each driver reads its own device ISR to
+      --  claim the event. Level triggering re-delivers while any
+      --  device keeps the line asserted, so a spuriously woken
+      --  driver (ISR reads 0, acks) cannot mask the real raiser.
+      declare
+         Cur : Kernel.Objects.IRQ_Line_Access := Lines (Index);
+      begin
+         while Cur /= null loop
+            Cur.Pending := True;
+            Cur.In_Flight := True;
 
-      Lines (Index).Pending := True;
-      Lines (Index).In_Flight := True;
+            if Cur.Ntfn /= System.Null_Address then
+               Kernel.Notifications.Signal (Cur.Ntfn, Cur.Ntfn_Badge);
+            end if;
 
-      if Lines (Index).Ntfn /= System.Null_Address then
-         Kernel.Notifications.Signal
-           (Lines (Index).Ntfn, Lines (Index).Ntfn_Badge);
-      end if;
+            if Cur.Waiter /= null then
+               Kernel.Scheduler.Wake (Cur.Waiter, Wake_Result);
+               Cur.Waiter := null;
+            end if;
 
-      if Lines (Index).Waiter /= null then
-         Kernel.Scheduler.Wake (Lines (Index).Waiter, Wake_Result);
-         Lines (Index).Waiter := null;
-      end if;
-
-      Claimed := True;
+            Claimed := True;
+            Cur := Cur.Next;
+         end loop;
+      end;
    end Deliver;
 
    procedure Bind_Notification

@@ -60,7 +60,9 @@ devmgr: spawned Drivers/VirtioRng
 devmgr: spawned Drivers/VirtioBlk
 devmgr: spawned Drivers/VirtioInput   (keyboard instance)
 devmgr: spawned Drivers/VirtioInput   (tablet instance)
+devmgr: spawned Drivers/VirtioGpu
 (virtio driver self-tests)
+virtio-gpu console online   (console server mirrors lines to it)
 fileserver spawned
 fileserver online
 fs name table pushed
@@ -72,12 +74,13 @@ init resumed
 fuzz online          (via console server endpoint stream)
 spin online          (via console server)
 timer interrupt online
-... 169/169 directed PASS (console stream RPC, echo IPC rounds,
+... 171/171 directed PASS (console stream RPC, echo IPC rounds,
 grants, memory objects, RTS heap, file protocol + volumes,
 spawn-from-memory-object, notifications, block volume, cap_delete,
 FAT32 reads + writes + delete/truncate/mkdir/rmdir/LFN through the
 VFS, partition query + per-partition raw volumes, fs sync,
-virtio-input keyboard/tablet config) ...
+virtio-input keyboard/tablet config, virtio-gpu display bring-up)
+...
 fuzz complete: calls=0x0000000000001000 unknowns=0x0000000000000155 failures=0x0000000000000000
 fuzz exit test
 ```
@@ -154,7 +157,10 @@ QEMU virt RAM base:     0x80000000
   volume; virtio-input live — keyboard chars flow through the
   stream protocol's Op_Input into the console server's input FIFO
   (UART RX feeds it too, client Op_Read drains), tablet pointer
-  events are serial-logged until the GPU console lands). The block
+  events are serial-logged for now; virtio-gpu live — the console
+  server mirrors its line-atomic output to the display over
+  stream-protocol sink endpoints (Op_Attach_Sink, devmgr-wired),
+  serial stays as the debug/logging copy). The block
   stack is driver -> partition -> filesystem: System/Partmgr
   probes GPT (MBR primary entries as fallback, slot 0 = whole
   disk without either) and serves block protocol with

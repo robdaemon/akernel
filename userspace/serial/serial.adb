@@ -23,9 +23,12 @@ with Akernel_User.Streams;
 --  Input: the server keeps a bounded input FIFO fed by UART RX
 --  (still echoed for UX) and by source drivers through the
 --  stream protocol's Op_Input (virtio-input keyboard chars).
---  Client Op_Read drains the FIFO (Count = 0 when empty); the
---  GPU console will sit on the same protocol, making the
---  serial sink switchable.
+--  Client Op_Read drains the FIFO (Count = 0 when empty).
+--  Sinks: Op_Attach_Sink (init/devmgr badge 0 only) registers an
+--  endpoint Send cap (virtio-gpu text console) that each flushed
+--  line is mirrored to via stream Op_Write; a sink whose write
+--  fails is dropped so a dead display server can never wedge the
+--  console. Serial output always continues (debug/logging role).
 
 procedure Serial is
    use Akernel_User.Syscalls;
@@ -131,10 +134,58 @@ procedure Serial is
 
    Lines : array (1 .. Max_Clients) of Client_Line;
 
+   --  Output sinks (Op_Attach_Sink): endpoint Send caps the
+   --  console mirrors every flushed line to. Bounded; a failing
+   --  sink is dropped and its cap deleted.
+   Max_Sinks : constant := 2;
+   Sinks : array (1 .. Max_Sinks) of U64 := (others => 0);
+
+   --  Stream-write S to one sink; returns False on any IPC
+   --  failure (caller drops the sink). Nested RPC while serving
+   --  a client write: the sink server replies promptly.
+   function Sink_Write (Sink : U64; S : String) return Boolean is
+      First  : Natural := S'First;
+      Chunk  : Natural;
+      R_Label : U64;
+      Req    : Akernel_User.Streams.Stream_Request;
+      Resp   : Akernel_User.Streams.Stream_Response;
+   begin
+      while First <= S'Last loop
+         Chunk := Natural'Min
+           (S'Last - First + 1, Akernel_User.Streams.Max_Chunk);
+         Req.Count := U64 (Chunk);
+         Req.Data := (others => 0);
+         for I in 1 .. Chunk loop
+            Req.Data (Ada.Streams.Stream_Element_Offset (I)) :=
+              Ada.Streams.Stream_Element (Character'Pos (S (First + I - 1)));
+         end loop;
+         if RPC.Call (Sink, Akernel_User.Streams.Op_Write, Req,
+                      RPC.No_Caps, R_Label, Resp) /= IPC_Ok
+         then
+            return False;
+         end if;
+         First := First + Chunk;
+      end loop;
+      return True;
+   end Sink_Write;
+
+   procedure Mirror_To_Sinks (S : String) is
+   begin
+      for I in Sinks'Range loop
+         if Sinks (I) /= 0 then
+            if not Sink_Write (Sinks (I), S) then
+               Result := Cap_Delete (Sinks (I));
+               Sinks (I) := 0;
+            end if;
+         end if;
+      end loop;
+   end Mirror_To_Sinks;
+
    procedure Flush_Line (Slot : Positive) is
    begin
       if Lines (Slot).Len > 0 then
          UART_Put (Lines (Slot).Buf (1 .. Lines (Slot).Len));
+         Mirror_To_Sinks (Lines (Slot).Buf (1 .. Lines (Slot).Len));
          Lines (Slot).Len := 0;
       end if;
    end Flush_Line;
@@ -255,6 +306,31 @@ begin
                     Ada.Streams.Stream_Element (Character'Pos (Ch));
                end loop;
             end;
+         elsif Label = Akernel_User.Streams.Op_Attach_Sink then
+            --  Console-sink registration: only the init/devmgr
+            --  badge (0 — init's own unminted console cap) may
+            --  attach, cap slot 0 carries the sink endpoint Send
+            --  cap. Reply Count: 0 = attached, 1 = rejected.
+            if Badge = 0 and then Caps (0) /= 0 then
+               Response.Count := 1;
+               for I in Sinks'Range loop
+                  if Sinks (I) = 0 then
+                     Sinks (I) := Caps (0);
+                     Response.Count := 0;
+                     exit;
+                  end if;
+               end loop;
+               if Response.Count = 1 then
+                  --  No slot: drop the transferred cap or leak it.
+                  Result := Cap_Delete (Caps (0));
+               end if;
+            else
+               if Caps (0) /= 0 then
+                  Result := Cap_Delete (Caps (0));
+               end if;
+               Response.Count := 1;
+            end if;
+            Response.Data := (others => 0);
          else
             --  Unknown ops: no data.
             Response := (Count => 0, Data => (others => 0));

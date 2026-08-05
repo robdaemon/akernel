@@ -11,6 +11,9 @@ package Kernel.Objects is
       Length        : U64;
    end record;
 
+   type IRQ_Line;
+   type IRQ_Line_Access is access all IRQ_Line;
+
    type IRQ_Line is record
       Source    : U64;
       Pending   : Boolean;
@@ -20,6 +23,14 @@ package Kernel.Objects is
       --  Null_Address = none bound (irq_bind_ntfn syscall).
       Ntfn       : System.Address;
       Ntfn_Badge : U64;
+      --  Shared-IRQ chain: PCI INTx lines are swizzled onto only
+      --  four PLIC sources ((dev + pin - 1) mod 4), so several
+      --  devices legitimately share one source. Lines (source)
+      --  heads a chain; Deliver walks it and pokes every line
+      --  (each driver reads its own device ISR to claim the
+      --  event; level triggering re-delivers while any device
+      --  keeps the line asserted).
+      Next       : IRQ_Line_Access := null;
    end record;
 
    --  Boot file: a slice of the initrd image (physmap VA + length).
@@ -30,8 +41,6 @@ package Kernel.Objects is
       Base   : U64;
       Length : U64;
    end record;
-
-   type IRQ_Line_Access is access all IRQ_Line;
 
    --  Refcounting: dynamically-owned shared objects (endpoints, later
    --  memory objects) embed Object_Header as their first component.
