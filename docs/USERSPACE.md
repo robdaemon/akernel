@@ -368,7 +368,8 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   partition-1 block service (badged Send on partmgr) at 2 and
   its own service endpoint
   (Receive) at 3; init pushes the Send side to the VFS as
-  Op_Add_FS (device HD0, label AKDISK). Probes sector 0 for a
+  Op_Add_FS (device BD0, label Sys — milestone 29; the raw
+  whole-device volume moved to WD0). Probes sector 0 for a
   FAT32 BPB (0x55AA, 512-byte sectors, "FAT32   " type string,
   cluster size <= 8 sectors), then serves the same client file
   protocol: subdirectory traversal ('/'-separated components),

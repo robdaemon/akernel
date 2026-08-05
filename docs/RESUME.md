@@ -15,7 +15,25 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: MILESTONE 28 COMPLETE (slices 1-4). Slice 4
+Recently landed: MILESTONE 29 COMPLETE — boot from the Sys
+filesystem: FAT32 partition is BD0/Sys (raw whole-device
+volume moved to WD0:disk after a device-name collision hung
+the boot; raw partitions stay PD0); disk.img carries
+:System/Bureau + :System/Terminal + :System/Startup (one
+path per line); devmgr records GPU_Svc at class-16 and init
+calls Start_Display after the mounts — images staged via
+the file server into memory objects and spawned from the
+object caps (memstage pattern, no kernel work), same grant
+layout, staging cap deleted; Bureau/Terminal removed from
+the initrd (cpio 812 -> 717 KiB). Burned: init ran on ONE
+4 KiB stack page — Start_Display overflowed it (store
+fault at stack_base - 8); init now gets 4 stack pages like
+spawned processes, big buffers library-level. 173/173 SMP1
++ SMP4, fuzz failures=0, host fsck clean. Next: milestone
+30 = multi-window + focus + moving windows (window protocol
+v2, generalize the one-surface slot), 31 = interactive
+shell in the terminal (launched from Sys:). Before that:
+MILESTONE 28 COMPLETE (slices 1-4). Slice 4
 seat: devmgr records class-18 service EPs, pushes terminal's
 stream EP to Bureau (Op_Set_Focus 26) and Bureau's EP to both
 virtio-input instances (Seat_Config_Label = U64'Last-2, second

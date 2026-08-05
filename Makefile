@@ -108,7 +108,10 @@ $(DISK_IMG): $(BUREAU_ELF) $(TERMINAL_ELF)
 
 initrd: $(INITRD_IMG)
 
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal tools/mkinitrd.py
+#  Bureau/Terminal deliberately NOT in the initrd (milestone 29):
+#  they live on the Sys filesystem (disk.img :System/) and the
+#  devmgr spawns them from there via Sys:System/Startup.
+$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
@@ -124,8 +127,6 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virt
 	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
 	cp $(VIRTIO_INPUT_ELF) $(INITRD_ROOT)/Drivers/VirtioInput
 	cp $(VIRTIO_GPU_ELF) $(INITRD_ROOT)/Drivers/VirtioGpu
-	cp $(BUREAU_ELF) $(INITRD_ROOT)/System/Bureau
-	cp $(TERMINAL_ELF) $(INITRD_ROOT)/System/Terminal
 	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin

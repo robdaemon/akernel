@@ -720,7 +720,12 @@ Next candidates (order open):
     server matched the raw one first) — raw partition
     volumes stay PD0..; host mdir shows "Volume ... is Sys",
     fsck clean, 173/173 SMP1, fuzz failures=0. 29b
-    29b FS-resident images out of the initrd, ~~29c
+    ~~29b FS-resident images out of the initrd~~ — DONE
+    (committed): Bureau/Terminal left the initrd (Makefile
+    deps + cp lines; cpio 812 KiB -> 717 KiB) and live only
+    on Sys:System/ — the boot still spawns them from the FS,
+    173/173 SMP1, fuzz failures=0. MILESTONE 29 COMPLETE.
+    ~~29c
     exec-from-volume + Startup list~~ — DONE (committed):
     disk.img gains :System/Bureau, :System/Terminal and
     :System/Startup (one path per line; the recipe depends
