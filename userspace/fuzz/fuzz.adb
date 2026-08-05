@@ -475,13 +475,13 @@ begin
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fs unknown volume rejected");
 
-      --  Block volume (BD0, virtio-blk behind Op_Add_Block): the
+      --  Block volume (WD0, virtio-blk behind Op_Add_Block): the
       --  raw device resolves as "disk" and reads come through the
       --  file server -> block driver RPC chain. The image is a
       --  64 MiB GPT-partitioned disk (partition 1 = FAT32).
       --  The mount is pushed asynchronously by init; wait for it.
-      Check (Await_Volume ("BD0:disk"), "blk volume appears");
-      Status := Akernel_User.Files.Stat ("BD0:disk", Size);
+      Check (Await_Volume ("WD0:disk"), "blk volume appears");
+      Status := Akernel_User.Files.Stat ("WD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 131072 * 512,
              "blk volume stat ok");
@@ -490,13 +490,13 @@ begin
       Check (Status = Akernel_User.Files.Status_Ok,
              "blk volume label resolves");
 
-      Status := Akernel_User.Files.Open ("BD0:disk", Size);
+      Status := Akernel_User.Files.Open ("WD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok,
              "blk volume open ok");
 
       --  GPT header at LBA 1: "EFI PART" signature.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 512, Buf'Address, 8, Count);
+        ("WD0:disk", 512, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -513,7 +513,7 @@ begin
       --  Unaligned offset exercises the file server's partial-
       --  sector copy path.
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 513, Buf'Address, 7, Count);
+        ("WD0:disk", 513, Buf'Address, 7, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 7;
       declare
@@ -591,21 +591,21 @@ begin
       Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
              "fs sync accepted");
 
-      --  FAT32 volume (HD0, System/Fat32 behind the VFS): real
+      --  FAT32 volume (BD0, System/Fat32 behind the VFS): real
       --  files resolve and read through the file server -> fs
       --  driver -> block driver RPC chain.
-      Check (Await_Volume ("HD0:README.TXT"), "fat32 volume appears");
-      Status := Akernel_User.Files.Stat ("HD0:README.TXT", Size);
+      Check (Await_Volume ("BD0:README.TXT"), "fat32 volume appears");
+      Status := Akernel_User.Files.Stat ("BD0:README.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 37,
              "fat stat readme size");
 
-      Status := Akernel_User.Files.Stat ("AKDISK:README.TXT", Size);
+      Status := Akernel_User.Files.Stat ("Sys:README.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat volume label resolves");
 
       Status := Akernel_User.Files.Read
-        ("HD0:README.TXT", 0, Buf'Address, 64, Count);
+        ("BD0:README.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 37;
       declare
@@ -623,13 +623,13 @@ begin
       --  BIG.BIN: byte i = (i*7+3) mod 256, 64 KiB — spans 128
       --  clusters on a 1-sector/cluster image, exercising FAT
       --  chain walks in the fs driver.
-      Status := Akernel_User.Files.Stat ("HD0:BIG.BIN", Size);
+      Status := Akernel_User.Files.Stat ("BD0:BIG.BIN", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 65536,
              "fat stat big.bin size");
 
       Status := Akernel_User.Files.Read
-        ("HD0:BIG.BIN", 0, Big_Buf'Address, 512, Count);
+        ("BD0:BIG.BIN", 0, Big_Buf'Address, 512, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
@@ -640,7 +640,7 @@ begin
       Check (Match, "fat big.bin head ok");
 
       Status := Akernel_User.Files.Read
-        ("HD0:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
+        ("BD0:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
@@ -652,7 +652,7 @@ begin
 
       --  Cluster-crossing unaligned read (clusters are 1 sector).
       Status := Akernel_User.Files.Read
-        ("HD0:BIG.BIN", 4091, Buf'Address, 8, Count);
+        ("BD0:BIG.BIN", 4091, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       for J in 0 .. 7 loop
@@ -662,24 +662,24 @@ begin
       end loop;
       Check (Match, "fat unaligned read ok");
 
-      Status := Akernel_User.Files.Stat ("hd0:big.bin", Size);
+      Status := Akernel_User.Files.Stat ("bd0:big.bin", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 65536,
              "fat names case-insensitive");
 
-      Status := Akernel_User.Files.Stat ("HD0:NOSUCH.BIN", Size);
+      Status := Akernel_User.Files.Stat ("BD0:NOSUCH.BIN", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat unknown file rejected");
 
       --  Subdirectory traversal and LFN entries (host-created in
       --  the image: mmd SUBDIR, mcopy with a long name).
-      Status := Akernel_User.Files.Stat ("HD0:SUBDIR/HELLO.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD0:SUBDIR/HELLO.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 14,
              "fat subdir stat ok");
 
       Status := Akernel_User.Files.Read
-        ("HD0:subdir/hello.txt", 0, Buf'Address, 64, Count);
+        ("BD0:subdir/hello.txt", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 14;
       declare
@@ -694,13 +694,13 @@ begin
       end;
       Check (Match, "fat subdir read ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:LongFileName.txt", Size);
+      Status := Akernel_User.Files.Stat ("BD0:LongFileName.txt", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 23,
              "fat lfn stat ok");
 
       Status := Akernel_User.Files.Read
-        ("hd0:longfilename.txt", 0, Buf'Address, 64, Count);
+        ("bd0:longfilename.txt", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 23;
       declare
@@ -727,12 +727,12 @@ begin
       end;
 
       Status := Akernel_User.Files.Write
-        ("HD0:NEWFILE.TXT", 0, Buf'Address, 14, Count);
+        ("BD0:NEWFILE.TXT", 0, Buf'Address, 14, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 14,
              "fat write create ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:NEWFILE.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD0:NEWFILE.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 14,
              "fat write stat ok");
@@ -741,7 +741,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("HD0:NEWFILE.TXT", 0, Buf'Address, 64, Count);
+        ("BD0:NEWFILE.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 14;
       declare
@@ -757,7 +757,7 @@ begin
 
       --  Create inside a subdirectory.
       Status := Akernel_User.Files.Write
-        ("HD0:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
+        ("BD0:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat write zero-length rejected");
 
@@ -770,7 +770,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
+        ("BD0:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat write subdir ok");
@@ -781,14 +781,14 @@ begin
          Big_Buf (J) := Interfaces.Unsigned_8 ((J * 5 + 1) mod 256);
       end loop;
       Status := Akernel_User.Files.Write
-        ("HD0:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
+        ("BD0:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 512,
              "fat write big ok");
 
       --  Extending write at the current end (size grows 8 bytes
       --  per boot; checks stay relative so reruns pass).
-      Status := Akernel_User.Files.Stat ("HD0:EXT.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD0:EXT.TXT", Size);
       declare
          Prior : U64 := 0;
       begin
@@ -804,11 +804,11 @@ begin
             end loop;
          end;
          Status := Akernel_User.Files.Write
-           ("HD0:EXT.TXT", Prior, Buf'Address, 8, Count);
+           ("BD0:EXT.TXT", Prior, Buf'Address, 8, Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = 8,
                 "fat write extend ok");
-         Status := Akernel_User.Files.Stat ("HD0:EXT.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD0:EXT.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = Prior + 8,
                 "fat write extend stat ok");
@@ -816,12 +816,12 @@ begin
 
       --  Sparse writes rejected; bad parent rejected.
       Status := Akernel_User.Files.Write
-        ("HD0:NEWFILE.TXT", 100, Buf'Address, 4, Count);
+        ("BD0:NEWFILE.TXT", 100, Buf'Address, 4, Count);
       Check (Status = Akernel_User.Files.Status_Out_Of_Range,
              "fat write sparse rejected");
 
       Status := Akernel_User.Files.Write
-        ("HD0:NODIR/F.TXT", 0, Buf'Address, 4, Count);
+        ("BD0:NODIR/F.TXT", 0, Buf'Address, 4, Count);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat write bad parent rejected");
 
@@ -837,7 +837,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
+        ("WD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "blk volume write ok");
@@ -846,7 +846,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
+        ("WD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -863,22 +863,22 @@ begin
       --  20c: delete / truncate / mkdir / rmdir / LFN creation.
       --  Idempotent across reused images: the prelude drops any
       --  leftover MKTEST state from a prior boot.
-      Status := Akernel_User.Files.Delete ("HD0:MKTEST/INNER.TXT");
-      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+      Status := Akernel_User.Files.Delete ("BD0:MKTEST/INNER.TXT");
+      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
 
-      Status := Akernel_User.Files.Mkdir ("HD0:MKTEST");
+      Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat mkdir ok");
 
-      Status := Akernel_User.Files.Mkdir ("HD0:MKTEST");
+      Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat mkdir exists rejected");
 
-      Status := Akernel_User.Files.Stat ("HD0:MKTEST", Size);
+      Status := Akernel_User.Files.Stat ("BD0:MKTEST", Size);
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat dir stat rejected");
 
-      Status := Akernel_User.Files.Mkdir ("HD0:NODIR/SUB");
+      Status := Akernel_User.Files.Mkdir ("BD0:NODIR/SUB");
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat mkdir bad parent rejected");
 
@@ -891,7 +891,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
+        ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat mkdir file write ok");
@@ -900,7 +900,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("HD0:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
+        ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -914,19 +914,19 @@ begin
       end;
       Check (Match, "fat mkdir file read ok");
 
-      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat rmdir non-empty rejected");
 
-      Status := Akernel_User.Files.Delete ("HD0:MKTEST/INNER.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:MKTEST/INNER.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat delete inner ok");
 
-      Status := Akernel_User.Files.Rmdir ("HD0:MKTEST");
+      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rmdir ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:MKTEST", Size);
+      Status := Akernel_User.Files.Stat ("BD0:MKTEST", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat rmdir gone");
 
@@ -940,24 +940,24 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:DELME.TXT", 0, Buf'Address, 8, Count);
+        ("BD0:DELME.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("HD0:DELME.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:DELME.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat file delete ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:DELME.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD0:DELME.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat deleted stat rejected");
 
-      Status := Akernel_User.Files.Delete ("HD0:DELME.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:DELME.TXT");
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat delete twice rejected");
 
-      Status := Akernel_User.Files.Delete ("HD0:SUBDIR");
+      Status := Akernel_User.Files.Delete ("BD0:SUBDIR");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat delete dir rejected");
 
@@ -971,22 +971,22 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+        ("BD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate setup write ok");
 
-      Status := Akernel_User.Files.Truncate ("HD0:TRUNC.TXT");
+      Status := Akernel_User.Files.Truncate ("BD0:TRUNC.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat truncate ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:TRUNC.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD0:TRUNC.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 0,
              "fat truncate zeroes size");
 
       Status := Akernel_User.Files.Write
-        ("HD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+        ("BD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate rewrite ok");
@@ -995,7 +995,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("HD0:TRUNC.TXT", 0, Buf'Address, 64, Count);
+        ("BD0:TRUNC.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -1021,13 +1021,13 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:CreatedLongName.dat", 0, Buf'Address, 16, Count);
+        ("BD0:CreatedLongName.dat", 0, Buf'Address, 16, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 16,
              "fat lfn create write ok");
 
       Status := Akernel_User.Files.Stat
-        ("hd0:createdlongname.dat", Size);
+        ("bd0:createdlongname.dat", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 16,
              "fat lfn create stat ok");
@@ -1036,7 +1036,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("HD0:CreatedLongName.dat", 0, Buf'Address, 64, Count);
+        ("BD0:CreatedLongName.dat", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 16;
       declare
@@ -1060,16 +1060,16 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("HD0:DeleteLongName.dat", 0, Buf'Address, 8, Count);
+        ("BD0:DeleteLongName.dat", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat lfn delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("HD0:DeleteLongName.dat");
+      Status := Akernel_User.Files.Delete ("BD0:DeleteLongName.dat");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat lfn delete ok");
 
-      Status := Akernel_User.Files.Stat ("HD0:DeleteLongName.dat", Size);
+      Status := Akernel_User.Files.Stat ("BD0:DeleteLongName.dat", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat lfn delete gone");
 

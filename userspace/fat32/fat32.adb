@@ -7,7 +7,7 @@ with System.Storage_Elements;
 --  process behind the file server's VFS layer: it talks block
 --  protocol to the virtio-blk service endpoint and speaks the
 --  client file protocol on its own service endpoint (init mints it
---  and pushes the Send side to the VFS as Op_Add_FS, device HD0).
+--  and pushes the Send side to the VFS as Op_Add_FS, device BD0).
 --
 --  Handles: 1 = console endpoint, 2 = blk service EP, 3 = svc EP.
 --

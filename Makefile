@@ -92,8 +92,8 @@ $(DISK_IMG):
 	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt
 	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt
 	truncate -s 67108864 $@
-	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:AKDISK $@ >/dev/null
-	mkfs.vfat -F 32 -S 512 -s 1 -n AKDISK --offset 2048 $@ 61440 >/dev/null
+	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:Sys $@ >/dev/null
+	mkfs.vfat -F 32 -S 512 -s 1 -n Sys --offset 2048 $@ 61440 >/dev/null
 	mcopy -i $@@@1048576 $(INITRD_OUT)/readme.txt ::README.TXT
 	mcopy -i $@@@1048576 $(INITRD_OUT)/big.bin ::BIG.BIN
 	mmd -i $@@@1048576 ::SUBDIR

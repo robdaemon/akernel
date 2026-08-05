@@ -43,8 +43,8 @@ procedure Init is
 
    --  FAT32 driver endpoint minted at boot: Receive side granted
    --  (fat32_server token) to System/Fat32, Send side pushed to
-   --  the file server as Op_Add_FS (device HD0) after the driver
-   --  spawns, so the VFS forwards HD0: paths to it. The driver's
+   --  the file server as Op_Add_FS (device BD0) after the driver
+   --  spawns, so the VFS forwards BD0: paths to it. The driver's
    --  blk token grants it the virtio-blk service endpoint (Send)
    --  kept by the device manager.
    FAT32_EP : Akernel_User.Syscalls.U64 := 0;
@@ -221,11 +221,13 @@ procedure Init is
       end if;
    end Push_Block_Mount_As;
 
-   --  Send Op_Add_Block (device "BD0", label "Disk") with the blk
+   --  Send Op_Add_Block (device "WD0", label "Disk") with the blk
+   --  (raw whole-device volume is WD0; BD0 is the FAT32 partition
+   --  filesystem, milestone 29)
    --  driver's service endpoint.
    procedure Push_Block_Mount (Blk_EP : Akernel_User.Syscalls.U64) is
    begin
-      Push_Block_Mount_As ("BD0", "Disk", Blk_EP);
+      Push_Block_Mount_As ("WD0", "Disk", Blk_EP);
    end Push_Block_Mount;
 
    --  Enumerate populated partition slots via the part_query op
@@ -286,13 +288,13 @@ procedure Init is
       end if;
    end Push_Part_Mounts;
 
-   --  Send Op_Add_FS (device "HD0", label "AKDISK") with the
+   --  Send Op_Add_FS (device "BD0", label "Sys") with the
    --  FAT32 driver's service endpoint (Send side, transferred in
    --  cap slot 0) so the VFS mounts the forwarded volume.
    procedure Push_Fat32_Mount is
       use Akernel_User.Syscalls;
-      Dev   : constant String := "HD0";
-      Lab   : constant String := "AKDISK";
+      Dev   : constant String := "BD0";
+      Lab   : constant String := "Sys";
       Chars : constant String := Dev & Lab;
    begin
       Message.Label := 6;  --  Files.Op_Add_FS

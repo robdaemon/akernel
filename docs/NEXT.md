@@ -711,10 +711,19 @@ Next candidates (order open):
       FS online — boot output still scrolls in the terminal
       (one code path from power-on), it just opens a beat
       later.
-    Slices: 29a rename + disk recipe, 29b FS-resident images
-    out of the initrd, 29c exec-from-volume + Startup list.
-    Milestone 30 = multi-window + focus, 31 = interactive
-    shell in the terminal (launched from Sys:).
+    Slices: ~~29a rename + disk recipe~~ — DONE (committed):
+    FAT32 volume is BD0/Sys (Push_Fat32_Mount, disk recipe,
+    fuzz paths incl. lowercase case-insensitivity probes and
+    the Sys: label-resolution test); the RAW whole-device
+    volume had to move OFF BD0 to WD0 (collision hung the
+    boot: two volumes claimed device BD0 and the file
+    server matched the raw one first) — raw partition
+    volumes stay PD0..; host mdir shows "Volume ... is Sys",
+    fsck clean, 173/173 SMP1, fuzz failures=0. 29b
+    FS-resident images out of the initrd, 29c
+    exec-from-volume + Startup list. Milestone 30 =
+    multi-window + focus, 31 = interactive shell in the
+    terminal (launched from Sys:).
 
 Commit between each milestone.
 
