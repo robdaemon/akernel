@@ -221,6 +221,26 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   it after devmgr attaches the endpoint via Op_Attach_Sink. All
   driver logging is Debug_Put_Line — a console print during init
   would deadlock against the server blocked in the sink RPC.
+  The same endpoint ALSO serves the display-service protocol
+  (`akernel_user-display.ads`, labels 10+ — stream labels own
+  1..4) for the Bureau compositor (milestone 28, slice 1):
+  caps move caller -> callee only (replies are words-only), so
+  the compositor ALLOCATES the compositing buffer (Mem_Alloc
+  64-page chunks, contiguous VA) and pushes chunk caps with
+  Op_Set_Buffer (base index in w0, up to 4 caps per call, caps
+  must carry Manage — the driver runs Mem_Object_PA on them;
+  the driver KEEPS them for the session, deliberate exception
+  to the per-op cap_delete rule so the frames outlive the
+  compositor). Op_Commit_Buffer DETACHes the boot framebuffer
+  backing and ATTACHes the compositor's chunks (one full-screen
+  TRANSFER + FLUSH); Op_Present(x,y,w,h) pushes a pixel band
+  straight from the compositor's buffer (zero extra copy).
+  Op_Get_Info returns width/height/stride/total-pages. The text
+  console keeps rendering into the driver's own framebuffer
+  until a compositor commits; its writes are invisible after
+  (Bureau's terminal client takes the sink over in slice 3).
+  Op_Set_Cursor/Op_Move_Cursor reserved for the hw cursor
+  (cursorq UPDATE_CURSOR 0x300 / MOVE_CURSOR 0x301, slice 4).
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the

@@ -15,7 +15,26 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: mirrored-glyph fix (27b) — font8x8 is bit 0 =
+Recently landed: milestone 28 SLICE 1 — display-service
+protocol (akernel_user-display.ads, labels 10-13; 14/15
+reserved for hw cursor) served by virtio_gpu alongside the
+text sink. Burned: IPC replies carry WORDS ONLY (caps move
+caller -> callee), so Bureau ALLOCATES the compositing buffer
+and pushes chunk caps (Op_Set_Buffer, caps need Manage —
+driver runs Mem_Object_PA; driver keeps them session-long,
+deliberate cap_delete exception); Op_Commit_Buffer re-attaches
+scanout backing onto the compositor's pages; Op_Present =
+band TRANSFER+FLUSH, zero-copy. Text console pixel-exact
+after the split (screendump decode err=0/6144 cells). Next:
+slice 2 = Servers/Bureau skeleton (Get_Info -> alloc buffer
+-> Set/Commit -> render desktop + WB3-style screen bar +
+gadtools chrome -> Present loop; display client helpers go in
+akernel_user-display.adb), then slice 3 terminal client, 4
+seat + cursor. Cosmetic pre-existing flake: kernel direct-UART
+lines interleave with console-server UART at SMP4, sometimes
+eating a serial "PASS " prefix (content intact); blk
+pattern/readback selftests skip on reused disk images.
+Before that: mirrored-glyph fix (27b) — font8x8 is bit 0 =
 leftmost pixel, not bit 7 as the upstream comment claims
 (screenshot 20260804_174859 showed mirrored text). Draw_Glyph
 flips the Shift_Right operand. Verified EXACTLY: screendump PPM

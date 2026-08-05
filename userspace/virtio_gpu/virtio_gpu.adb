@@ -6,6 +6,7 @@ with Akernel_User.Console;
 with Akernel_User.Syscalls;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
+with Akernel_User.Display;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -30,6 +31,18 @@ with Font8x8;
 --  stream protocol on handle 7 — the console server mirrors its
 --  line-atomic output here once the device manager attaches this
 --  endpoint as a sink (Op_Attach_Sink).
+--
+--  The same endpoint ALSO serves the display-service protocol
+--  (Akernel_User.Display, labels 10+): the compositor (Bureau)
+--  allocates the compositing buffer and pushes its memory-object
+--  chunk caps here (Op_Set_Buffer x N, caps move caller ->
+--  callee only), Op_Commit_Buffer re-attaches the scanout
+--  resource's backing onto those pages, and Op_Present pushes
+--  pixel bands straight from the compositor's buffer. The text
+--  console above keeps working against the driver's own boot
+--  framebuffer until a compositor commits (its writes become
+--  invisible then — Bureau's terminal client takes the sink
+--  over in slice 3).
 --
 --  Burned: ALL driver log output (PASS/FAIL/online) goes through
 --  Debug_Put_Line (kernel UART), NEVER the console stream: the
@@ -87,6 +100,7 @@ procedure Virtio_Gpu is
    Cmd_Resource_Flush   : constant Virtio.U32 := 16#104#;
    Cmd_Transfer_To_Host : constant Virtio.U32 := 16#105#;
    Cmd_Attach_Backing   : constant Virtio.U32 := 16#106#;
+   Cmd_Detach_Backing   : constant Virtio.U32 := 16#107#;
 
    Resp_Ok_Nodata       : constant Virtio.U32 := 16#1100#;
    Resp_Ok_Display_Info : constant Virtio.U32 := 16#1101#;
@@ -224,6 +238,19 @@ procedure Virtio_Gpu is
    FB_Objects : constant := (Max_W * Max_H * 4) / 4096 / 64;  --  12
    FB_Caps : array (0 .. FB_Objects - 1) of U64 := (others => 0);
    FB_Obj_Count : Natural := 0;
+
+   --  Compositor buffer handoff (display-service protocol): chunk
+   --  caps pushed by Op_Set_Buffer until Op_Commit_Buffer swaps
+   --  the scanout backing. Kept for the session once received
+   --  (deliberate exception to the per-op cap_delete rule — the
+   --  frames must outlive the compositor).
+   New_Caps   : array (0 .. FB_Objects - 1) of U64 := (others => 0);
+   New_Chunks : Natural := 0;
+
+   FB_Pages  : U64;
+   Obj_Pages : U64;
+   PA        : U64;
+   Ent_Count : U64;
 
    procedure Fail (S : String) is
    begin
@@ -470,6 +497,109 @@ procedure Virtio_Gpu is
    end Flush_Dirty;
 
    ------------------------------------------------------------------
+   --  Display-service protocol (Akernel_User.Display)
+   ------------------------------------------------------------------
+
+   package DSP renames Akernel_User.Display;
+
+   --  Reply with raw words (the RPC generic marshals stream
+   --  payloads; display replies are plain words).
+   procedure Display_Reply (Req_Label : U64; W0 : U64) is
+   begin
+      Message.Label := Req_Label;
+      Message.Words (0) := W0;
+      Message.Words (1) := U64 (Width);
+      Message.Words (2) := U64 (Height);
+      Message.Words (3) := U64 (Width * 4);
+      Message.Words (4) := FB_Pages;
+      Message.Words (5) := 64;
+      if IPC_Reply /= IPC_Ok then
+         Debug_Put_Line ("virtio-gpu display reply failed");
+         Process_Exit;
+      end if;
+   end Display_Reply;
+
+   --  TRANSFER_TO_HOST_2D + RESOURCE_FLUSH for one pixel band.
+   procedure Present_Band (X, Y, W, H : Natural) is
+   begin
+      if W = 0 or else H = 0 or else Width = 0 then
+         return;
+      end if;
+      Set_Hdr (Cmd_Transfer_To_Host);
+      Set_Rect (Virtio.U32 (X), Virtio.U32 (Y),
+                Virtio.U32 (W), Virtio.U32 (H));
+      Cmd_Words (10) := Virtio.U32 ((Y * Width + X) * 4);
+      Cmd_Words (11) := 0;
+      Cmd_Words (12) := Resource_Id;
+      Cmd_Words (13) := 0;
+      if Ctrl_Cmd (56) /= Resp_Ok_Nodata then
+         Debug_Put_Line ("virtio-gpu present transfer failed");
+         return;
+      end if;
+
+      Set_Hdr (Cmd_Resource_Flush);
+      Set_Rect (Virtio.U32 (X), Virtio.U32 (Y),
+                Virtio.U32 (W), Virtio.U32 (H));
+      Cmd_Words (10) := Resource_Id;
+      Cmd_Words (11) := 0;
+      if Ctrl_Cmd (48) /= Resp_Ok_Nodata then
+         Debug_Put_Line ("virtio-gpu present flush failed");
+      end if;
+   end Present_Band;
+
+   --  Swap the scanout backing onto the compositor's chunks:
+   --  DETACH the driver's boot framebuffer, ATTACH the stored
+   --  caps' frames, push the full screen once.
+   function Commit_Buffer return U64 is
+      PA : U64;
+      Pages_In : U64;
+   begin
+      if New_Chunks = 0 then
+         return DSP.Status_No_Buffer;
+      end if;
+      if U64 (New_Chunks) /= (FB_Pages + 63) / 64 then
+         return DSP.Status_Bad_Index;
+      end if;
+
+      Ent_Count := 0;
+      for I in 0 .. New_Chunks - 1 loop
+         Pages_In := U64'Min (FB_Pages - U64 (I) * 64, 64);
+         for P in 0 .. Pages_In - 1 loop
+            PA := Mem_Object_PA (New_Caps (I), P);
+            if PA = 0 then
+               return DSP.Status_Bad_Caps;
+            end if;
+            Ent_Words (Natural (Ent_Count) * 4) :=
+              Virtio.U32 (PA and 16#FFFF_FFFF#);
+            Ent_Words (Natural (Ent_Count) * 4 + 1) :=
+              Virtio.U32 (PA / 16#1_0000_0000#);
+            Ent_Words (Natural (Ent_Count) * 4 + 2) := 4096;
+            Ent_Words (Natural (Ent_Count) * 4 + 3) := 0;
+            Ent_Count := Ent_Count + 1;
+         end loop;
+      end loop;
+
+      Set_Hdr (Cmd_Detach_Backing);
+      Cmd_Words (6) := Resource_Id;
+      Cmd_Words (7) := 0;
+      if Ctrl_Cmd (32) /= Resp_Ok_Nodata then
+         return DSP.Status_Device;
+      end if;
+
+      Set_Hdr (Cmd_Attach_Backing);
+      Cmd_Words (6) := Resource_Id;
+      Cmd_Words (7) := Virtio.U32 (Ent_Count);
+      if Ctrl_Cmd (32, Extra_Len => Virtio.U32 (Ent_Count) * 16)
+        /= Resp_Ok_Nodata
+      then
+         return DSP.Status_Device;
+      end if;
+
+      Present_Band (0, 0, Width, Height);
+      return DSP.Status_Ok;
+   end Commit_Buffer;
+
+   ------------------------------------------------------------------
 
    package RPC is new Akernel_User.IPC
      (Akernel_User.Streams.Stream_Request,
@@ -481,10 +611,6 @@ procedure Virtio_Gpu is
    Request  : Akernel_User.Streams.Stream_Request;
    Response : Akernel_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
-   FB_Pages : U64;
-   Obj_Pages : U64;
-   PA        : U64;
-   Ent_Count : U64;
 
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
@@ -739,6 +865,49 @@ begin
             Debug_Put_Line ("virtio-gpu reply failed");
             Process_Exit;
          end if;
+
+      elsif Label = DSP.Op_Get_Info then
+         Display_Reply (Label, DSP.Status_Ok);
+
+      elsif Label = DSP.Op_Set_Buffer then
+         declare
+            Base : constant U64 := Message.Words (0);
+            St   : U64 := DSP.Status_Ok;
+            Idx  : U64;
+         begin
+            for I in 0 .. 3 loop
+               exit when Caps (I) = 0;
+               Idx := Base + U64 (I);
+               if Idx >= U64 (FB_Objects)
+                 or else New_Caps (Natural (Idx)) /= 0
+               then
+                  St := DSP.Status_Bad_Index;
+                  Result := Cap_Delete (Caps (I));
+               else
+                  New_Caps (Natural (Idx)) := Caps (I);
+                  New_Chunks := New_Chunks + 1;
+               end if;
+            end loop;
+            Display_Reply (Label, St);
+         end;
+
+      elsif Label = DSP.Op_Commit_Buffer then
+         Display_Reply (Label, Commit_Buffer);
+
+      elsif Label = DSP.Op_Present then
+         declare
+            X : constant Natural :=
+              Natural'Min (Natural (Message.Words (0)), Width);
+            Y : constant Natural :=
+              Natural'Min (Natural (Message.Words (1)), Height);
+            W : constant Natural :=
+              Natural'Min (Natural (Message.Words (2)), Width - X);
+            H : constant Natural :=
+              Natural'Min (Natural (Message.Words (3)), Height - Y);
+         begin
+            Present_Band (X, Y, W, H);
+            Display_Reply (Label, DSP.Status_Ok);
+         end;
 
       else
          --  Op_Read/Op_Input/unknown: no data.

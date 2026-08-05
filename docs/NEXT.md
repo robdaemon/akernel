@@ -553,14 +553,21 @@ Next candidates (order open):
     - Servers/Bureau (new, arch-independent; the compositor /
       window server process — the GUI is named "Bureau",
       user-chosen, no akernel prefix, screen bar reads
-      "Bureau"): owns the compositing buffer (memory object;
-      one scanout resource with ATTACH_BACKING, TRANSFER of
-      damage bands, FLUSH), renders desktop + screen bar +
-      window chrome, composites client surfaces by damage,
-      pushes dirty bands to the display service. Owns the seat:
-      virtio-input routes to BureauSrv (both roles leave the
-      serial log), keyboard -> focused client, tablet -> cursor
-      position.
+      "Bureau"): owns the compositing buffer — IT ALLOCATES
+      it (Mem_Alloc 64-page chunks; caps move caller -> callee
+      only, replies are words-only, so the earlier
+      "Create_Surface returns shm memobj" sketch inverts to
+      wl_shm direction: client allocates, pushes caps) — one
+      scanout resource re-attached onto those pages, TRANSFER
+      of damage bands, FLUSH. SLICE 1 DONE (committed): the
+      display-service protocol (akernel_user-display.ads,
+      labels 10-13, cursor ops reserved at 14/15) is served by
+      virtio_gpu alongside the text sink; Op_Set_Buffer /
+      Op_Commit_Buffer / Op_Present / Op_Get_Info all live;
+      text console pixel-exact after the split (screendump
+      decode err=0). Slice 2 = BureauSrv skeleton
+      (desktop+bar+chrome), 3 = terminal client, 4 = seat +
+      hw cursor.
     - Terminal = FIRST REAL CLIENT on window protocol v1:
       Create_Surface -> (surface EP + shm memobj),
       Commit(damage). Scroll = memmove inside the terminal's
@@ -590,6 +597,13 @@ Next candidates (order open):
       tunable at implementation time.
     - virtio-gpu 2D has no vsync event; FLUSH is fire-and-forget.
       Fine for text; revisit if tearing shows on pointer motion.
+    - Cosmetic flake seen (not fixed, pre-existing): kernel
+      direct-UART lines ("iommu context online") can interleave
+      character-wise with console-server UART output at SMP4,
+      occasionally eating a "PASS " prefix in the SERIAL log
+      (content intact, display unaffected). Count PASS lines
+      with interleave tolerance; the two blk pattern/readback
+      selftests skip on reused (non-pattern) disk images.
     Follow-ups: multi-window + focus + moving windows (29),
     interactive shell in the terminal (30).
 
