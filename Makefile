@@ -27,7 +27,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
 .PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal initrd run clean clean-kernel clean-userspace clean-initrd
 
-all: kernel initrd
+all: kernel initrd bureau terminal
 
 kernel:
 	alr build
@@ -86,7 +86,9 @@ terminal:
 #  System/Partmgr serves the partition to System/Fat32 behind the
 #  file server's VFS; the raw device (incl. GPT) stays WD0:disk
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
-$(DISK_IMG): $(BUREAU_ELF) $(TERMINAL_ELF)
+#  Phony crate deps (not the ELF files: those have no rule) so
+#  the images actually rebuild before being mcopy'd.
+$(DISK_IMG): bureau terminal
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"

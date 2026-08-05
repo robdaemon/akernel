@@ -1,3 +1,4 @@
+with Interfaces;
 package body Akernel_User.Window is
    use Akernel_User.Syscalls;
    use type U64;
@@ -14,6 +15,7 @@ package body Akernel_User.Window is
    function Surface_Create
      (EP             : U64;
       Width, Height  : U64;
+      Input_Cap      : U64 := 0;
       Id, Pages      : out U64;
       Grant_W        : out U64;
       Grant_H        : out U64) return U64
@@ -24,6 +26,7 @@ package body Akernel_User.Window is
       Message.Words (0) := Width;
       Message.Words (1) := Height;
       Message.Caps  := (others => 0);
+      Message.Caps (0) := Input_Cap;
       if IPC_Call (EP) /= IPC_Ok then
          return Status_Device;
       end if;
@@ -60,6 +63,41 @@ package body Akernel_User.Window is
       Message.Caps  := (others => 0);
       return Call (EP);
    end Surface_Commit_Buffer;
+
+   function Surface_Set_Title
+     (EP : U64; Id : U64; S : String) return U64
+   is
+   begin
+      Message.Label := Op_Set_Title;
+      Message.Words := (others => 0);
+      Message.Words (0) := Id;
+      --  Pack up to 40 chars, little-endian byte order, into
+      --  words 1..5.
+      for I in S'Range loop
+         exit when I - S'First >= 40;
+         declare
+            K : constant Natural := I - S'First;
+            W : constant Natural := 1 + K / 8;
+            B : constant Natural := K mod 8;
+            use type Interfaces.Unsigned_64;
+         begin
+            Message.Words (W) := Message.Words (W)
+              or Interfaces.Shift_Left
+                (U64 (Character'Pos (S (I))), B * 8);
+         end;
+      end loop;
+      Message.Caps := (others => 0);
+      return Call (EP);
+   end Surface_Set_Title;
+
+   function Surface_Destroy (EP : U64; Id : U64) return U64 is
+   begin
+      Message.Label := Op_Surface_Destroy;
+      Message.Words := (others => 0);
+      Message.Words (0) := Id;
+      Message.Caps := (others => 0);
+      return Call (EP);
+   end Surface_Destroy;
 
    function Surface_Update
      (EP      : U64;

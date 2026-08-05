@@ -33,6 +33,10 @@ procedure Terminal is
    Console_EP : constant U64 := 1;
    Win_EP     : constant U64 := 2;
    Sink_EP    : constant U64 := 3;
+   --  Send+Transfer copy of the sink endpoint: pushed to Bureau
+   --  at Surface_Create so focused keys arrive here as Op_Input
+   --  (window protocol v2; a Receive-only cap cannot mint Send).
+   Sink_Send  : constant U64 := 4;
 
    Buf_VA : constant U64 := 16#6000_0000#;
 
@@ -203,12 +207,20 @@ procedure Terminal is
    Minted     : U64;
 
 begin
-   --  1. Surface: ask for the whole pane, Bureau clamps.
+   --  1. Surface: request the terminal pane (87x29 cells);
+   --  hand over the sink Send cap for focused keys (v2).
    if Win.Surface_Create
-     (Win_EP, Max_W, Max_H, Surf_Id, Pages, Surf_W, Surf_H) /=
+     (Win_EP, 87 * 8, 29 * 16, Sink_Send, Surf_Id, Pages,
+      Surf_W, Surf_H) /=
        Win.Status_Ok
    then
       Fail ("surface create failed");
+   end if;
+   Result := Cap_Delete (Sink_Send);
+   if Win.Surface_Set_Title
+     (Win_EP, Surf_Id, "System/Terminal") /= Win.Status_Ok
+   then
+      Debug_Put_Line ("terminal title failed");
    end if;
    Cols := Surf_W / 8;
    Rows := Surf_H / 16;

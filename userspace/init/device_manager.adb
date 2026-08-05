@@ -65,10 +65,10 @@ package body Device_Manager is
    --  Seat (milestone 28 slice 4): class-18 (virtio-input)
    --  service endpoints, recorded at spawn; after Bureau +
    --  terminal are up, devmgr pushes Bureau's endpoint to each
-   --  (Seat_Config_Label, cap slot 0) and the terminal's stream
-   --  endpoint to Bureau (Op_Set_Focus = 26).
+   --  (Seat_Config_Label, cap slot 0). Focus is Bureau-internal
+   --  since window protocol v2 (clients hand their input
+   --  endpoint over at Surface_Create).
    Seat_Config_Label : constant U64 := U64'Last - 2;
-   Op_Set_Focus      : constant U64 := 26;
    Input_Svc     : array (0 .. 3) of U64 := (others => 0);
    Input_Count   : Natural := 0;
    --  Class-16 (GPU) display endpoint, recorded at spawn; the
@@ -783,6 +783,12 @@ package body Device_Manager is
       Grant_Count := Grant_Count + 1;
       Set_Grant (Grant_Count, Term_Sink, Right_Receive, 0);
       Grant_Count := Grant_Count + 1;
+      --  Handle 4: Send+Transfer copy of the sink endpoint — the
+      --  terminal pushes it to Bureau at Surface_Create (window
+      --  protocol v2 focused keys).
+      Set_Grant (Grant_Count, Term_Sink, Right_Send + Right_Transfer,
+                 0);
+      Grant_Count := Grant_Count + 1;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) /= Spawn_Ok
         or else Process_Cap = 0
       then
@@ -807,24 +813,10 @@ package body Device_Manager is
          end if;
          Result := Cap_Delete (Sink);
 
-         --  Seat wiring: Bureau learns the focus, the input
-         --  drivers learn Bureau.
-         Sink := Cap_Mint (Term_Sink, Right_Send + Right_Transfer, 0);
-         if Sink = Syscall_Failed then
-            Log ("devmgr: focus mint failed");
-         else
-            Message.Label := Op_Set_Focus;
-            Message.Words := (others => 0);
-            Message.Caps := (others => 0);
-            Message.Caps (0) := Sink;
-            if IPC_Call (Bureau_Svc) /= IPC_Ok
-              or else Message.Words (0) /= 0
-            then
-               Log ("devmgr: focus push failed");
-            end if;
-            Result := Cap_Delete (Sink);
-         end if;
-
+         --  Seat wiring: the input drivers learn Bureau (the
+         --  focus is Bureau-internal since window protocol v2 —
+         --  each client hands its input endpoint over at
+         --  Surface_Create).
          for I in 0 .. Input_Count - 1 loop
             Sink := Cap_Mint (Bureau_Svc, Right_Send + Right_Transfer,
                               0);

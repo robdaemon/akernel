@@ -747,8 +747,32 @@ Next candidates (order open):
     "gpu online" -> spawn/bureau desktop/terminal/seat
     chain from the FS, desktop pixels exact at SMP4,
     173/173 SMP1, fuzz failures=0, host fsck clean.
-    Milestone 30 = multi-window + focus, 31 = interactive
-    shell in the terminal (launched from Sys:).
+    MILESTONE 30 (multi-window + focus) in progress:
+    ~~30a window protocol v2 + multi-window Bureau~~ — DONE
+    (committed): up to 4 window slots with per-window
+    geometry (cascade placement), z-order band compositor
+    (desktop -> windows bottom-to-top -> bar, all drawing
+    clipped to the damage band; terminal scroll stays a
+    narrow band), per-window input endpoint handed over at
+    Surface_Create (cap slot 0; the devmgr focus push is
+    gone — terminal gets a Send+Transfer copy of its sink
+    EP at handle 4 since a Receive-only cap cannot mint
+    Send), Op_Set_Title = 25 (40 bytes packed LE into
+    w1..w5), real Destroy (unmap + cap_delete + repaint).
+    Burned: 29b removed bureau/terminal from the initrd
+    deps and NOTHING rebuilt them (disk.img deps were the
+    ELF files, which have no rule) — the boot ran a stale
+    v1 Bureau; `all` now builds bureau + terminal and
+    disk.img depends on the phony crate targets. Also:
+    v2 clamps the requested pane to SCREEN bounds only, so
+    the terminal now asks for 87x29 cells explicitly
+    (1024x768 exceeded the 8-chunk surface cap -> No_Slot).
+    Verified: window at cascade (32,40), blue title +
+    white text, 2 bureau key forwards, 173/173 SMP1, fuzz
+    failures=0. 30b = click-to-focus/raise + second client
+    (demo from Sys:), 30c = title-bar dragging. 31 =
+    interactive shell in the terminal (launched from
+    Sys:).
 
 Commit between each milestone.
 
