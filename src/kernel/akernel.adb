@@ -604,6 +604,30 @@ begin
          Physical => User_Stack_Frame,
          Flags    => Arch.MMU.User_RW,
          Result   => MMU_Result);
+      --  Spawned processes get 4 stack pages; init deserves the
+      --  same (Start_Display's fs staging overflowed the single
+      --  page: store fault at stack_base - 8).
+      for I in 2 .. 4 loop
+         exit when MMU_Result /= Arch.MMU.Ok;
+         declare
+            Extra_Frame : Interfaces.Unsigned_64 := 0;
+         begin
+            Kernel.Physical_Memory.Allocate_Frame
+              (PMM_Result, Extra_Frame);
+            if PMM_Result = Kernel.Physical_Memory.Ok then
+               Arch.MMU.Map_Page
+                 (Root     => User_Root_Table,
+                  Virtual  => User_Stack_Top
+                              - Interfaces.Unsigned_64 (I)
+                                * Arch.MMU.Page_Size,
+                  Physical => Extra_Frame,
+                  Flags    => Arch.MMU.User_RW,
+                  Result   => MMU_Result);
+            else
+               MMU_Result := Arch.MMU.Allocation_Failed;
+            end if;
+         end;
+      end loop;
    end if;
 
    --  Init's IPC buffer page (docs/IPC.md): fixed user VA, zeroed to

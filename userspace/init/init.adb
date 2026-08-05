@@ -1,5 +1,6 @@
 with Interfaces;
 with Akernel_User.Syscalls;
+with Akernel_User.Files;
 with Device_Manager;
 
 --  Init composes its namespace from the kernel-provided bootinfo
@@ -636,6 +637,12 @@ begin
    if Partmgr_Seen then
       Push_Part_Mounts;
    end if;
+
+   --  Display stack launches from the Sys filesystem now that
+   --  the FS chain is online (milestone 29): bind the fs client
+   --  and let the devmgr run Sys:System/Startup.
+   Akernel_User.Files.Bind (FS_EP);
+   Device_Manager.Start_Display;
 
    Akernel_User.Syscalls.Yield;
    Akernel_User.Syscalls.Debug_Put_Line ("init resumed");

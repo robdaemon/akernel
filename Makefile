@@ -84,8 +84,9 @@ terminal:
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
 #  multi-cluster chain), SUBDIR/HELLO.TXT and LongFileName.txt.
 #  System/Partmgr serves the partition to System/Fat32 behind the
-#  file server's VFS; the raw device (incl. GPT) stays BD0:disk.
-$(DISK_IMG):
+#  file server's VFS; the raw device (incl. GPT) stays WD0:disk
+#  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
+$(DISK_IMG): $(BUREAU_ELF) $(TERMINAL_ELF)
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
@@ -99,6 +100,11 @@ $(DISK_IMG):
 	mmd -i $@@@1048576 ::SUBDIR
 	mcopy -i $@@@1048576 $(INITRD_OUT)/hello.txt ::SUBDIR/HELLO.TXT
 	mcopy -i $@@@1048576 $(INITRD_OUT)/longfile.txt "::LongFileName.txt"
+	mmd -i $@@@1048576 ::System
+	mcopy -i $@@@1048576 $(BUREAU_ELF) ::System/Bureau
+	mcopy -i $@@@1048576 $(TERMINAL_ELF) ::System/Terminal
+	printf 'System/Bureau\nSystem/Terminal\n' > $(INITRD_OUT)/startup
+	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
 initrd: $(INITRD_IMG)
 

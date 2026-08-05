@@ -2,6 +2,7 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Akernel_User.Syscalls;
+with Akernel_User.Files;
 with Device_Tree;
 
 package body Device_Manager is
@@ -70,6 +71,16 @@ package body Device_Manager is
    Op_Set_Focus      : constant U64 := 26;
    Input_Svc     : array (0 .. 3) of U64 := (others => 0);
    Input_Count   : Natural := 0;
+   --  Class-16 (GPU) display endpoint, recorded at spawn; the
+   --  display stack (Bureau + terminal) launches from the Sys
+   --  filesystem in Start_Display once init has the FS chain
+   --  online (milestone 29).
+   GPU_Svc : U64 := 0;
+   --  Scratch VA for staging FS files into memory objects.
+   Stage_VA : constant U64 := 16#5C00_0000#;
+   --  Sys:System/Startup contents (library-level: init's stack is
+   --  only 4 pages — do NOT put kilobyte buffers on it).
+   Startup_Buf : String (1 .. 2048) := (others => Character'Val (0));
 
    function Block_Service return U64 is (Block_EP);
    Next_Id         : U64 := First_Driver_Id;
@@ -634,137 +645,305 @@ package body Device_Manager is
          Log ("devmgr: driver config push failed");
       end if;
 
-      --  GPU (class 16): spawn the Bureau compositor, then the
-      --  terminal client. Bureau takes over the scanout through
-      --  the display-service protocol (the GPU driver's text
-      --  console goes dark — it is NOT attached as a sink); the
-      --  terminal's stream endpoint is the console sink (the
-      --  Startup-Sequence CLI look: boot output scrolls in the
-      --  terminal window's pane). Bureau handles: 1 = console
-      --  Send (badged), 2 = display endpoint Send, 3 = window
-      --  service Receive. Terminal handles: 1 = console Send
-      --  (badged), 2 = Bureau window service Send, 3 = sink
-      --  endpoint Receive.
+      --  GPU (class 16): record the display endpoint. The
+      --  display stack (Bureau compositor + terminal client)
+      --  launches later from the Sys filesystem — see
+      --  Start_Display, called by init once the FS chain is
+      --  online (milestone 29). Bureau takes over the scanout
+      --  through the display-service protocol (the GPU
+      --  driver's text console goes dark — it is NOT attached
+      --  as a sink); the terminal's stream endpoint is the
+      --  console sink (the Startup-Sequence CLI look: boot
+      --  output scrolls in the terminal window's pane).
       if L.Class_Id = 16 then
-         declare
-            Bureau_Img : constant U64 := Boot_Cap ("System/Bureau");
-            Term_Img   : constant U64 := Boot_Cap ("System/Terminal");
-            Term_Sink  : U64;
-            Sink       : U64;
-         begin
-            if Bureau_Img = 0 then
-               Log ("devmgr: bureau image unknown");
-            else
-               Bureau_Svc := EP_Create;
-               if Bureau_Svc = Syscall_Failed then
-                  Log ("devmgr: bureau svc ep failed");
-               else
-                  Grant_Count := 0;
-                  Set_Grant (Grant_Count, Console_Handle, Right_Send,
-                             Next_Id);
-                  Grant_Count := Grant_Count + 1;
-                  Set_Grant (Grant_Count, Svc_EP, Right_Send, 0);
-                  Grant_Count := Grant_Count + 1;
-                  Set_Grant (Grant_Count, Bureau_Svc, Right_Receive,
-                             0);
-                  Grant_Count := Grant_Count + 1;
-                  if Spawn (Bureau_Img, Grant_Count, Process_Cap) =
-                       Spawn_Ok
-                    and then Process_Cap /= 0
-                  then
-                     Next_Id := Next_Id + 1;
-                     Log ("devmgr: spawned System/Bureau");
-                  else
-                     Log ("devmgr: bureau spawn failed");
-                  end if;
-               end if;
-            end if;
-
-            if Bureau_Svc /= 0 and then Term_Img /= 0 then
-               Term_Sink := EP_Create;
-               if Term_Sink = Syscall_Failed then
-                  Log ("devmgr: terminal sink ep failed");
-               else
-                  Grant_Count := 0;
-                  Set_Grant (Grant_Count, Console_Handle, Right_Send,
-                             Next_Id);
-                  Grant_Count := Grant_Count + 1;
-                  Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
-                  Grant_Count := Grant_Count + 1;
-                  Set_Grant (Grant_Count, Term_Sink, Right_Receive,
-                             0);
-                  Grant_Count := Grant_Count + 1;
-                  if Spawn (Term_Img, Grant_Count, Process_Cap) =
-                       Spawn_Ok
-                    and then Process_Cap /= 0
-                  then
-                     Next_Id := Next_Id + 1;
-                     Log ("devmgr: spawned System/Terminal");
-                     Sink := Cap_Mint
-                       (Term_Sink, Right_Send + Right_Transfer, 0);
-                     if Sink = Syscall_Failed then
-                        Log ("devmgr: terminal sink mint failed");
-                     else
-                        Message.Label := Op_Attach_Sink_Label;
-                        Message.Words := (others => 0);
-                        Message.Caps := (others => 0);
-                        Message.Caps (0) := Sink;
-                        if IPC_Call (Console_Handle) /= IPC_Ok
-                          or else Message.Words (0) /= 0
-                        then
-                           Log ("devmgr: terminal sink attach failed");
-                        end if;
-                        Result := Cap_Delete (Sink);
-
-                        --  Seat wiring: Bureau learns the focus,
-                        --  the input drivers learn Bureau.
-                        Sink := Cap_Mint
-                          (Term_Sink, Right_Send + Right_Transfer, 0);
-                        if Sink = Syscall_Failed then
-                           Log ("devmgr: focus mint failed");
-                        else
-                           Message.Label := Op_Set_Focus;
-                           Message.Words := (others => 0);
-                           Message.Caps := (others => 0);
-                           Message.Caps (0) := Sink;
-                           if IPC_Call (Bureau_Svc) /= IPC_Ok
-                             or else Message.Words (0) /= 0
-                           then
-                              Log ("devmgr: focus push failed");
-                           end if;
-                           Result := Cap_Delete (Sink);
-                        end if;
-
-                        for I in 0 .. Input_Count - 1 loop
-                           Sink := Cap_Mint
-                             (Bureau_Svc, Right_Send + Right_Transfer,
-                              0);
-                           if Sink = Syscall_Failed then
-                              Log ("devmgr: seat mint failed");
-                           else
-                              Message.Label := Seat_Config_Label;
-                              Message.Words := (others => 0);
-                              Message.Caps := (others => 0);
-                              Message.Caps (0) := Sink;
-                              if IPC_Call (Input_Svc (I)) /= IPC_Ok
-                                or else Message.Words (0) /= 0
-                              then
-                                 Log ("devmgr: seat push failed");
-                              end if;
-                              Result := Cap_Delete (Sink);
-                           end if;
-                        end loop;
-                     end if;
-                  else
-                     Log ("devmgr: terminal spawn failed");
-                  end if;
-               end if;
-            elsif Bureau_Svc /= 0 then
-               Log ("devmgr: terminal image unknown");
-            end if;
-         end;
+         GPU_Svc := Svc_EP;
+         Log ("devmgr: gpu online");
       end if;
    end Spawn_PCI_Driver;
+
+   ------------------------------------------------------------------
+   --  Display stack launch from the Sys filesystem (milestone 29):
+   --  images are staged from BD0: through the file server into
+   --  memory objects and spawned from the object caps (the
+   --  memstage pattern — no kernel support needed). Handle layout
+   --  is identical to the old initrd spawn, so the seat wiring is
+   --  unchanged.
+   ------------------------------------------------------------------
+
+   --  Read Path from the Sys volume (BD0:) into a fresh memory
+   --  object; returns the object cap (a spawnable image) or 0.
+   function Stage_From_FS (Path : String) return U64 is
+      Full    : constant String := "BD0:" & Path;
+      Size    : U64 := 0;
+      Pages   : U64;
+      Mem_Cap : U64;
+      Off     : U64 := 0;
+      Chunk   : U64;
+      Count   : U64 := 0;
+      St      : U64;
+      Result  : U64;
+   begin
+      St := Akernel_User.Files.Stat (Full, Size);
+      if St /= Akernel_User.Files.Status_Ok then
+         Log ("devmgr: fs stat failed: " & Path);
+         return 0;
+      end if;
+      Pages := (Size + 4095) / 4096;
+      Mem_Cap := Mem_Alloc (Pages);
+      if Mem_Cap = Syscall_Failed then
+         Log ("devmgr: staging alloc failed");
+         return 0;
+      end if;
+      if Mem_Map (Address_Space_Cap, Mem_Cap, Stage_VA, 0,
+                  Pages * 4096, 3) /= 0
+      then
+         Log ("devmgr: staging map failed");
+         Result := Cap_Delete (Mem_Cap);
+         return 0;
+      end if;
+      St := Akernel_User.Files.Open (Full, Size);
+      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+         Chunk := U64'Min (Size - Off, 32768);
+         St := Akernel_User.Files.Read
+           (Full, Off,
+            System.Storage_Elements.To_Address
+              (System.Storage_Elements.Integer_Address
+                 (Stage_VA + Off)),
+            Chunk, Count);
+         if St /= Akernel_User.Files.Status_Ok
+           or else Count /= Chunk
+         then
+            exit;
+         end if;
+         Off := Off + Chunk;
+      end loop;
+      if Mem_Unmap (Address_Space_Cap, Stage_VA, Pages * 4096) /= 0
+      then
+         Log ("devmgr: staging unmap failed");
+      end if;
+      if Off < Size then
+         Log ("devmgr: fs read failed: " & Path);
+         Result := Cap_Delete (Mem_Cap);
+         return 0;
+      end if;
+      return Mem_Cap;
+   end Stage_From_FS;
+
+   --  Bureau handles: 1 = console Send (badged), 2 = display
+   --  endpoint Send, 3 = window service Receive (init keeps the
+   --  Send side as Bureau_Svc).
+   procedure Spawn_Bureau (Image_Cap : U64) is
+      Grant_Count : U64 := 0;
+      Process_Cap : U64;
+   begin
+      Bureau_Svc := EP_Create;
+      if Bureau_Svc = Syscall_Failed then
+         Log ("devmgr: bureau svc ep failed");
+         return;
+      end if;
+      Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, GPU_Svc, Right_Send, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Bureau_Svc, Right_Receive, 0);
+      Grant_Count := Grant_Count + 1;
+      if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
+        and then Process_Cap /= 0
+      then
+         Next_Id := Next_Id + 1;
+         Log ("devmgr: spawned System/Bureau");
+      else
+         Log ("devmgr: bureau spawn failed");
+      end if;
+   end Spawn_Bureau;
+
+   --  Terminal handles: 1 = console Send (badged), 2 = Bureau
+   --  window service Send, 3 = sink endpoint Receive. After the
+   --  spawn: attach the sink at the console server, push the
+   --  focus to Bureau, push the seat to every input driver.
+   procedure Spawn_Terminal (Image_Cap : U64) is
+      Grant_Count : U64 := 0;
+      Process_Cap : U64;
+      Term_Sink   : U64;
+      Sink        : U64;
+      Result      : U64;
+   begin
+      if Bureau_Svc = 0 then
+         Log ("devmgr: terminal needs bureau first");
+         return;
+      end if;
+      Term_Sink := EP_Create;
+      if Term_Sink = Syscall_Failed then
+         Log ("devmgr: terminal sink ep failed");
+         return;
+      end if;
+      Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Term_Sink, Right_Receive, 0);
+      Grant_Count := Grant_Count + 1;
+      if Spawn (Image_Cap, Grant_Count, Process_Cap) /= Spawn_Ok
+        or else Process_Cap = 0
+      then
+         Log ("devmgr: terminal spawn failed");
+         return;
+      end if;
+      Next_Id := Next_Id + 1;
+      Log ("devmgr: spawned System/Terminal");
+
+      Sink := Cap_Mint (Term_Sink, Right_Send + Right_Transfer, 0);
+      if Sink = Syscall_Failed then
+         Log ("devmgr: terminal sink mint failed");
+      else
+         Message.Label := Op_Attach_Sink_Label;
+         Message.Words := (others => 0);
+         Message.Caps := (others => 0);
+         Message.Caps (0) := Sink;
+         if IPC_Call (Console_Handle) /= IPC_Ok
+           or else Message.Words (0) /= 0
+         then
+            Log ("devmgr: terminal sink attach failed");
+         end if;
+         Result := Cap_Delete (Sink);
+
+         --  Seat wiring: Bureau learns the focus, the input
+         --  drivers learn Bureau.
+         Sink := Cap_Mint (Term_Sink, Right_Send + Right_Transfer, 0);
+         if Sink = Syscall_Failed then
+            Log ("devmgr: focus mint failed");
+         else
+            Message.Label := Op_Set_Focus;
+            Message.Words := (others => 0);
+            Message.Caps := (others => 0);
+            Message.Caps (0) := Sink;
+            if IPC_Call (Bureau_Svc) /= IPC_Ok
+              or else Message.Words (0) /= 0
+            then
+               Log ("devmgr: focus push failed");
+            end if;
+            Result := Cap_Delete (Sink);
+         end if;
+
+         for I in 0 .. Input_Count - 1 loop
+            Sink := Cap_Mint (Bureau_Svc, Right_Send + Right_Transfer,
+                              0);
+            if Sink = Syscall_Failed then
+               Log ("devmgr: seat mint failed");
+            else
+               Message.Label := Seat_Config_Label;
+               Message.Words := (others => 0);
+               Message.Caps := (others => 0);
+               Message.Caps (0) := Sink;
+               if IPC_Call (Input_Svc (I)) /= IPC_Ok
+                 or else Message.Words (0) /= 0
+               then
+                  Log ("devmgr: seat push failed");
+               end if;
+               Result := Cap_Delete (Sink);
+            end if;
+         end loop;
+      end if;
+   end Spawn_Terminal;
+
+   --  Called by init after the FS chain is online: read
+   --  Sys:System/Startup (one volume-relative program path per
+   --  line, the Startup-Sequence analog) and spawn each known
+   --  entry from the filesystem. Falls back to the initrd boot
+   --  images when the list is unavailable (transition aid).
+   procedure Start_Display is
+      List   : constant String := "BD0:System/Startup";
+      Size   : U64 := 0;
+      St     : U64;
+      Count  : U64 := 0;
+      Tries  : Natural := 0;
+      Buf_Len : Natural := 0;
+      Img    : U64;
+      Result : U64;
+      L0, L1 : Natural;
+   begin
+      if GPU_Svc = 0 then
+         Log ("devmgr: no gpu; display stack skipped");
+         return;
+      end if;
+
+      --  The mount push is a synchronous rendezvous, but tolerate
+      --  a scheduling window anyway.
+      loop
+         St := Akernel_User.Files.Stat (List, Size);
+         exit when St = Akernel_User.Files.Status_Ok;
+         Tries := Tries + 1;
+         if Tries > 200 then
+            exit;
+         end if;
+         Yield;
+      end loop;
+
+      if St = Akernel_User.Files.Status_Ok
+        and then Akernel_User.Files.Open (List, Size) =
+                  Akernel_User.Files.Status_Ok
+      then
+         if Size > U64 (Startup_Buf'Length) then
+            Size := U64 (Startup_Buf'Length);
+         end if;
+         St := Akernel_User.Files.Read
+           (List, 0, Startup_Buf'Address, Size, Count);
+         if St = Akernel_User.Files.Status_Ok then
+            Buf_Len := Natural (Count);
+         end if;
+      end if;
+
+      if Buf_Len = 0 then
+         --  Transition fallback: initrd boot images.
+         Log ("devmgr: no Sys:System/Startup; initrd fallback");
+         Img := Boot_Cap ("System/Bureau");
+         if Img /= 0 then
+            Spawn_Bureau (Img);
+         else
+            Log ("devmgr: bureau image unknown");
+         end if;
+         Img := Boot_Cap ("System/Terminal");
+         if Img /= 0 then
+            Spawn_Terminal (Img);
+         else
+            Log ("devmgr: terminal image unknown");
+         end if;
+         return;
+      end if;
+
+      L0 := 1;
+      while L0 <= Buf_Len loop
+         L1 := L0;
+         while L1 <= Buf_Len
+           and then Startup_Buf (L1) /= Character'Val (10)
+           and then Startup_Buf (L1) /= Character'Val (13)
+         loop
+            L1 := L1 + 1;
+         end loop;
+         if L1 > L0 then
+            declare
+               Line : constant String := Startup_Buf (L0 .. L1 - 1);
+            begin
+               if Line = "System/Bureau" then
+                  Img := Stage_From_FS (Line);
+                  if Img /= 0 then
+                     Spawn_Bureau (Img);
+                     Result := Cap_Delete (Img);
+                  end if;
+               elsif Line = "System/Terminal" then
+                  Img := Stage_From_FS (Line);
+                  if Img /= 0 then
+                     Spawn_Terminal (Img);
+                     Result := Cap_Delete (Img);
+                  end if;
+               else
+                  Log ("devmgr: startup entry unknown: " & Line);
+               end if;
+            end;
+         end if;
+         L0 := L1 + 1;
+      end loop;
+   end Start_Display;
 
    --  BARs and discovered regions for one matched function (its
    --  config page is the one currently mapped at ECAM_VA).

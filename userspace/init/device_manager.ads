@@ -23,5 +23,9 @@ with Akernel_User.Syscalls;
 
 package Device_Manager is
    procedure Run (Console_EP : Akernel_User.Syscalls.U64);
+   --  Launch the display stack (Bureau + terminal) from the Sys
+   --  filesystem; call after the FS chain is online and
+   --  Akernel_User.Files is bound.
+   procedure Start_Display;
    function Block_Service return Akernel_User.Syscalls.U64;
 end Device_Manager;

@@ -720,10 +720,30 @@ Next candidates (order open):
     server matched the raw one first) — raw partition
     volumes stay PD0..; host mdir shows "Volume ... is Sys",
     fsck clean, 173/173 SMP1, fuzz failures=0. 29b
-    FS-resident images out of the initrd, 29c
-    exec-from-volume + Startup list. Milestone 30 =
-    multi-window + focus, 31 = interactive shell in the
-    terminal (launched from Sys:).
+    29b FS-resident images out of the initrd, ~~29c
+    exec-from-volume + Startup list~~ — DONE (committed):
+    disk.img gains :System/Bureau, :System/Terminal and
+    :System/Startup (one path per line; the recipe depends
+    on the ELFs so the image rebuilds when they change).
+    devmgr records GPU_Svc at class-16 instead of spawning,
+    and init calls Device_Manager.Start_Display after the
+    mounts: await + read BD0:System/Startup through the file
+    server, stage each image into a memory object
+    (Stat/Open/Read 32 KiB chunks, the memstage pattern —
+    no kernel work), spawn from the object cap with the
+    SAME grant layout as the initrd spawn, cap_delete the
+    staging object; initrd fallback when the list is
+    unavailable. Burned: INIT ran on ONE 4 KiB stack page
+    (spawned processes got 4 in milestone 18b; init's is
+    set up in akernel.adb) — Start_Display's on-stack
+    buffer + Files frames overflowed it (store fault at
+    stack_base - 8); init now gets 4 stack pages too and
+    the startup buffer is library-level. Verified:
+    "gpu online" -> spawn/bureau desktop/terminal/seat
+    chain from the FS, desktop pixels exact at SMP4,
+    173/173 SMP1, fuzz failures=0, host fsck clean.
+    Milestone 30 = multi-window + focus, 31 = interactive
+    shell in the terminal (launched from Sys:).
 
 Commit between each milestone.
 
