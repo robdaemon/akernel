@@ -19,15 +19,16 @@ VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 VIRTIO_GPU_ELF := bin/userspace/virtio_gpu.elf
 BUREAU_ELF := bin/userspace/bureau.elf
 TERMINAL_ELF := bin/userspace/terminal.elf
+DEMO_ELF := bin/userspace/demo.elf
 DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo initrd run clean clean-kernel clean-userspace clean-initrd
 
-all: kernel initrd bureau terminal
+all: kernel initrd bureau terminal demo
 
 kernel:
 	alr build
@@ -79,6 +80,9 @@ bureau:
 terminal:
 	$(MAKE) -C userspace/terminal
 
+demo:
+	$(MAKE) -C userspace/demo
+
 #  64 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
@@ -88,12 +92,13 @@ terminal:
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): bureau terminal
+$(DISK_IMG): bureau terminal demo
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
 	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt
 	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt
+	rm -f $@
 	truncate -s 67108864 $@
 	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:Sys $@ >/dev/null
 	mkfs.vfat -F 32 -S 512 -s 1 -n Sys --offset 2048 $@ 61440 >/dev/null
@@ -105,7 +110,8 @@ $(DISK_IMG): bureau terminal
 	mmd -i $@@@1048576 ::System
 	mcopy -i $@@@1048576 $(BUREAU_ELF) ::System/Bureau
 	mcopy -i $@@@1048576 $(TERMINAL_ELF) ::System/Terminal
-	printf 'System/Bureau\nSystem/Terminal\n' > $(INITRD_OUT)/startup
+	mcopy -i $@@@1048576 $(DEMO_ELF) ::System/Demo
+	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
 initrd: $(INITRD_IMG)

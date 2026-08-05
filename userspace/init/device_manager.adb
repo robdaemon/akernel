@@ -838,6 +838,39 @@ package body Device_Manager is
       end if;
    end Spawn_Terminal;
 
+   --  Generic GUI client (milestone 30b): 1 = Bureau window
+   --  service Send, 2 = input sink endpoint Receive, 3 = input
+   --  sink Send+Transfer (pushed to Bureau at Surface_Create).
+   procedure Spawn_Gui_Client (Path : String; Image_Cap : U64) is
+      Grant_Count : U64 := 0;
+      Process_Cap : U64;
+      Sink_EP     : U64;
+   begin
+      if Bureau_Svc = 0 then
+         Log ("devmgr: gui client needs bureau first");
+         return;
+      end if;
+      Sink_EP := EP_Create;
+      if Sink_EP = Syscall_Failed then
+         Log ("devmgr: gui sink ep failed");
+         return;
+      end if;
+      Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Sink_EP, Right_Receive, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Sink_EP, Right_Send + Right_Transfer,
+                 0);
+      Grant_Count := Grant_Count + 1;
+      if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
+        and then Process_Cap /= 0
+      then
+         Log ("devmgr: spawned " & Path);
+      else
+         Log ("devmgr: gui client spawn failed");
+      end if;
+   end Spawn_Gui_Client;
+
    --  Called by init after the FS chain is online: read
    --  Sys:System/Startup (one volume-relative program path per
    --  line, the Startup-Sequence analog) and spawn each known
@@ -929,7 +962,12 @@ package body Device_Manager is
                      Result := Cap_Delete (Img);
                   end if;
                else
-                  Log ("devmgr: startup entry unknown: " & Line);
+                  --  Generic GUI client (System/Demo ...).
+                  Img := Stage_From_FS (Line);
+                  if Img /= 0 then
+                     Spawn_Gui_Client (Line, Img);
+                     Result := Cap_Delete (Img);
+                  end if;
                end if;
             end;
          end if;

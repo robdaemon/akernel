@@ -505,6 +505,32 @@ procedure Bureau is
       Cursor_Draw (NX, NY);
    end Cursor_Move;
 
+   Prev_Buttons : U64 := 0;
+
+   --  Click-to-focus (slice b): button0 press inside a window
+   --  raises it to the top and gives it the keys.
+   procedure Pointer_Press (PX, PY : U64) is
+   begin
+      for I in reverse 1 .. Z_N loop
+         declare
+            S : constant Natural := Z (I);
+         begin
+            if PX >= Wins (S).X
+              and then PX < Wins (S).X + Wins (S).FW
+              and then PY >= Wins (S).Y
+              and then PY < Wins (S).Y + Wins (S).FH
+            then
+               if I /= Z_N then
+                  Raise_Slot (S);
+                  Repaint_Window (S);
+               end if;
+               Focus_Slot (S);
+               return;
+            end if;
+         end;
+      end loop;
+   end Pointer_Press;
+
    --  Forward one focused key as a stream Op_Input byte to the
    --  focused window's input endpoint (Stream_Request layout:
    --  Count = word 0, Data (1) = word 1 byte 0).
@@ -915,7 +941,14 @@ begin
               Message.Words (0) * Width / 32768;
             NY : constant U64 :=
               Message.Words (1) * Height / 32768;
+            Buttons : constant U64 := Message.Words (2);
          begin
+            if (Buttons and 1) = 1
+              and then (Prev_Buttons and 1) = 0
+            then
+               Pointer_Press (NX, NY);
+            end if;
+            Prev_Buttons := Buttons;
             Cursor_Move (NX, NY);
          end;
          Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);

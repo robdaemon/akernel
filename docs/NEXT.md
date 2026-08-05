@@ -769,8 +769,21 @@ Next candidates (order open):
     (1024x768 exceeded the 8-chunk surface cap -> No_Slot).
     Verified: window at cascade (32,40), blue title +
     white text, 2 bureau key forwards, 173/173 SMP1, fuzz
-    failures=0. 30b = click-to-focus/raise + second client
-    (demo from Sys:), 30c = title-bar dragging. 31 =
+    failures=0. ~~30b click-to-focus/raise + second
+    client~~ — DONE (committed): Demo crate (color bars +
+    key-strip echo, Sys:System/Demo, generic GUI grant ABI
+    1=Bureau svc Send / 2=sink Receive / 3=sink
+    Send+Transfer; Start_Display spawns unknown Startup
+    entries that way); Bureau tracks button edges, button0
+    press hit-tests top-to-bottom, raises + focuses.
+    Burned: phony disk.img deps rebuilt the image every
+    run on top of the EXISTING GPT (sgdisk "could not
+    create partition") — the recipe now rm -f's first.
+    Verified on screen: demo occludes terminal pane
+    (frame pixel at the overlap), QMP click in the
+    terminal pane raises it (blue title, pane over demo),
+    key forwards to the focused window, 173/173 SMP1,
+    fuzz failures=0. 30c = title-bar dragging. 31 =
     interactive shell in the terminal (launched from
     Sys:).
 
