@@ -250,10 +250,13 @@ package Kernel.Tasks is
       Result    : out Kernel.Capabilities.Status;
       Out_Entry : out Kernel.Capabilities.Cap_Entry);
 
+   --  Thread_Dying must be True only when closing caps as part of
+   --  the thread's own teardown (see Cleanup_Thread_Cap_Object).
    procedure Close_Cap
-     (Thread : not null Thread_Access;
-      Cap    : Kernel.Capabilities.Handle;
-      Result : out Kernel.Capabilities.Status);
+     (Thread       : not null Thread_Access;
+      Cap          : Kernel.Capabilities.Handle;
+      Result       : out Kernel.Capabilities.Status;
+      Thread_Dying : Boolean := False);
 
    --  Raw close with no cleanup hooks: table entry only. Used by the
    --  IPC reply path to consume a reply cap whose target was already

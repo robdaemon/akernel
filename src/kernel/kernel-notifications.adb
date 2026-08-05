@@ -169,10 +169,14 @@ package body Kernel.Notifications is
 
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
-      Object : System.Address)
+      Object : System.Address;
+      Unbind : Boolean)
    is
       Slot : constant Natural := Slot_Of (Object);
    begin
+      if not Unbind then
+         return;
+      end if;
       if Slot /= 0 and then Pool (Slot).Bound_Thread = Thread then
          Pool (Slot).Bound_Thread := null;
       end if;

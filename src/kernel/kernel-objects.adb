@@ -30,8 +30,9 @@ package body Kernel.Objects is
    end Retain_Cap;
 
    procedure Cleanup_Thread_Cap_Object
-     (Thread : Kernel.Tasks.Thread_Access;
-      Cap    : Kernel.Capabilities.Cap_Entry)
+     (Thread       : Kernel.Tasks.Thread_Access;
+      Cap          : Kernel.Capabilities.Cap_Entry;
+      Thread_Dying : Boolean := False)
    is
       use type Kernel.Capabilities.Object_Kind;
    begin
@@ -69,7 +70,8 @@ package body Kernel.Objects is
                null;
             end if;
          when Kernel.Capabilities.Notification_Object =>
-            Kernel.Notifications.Cleanup_Thread_Cap (Thread, Cap.Object);
+            Kernel.Notifications.Cleanup_Thread_Cap
+              (Thread, Cap.Object, Unbind => Thread_Dying);
             if Kernel.Notifications.Release (Cap.Object) then
                null;
             end if;

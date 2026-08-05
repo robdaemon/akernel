@@ -76,6 +76,8 @@ package body Akernel_User.Files is
       Akernel_User.Files.FS_Cap := FS_Cap;
    end Bind;
 
+   function Endpoint return U64 is (FS_Cap);
+
    procedure Set_Default_Volume (Name : String) is
    begin
       if Name'Length > 0 and then Name'Length <= 16 then

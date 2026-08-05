@@ -15,7 +15,8 @@ package body Akernel_User.Window is
    function Surface_Create
      (EP             : U64;
       Width, Height  : U64;
-      Input_Cap      : U64 := 0;
+      Queue_Cap      : U64 := 0;
+      Ntfn_Cap       : U64 := 0;
       Id, Pages      : out U64;
       Grant_W        : out U64;
       Grant_H        : out U64) return U64
@@ -26,7 +27,8 @@ package body Akernel_User.Window is
       Message.Words (0) := Width;
       Message.Words (1) := Height;
       Message.Caps  := (others => 0);
-      Message.Caps (0) := Input_Cap;
+      Message.Caps (0) := Queue_Cap;
+      Message.Caps (1) := Ntfn_Cap;
       if IPC_Call (EP) /= IPC_Ok then
          return Status_Device;
       end if;

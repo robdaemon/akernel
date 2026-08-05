@@ -375,7 +375,16 @@ namespace mechanism.
 seL4-style: a capability-ownable word of pending signal bits
 (`Notification_Object`, static slab of 16). Signaling ORs bits in;
 waiting consumes them. Rights: Wait = ntfn_wait, Write =
-ntfn_signal, Manage = ntfn_bind_thread.
+ntfn_signal, Manage = ntfn_bind_thread; creation also carries
+Transfer so a signaler mint can cross a message (window protocol
+v3: the consumer pushes a Write+Transfer mint to the producer).
+The thread binding is thread<->object, not cap<->object: closing
+one cap to the object on a live thread never unbinds; the unbind
+hook fires only at thread teardown (`Thread_Dying` on
+Close_Cap/Cleanup_Thread_Cap_Object, set only by Discard_Slot).
+Endpoint/IRQ-line cap-close hooks still clear waiters on any cap
+close — safe only because no code deletes a cap while blocked on
+the object.
 
 ```text
 ntfn_create() -> cap handle or fail          (syscall 18)
@@ -420,7 +429,10 @@ it; rng now drains + acks like every other driver).
 
 ## Deferred
 
-- Plain `send` (notify-style, no reply).
+- Plain `send` (notify-style, no reply). Bureau->client input
+  delivery dodged the need via shared-memory queues +
+  notifications (window protocol v3); revisit if another
+  producer->consumer channel needs it.
 - Register fast path: `call_small`/`send_small` variants carrying
   label + 4 words + no caps in registers. Pure optimization, no
   protocol change; only if profiling justifies.

@@ -798,6 +798,73 @@ Next candidates (order open):
     interactive shell in the terminal (launched from
     Sys:).
 
+31. Interactive shell in the terminal (31a DONE, committed):
+    Terminal is a console device (the CON: analog), not a shell
+    host UI — launching a Terminal starts the shell. Terminal
+    serves Op_Read from a local input FIFO, echoes focused keys
+    into its own text grid (line discipline lives in the console
+    device, never in the shell), stages System/Shell from Sys:
+    (memstage pattern; grant ABI gains handle 5 = fs Send) and
+    spawns it with 1 = Send on its own sink endpoint (badge 1,
+    minted from handle 4 — a Receive-only cap cannot mint Send)
+    and 2 = fs. The shell (userspace/shell, System/Shell) is a
+    plain CLI program: it opens no window, its console channel
+    decides where the session lives (terminal pane today, UART
+    console server if spawned that way). Builtins help/version/
+    exit; anything else is a program path staged + spawned with
+    the shell's own console+fs caps and reap-polled (Reap is
+    non-blocking — poll with Yield). "System/Shell" nests,
+    Amiga-style. Boot mirror + shell share the pane: both write
+    the same sink endpoint, multiplexed by badge. The interim
+    "bureau key" serial log is gone.
+
+    Input delivery had to become ASYNC first — window protocol
+    v3. Burned HARD: Bureau forwarded focused keys with a
+    blocking rendezvous into the client's input endpoint while
+    clients rendezvous back with Surface_Update — any overlap
+    deadlocks the pair (one key in, then Bureau blocked calling
+    the client while the client is blocked calling Bureau;
+    moving the flush to after the reply only moved the
+    deadlock). Worse, the wedge CASCADES: terminal blocked =>
+    console server blocked in the sink RPC => ALL console
+    output stops and every printing process blocks behind it
+    (fuzz "froze" mid-suite — it was the mirror, not the
+    test). v3 (the Amiga message-port model docs/IPC.md always
+    prescribed): each Surface_Create pushes a one-page event
+    queue memobj (caps 0, Map+Read+Write+Transfer — head/tail
+    counters + 255 two-word (kind,value) events, drop-new when
+    full) and a thread-bound notification (caps 1,
+    Write+Transfer). Bureau enqueues focused keys and signals
+    bit 1; it NEVER calls the client. Clients multiplex the
+    synthetic notification message on their service Receive
+    (rng-style) and drain outside any rendezvous. Two kernel
+    fixes this forced: (1) Notification_Full_Rights gained
+    Transfer — a notification cap could never cross a message,
+    so no client could push one (the milestone-21 Transfer
+    burn again). (2) LATENT BUG: Notifications.Cleanup_Thread_
+    Cap ran the thread UNBIND on every cap close, so deleting
+    a minted copy after the transfer silently unbound the
+    client thread from its own object — signals found no bound
+    thread, bits pended forever, zero errors anywhere (6 keys
+    queued+signaled at Bureau, 0 synthetic messages at the
+    terminal). The unbind is thread-lifetime, not cap-lifetime:
+    Cleanup_Thread_Cap_Object/Close_Cap gained a Thread_Dying
+    flag (only Discard_Slot sets it). Same-class hooks on
+    endpoints/IRQ lines (clear waiter on any cap close) only
+    bite when deleting a cap while blocked on the object — no
+    code does that; left as-is. Verified LIVE: click-to-focus
+    the terminal, sendkey types "help"/"version"/"System/Shell"
+    — echo in the pane, help text, milestone banner, nested
+    shell banner+prompt, all screendump-verified; keys survive
+    a concurrently scrolling fuzz mirror. 174 PASS at SMP1 +
+    SMP4, fuzz failures=0, host fsck clean. Next: 31b uniform
+    program ABI (user ruling: a program is GUI only once it
+    calls Surface_Create — every Startup entry gets the same
+    console+fs+Bureau-svc namespace, Spawn_Gui_Client and the
+    special-case ABIs die; Demo migrates), then the deferred
+    list (pointer events to focused clients are still
+    Bureau-internal: focus/raise/drag only).
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -811,12 +878,13 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- Tasking runtime; multi-window GUI (focus, moving windows,
-  xdg-popup-analogs) after milestone 28; zero-copy direct scanout
-  of full-screen client surfaces; MSI-X for virtio-pci (INTx
-  today, shared chains); per-device IOVA spaces (IOVA = PA
-  identity today); pointer events into a structured channel
-  (lands with milestone 28's seat).
+- Tasking runtime; uniform program ABI (milestone 31b: one
+  namespace for every program, windows open only via
+  Surface_Create); pointer events to focused clients (v3 input
+  queue carries keys only; pointer is Bureau-internal for
+  focus/raise/drag); zero-copy direct scanout of full-screen
+  client surfaces; MSI-X for virtio-pci (INTx today, shared
+  chains); per-device IOVA spaces (IOVA = PA identity today).
 
 ## Start by reading
 

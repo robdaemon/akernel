@@ -5,16 +5,20 @@ with Ada.Streams;
 with Akernel_User.Syscalls;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
+with Akernel_User.Files;
 with Akernel_User.Window;
 with Font8x8;
 
---  Terminal: Bureau's first window-protocol client (milestone 28,
---  slice 3). Spawned by the device manager right after Bureau.
---  Grant ABI (3 handles): 1 = console endpoint (Send, badged),
---  2 = Bureau window-service endpoint (Send), 3 = stream sink
---  endpoint (Receive) — the console server mirrors its
---  line-atomic output here (devmgr attaches THIS endpoint via
---  Op_Attach_Sink, replacing the GPU driver's text console).
+--  Terminal: a console device (the CON: analog) living in a
+--  Bureau window. Spawned from the Sys filesystem by the device
+--  manager right after Bureau. Grant ABI (5 handles):
+--  1 = console endpoint (Send, badged), 2 = Bureau window-service
+--  endpoint (Send), 3 = stream sink endpoint (Receive) — the
+--  console server mirrors its line-atomic output here (devmgr
+--  attaches THIS endpoint via Op_Attach_Sink), 4 = Send+Transfer
+--  copy of the sink endpoint (grant source for the shell's
+--  console cap — a Receive-only cap cannot mint Send), 5 = file
+--  server endpoint (Send) — staging authority for the shell.
 --
 --  The terminal allocates its surface buffer (caps move caller ->
 --  callee only), pushes chunk caps to Bureau, renders its text
@@ -22,8 +26,23 @@ with Font8x8;
 --  the Startup-Sequence CLI look), and pushes damaged bands with
 --  Op_Surface_Update. Scroll = memmove inside the surface + one
 --  band update (no device copy exists in virtio-gpu 2D — see the
---  display-service correction in docs/NEXT.md). Input arrives in
---  slice 4 via the Bureau seat; Op_Read stays EOF.
+--  display-service correction in docs/NEXT.md).
+--
+--  Milestone 31 (console device): input arrives on the v3 async
+--  channel — a one-page event queue memory object + a thread-bound
+--  notification, both pushed at Surface_Create. Bureau enqueues
+--  focused keys and signals; it NEVER calls the terminal (a
+--  blocking forward rendezvous deadlocked against the client's
+--  Surface_Update calls — milestone 31 burn). The service loop
+--  multiplexes the synthetic notification message with sink
+--  traffic; drained keys are ECHOED straight into the text grid
+--  (line discipline lives here, like CON:) and queued in a local
+--  input FIFO; Op_Read drains that FIFO (Count = 0 when empty —
+--  single-threaded receiver, reads cannot block). Launching a
+--  terminal starts the shell: System/Shell is staged from the Sys
+--  volume (memstage pattern) and spawned with 1 = Send on this
+--  sink endpoint (badge 1) and 2 = the fs cap, so shell output
+--  lands in this pane alongside the boot mirror.
 
 procedure Terminal is
    use Akernel_User.Syscalls;
@@ -33,12 +52,25 @@ procedure Terminal is
    Console_EP : constant U64 := 1;
    Win_EP     : constant U64 := 2;
    Sink_EP    : constant U64 := 3;
-   --  Send+Transfer copy of the sink endpoint: pushed to Bureau
-   --  at Surface_Create so focused keys arrive here as Op_Input
-   --  (window protocol v2; a Receive-only cap cannot mint Send).
+   --  Send+Transfer copy of the sink endpoint: grant source for
+   --  the shell's console cap (a Receive-only cap cannot mint
+   --  Send; the shell writes its output to this endpoint).
    Sink_Send  : constant U64 := 4;
+   --  File server (Send): staging authority for the shell spawn.
+   FS_EP      : constant U64 := 5;
 
    Buf_VA : constant U64 := 16#6000_0000#;
+   --  v3 input queue (one page, shared RW with Bureau) and the
+   --  thread-bound notification that signals new events.
+   Queue_VA : constant U64 := 16#5080_0000#;
+   Queue_Cap : U64 := 0;
+   Ntfn_Cap  : U64 := 0;
+
+   type Word_Array is array (U64 range 0 .. 511) of U64
+     with Volatile_Components;
+   Queue : Word_Array
+     with Address => System.Storage_Elements.To_Address
+       (System.Storage_Elements.Integer_Address (Queue_VA));
 
    Max_W : constant := 1024;
    Max_H : constant := 768;
@@ -68,6 +100,37 @@ procedure Terminal is
    Cur_Row : U64 := 0;
    Dirty_Y0 : U64 := U64'Last;
    Dirty_Y1 : U64 := 0;
+
+   --  Input FIFO: focused keys (Op_Input bytes) queue here;
+   --  Op_Read drains it. Drop-new on overflow (typing bursts
+   --  never block the seat).
+   Input_Size  : constant := 128;
+   Input_Buf   : String (1 .. Input_Size);
+   Input_Head  : Natural := 0;  --  next write slot (0-based)
+   Input_Count : Natural := 0;
+
+   procedure Input_Put (Ch : Character) is
+   begin
+      if Input_Count = Input_Size then
+         return;  --  full: drop
+      end if;
+      Input_Buf (Input_Head + 1) := Ch;
+      Input_Head := (Input_Head + 1) mod Input_Size;
+      Input_Count := Input_Count + 1;
+   end Input_Put;
+
+   function Input_Get (Ch : out Character) return Boolean is
+      Tail : Natural;
+   begin
+      if Input_Count = 0 then
+         Ch := Character'Val (0);
+         return False;
+      end if;
+      Tail := (Input_Head + Input_Size - Input_Count) mod Input_Size;
+      Ch := Input_Buf (Tail + 1);
+      Input_Count := Input_Count - 1;
+      return True;
+   end Input_Get;
 
    Result : U64;
 
@@ -168,6 +231,31 @@ procedure Terminal is
       end if;
    end Put_Char;
 
+   --  Drain v3 input-queue events into the local FIFO, echoing
+   --  keys into the text grid (buffer only; the band flush is at
+   --  the top of the service loop).
+   procedure Drain_Input_Queue is
+      Head : constant U64 := Queue (Akernel_User.Window.Input_Queue_Head);
+      Tail : U64 := Queue (Akernel_User.Window.Input_Queue_Tail);
+      Slot : U64;
+   begin
+      while Tail < Head loop
+         Slot := Akernel_User.Window.Input_Queue_First
+           + (Tail mod Akernel_User.Window.Input_Queue_Events) * 2;
+         if Queue (Slot) = Akernel_User.Window.Input_Event_Key then
+            declare
+               Ch : constant Character :=
+                 Character'Val (Natural (Queue (Slot + 1) and 16#FF#));
+            begin
+               Input_Put (Ch);
+               Put_Char (Ch);
+            end;
+         end if;
+         Tail := Tail + 1;
+      end loop;
+      Queue (Akernel_User.Window.Input_Queue_Tail) := Tail;
+   end Drain_Input_Queue;
+
    --  Push the damaged surface band to Bureau.
    procedure Flush_Dirty is
       Y0 : U64;
@@ -189,6 +277,76 @@ procedure Terminal is
 
    ------------------------------------------------------------------
 
+   --  Milestone 31: stage System/Shell from the Sys volume into a
+   --  memory object (memstage pattern) and spawn it on this
+   --  terminal's stream endpoint. Launching a terminal starts the
+   --  shell; the shell opens no window itself.
+   Shell_Stage_VA : constant U64 := 16#5400_0000#;
+
+   procedure Spawn_Shell is
+      use System.Storage_Elements;
+      Size     : U64 := 0;
+      Pages    : U64;
+      Mem_Cap  : U64;
+      Off      : U64 := 0;
+      Chunk    : U64;
+      Count    : U64 := 0;
+      St       : U64;
+      Proc_Cap : U64 := 0;
+   begin
+      Akernel_User.Files.Bind (FS_EP);
+      St := Akernel_User.Files.Stat ("BD0:System/Shell", Size);
+      if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+         Debug_Put_Line ("terminal shell stat failed");
+         return;
+      end if;
+      Pages := (Size + 4095) / 4096;
+      Mem_Cap := Mem_Alloc (Pages);
+      if Mem_Cap = Syscall_Failed then
+         Debug_Put_Line ("terminal shell alloc failed");
+         return;
+      end if;
+      if Mem_Map (Address_Space_Cap, Mem_Cap, Shell_Stage_VA, 0,
+                  Pages * 4096, 3) /= 0
+      then
+         Debug_Put_Line ("terminal shell map failed");
+         Result := Cap_Delete (Mem_Cap);
+         return;
+      end if;
+      St := Akernel_User.Files.Open ("BD0:System/Shell", Size);
+      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+         Chunk := U64'Min (Size - Off, 32768);
+         St := Akernel_User.Files.Read
+           ("BD0:System/Shell", Off,
+            System'To_Address (Integer_Address (Shell_Stage_VA + Off)),
+            Chunk, Count);
+         exit when St /= Akernel_User.Files.Status_Ok
+           or else Count /= Chunk;
+         Off := Off + Chunk;
+      end loop;
+      Result := Mem_Unmap (Address_Space_Cap, Shell_Stage_VA,
+                           Pages * 4096);
+      if Off < Size then
+         Debug_Put_Line ("terminal shell read failed");
+         Result := Cap_Delete (Mem_Cap);
+         return;
+      end if;
+      --  Shell handles: 1 = this sink endpoint (Send, badge 1) —
+      --  its console channel — 2 = the fs endpoint (Send).
+      Set_Grant (0, Sink_Send, Right_Send, 1);
+      Set_Grant (1, FS_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 2, Proc_Cap) /= Spawn_Ok
+        or else Proc_Cap = 0
+      then
+         Debug_Put_Line ("terminal shell spawn failed");
+      else
+         Debug_Put_Line ("terminal spawned shell");
+      end if;
+      Result := Cap_Delete (Mem_Cap);
+   end Spawn_Shell;
+
+   ------------------------------------------------------------------
+
    package RPC is new Akernel_User.IPC
      (Akernel_User.Streams.Stream_Request,
       Akernel_User.Streams.Stream_Response);
@@ -207,16 +365,48 @@ procedure Terminal is
    Minted     : U64;
 
 begin
-   --  1. Surface: request the terminal pane (87x29 cells);
-   --  hand over the sink Send cap for focused keys (v2).
-   if Win.Surface_Create
-     (Win_EP, 87 * 8, 29 * 16, Sink_Send, Surf_Id, Pages,
-      Surf_W, Surf_H) /=
-       Win.Status_Ok
-   then
-      Fail ("surface create failed");
+   --  1. v3 input channel: one-page event queue + thread-bound
+   --  notification, pushed to Bureau at Surface_Create.
+   Queue_Cap := Mem_Alloc (1);
+   if Queue_Cap = Syscall_Failed then
+      Fail ("queue alloc failed");
    end if;
-   Result := Cap_Delete (Sink_Send);
+   if Mem_Map (Address_Space_Cap, Queue_Cap, Queue_VA, 0,
+               4096, 3) /= 0
+   then
+      Fail ("queue map failed");
+   end if;
+   Queue (Akernel_User.Window.Input_Queue_Head) := 0;
+   Queue (Akernel_User.Window.Input_Queue_Tail) := 0;
+   Ntfn_Cap := Ntfn_Create;
+   if Ntfn_Cap = Syscall_Failed
+     or else Ntfn_Bind_Thread (Ntfn_Cap) /= 0
+   then
+      Fail ("input ntfn setup failed");
+   end if;
+
+   --  2. Surface: request the terminal pane (87x29 cells); hand
+   --  over the input queue + notification (v3).
+   declare
+      Q_Mint : constant U64 := Cap_Mint
+        (Queue_Cap, Right_Map + Right_Read + Right_Write +
+         Right_Transfer, 0);
+      N_Mint : constant U64 := Cap_Mint
+        (Ntfn_Cap, Right_Write + Right_Transfer, 0);
+   begin
+      if Q_Mint = Syscall_Failed or else N_Mint = Syscall_Failed then
+         Fail ("input mint failed");
+      end if;
+      if Win.Surface_Create
+        (Win_EP, 87 * 8, 29 * 16, Q_Mint, N_Mint, Surf_Id, Pages,
+         Surf_W, Surf_H) /=
+          Win.Status_Ok
+      then
+         Fail ("surface create failed");
+      end if;
+      Result := Cap_Delete (Q_Mint);
+      Result := Cap_Delete (N_Mint);
+   end;
    if Win.Surface_Set_Title
      (Win_EP, Surf_Id, "System/Terminal") /= Win.Status_Ok
    then
@@ -294,45 +484,86 @@ begin
    Flush_Dirty;
    Debug_Put_Line ("terminal online");
 
-   --  4. Stream sink service: Op_Write renders text.
+   --  Launching a terminal starts the shell (milestone 31). Its
+   --  first console write rendezvous-waits until the service loop
+   --  below receives.
+   Spawn_Shell;
+   Result := Cap_Delete (Sink_Send);
+
+   --  4. Stream sink service: Op_Write renders text; Op_Input
+   --  queues focused keys + echoes them into the grid; Op_Read
+   --  drains the input FIFO. Damaged bands flush at the TOP of
+   --  the loop, AFTER the reply: an Op_Input is Bureau calling
+   --  us, and calling Bureau back (Surface_Update) before
+   --  replying deadlocks the rendezvous pair (docs/IPC.md:
+   --  never call your caller while serving it).
    loop
+      Flush_Dirty;
       Status := RPC.Receive (Sink_EP, Label, Request, Badge, Caps);
       if Status /= IPC_Ok then
          Debug_Put_Line ("terminal recv failed");
          Process_Exit;
       end if;
 
-      if Label = Akernel_User.Streams.Op_Write then
+      if Label = Notification_Label then
+         --  v3 input signal (synthetic message, NO reply cap):
+         --  Bureau enqueued events; drain at our own pace.
+         Drain_Input_Queue;
+
+      elsif Label = Akernel_User.Streams.Op_Write then
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop
             Put_Char (Character'Val (Natural (Request.Data (I))));
          end loop;
-         Flush_Dirty;
          Response := (Count => Request.Count, Data => (others => 0));
          if RPC.Reply (Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
       elsif Label = Akernel_User.Streams.Op_Input then
-         --  Seat input (Bureau forwards focused keys as Op_Input
-         --  bytes): inject into the console server's input FIFO,
-         --  same channel the UART RX and (pre-seat) keyboard
-         --  driver feed. A future shell reads it via Op_Read.
-         declare
-            Fwd   : Akernel_User.Streams.Stream_Request;
-            Fresp : Akernel_User.Streams.Stream_Response;
-            Rlbl  : U64;
-         begin
-            Fwd.Count := Request.Count;
-            Fwd.Data := Request.Data;
-            if RPC.Call (Console_EP, Akernel_User.Streams.Op_Input,
-                         Fwd, RPC.No_Caps, Rlbl, Fresp) /= IPC_Ok
-            then
-               Debug_Put_Line ("terminal console input failed");
-            end if;
-         end;
+         --  Seat input (focused keys from Bureau): queue for
+         --  Op_Read and echo into the text grid — line discipline
+         --  lives in the console device. Buffer only: the band
+         --  flush happens at the top of the loop, after the reply
+         --  (see the loop comment).
+         for I in 1 .. Ada.Streams.Stream_Element_Offset
+           (Request.Count)
+         loop
+            declare
+               Ch : constant Character :=
+                 Character'Val (Natural (Request.Data (I)));
+            begin
+               Input_Put (Ch);
+               Put_Char (Ch);
+            end;
+         end loop;
          Response := (Count => Request.Count, Data => (others => 0));
+         if RPC.Reply (Label, Response) /= IPC_Ok then
+            Debug_Put_Line ("terminal reply failed");
+            Process_Exit;
+         end if;
+      elsif Label = Akernel_User.Streams.Op_Read then
+         --  Drain the input FIFO (Count = 0 when empty).
+         declare
+            Ch : Character;
+         begin
+            Response.Count := 0;
+            Response.Data := (others => 0);
+            while Response.Count <
+              Akernel_User.Syscalls.U64 (Request.Count)
+              and then Response.Count <
+                Akernel_User.Syscalls.U64
+                  (Akernel_User.Streams.Max_Chunk)
+              and then Input_Get (Ch)
+            loop
+               Response.Count := Response.Count + 1;
+               Response.Data
+                 (Ada.Streams.Stream_Element_Offset
+                    (Response.Count)) :=
+                 Ada.Streams.Stream_Element (Character'Pos (Ch));
+            end loop;
+         end;
          if RPC.Reply (Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;

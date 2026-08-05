@@ -4,7 +4,6 @@ with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Display;
 with Akernel_User.Window;
-with Akernel_User.Streams;
 with Font8x8;
 
 --  Bureau: the compositor / window server. Spawned by the device
@@ -42,6 +41,8 @@ procedure Bureau is
    --  Per-slot client surface maps: 4 MiB stride starting here.
    Surf_VA0 : constant U64 := 16#6800_0000#;
    Surf_Slot_Stride : constant U64 := 16#40_0000#;
+   --  Per-slot client input-queue maps (v3): one page each.
+   Queue_VA0 : constant U64 := 16#6A00_0000#;
 
    Max_W : constant := 1024;
    Max_H : constant := 768;
@@ -112,7 +113,12 @@ procedure Bureau is
       Got      : Natural := 0;
       Mapped   : Boolean := False;
       Caps     : Cap_Set := (others => 0);
-      Input_EP : U64 := 0;   --  client's input stream (Send)
+      --  v3 async input: client's one-page event queue (mapped
+      --  RW at Queue_VA (slot)) + its thread-bound notification
+      --  (Write). Bureau enqueues focused keys and signals; it
+      --  never calls the client.
+      Queue_Cap : U64 := 0;
+      Ntfn_Cap  : U64 := 0;
       Title    : String (1 .. 40) := (others => ' ');
       Title_Len : Natural := 0;
    end record;
@@ -132,6 +138,13 @@ procedure Bureau is
       end loop;
       return 0;
    end Slot_Of;
+
+   function Queue_VA (Slot : Natural) return U64 is
+     (Queue_VA0 + U64 (Slot - 1) * 4096);
+
+   --  v3 input queue word view (layout in akernel_user-window.ads).
+   type Word_Array is array (U64 range 0 .. 511) of U64
+     with Volatile_Components;
 
    function Surf_VA (Slot : Natural) return U64 is
      (Surf_VA0 + U64 (Slot - 1) * Surf_Slot_Stride);
@@ -562,21 +575,37 @@ procedure Bureau is
       end loop;
    end Pointer_Press;
 
-   --  Forward one focused key as a stream Op_Input byte to the
-   --  focused window's input endpoint (Stream_Request layout:
-   --  Count = word 0, Data (1) = word 1 byte 0).
+   --  Enqueue one focused key into the focused window's input
+   --  queue and signal its notification (v3: shared memory +
+   --  signal — Bureau NEVER calls the client; a blocking forward
+   --  rendezvous deadlocked against the client's Surface_Update
+   --  calls, milestone 31 burn). Drop-new when the ring is full.
    procedure Forward_Key (Ch : U64) is
+      Q  : Word_Array
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (Queue_VA (Focus)));
+      Head : U64;
+      Tail : U64;
+      Slot : U64;
+      Res  : U64;
    begin
-      if Focus = 0 or else Wins (Focus).Input_EP = 0 then
+      if Focus = 0 or else Wins (Focus).Queue_Cap = 0 then
          return;
       end if;
-      Message.Label := Akernel_User.Streams.Op_Input;
-      Message.Words := (others => 0);
-      Message.Words (0) := 1;
-      Message.Words (1) := Ch;
-      Message.Caps := (others => 0);
-      if IPC_Call (Wins (Focus).Input_EP) /= IPC_Ok then
-         Debug_Put_Line ("bureau focus key forward failed");
+      Head := Q (Win.Input_Queue_Head);
+      Tail := Q (Win.Input_Queue_Tail);
+      if Head - Tail >= Win.Input_Queue_Events then
+         return;  --  full: drop
+      end if;
+      Slot := Win.Input_Queue_First
+        + (Head mod Win.Input_Queue_Events) * 2;
+      Q (Slot)     := Win.Input_Event_Key;
+      Q (Slot + 1) := Ch;
+      Q (Win.Input_Queue_Head) := Head + 1;
+      Res := Ntfn_Signal (Wins (Focus).Ntfn_Cap,
+                          Win.Input_Signal_Bit);
+      if Res /= 0 then
+         Debug_Put_Line ("bureau input signal failed");
       end if;
    end Forward_Key;
 
@@ -747,9 +776,31 @@ begin
                   Wins (Slot).Got      := 0;
                   Wins (Slot).Mapped   := False;
                   Wins (Slot).Caps     := (others => 0);
-                  Wins (Slot).Input_EP := Message.Caps (0);
+                  Wins (Slot).Queue_Cap := Message.Caps (0);
+                  Wins (Slot).Ntfn_Cap  := Message.Caps (1);
                   Wins (Slot).Title    := (others => ' ');
                   Wins (Slot).Title_Len := 0;
+                  --  v3: map the client's input queue RW (the
+                  --  one-page memobj arrives with Map+Read+
+                  --  Write+Transfer).
+                  if Wins (Slot).Queue_Cap /= 0 then
+                     if Mem_Map
+                       (Address_Space => Address_Space_Cap,
+                        Cap           => Wins (Slot).Queue_Cap,
+                        VA            => Queue_VA (Slot),
+                        Offset        => 0,
+                        Length        => 4096,
+                        Flags         => 3) /= 0
+                     then
+                        Debug_Put_Line ("bureau queue map failed");
+                        Result := Cap_Delete (Wins (Slot).Queue_Cap);
+                        Wins (Slot).Queue_Cap := 0;
+                        if Wins (Slot).Ntfn_Cap /= 0 then
+                           Result := Cap_Delete (Wins (Slot).Ntfn_Cap);
+                           Wins (Slot).Ntfn_Cap := 0;
+                        end if;
+                     end if;
+                  end if;
                   Z_N := Z_N + 1;
                   Z (Z_N) := Slot;
                   Focus_Slot (Slot);
@@ -888,8 +939,13 @@ begin
                         Result := Cap_Delete (Wins (S).Caps (I));
                      end if;
                   end loop;
-                  if Wins (S).Input_EP /= 0 then
-                     Result := Cap_Delete (Wins (S).Input_EP);
+                  if Wins (S).Queue_Cap /= 0 then
+                     Result := Mem_Unmap
+                       (Address_Space_Cap, Queue_VA (S), 4096);
+                     Result := Cap_Delete (Wins (S).Queue_Cap);
+                  end if;
+                  if Wins (S).Ntfn_Cap /= 0 then
+                     Result := Cap_Delete (Wins (S).Ntfn_Cap);
                   end if;
                   Wins (S).Used := False;
                   --  Remove from the z-order.
@@ -956,14 +1012,7 @@ begin
          Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Key then
-         declare
-            Ch : constant U64 := Message.Words (0);
-         begin
-            --  Interim chain proof (remove when the shell lands,
-            --  milestone 31): serial-log each key.
-            Debug_Put_Line ("bureau key");
-            Forward_Key (Ch);
-         end;
+         Forward_Key (Message.Words (0));
          Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Pointer then

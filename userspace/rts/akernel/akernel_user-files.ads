@@ -112,6 +112,10 @@ package Akernel_User.Files is
    --  Bind the package to a file-server endpoint cap (Send right).
    procedure Bind (FS_Cap : U64);
 
+   --  The bound endpoint cap (0 before Bind): lets a spawner grant
+   --  the same file service onward to a child.
+   function Endpoint return U64;
+
    --  Default volume for unqualified names (initially "RD0").
    procedure Set_Default_Volume (Name : String);
 

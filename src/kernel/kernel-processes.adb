@@ -198,7 +198,8 @@ package body Kernel.Processes is
       if Close_Caps then
          for Cap in Kernel.Capabilities.Handle loop
             Kernel.Tasks.Close_Cap
-              (Threads (Slot)'Unchecked_Access, Cap, Cap_Result);
+              (Threads (Slot)'Unchecked_Access, Cap, Cap_Result,
+               Thread_Dying => True);
          end loop;
       else
          Kernel.Tasks.Reset_Process_Caps (Processes (Slot));

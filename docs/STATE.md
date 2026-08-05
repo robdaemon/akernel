@@ -154,13 +154,21 @@ QEMU virt RAM base:     0x80000000
   (devmgr-scanned bus 0, devmgr-assigned BARs, per-region caps from
   the vendor capability list, INTx via the host interrupt-map;
   virtio-rng live; virtio-blk live with a block-backed BD0 raw
-  volume; virtio-input live — keyboard chars flow through the
-  stream protocol's Op_Input into the console server's input FIFO
-  (UART RX feeds it too, client Op_Read drains), tablet pointer
-  events are serial-logged for now; virtio-gpu live — the console
+  volume; virtio-input live — keyboard + tablet feed the seat:
+  events go to the Bureau compositor (Op_Key/Op_Pointer), which
+  enqueues focused keys into each window's async input queue
+  (window protocol v3: one-page event ring memobj + thread-bound
+  notification per surface, pushed at Surface_Create; Bureau
+  never calls its clients) and owns pointer focus/raise/drag;
+  virtio-gpu live — the console
   server mirrors its line-atomic output to the display over
   stream-protocol sink endpoints (Op_Attach_Sink, devmgr-wired),
-  serial stays as the debug/logging copy). The block
+  serial stays as the debug/logging copy). The terminal is a
+  console device (CON: analog) in a Bureau window: it echoes
+  focused keys into its text grid, serves Op_Read from its input
+  FIFO, and launches System/Shell from the Sys volume (plain CLI
+  program on its stream endpoint; builtins + spawn-and-await of
+  FS-resident programs, nestable). The block
   stack is driver -> partition -> filesystem: System/Partmgr
   probes GPT (MBR primary entries as fallback, slot 0 = whole
   disk without either) and serves block protocol with

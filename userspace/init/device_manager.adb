@@ -758,9 +758,12 @@ package body Device_Manager is
    end Spawn_Bureau;
 
    --  Terminal handles: 1 = console Send (badged), 2 = Bureau
-   --  window service Send, 3 = sink endpoint Receive. After the
-   --  spawn: attach the sink at the console server, push the
-   --  focus to Bureau, push the seat to every input driver.
+   --  window service Send, 3 = sink endpoint Receive, 4 = sink
+   --  Send+Transfer (pushed to Bureau at Surface_Create), 5 =
+   --  file server Send (shell staging authority — launching a
+   --  terminal starts the shell, milestone 31). After the spawn:
+   --  attach the sink at the console server and push the seat to
+   --  every input driver.
    procedure Spawn_Terminal (Image_Cap : U64) is
       Grant_Count : U64 := 0;
       Process_Cap : U64;
@@ -783,11 +786,17 @@ package body Device_Manager is
       Grant_Count := Grant_Count + 1;
       Set_Grant (Grant_Count, Term_Sink, Right_Receive, 0);
       Grant_Count := Grant_Count + 1;
-      --  Handle 4: Send+Transfer copy of the sink endpoint — the
-      --  terminal pushes it to Bureau at Surface_Create (window
-      --  protocol v2 focused keys).
+      --  Handle 4: Send+Transfer copy of the sink endpoint —
+      --  grant source for the shell's console cap (a Receive-
+      --  only cap cannot mint Send).
       Set_Grant (Grant_Count, Term_Sink, Right_Send + Right_Transfer,
                  0);
+      Grant_Count := Grant_Count + 1;
+      --  Handle 5: file server Send — the terminal stages and
+      --  spawns System/Shell (memstage pattern) once its surface
+      --  is up.
+      Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
+                 Right_Send, 0);
       Grant_Count := Grant_Count + 1;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) /= Spawn_Ok
         or else Process_Cap = 0

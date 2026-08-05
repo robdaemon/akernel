@@ -80,7 +80,7 @@ package Akernel_User.Syscalls is
 
    --  Notification objects (docs/IPC.md): a word of pending signal
    --  bits with an optional bound thread. Ntfn_Create returns a cap
-   --  handle (Wait+Write+Manage) or Syscall_Failed. Ntfn_Wait
+   --  handle (Wait+Write+Transfer+Manage) or Syscall_Failed. Ntfn_Wait
    --  blocks until bits are pending and returns them (consumed),
    --  Syscall_Failed on a bad cap. A thread binds one notification
    --  to itself (Ntfn_Bind_Thread, Manage right); IPC_Recv then

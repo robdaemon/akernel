@@ -32,7 +32,9 @@ package Kernel.Notifications is
 
    --  Rights granted to the creator of a notification object.
    --  Wait = ntfn_wait, Write = ntfn_signal (writing bits into the
-   --  object), Manage = ntfn_bind_thread.
+   --  object), Manage = ntfn_bind_thread. Transfer: a signaler cap
+   --  must travel in messages (window protocol v3 pushes a
+   --  Write+Transfer mint to the event producer).
    Notification_Full_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => False,
       Write    => True,
@@ -42,7 +44,7 @@ package Kernel.Notifications is
       Receive  => False,
       Wait     => True,
       Ack      => False,
-      Transfer => False,
+      Transfer => True,
       Manage   => True);
 
    --  Allocate a zeroed notification from the static slab. On Ok the
@@ -77,10 +79,15 @@ package Kernel.Notifications is
       Thread : Kernel.Tasks.Thread_Access;
       Result : out Status);
 
-   --  Cap-close hook: clears the thread binding on both sides.
+   --  Cap-close hook. Unbind = True (thread teardown only): clears
+   --  the thread binding on both sides. Unbind = False (ordinary
+   --  cap_delete on a live thread): no-op — closing ONE cap to the
+   --  object (e.g. a minted copy after a transfer) must not tear
+   --  down the binding, which is thread<->object, not cap<->object.
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
-      Object : System.Address);
+      Object : System.Address;
+      Unbind : Boolean);
 
 private
    type Notification is record

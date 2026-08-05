@@ -3,19 +3,22 @@ with System;
 with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Window;
-with Akernel_User.Streams;
 
 --  Demo: second Bureau client (milestone 30, slice b) — proves
 --  multi-window, click-to-focus and per-window key routing.
 --  Spawned from Sys:System/Demo via the Startup list with the
 --  generic GUI grant ABI (3 handles): 1 = Bureau window service
 --  (Send), 2 = input sink endpoint (Receive), 3 = input sink
---  (Send+Transfer, pushed to Bureau at Surface_Create).
+--  (Send+Transfer).
 --
 --  Draws eight color bars; every focused key paints a small
 --  block in the key strip at the bottom (colour = the character
---  code), so key routing is visible on screen. Display-stack
---  rule: Debug_Put_Line only, never console writes.
+--  code), so key routing is visible on screen. Keys arrive on
+--  the v3 async channel (queue page + notification pushed at
+--  Surface_Create; Bureau never calls the client). The strip
+--  update flushes AFTER draining, outside any rendezvous with
+--  Bureau. Display-stack rule: Debug_Put_Line only, never
+--  console writes.
 
 procedure Demo is
    use Akernel_User.Syscalls;
@@ -24,9 +27,9 @@ procedure Demo is
 
    Win_EP    : constant U64 := 1;
    Sink_EP   : constant U64 := 2;
-   Sink_Send : constant U64 := 3;
 
    Buf_VA : constant U64 := 16#6000_0000#;
+   Queue_VA : constant U64 := 16#5080_0000#;
 
    Req_W : constant U64 := 320;
    Req_H : constant U64 := 200;
@@ -59,6 +62,16 @@ procedure Demo is
 
    Key_X   : U64 := 4;
    Key_N   : U64 := 0;
+   Strip_Dirty : Boolean := False;
+
+   Queue_Cap : U64 := 0;
+   Ntfn_Cap  : U64 := 0;
+
+   type Word_Array is array (U64 range 0 .. 511) of U64
+     with Volatile_Components;
+   Queue : Word_Array
+     with Address => System.Storage_Elements.To_Address
+       (System.Storage_Elements.Integer_Address (Queue_VA));
 
    procedure Fail (S : String) is
    begin
@@ -102,13 +115,50 @@ procedure Demo is
    end Key_Block;
 
 begin
-   if Win.Surface_Create
-     (Win_EP, Req_W, Req_H, Sink_Send, Surf_Id, Pages,
-      Surf_W, Surf_H) /= Win.Status_Ok
-   then
-      Fail ("surface create failed");
+   --  v3 input channel: one-page event queue + thread-bound
+   --  notification, pushed at Surface_Create.
+   Queue_Cap := Mem_Alloc (1);
+   if Queue_Cap = Syscall_Failed then
+      Fail ("queue alloc failed");
    end if;
-   Result := Cap_Delete (Sink_Send);
+   Result := Mem_Map
+     (Address_Space => Address_Space_Cap,
+      Cap           => Queue_Cap,
+      VA            => Queue_VA,
+      Offset        => 0,
+      Length        => 4096,
+      Flags         => 3);
+   if Result /= 0 then
+      Fail ("queue map failed");
+   end if;
+   Queue (Win.Input_Queue_Head) := 0;
+   Queue (Win.Input_Queue_Tail) := 0;
+   Ntfn_Cap := Ntfn_Create;
+   if Ntfn_Cap = Syscall_Failed
+     or else Ntfn_Bind_Thread (Ntfn_Cap) /= 0
+   then
+      Fail ("ntfn setup failed");
+   end if;
+
+   declare
+      Q_Mint : constant U64 := Cap_Mint
+        (Queue_Cap, Right_Map + Right_Read + Right_Write +
+         Right_Transfer, 0);
+      N_Mint : constant U64 := Cap_Mint
+        (Ntfn_Cap, Right_Write + Right_Transfer, 0);
+   begin
+      if Q_Mint = Syscall_Failed or else N_Mint = Syscall_Failed then
+         Fail ("input mint failed");
+      end if;
+      if Win.Surface_Create
+        (Win_EP, Req_W, Req_H, Q_Mint, N_Mint, Surf_Id, Pages,
+         Surf_W, Surf_H) /= Win.Status_Ok
+      then
+         Fail ("surface create failed");
+      end if;
+      Result := Cap_Delete (Q_Mint);
+      Result := Cap_Delete (N_Mint);
+   end;
 
    --  Single chunk suffices at this size (<= 64 pages).
    if Pages > 64 then
@@ -157,17 +207,14 @@ begin
    end if;
    Debug_Put_Line ("demo online");
 
-   --  Input sink: focused keys arrive as stream Op_Input bytes.
+   --  Service loop: v3 input signals arrive as synthetic
+   --  notification messages on the sink endpoint receive
+   --  (thread-bound ntfn multiplex, rng-style — NO reply cap
+   --  rides them). The strip update flushes after draining,
+   --  never inside a rendezvous with Bureau.
    loop
-      if IPC_Recv (Sink_EP) /= IPC_Ok then
-         Debug_Put_Line ("demo recv failed");
-         Process_Exit;
-      end if;
-      Label := Message.Label;
-      if Label = Akernel_User.Streams.Op_Input then
-         for I in 1 .. Message.Words (0) loop
-            Key_Block (Message.Words (1) and 16#FF#);
-         end loop;
+      if Strip_Dirty then
+         Strip_Dirty := False;
          if Win.Surface_Update
            (Win_EP, Surf_Id, 0, Surf_H - 28, Surf_W, 28) /=
              Win.Status_Ok
@@ -175,12 +222,37 @@ begin
             Debug_Put_Line ("demo update failed");
          end if;
       end if;
-      Message.Words := (others => 0);
-      Message.Words (0) := 0;
-      Message.Caps := (others => 0);
-      if IPC_Reply /= IPC_Ok then
-         Debug_Put_Line ("demo reply failed");
+      if IPC_Recv (Sink_EP) /= IPC_Ok then
+         Debug_Put_Line ("demo recv failed");
          Process_Exit;
+      end if;
+      Label := Message.Label;
+      if Label = Notification_Label then
+         --  Drain v3 input-queue key events.
+         declare
+            Head : constant U64 := Queue (Win.Input_Queue_Head);
+            Tail : U64 := Queue (Win.Input_Queue_Tail);
+            Slot : U64;
+         begin
+            while Tail < Head loop
+               Slot := Win.Input_Queue_First
+                 + (Tail mod Win.Input_Queue_Events) * 2;
+               if Queue (Slot) = Win.Input_Event_Key then
+                  Key_Block (Queue (Slot + 1) and 16#FF#);
+                  Strip_Dirty := True;
+               end if;
+               Tail := Tail + 1;
+            end loop;
+            Queue (Win.Input_Queue_Tail) := Tail;
+         end;
+      else
+         Message.Words := (others => 0);
+         Message.Words (0) := 0;
+         Message.Caps := (others => 0);
+         if IPC_Reply /= IPC_Ok then
+            Debug_Put_Line ("demo reply failed");
+            Process_Exit;
+         end if;
       end if;
    end loop;
 end Demo;

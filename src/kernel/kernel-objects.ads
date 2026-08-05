@@ -66,7 +66,13 @@ package Kernel.Objects is
    --  thread-waiter cleanup, then releases one object reference for
    --  refcounted kinds, running the object finalizer when the last
    --  reference drops. Called on cap close, thread exit, and reap.
+   --  Thread_Dying must be True only when the close is part of the
+   --  thread's own teardown (Discard_Slot): thread-lifetime hooks
+   --  (e.g. the notification thread binding) must not fire when a
+   --  live thread merely cap_deletes one of several caps to the
+   --  same object.
    procedure Cleanup_Thread_Cap_Object
-     (Thread : Kernel.Tasks.Thread_Access;
-      Cap    : Kernel.Capabilities.Cap_Entry);
+     (Thread       : Kernel.Tasks.Thread_Access;
+      Cap          : Kernel.Capabilities.Cap_Entry;
+      Thread_Dying : Boolean := False);
 end Kernel.Objects;

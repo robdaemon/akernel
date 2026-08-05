@@ -535,9 +535,10 @@ package body Kernel.Tasks is
    end Lookup_Cap;
 
    procedure Close_Cap
-     (Thread : not null Thread_Access;
-      Cap    : Kernel.Capabilities.Handle;
-      Result : out Kernel.Capabilities.Status)
+     (Thread       : not null Thread_Access;
+      Cap          : Kernel.Capabilities.Handle;
+      Result       : out Kernel.Capabilities.Status;
+      Thread_Dying : Boolean := False)
    is
       Cap_Info : Kernel.Capabilities.Cap_Entry;
    begin
@@ -555,7 +556,8 @@ package body Kernel.Tasks is
          return;
       end if;
 
-      Kernel.Objects.Cleanup_Thread_Cap_Object (Thread, Cap_Info);
+      Kernel.Objects.Cleanup_Thread_Cap_Object
+        (Thread, Cap_Info, Thread_Dying => Thread_Dying);
       Kernel.Capabilities.Close
         (Table  => Thread.Process.Caps,
          Cap    => Cap,

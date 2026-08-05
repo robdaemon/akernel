@@ -1,6 +1,6 @@
 with Akernel_User.Syscalls;
 
---  Bureau window protocol v2 (milestone 30, slice a). Clients
+--  Bureau window protocol v3 (milestone 31). Clients
 --  (terminal, demos) talk to Bureau's window-service endpoint.
 --  Same direction rule as the display service: caps move caller
 --  -> callee only, so the CLIENT allocates its surface buffer
@@ -10,18 +10,43 @@ with Akernel_User.Syscalls;
 --  window's pane origin (wl_shm model), then Presents the band
 --  to the display service.
 --
---  v2: up to 4 windows. Each Surface_Create takes a slot; the
---  client passes a Send cap on its own input endpoint (cap slot
---  0) so Bureau can forward focused keys as stream Op_Input
---  bytes. Bureau owns stacking, focus (click-to-focus/raise in
---  slice b, title-drag in slice c) and per-window titles.
+--  v3: input delivery is ASYNCHRONOUS (Amiga message-port
+--  model: shared memory + notification, docs/IPC.md). v2
+--  forwarded focused keys with a blocking rendezvous into the
+--  client's input endpoint while clients rendezvous back with
+--  Surface_Update — any overlap deadlocked the pair (burned in
+--  milestone 31: one key in, GUI wedged, console server
+--  cascade-stalled behind the terminal sink). Now each client
+--  pushes at Surface_Create:
+--    caps 0 = input queue memory object, ONE page (Map+Read+
+--             Write+Transfer), Bureau maps it RW
+--    caps 1 = notification cap (Write+Transfer), bound to the
+--             client's service thread; Bureau signals bit 1
+--             after enqueueing
+--  Bureau enqueues focused-key events and signals — it NEVER
+--  calls the client. The client's IPC_Recv multiplexes the
+--  synthetic notification message (rng-style) with its normal
+--  service traffic and drains the queue at its own pace,
+--  outside any rendezvous with Bureau.
+--
+--  Input queue layout (one page, u64 words):
+--    word 0: head  (producer = Bureau, monotonic write count)
+--    word 1: tail  (consumer = client, monotonic read count)
+--    words 2..: event ring, 2 words per event: (kind, value),
+--    slot = head mod Input_Queue_Events. Empty: head = tail.
+--    Full (head - tail = Input_Queue_Events): drop-new.
+--    kind 1 = key (value = character code).
+--
+--  Up to 4 windows. Bureau owns stacking, focus
+--  (click-to-focus/raise), title dragging and per-window
+--  titles.
 --
 --  Message words (raw Message.Words):
 --    Op_Surface_Create (20): w0 = width, w1 = height (content
---      pixels requested); caps 0 = client's input endpoint
---      (Send+Transfer, 0 = none). Reply w0 = status, w1 =
---      surface id, w2 = pages needed, w3 = granted width,
---      w4 = granted height.
+--      pixels requested); caps 0 = input queue memobj cap,
+--      caps 1 = input notification cap (0/0 = no input).
+--      Reply w0 = status, w1 = surface id, w2 = pages needed,
+--      w3 = granted width, w4 = granted height.
 --    Op_Surface_Set_Buffer (21): w0 = surface id, w1 = base
 --      chunk index; caps 0..3 = up to 4 chunk caps (Map+Read+
 --      Transfer rights). Reply w0 = status.
@@ -39,13 +64,13 @@ with Akernel_User.Syscalls;
 --  Seat (milestone 28 slice 4): the virtio-input drivers push
 --  events to Bureau (Op_Key / Op_Pointer) once devmgr hands
 --  them Bureau's endpoint (seat-config message on their service
---  endpoint). Bureau forwards keys to the FOCUSED window's
---  input endpoint as stream Op_Input bytes and software-sprites
---  the pointer (hw cursor ops stay reserved in the display
---  protocol; the software sprite is the arch-independent
---  fallback by design). Op_Set_Focus (26) from the v1 devmgr
---  wiring is obsolete in v2 (focus is Bureau-internal) but
---  still answered.
+--  endpoint). Bureau enqueues keys into the FOCUSED window's
+--  input queue (v3, above) and software-sprites the pointer
+--  (hw cursor ops stay reserved in the display protocol; the
+--  software sprite is the arch-independent fallback by
+--  design). Op_Set_Focus (26) from the v1 devmgr wiring is
+--  obsolete since v2 (focus is Bureau-internal) but still
+--  answered.
 --    Op_Set_Focus (26): caps 0 = focused client's stream
 --      endpoint (Send+Transfer). Reply w0 = status.
 --    Op_Key (30): w0 = character code (translated by the
@@ -74,11 +99,20 @@ package Akernel_User.Window is
    Status_Bad_Caps  : constant U64 := 4;
    Status_Device    : constant U64 := 5;
 
+   --  Input queue (v3): one page, u64 words; see the header.
+   Input_Queue_Head   : constant := 0;  --  word index
+   Input_Queue_Tail   : constant := 1;  --  word index
+   Input_Queue_First  : constant := 2;  --  first event word
+   Input_Queue_Events : constant := 255;  --  (512 - 2) / 2
+   Input_Event_Key    : constant U64 := 1;
+   Input_Signal_Bit   : constant U64 := 1;
+
    --  Client-side helpers (raw IPC_Call; replies are words-only).
    function Surface_Create
      (EP             : U64;
       Width, Height  : U64;
-      Input_Cap      : U64 := 0;
+      Queue_Cap      : U64 := 0;
+      Ntfn_Cap       : U64 := 0;
       Id, Pages      : out U64;
       Grant_W        : out U64;
       Grant_H        : out U64) return U64;
