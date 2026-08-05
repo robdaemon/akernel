@@ -527,6 +527,72 @@ Next candidates (order open):
     against the font table (err=0). Non-black/threshold checks
     fool: mirrored glyphs still look glyphy.
 
+28. GUI: display-service split + compositor + terminal client.
+    Design settled in discussion (Wayland model mapped onto caps:
+    fd passing = cap transfer; wl_shm attach/damage/commit =
+    surface endpoint + memobj; dmabuf zero-copy = mem_object_pa
+    surfaces; seat = BureauSrv input hub; frame callback =
+    Present-complete reply):
+
+    - Drivers/VirtioGpu SHRINKS to a dumb display service (no
+      text, no chrome — window logic is arch-independent, drivers
+      are per-board, duplication point dies here). Protocol:
+      Present(dirty band) + hw-cursor ops (cursorq
+      UPDATE_CURSOR/MOVE_CURSOR = 0x300/0x301; absent ->
+      BureauSrv software-sprites + damages). CORRECTION burned:
+      virtio-gpu 2D has NO resource copy/blit commands — the 2D
+      cmd enum (standard-headers/linux/virtio_gpu.h) runs
+      GET_DISPLAY_INFO .. SET_SCANOUT_BLOB with no
+      RESOURCE_COPY_REGION/BLIT anywhere (earlier draft of this
+      plan claimed otherwise; wrong, do not resurrect).
+      Device-side scroll is impossible here; all compositing is
+      guest-CPU + TRANSFER uploads of damage bands (host memcpy
+      speed both ways — fine at 1024x768; the Amiga bitplane
+      trap was shared-chip bandwidth, not pixel movement per
+      se). Zero-copy exists only behind VIRGL/3D (not planned).
+    - Servers/Bureau (new, arch-independent; the compositor /
+      window server process — the GUI is named "Bureau",
+      user-chosen, no akernel prefix, screen bar reads
+      "Bureau"): owns the compositing buffer (memory object;
+      one scanout resource with ATTACH_BACKING, TRANSFER of
+      damage bands, FLUSH), renders desktop + screen bar +
+      window chrome, composites client surfaces by damage,
+      pushes dirty bands to the display service. Owns the seat:
+      virtio-input routes to BureauSrv (both roles leave the
+      serial log), keyboard -> focused client, tablet -> cursor
+      position.
+    - Terminal = FIRST REAL CLIENT on window protocol v1:
+      Create_Surface -> (surface EP + shm memobj),
+      Commit(damage). Scroll = memmove inside the terminal's
+      own surface + Commit of the pane band (no device copy
+      exists — see display-service correction above; cost is
+      one cache-speed memmove + one band upload). font8x8 moves
+      to a client-side rendering lib future
+      clients reuse. Terminal serves stream Op_Write (console
+      sink compatible — devmgr's Op_Attach_Sink wiring
+      unchanged) and injects keys into the console input FIFO
+      via Op_Input, so the later shell reads Op_Read as
+      planned. UART path stays for headless.
+    - Theme (user-confirmed): pure Amiga, NeXTSTEP scrapped
+      entirely. Workbench-3.x-STYLE look (NOT 1.3 — too dated):
+      gray
+      gadtools palette (light-gray fills, white highlight /
+      dark shadow 3D bevels on borders and gadgets), blue
+      accent for the ACTIVE window title bar (gray inactive),
+      gray screen bar with dark text + right-side gadgets.
+      Painted in 32-bit true color (B8G8R8A8 stays; virtio-gpu
+      2D has no 16-bit/indexed formats, and packed 32bpp is
+      the FAST path — the "fewer bitplanes = faster" intuition
+      is planar-era, does not transfer). Boot = Amiga-style: the Bureau screen opens
+      immediately and startup output scrolls in its console
+      window (Startup-Sequence CLI look) — no boot-mode/display
+      transition, one code path from power-on. Exact hex values / gadget shapes
+      tunable at implementation time.
+    - virtio-gpu 2D has no vsync event; FLUSH is fire-and-forget.
+      Fine for text; revisit if tearing shows on pointer motion.
+    Follow-ups: multi-window + focus + moving windows (29),
+    interactive shell in the terminal (30).
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -540,12 +606,12 @@ Commit between each milestone.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
-- Tasking runtime; interactive shell on the display console
-  (input FIFO + GPU sink + stream Op_Read all in place; a shell
-  program reads console input and spawns commands); MSI-X for
-  virtio-pci (INTx today, shared chains); per-device IOVA spaces
-  (IOVA = PA identity today); pointer events into a structured
-  channel (serial-logged today).
+- Tasking runtime; multi-window GUI (focus, moving windows,
+  xdg-popup-analogs) after milestone 28; zero-copy direct scanout
+  of full-screen client surfaces; MSI-X for virtio-pci (INTx
+  today, shared chains); per-device IOVA spaces (IOVA = PA
+  identity today); pointer events into a structured channel
+  (lands with milestone 28's seat).
 
 ## Start by reading
 
