@@ -171,8 +171,10 @@ procedure Bureau is
    end Win_Reply;
 
    ------------------------------------------------------------------
-   --  Cursor state (bodies below; Present_Band redraws the sprite
-   --  when a band clobbers it)
+   --  Cursor state (bodies below; Composite_Band erases the sprite
+   --  BEFORE painting an intersecting band and redraws after —
+   --  saving the under-rect while Buf still holds sprite pixels
+   --  ghosts the arrow, the milestone-32 artifacting burn)
    ------------------------------------------------------------------
 
    Cur_W : constant := 10;
@@ -181,6 +183,7 @@ procedure Bureau is
    Cur_Y   : U64 := 0;
    Cur_Vis : Boolean := False;
    procedure Cursor_Draw (NX, NY : U64);
+   procedure Cursor_Erase;
 
    Prev_Buttons : U64 := 0;
    --  Title-bar drag state (slice c): grabbed slot + pointer
@@ -387,31 +390,43 @@ procedure Bureau is
          return;
       end if;
       Result := Akernel_User.Display.Present (Display_EP, X, Y, W, H);
-      if Cur_Vis
-        and then X < Cur_X + Cur_W
-        and then Cur_X < X + W
-        and then Y < Cur_Y + Cur_H
-        and then Cur_Y < Y + H
-      then
+   end Present_Band;
+
+   --  Composite one band: erase the cursor FIRST when the band
+   --  intersects the sprite rect (so Paint_Band can never leave
+   --  sprite pixels inside a partially-covered under-rect — the
+   --  next Cursor_Draw saves a clean under-rect), repaint, then
+   --  redraw the cursor on top.
+   procedure Composite_Band (X0, Y0, X1, Y1 : U64) is
+      Hit : constant Boolean := Cur_Vis
+        and then X0 < Cur_X + Cur_W
+        and then Cur_X < X1
+        and then Y0 < Cur_Y + Cur_H
+        and then Cur_Y < Y1;
+   begin
+      if Hit then
+         Cursor_Erase;
+      end if;
+      Paint_Band (X0, Y0, X1, Y1);
+      Present_Band (X0, Y0, X1 - X0, Y1 - Y0);
+      if Hit then
          Cursor_Draw (Cur_X, Cur_Y);
       end if;
-   end Present_Band;
+   end Composite_Band;
 
    procedure Repaint_Window (S : Natural) is
    begin
-      Paint_Band (Wins (S).X, Wins (S).Y,
-                  Wins (S).X + Wins (S).FW, Wins (S).Y + Wins (S).FH);
-      Present_Band (Wins (S).X, Wins (S).Y, Wins (S).FW, Wins (S).FH);
+      Composite_Band (Wins (S).X, Wins (S).Y,
+                      Wins (S).X + Wins (S).FW,
+                      Wins (S).Y + Wins (S).FH);
    end Repaint_Window;
 
    --  Title band of a slot (for focus-color changes).
    procedure Repaint_Title (S : Natural) is
    begin
-      Paint_Band (Wins (S).X, Wins (S).Y,
-                  Wins (S).X + Wins (S).FW,
-                  Wins (S).Y + Frame + Title_H);
-      Present_Band (Wins (S).X, Wins (S).Y,
-                    Wins (S).FW, Frame + Title_H);
+      Composite_Band (Wins (S).X, Wins (S).Y,
+                      Wins (S).X + Wins (S).FW,
+                      Wins (S).Y + Frame + Title_H);
    end Repaint_Title;
 
    --  Move a slot to the top of the z-order.
@@ -541,8 +556,7 @@ procedure Bureau is
       end if;
       Wins (S).X := NX;
       Wins (S).Y := NY;
-      Paint_Band (X0, Y0, X1, Y1);
-      Present_Band (X0, Y0, X1 - X0, Y1 - Y0);
+      Composite_Band (X0, Y0, X1, Y1);
    end Drag_Move;
 
    --  Click-to-focus (slice b): button0 press inside a window
@@ -955,11 +969,9 @@ begin
                     U64'Min (Message.Words (4), Wins (S).PH - CY);
                begin
                   if CW > 0 and then CH > 0 then
-                     Paint_Band (Pane_X (S) + CX, Pane_Y (S) + CY,
-                                 Pane_X (S) + CX + CW,
-                                 Pane_Y (S) + CY + CH);
-                     Present_Band (Pane_X (S) + CX, Pane_Y (S) + CY,
-                                   CW, CH);
+                     Composite_Band (Pane_X (S) + CX, Pane_Y (S) + CY,
+                                     Pane_X (S) + CX + CW,
+                                     Pane_Y (S) + CY + CH);
                   end if;
                end;
                Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
@@ -1024,8 +1036,7 @@ begin
                         Focus_Slot (Z (Z_N));
                      end if;
                   end if;
-                  Paint_Band (FX, FY, FX + FW, FY + FH);
-                  Present_Band (FX, FY, FW, FH);
+                  Composite_Band (FX, FY, FX + FW, FY + FH);
                   Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
                end;
             end if;

@@ -1,6 +1,12 @@
 QEMU ?= qemu-system-riscv64
 QEMU_MEMORY ?= 4G
 QEMU_SMP ?= 4
+#  Extra flags appended to the qemu command line. Default is
+#  headless (-nographic: serial on stdio for the test harness);
+#  override for interactive testing, e.g.
+#  make run QEMU_ARGS="-display gtk" — the later -display wins
+#  and serial stays on stdio.
+QEMU_ARGS ?= -nographic
 INITRD_ADDR ?= 0x84000000
 
 KERNEL_ELF := bin/akernel.elf
@@ -163,7 +169,6 @@ run: all $(DISK_IMG)
 	  -machine virt,iommu-sys=on \
 	  -smp $(QEMU_SMP) \
 	  -m $(QEMU_MEMORY) \
-	  -nographic \
 	  -kernel $(KERNEL_ELF) \
 	  -device loader,file=$(INITRD_IMG),addr=$(INITRD_ADDR) \
 	  -device virtio-rng-pci,addr=0x3 \
@@ -173,7 +178,8 @@ run: all $(DISK_IMG)
 	  -device virtio-tablet-pci,addr=0x6 \
 	  -device virtio-gpu-pci,addr=0x7 \
 	  -monitor unix:/tmp/qmon.sock,server,nowait \
-  -qmp unix:/tmp/qqmp.sock,server,nowait
+  -qmp unix:/tmp/qqmp.sock,server,nowait \
+  $(QEMU_ARGS)
 
 clean: clean-kernel clean-userspace clean-initrd
 

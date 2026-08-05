@@ -14,14 +14,19 @@ write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
 covers the IPC case).
 
-Recently landed: pointer events to focused clients — v3 queue
+Recently landed: cursor artifacting fix — Bureau paints now go
+through Composite_Band (erase sprite before painting an
+intersecting band, redraw after); the old re-save-after-paint
+path polluted the under-rect with sprite pixels on partial
+overlaps and ghosted arrows around updating windows. Makefile
+gained QEMU_ARGS (default -nographic; QEMU_ARGS="-display
+gtk" for interactive runs). Before that: pointer events to
+focused clients — v3 queue
 kind 2, packed content-relative value (x16|y16|buttons8),
 delivered only inside window content, coalesced in place
 (undrained newest pointer event overwritten; moves can't flood
 the ring). Demo paints a tracking 5x5 marker (white = button0
-held); verified live by screendump pixel check. Known cosmetic:
-Bureau cursor draws on top of client updates; under-rect
-restore can ghost.
+held); verified live by screendump pixel check.
 
 Before that: MILESTONE 31 COMPLETE (a+b) — interactive
 shell + uniform program ABI. Every program spawned from Sys:

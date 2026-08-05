@@ -893,11 +893,26 @@ Next candidates (order open):
     terminal ignores non-key kinds. Verified LIVE by pixel
     check, not eyeballs: press-hold at a content point, move
     the cursor off the content, screendump shows the white 5x5
-    at exactly the pressed position. Burn: the Bureau cursor is
-    drawn ON TOP of client updates — a marker under the cursor
-    is invisible, and cursor under-rect restore can ghost over
-    freshly-updated client pixels (cosmetic, known). 174 PASS
-    SMP1+SMP4, fuzz failures=0. Next: the deferred list.
+    at exactly the pressed position. 174 PASS
+    SMP1+SMP4, fuzz failures=0.
+
+    Cursor artifacting FIXED (the ghost-arrow burn): the old
+    Present_Band redraw path re-saved the cursor under-rect
+    AFTER Paint_Band, so a client band that only PARTIALLY
+    overlapped the sprite rect left old sprite pixels in the
+    uncovered part of Buf; Cursor_Draw then saved a polluted
+    under-rect and the next erase stamped arrow fragments onto
+    the screen — fragments accumulated around any updating
+    window (heavy over the pointer-tracking demo). Now every
+    paint+present goes through Composite_Band: erase the sprite
+    FIRST when the band intersects it (Buf never holds sprite
+    pixels across a paint), repaint, redraw on top. Pixel-
+    verified live: a 30-point cursor sweep over the demo leaves
+    exactly ONE sprite's worth of fill pixels (52 px in an
+    8x13 box) and zero fragments. Also: Makefile gained
+    QEMU_ARGS (default -nographic; make run QEMU_ARGS="-
+    display gtk" for interactive testing — the later -display
+    wins and serial stays on stdio). Next: the deferred list.
 
 Commit between each milestone.
 
