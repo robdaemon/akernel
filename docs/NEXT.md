@@ -942,7 +942,41 @@ Next candidates (order open):
     lists README.TXT 37, BIG.BIN 65536, SUBDIR (dir),
     LongFileName.txt 23 (LFN!), System (dir), C (dir) and the
     fuzz-created files. 174 PASS SMP1+SMP4, fuzz failures=0,
-    host fsck clean. Next: the deferred list.
+    host fsck clean.
+
+33. Environment + command-line conventions (33a DONE): no
+    process environment block, no argv in the spawn ABI —
+    Amiga-style, everything is a file or a cap. VARIABLES ARE
+    FILES (the ENV:/ENVARC: analog): BD0:Prefs/Env/<NAME>
+    holds the value, global by construction so nested shells
+    and spawned programs all see the same world. Shell
+    builtins: set [N=V] (bare set lists NAME=value via
+    Op_ReadDir), get N, unset N, path (shows the command
+    search path). Command resolution: the Path variable holds
+    ';'-separated directory prefixes (e.g. "C/;System/"),
+    default = volume root then C/ when unset; qualified names
+    (with ':' or '/') go straight through. ARGUMENTS ride a
+    one-page memory object at grant handle 4 (NUL-terminated
+    string, Map+Read, the Amiga command-line analog; absent =
+    no args), read via Syscalls.Read_Args. New crate
+    userspace/type -> Sys:C/Type streams a file to the
+    console in 32 KiB chunks; Dir takes an optional directory
+    argument. TWO burns: (1) Args_VA first picked 0x4600_0000
+    — EXACTLY the userspace link base; Read_Args unmapped the
+    caller's own .text (now 0x4800_0000; fixed VAs must be
+    checked against linker-riscv64.ld). (2) the init-stack
+    burn redux: Type's 32 KiB chunk buffer sat in the MAIN
+    procedure's declarative part — a 32 KiB stack frame over
+    16 KiB of mapped stack (4 pages) — store fault at the
+    first call, hart-halting trap. Buffers that size must be
+    genuinely library-level (a package spec), not just
+    commented that way. Verified live: set/get/set-list
+    (GREETING=hello), path, Type README.TXT, Dir System (.
+    .. Bureau 55736 Terminal 61160 Demo 32848 Shell 63840
+    Startup 42). 174 PASS SMP1+SMP4, fuzz failures=0, host
+    fsck clean. Next: the deferred list (assigns C:/ENV: as
+    VFS aliases stay deferred until a second volume pulls
+    them).
 
 Commit between each milestone.
 

@@ -427,4 +427,26 @@ package body Akernel_User.Syscalls is
       Debug_Put (S);
       Raw_Debug_Putchar (Character'Pos (Character'Val (10)));
    end Debug_Put_Line;
+
+   procedure Read_Args (S : out String; Len : out Natural) is
+      use System.Storage_Elements;
+      type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
+      Page : Byte_Array (0 .. Page_Size - 1)
+        with Address => To_Address (Integer_Address (Args_VA));
+      Ch   : Character;
+   begin
+      Len := 0;
+      if Mem_Map (Address_Space_Cap, Args_Handle, Args_VA, 0,
+                  Page_Size, 1) /= 0
+      then
+         return;  --  no args page granted (or already mapped)
+      end if;
+      for I in Page'Range loop
+         exit when Natural (Page (I)) = 0 or else Len >= S'Length;
+         Ch := Character'Val (Natural (Page (I)));
+         exit when Ch = Character'Val (10);
+         Len := Len + 1;
+         S (S'First + Len - 1) := Ch;
+      end loop;
+   end Read_Args;
 end Akernel_User.Syscalls;

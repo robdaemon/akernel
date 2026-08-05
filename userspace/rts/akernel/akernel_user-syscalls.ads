@@ -167,6 +167,20 @@ package Akernel_User.Syscalls is
 
    Reply_Cap_Handle : constant U64 := 254;
    IPC_Buffer_VA    : constant U64 := 16#6FFF_0000#;
+
+   --  Argument passing (milestone 33a): a spawner MAY hand the
+   --  child a one-page memory object at handle 4 holding a
+   --  NUL-terminated argument string (the Amiga command-line
+   --  analog). Absent handle = no args. The child Mem_Maps it
+   --  read-only at Args_VA (0x4800_0000 — ABOVE the 0x4600_0000
+   --  link base + image; the first choice 0x4600_0000 collided
+   --  with the program's own .text, milestone-33a burn).
+   Args_Handle : constant U64 := 4;
+   Args_VA     : constant U64 := 16#4800_0000#;
+
+   --  Copy the argument string into S (Len = its length, 0 when
+   --  no args page was granted). The page stays mapped.
+   procedure Read_Args (S : out String; Len : out Natural);
    IPC_Ok              : constant U64 := 0;
    IPC_Invalid         : constant U64 := 1;
    IPC_Transfer_Failed : constant U64 := 2;

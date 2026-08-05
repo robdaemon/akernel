@@ -16,7 +16,22 @@ covers the IPC case), endpoint-teardown failing of queued
 callers (a shell whose terminal closes stays blocked in its
 read call — inert but unkillable).
 
-Recently landed: MILESTONE 32 COMPLETE — window close +
+Recently landed: MILESTONE 33a — environment + command-line
+conventions, Amiga-style (no env block, no argv ABI).
+Variables ARE files: BD0:Prefs/Env/<NAME>, global by
+construction. Shell builtins set [N=V] (bare set lists via
+Op_ReadDir), get, unset, path; command resolution reads the
+Path variable (';'-separated prefixes, default root then
+C/). Arguments ride a one-page memobj at grant handle 4
+(NUL-terminated, Map+Read; Syscalls.Read_Args). Sys:C/Type
+streams a file to the console; Dir takes an optional
+directory arg. Burns: Args_VA 0x4600_0000 == the userspace
+link base (unmapped the caller's own .text — now
+0x4800_0000); Type's 32 KiB buffer in the MAIN declarative
+part blew the 16 KiB mapped stack (the init-stack burn
+redux — big buffers must be genuinely library-level
+packages). Verified live: set/get/list, path, Type
+README.TXT, Dir System. Before that: MILESTONE 32 COMPLETE — window close +
 C:Dir. The left title-bar gadget is close: Bureau enqueues
 CLOSEWINDOW (v3 queue kind 3); terminal/demo Surface_Destroy
 + exit (Bureau never kills the window). File protocol gains
