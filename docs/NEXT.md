@@ -610,8 +610,8 @@ Next candidates (order open):
       from Ntfn_Wait to the rng-style IPC_Recv multiplex for
       this). Keys: driver keymap -> Op_Key 30 -> Bureau ->
       stream Op_Input byte into the focus (terminal) ->
-      console input FIFO (shell reads Op_Read in milestone 30);
-      interim "bureau key" serial log per key (remove at 30).
+      console input FIFO (shell reads Op_Read in milestone 31);
+      interim "bureau key" serial log per key (remove at 31).
       Pointer: ABS_X/Y batched on EV_SYN + BTN bits ->
       Op_Pointer 31 (raw 0..32767, Bureau scales) -> SOFTWARE
       cursor sprite in Bureau (chosen over the virtio hw
@@ -627,8 +627,9 @@ Next candidates (order open):
       (buttons flowed, movement didn't) — absolute injection
       needs QMP input-send-event; the run target now also
       exposes -qmp unix:/tmp/qqmp.sock. 173/173 SMP1, fuzz
-      failures=0. Milestone 28 COMPLETE: 29 = multi-window +
-      focus, 30 = interactive shell in the terminal.
+      failures=0. Milestone 28 COMPLETE: 29 = boot from the
+      Sys filesystem, 30 = multi-window + focus, 31 =
+      interactive shell in the terminal.
     - Terminal = FIRST REAL CLIENT on window protocol v1:
       Create_Surface -> (surface EP + shm memobj),
       Commit(damage). Scroll = memmove inside the terminal's
@@ -665,8 +666,55 @@ Next candidates (order open):
       (content intact, display unaffected). Count PASS lines
       with interleave tolerance; the two blk pattern/readback
       selftests skip on reused (non-pattern) disk images.
-    Follow-ups: multi-window + focus + moving windows (29),
-    interactive shell in the terminal (30).
+    Follow-ups: multi-window + focus + moving windows (30),
+    interactive shell in the terminal (31).
+
+29. Boot from the Sys filesystem (initrd back to bootstrap
+    scope). The initrd has grown into a root filesystem: the
+    display stack (Bureau, terminal) and later the shell do
+    not belong in it. Move them to the FAT32 data partition
+    and launch them from there during boot.
+    - Volume naming: the virtio-blk GPT partition 1 becomes
+      device BD0 with volume label Sys (Amiga device:volume
+      convention; HD0/AKDISK were placeholder names and this
+      is a block device, so BD0 — the same name the raw
+      volume already uses). Touch points: init's
+      Push_Fat32_Mount (Dev "HD0" -> "BD0", Lab "AKDISK" ->
+      "Sys"), the disk.img recipe (sgdisk -c 1:Sys,
+      mkfs.vfat -n Sys), and the fuzz suite's "HD0:..." paths
+      -> "BD0:..." (mechanical rename; tests stay idempotent
+      across reused images).
+    - FS-resident images: the Makefile mcopy's the Bureau and
+      Terminal ELF images (later System/Shell) into disk.img
+      at :System/Bureau, :System/Terminal (the Amiga System/
+      drawer); both leave the initrd (mkinitrd manifest +
+      Makefile initrd deps/cp). Drivers needed to REACH the
+      FS (blk, partmgr, fat32, fileserver) and the console/
+      display drivers stay in the initrd — bootstrap scope.
+    - Launch from FS: spawn-from-memory-object exists since
+      milestone 12 (fuzz stages Tests/Memstage through the
+      file server); devmgr gains an exec-from-volume helper —
+      read the whole file from BD0: into a memory object via
+      the file server, spawn from the object cap. No kernel
+      work expected.
+    - Startup list: after the FS chain is online (blk ->
+      partmgr -> fat32 -> fileserver; await the BD0: volume
+      like the fuzz suite's Await_Volume), devmgr reads
+      Sys:System/Startup (one program path per line, the
+      Startup-Sequence analog) and spawns each entry from the
+      volume, replacing the class-16 initrd spawn of Bureau +
+      Terminal. FS-spawned handle layouts stay exactly as
+      today (Bureau: 1 console Send, 2 display EP, 3 window
+      svc Receive; Terminal: 1 console Send, 2 Bureau svc,
+      3 sink EP) so the seat wiring is unchanged.
+    - Ordering: the display stack now starts strictly after
+      FS online — boot output still scrolls in the terminal
+      (one code path from power-on), it just opens a beat
+      later.
+    Slices: 29a rename + disk recipe, 29b FS-resident images
+    out of the initrd, 29c exec-from-volume + Startup list.
+    Milestone 30 = multi-window + focus, 31 = interactive
+    shell in the terminal (launched from Sys:).
 
 Commit between each milestone.
 

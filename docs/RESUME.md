@@ -23,7 +23,7 @@ message on their service EP — input scans before the GPU;
 their event loop is now the rng-style IPC_Recv multiplex).
 Keys: keymap -> Op_Key 30 -> Bureau -> stream Op_Input byte ->
 terminal -> console input FIFO ("bureau key" serial log per
-key, interim — remove at milestone 30). Pointer: ABS batched
+key, interim — remove at milestone 31). Pointer: ABS batched
 on EV_SYN + BTN bits -> Op_Pointer 31 -> Bureau SOFTWARE
 cursor sprite (chosen over virtio hw cursor: arch-independent;
 sprite re-saved/redrawn when update bands clobber it).
@@ -38,10 +38,18 @@ a screendump decoder script had an R/B swap, "verified" a
 false channel order, and the palette "fix" created the real
 bug. Pixels are B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE);
 decode PPM bytes straight (R,G,B); trust the user's eyes over
-the script (commit d56c59d). Next: milestone 29 = multi-window
-+ focus + moving windows (Bureau window protocol v1 has ONE
-surface slot; generalize), 30 = interactive shell in the
-terminal (console FIFO + Op_Read + seat all in place). 173/173
+the script (commit d56c59d). Next: MILESTONE 29 = boot from
+the Sys filesystem (initrd back to bootstrap scope): BD0/Sys
+volume rename (HD0/AKDISK -> BD0/Sys in Push_Fat32_Mount,
+disk recipe, fuzz paths), Bureau + Terminal images move into
+disk.img (:System/, mcopy) and out of the initrd, devmgr
+gains exec-from-volume (read file via file server into a
+memory object, spawn from it — memstage pattern, no kernel
+work) and launches Sys:System/Startup entries after FS
+online. THEN 30 = multi-window + focus + moving windows
+(Bureau window protocol v1 has ONE surface slot; generalize),
+31 = interactive shell in the terminal (console FIFO +
+Op_Read + seat all in place). 173/173
 SMP1, fuzz failures=0. Before that: milestone 28 SLICE 2 — Servers/Bureau
 (userspace/bureau, System/Bureau, devmgr-spawned after the GPU
 with console+display-EP Send caps) allocates the compositing
