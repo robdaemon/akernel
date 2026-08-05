@@ -183,8 +183,8 @@ procedure Fileserver is
          end if;
       end loop;
 
-      if Colon = 0 or else Colon = Len then
-         return 0;  --  unqualified or empty path
+      if Colon = 0 then
+         return 0;  --  unqualified
       end if;
 
       for V in Volumes'Range loop
@@ -463,22 +463,64 @@ procedure Fileserver is
    --  First_Word .. 5 (NUL-padded): the VFS forwards the path
    --  portion of a volume-qualified name to the fs driver.
    procedure Pack_Path
-     (Name : String; Pos : Natural; Len : Natural; First_Word : Natural)
+     (Name : String; Pos : Natural; Len : Natural; First_Word : Natural;
+      Last_Word : Natural := 5)
    is
       W : Natural;
    begin
-      for I in First_Word .. 5 loop
+      for I in First_Word .. Last_Word loop
          Syscalls.Message.Words (I) := 0;
       end loop;
       for P in Pos .. Len loop
          W := First_Word + (P - Pos) / 8;
-         exit when W > 5;
+         exit when W > Last_Word;
          Syscalls.Message.Words (W) :=
            Syscalls.Message.Words (W)
              or Shl (U64 (Character'Pos (Name (Name'First + P - 1))),
                      ((P - Pos) mod 8) * 8);
       end loop;
    end Pack_Path;
+
+   --  Op_ReadDir (milestone 32): words 0..3 = volume-qualified
+   --  path, word 4 = entry index; FS-driver volumes only (the
+   --  wire format matches the fs driver's: path portion repacked
+   --  into words 0..3, index back into word 4). The reply rides
+   --  through unchanged: w0 = status, w1 = size, w2 = is_dir,
+   --  words 3..5 = entry name.
+   procedure Handle_Read_Dir is
+      Name : String (1 .. 32);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+      Idx  : U64;
+   begin
+      if not Name_Of (0, 3, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      V := Resolve_Volume (Name, Len, Pos);
+      if V = 0 or else not Volumes (V).Is_FS then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      Idx := Syscalls.Message.Words (4);
+      Syscalls.Message.Label := Files.Op_ReadDir;
+      Pack_Path (Name, Pos, Len, 0, 3);
+      Syscalls.Message.Words (4) := Idx;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+         --  Relay the fs driver's reply words untouched.
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+            Syscalls.Debug_Put_Line ("fileserver readdir reply failed");
+            Syscalls.Process_Exit;
+         end if;
+      else
+         Reply2 (Files.Status_Not_Found, 0);
+      end if;
+   end Handle_Read_Dir;
 
    procedure Handle_Stat_Or_Open is
       Name : String (1 .. 48);
@@ -1045,6 +1087,12 @@ begin
          end if;
       elsif Syscalls.Message.Label = Files.Op_Read then
          Handle_Read;
+      elsif Syscalls.Message.Label = Files.Op_ReadDir then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Read_Dir;
+         end if;
       else
          Reply2 (Files.Status_Bad_Args, 0);
       end if;

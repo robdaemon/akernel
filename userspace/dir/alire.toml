@@ -1,0 +1,14 @@
+name = "akernel_dir"
+description = "akernel Dir command (milestone 32)"
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+tags = []
+
+project-files = ["dir.gpr"]
+executables = ["dir.elf"]
+
+[[depends-on]]
+gnat_riscv64_elf = "*"

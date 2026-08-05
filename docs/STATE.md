@@ -170,7 +170,12 @@ QEMU virt RAM base:     0x80000000
   focused keys into its text grid, serves Op_Read from its input
   FIFO, and launches System/Shell from the Sys volume (plain CLI
   program on its stream endpoint; builtins + spawn-and-await of
-  FS-resident programs, nestable). Every program spawned from
+  FS-resident programs, nestable; bare command names resolve
+  against the volume root then C/ — Sys:C/Dir lists a directory
+  via the file protocol's Op_ReadDir). Windows close via the
+  title-bar close gadget (Bureau posts CLOSEWINDOW into the
+  window's input queue; the client destroys its surface and
+  exits). Every program spawned from
   Sys: (Startup list or shell child) gets the same namespace —
   1 = console Send (badged), 2 = fs Send, 3 = Bureau svc Send;
   a program is GUI only once it calls Surface_Create. The block

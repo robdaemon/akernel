@@ -12,9 +12,23 @@ for init state reconstruction, plain send, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
-covers the IPC case).
+covers the IPC case), endpoint-teardown failing of queued
+callers (a shell whose terminal closes stays blocked in its
+read call — inert but unkillable).
 
-Recently landed: cursor artifacting fix — Bureau paints now go
+Recently landed: MILESTONE 32 COMPLETE — window close +
+C:Dir. The left title-bar gadget is close: Bureau enqueues
+CLOSEWINDOW (v3 queue kind 3); terminal/demo Surface_Destroy
++ exit (Bureau never kills the window). File protocol gains
+Op_ReadDir (stateless per-index, path "" = volume root);
+fat32 enumerates skipping deleted/LFN/label entries (LFN
+supplies the name). New crate userspace/dir -> Sys:C/Dir —
+user ruling: commands live in C/, Amiga-style; the shell
+resolves bare names against the volume root then C/. Burn:
+Resolve_Volume rejected volume-only names ("BD0:"), exactly
+what readdir-of-root needs — relaxed. Verified live: close
+clicks destroy windows; Sys:> Dir lists the volume (LFNs,
+dir tags, sizes). Before that: cursor artifacting fix — Bureau paints now go
 through Composite_Band (erase sprite before painting an
 intersecting band, redraw after); the old re-save-after-paint
 path polluted the under-rect with sprite pixels on partial

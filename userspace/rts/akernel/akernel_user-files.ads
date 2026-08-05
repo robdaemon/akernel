@@ -91,6 +91,13 @@ package Akernel_User.Files is
    Op_Mkdir    : constant U64 := 10;
    Op_Rmdir    : constant U64 := 11;
    Op_Sync     : constant U64 := 12;
+   Op_ReadDir  : constant U64 := 13;
+   --    Op_ReadDir = 13  words 0..3 = path (32 chars, "" = volume
+   --                      root), word 4 = entry index -> (status,
+   --                      size, is_dir, entry name[24] in words
+   --                      3..5). Stateless: index N returns the
+   --                      N-th live entry; Status_Not_Found ends
+   --                      the enumeration. FS-driver volumes only.
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;
@@ -123,6 +130,19 @@ package Akernel_User.Files is
    --  maps the read buffer on first success.
    function Stat (Name : String; Size : out U64) return U64;
    function Open (Name : String; Size : out U64) return U64;
+
+   --  Directory enumeration (milestone 32, the Dir command):
+   --  Index-th live entry of the directory at Name (volume
+   --  qualified; "" after the volume = its root). Returns a
+   --  protocol status; Status_Not_Found = no more entries.
+   --  Entry name comes back in Out_Name (caller buffer >= 24).
+   function Read_Dir
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Is_Dir       : out Boolean;
+      Size         : out U64) return U64;
 
    --  Read Length bytes at Offset into Dest; Count returns the
    --  bytes actually read (clamped at EOF and buffer capacity).

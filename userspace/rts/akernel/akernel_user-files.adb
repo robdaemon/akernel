@@ -111,6 +111,53 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Stat;
 
+   function Read_Dir
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Is_Dir       : out Boolean;
+      Size         : out U64) return U64
+   is
+      Q   : String (1 .. 32);
+      Len : Natural;
+      Ch  : Character;
+   begin
+      Out_Name_Len := 0;
+      Is_Dir := False;
+      Size := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_ReadDir;
+      Syscalls.Message.Words := (others => 0);
+      Pack_Name (Q (1 .. Len), 0, 3);
+      Syscalls.Message.Words (4) := Index;
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Size := Syscalls.Message.Words (1);
+         Is_Dir := Syscalls.Message.Words (2) /= 0;
+         for P in 0 .. 23 loop
+            exit when P >= Out_Name'Length;
+            Ch := Character'Val (Natural
+              ((Syscalls.Message.Words (3 + P / 8)
+                  / Shift_Left (1, (P mod 8) * 8)) and 16#FF#));
+            exit when Ch = Character'Val (0);
+            Out_Name_Len := Out_Name_Len + 1;
+            Out_Name (Out_Name'First + Out_Name_Len - 1) := Ch;
+         end loop;
+      end if;
+
+      return Syscalls.Message.Words (0);
+   end Read_Dir;
+
    function Open (Name : String; Size : out U64) return U64 is
       Status : constant U64 := Stat (Name, Size);
    begin

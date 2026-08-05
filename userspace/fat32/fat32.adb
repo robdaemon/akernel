@@ -48,6 +48,7 @@ procedure Fat32 is
    Op_Mkdir    : constant U64 := 10;
    Op_Rmdir    : constant U64 := 11;
    Op_Sync     : constant U64 := 12;
+   Op_ReadDir  : constant U64 := 13;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -563,6 +564,104 @@ procedure Fat32 is
       end loop;
       return False;
    end Find_In_Dir;
+
+   --  8.3 short name of the entry at Ent_Off in Bounce ("FOO.BAR").
+   function Short_Name_Of (Ent_Off : U64) return String is
+      Short : String (1 .. 12);
+      SL    : Natural := 0;
+   begin
+      for J in 0 .. 7 loop
+         exit when Bounce (Ent_Off + U64 (J)) = 16#20#;
+         SL := SL + 1;
+         Short (SL) :=
+           Character'Val (Natural (Bounce (Ent_Off + U64 (J))));
+      end loop;
+      if Bounce (Ent_Off + 8) /= 16#20# then
+         SL := SL + 1;
+         Short (SL) := '.';
+         for J in 8 .. 10 loop
+            exit when Bounce (Ent_Off + U64 (J)) = 16#20#;
+            SL := SL + 1;
+            Short (SL) :=
+              Character'Val (Natural (Bounce (Ent_Off + U64 (J))));
+         end loop;
+      end if;
+      return Short (1 .. SL);
+   end Short_Name_Of;
+
+   --  Enumerate the Index-th live entry (0-based) of the
+   --  directory chain at Dir_Clus (Op_ReadDir): deleted entries,
+   --  LFN fragments and volume labels are skipped; the LFN run
+   --  preceding a short entry supplies the name when present.
+   function Dir_Entry_At
+     (Dir_Clus   : U64;
+      Index      : U64;
+      Name       : out String;
+      Name_Len   : out Natural;
+      Entry_Size : out U64;
+      Is_Dir     : out Boolean) return Boolean
+   is
+      C    : U64 := Dir_Clus;
+      B0   : Interfaces.Unsigned_8;
+      Attr : Interfaces.Unsigned_8;
+      Base : U64;
+      N    : U64 := 0;
+   begin
+      Name_Len := 0;
+      Entry_Size := 0;
+      Is_Dir := False;
+      LFN_Len := 0;
+
+      for Guard in 0 .. 512 loop
+         if not Meta_Read_Sectors (Cluster_Sector (C), Sec_Per_Clus)
+         then
+            return False;
+         end if;
+
+         for Ent in 0 .. Sec_Per_Clus * 16 - 1 loop
+            Base := Ent * 32;
+            B0 := Bounce (Base);
+            if B0 = 0 then
+               return False;  --  end of directory
+            end if;
+            Attr := Bounce (Base + 11);
+            if B0 = 16#E5# then
+               LFN_Len := 0;
+            elsif Attr = 16#0F# then
+               Collect_LFN (Base);
+            elsif (Attr and 16#08#) /= 0 then
+               LFN_Len := 0;  --  volume label
+            else
+               if N = Index then
+                  if LFN_Len > 0 then
+                     Name_Len := Natural'Min (LFN_Len, Name'Length);
+                     Name (Name'First .. Name'First + Name_Len - 1) :=
+                       LFN_Buf (1 .. Name_Len);
+                  else
+                     declare
+                        SN : constant String := Short_Name_Of (Base);
+                     begin
+                        Name_Len :=
+                          Natural'Min (SN'Length, Name'Length);
+                        Name (Name'First
+                              .. Name'First + Name_Len - 1) :=
+                          SN (SN'First .. SN'First + Name_Len - 1);
+                     end;
+                  end if;
+                  Entry_Size := LE32 (Base + 28);
+                  Is_Dir := (Attr and 16#10#) /= 0;
+                  return True;
+               end if;
+               N := N + 1;
+               LFN_Len := 0;
+            end if;
+         end loop;
+
+         C := Next_Cluster (C);
+         exit when C = 0;
+      end loop;
+      return False;
+   end Dir_Entry_At;
 
    --  Resolve a '/'-separated path from the root. On a hit returns
    --  the entry fields; on a miss Parent_Clus/Parent_Last hold the
@@ -1269,6 +1368,75 @@ procedure Fat32 is
    end Handle_Stat_Or_Open;
 
    ------------------------------------------------------------------
+   --  Op_ReadDir (milestone 32): words 0..3 = path ("" = root),
+   --  word 4 = entry index. Reply: w0 = status, w1 = size,
+   --  w2 = is_dir, words 3..5 = entry name (24 chars, NUL-padded).
+   ------------------------------------------------------------------
+
+   procedure Handle_Read_Dir is
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      F1, F2, F3, F4 : U64;
+      Idx         : constant U64 := Syscalls.Message.Words (4);
+      Clus        : U64;
+      Name        : String (1 .. 24) :=
+        (others => Character'Val (0));
+      Name_Len    : Natural;
+   begin
+      if not Fat_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Clus := Root_Clus;
+         elsif Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                             Dir_Sector, Dir_Off, Parent, Parent_Last,
+                             Comp_First, F1, F2, F3, F4)
+           and then Is_Dir
+         then
+            Clus := Entry_Clus;
+         else
+            Reply2 (Status_Not_Found, 0);
+            return;
+         end if;
+      end;
+
+      if not Dir_Entry_At (Clus, Idx, Name, Name_Len,
+                           Entry_Size, Is_Dir)
+      then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      Syscalls.Message.Words (0) := Status_Ok;
+      Syscalls.Message.Words (1) := Entry_Size;
+      Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+      for W in 3 .. 5 loop
+         Syscalls.Message.Words (W) := 0;
+      end loop;
+      for P in 1 .. Name_Len loop
+         Syscalls.Message.Words (3 + (P - 1) / 8) :=
+           Syscalls.Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Name (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+         Fail ("fat32 readdir reply failed");
+      end if;
+   end Handle_Read_Dir;
+
+   ------------------------------------------------------------------
    --  Op_Read
    ------------------------------------------------------------------
 
@@ -1885,6 +2053,8 @@ begin
          Handle_Stat_Or_Open;
       elsif Syscalls.Message.Label = Op_Read then
          Handle_Read;
+      elsif Syscalls.Message.Label = Op_ReadDir then
+         Handle_Read_Dir;
       elsif Syscalls.Message.Label = Op_Write then
          Handle_Write;
       elsif Syscalls.Message.Label = Op_Delete then

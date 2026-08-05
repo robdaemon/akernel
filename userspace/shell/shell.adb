@@ -111,13 +111,25 @@ procedure Shell is
 
    --  Run Path as a child on this shell's channel: same console
    --  (Send, badge 0) and fs caps, then reap-poll until it exits.
+   --  Bare names (no ':' and no '/') resolve Amiga-style: first
+   --  the volume root, then the commands directory C/ (Sys:C).
    procedure Exec (Path : String) is
       Mem_Cap  : U64;
       Proc_Cap : U64 := 0;
       Result   : U64;
       Reaped   : Boolean := False;
+      Bare     : Boolean := True;
    begin
+      for C of Path loop
+         if C = ':' or else C = '/' then
+            Bare := False;
+            exit;
+         end if;
+      end loop;
       Mem_Cap := Stage (Path);
+      if Mem_Cap = 0 and then Bare then
+         Mem_Cap := Stage ("C/" & Path);
+      end if;
       if Mem_Cap = 0 then
          Akernel_User.Console.Put_Line ("unknown command: " & Path);
          return;
@@ -148,7 +160,7 @@ procedure Shell is
          Akernel_User.Console.Put_Line ("  version       system version");
          Akernel_User.Console.Put_Line ("  exit          leave the shell");
          Akernel_User.Console.Put_Line
-           ("  <path>        run a program (e.g. System/Shell)");
+           ("  <path>        run a program (C/Dir, System/Shell, ...)");
       elsif Cmd = "version" then
          Akernel_User.Console.Put_Line ("akernel milestone 31 (shell)");
       elsif Cmd = "exit" then

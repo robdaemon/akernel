@@ -27,15 +27,16 @@ BUREAU_ELF := bin/userspace/bureau.elf
 TERMINAL_ELF := bin/userspace/terminal.elf
 DEMO_ELF := bin/userspace/demo.elf
 SHELL_ELF := bin/userspace/shell.elf
+DIR_ELF := bin/userspace/dir.elf
 DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir initrd run clean clean-kernel clean-userspace clean-initrd
 
-all: kernel initrd bureau terminal demo shell
+all: kernel initrd bureau terminal demo shell dir
 
 kernel:
 	alr build
@@ -93,6 +94,9 @@ demo:
 shell:
 	$(MAKE) -C userspace/shell
 
+dir:
+	$(MAKE) -C userspace/dir
+
 #  64 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
@@ -102,7 +106,7 @@ shell:
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): bureau terminal demo shell
+$(DISK_IMG): bureau terminal demo shell dir
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
@@ -122,6 +126,8 @@ $(DISK_IMG): bureau terminal demo shell
 	mcopy -i $@@@1048576 $(TERMINAL_ELF) ::System/Terminal
 	mcopy -i $@@@1048576 $(DEMO_ELF) ::System/Demo
 	mcopy -i $@@@1048576 $(SHELL_ELF) ::System/Shell
+	mmd -i $@@@1048576 ::C
+	mcopy -i $@@@1048576 $(DIR_ELF) ::C/Dir
 	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 

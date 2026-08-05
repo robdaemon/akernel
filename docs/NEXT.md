@@ -912,7 +912,37 @@ Next candidates (order open):
     8x13 box) and zero fragments. Also: Makefile gained
     QEMU_ARGS (default -nographic; make run QEMU_ARGS="-
     display gtk" for interactive testing — the later -display
-    wins and serial stays on stdio). Next: the deferred list.
+    wins and serial stays on stdio).
+
+32. Desktop + shell usability (32a + 32b DONE): the left
+    title-bar gadget is CLOSE — Bureau enqueues a close event
+    (v3 queue kind 3, the CLOSEWINDOW analog) into the window's
+    queue and signals; the CLIENT decides (terminal/demo:
+    Surface_Destroy + exit). Bureau never kills the window.
+    Terminal close cascades to the shell — EXCEPT the kernel
+    gap: endpoint teardown does not fail OTHER threads queued
+    on it, so the shell stays blocked in its read call (inert,
+    no CPU) instead of being failed awake. Deferred: endpoint
+    finalization should fail/wake queued callers.
+
+    32b: directory enumeration + the Amiga C: layout. File
+    protocol gains Op_ReadDir = 13 (words 0..3 = path, "" =
+    volume root, word 4 = index -> status/size/is_dir/name[24]
+    in words 3..5; stateless per-index, Not_Found ends it).
+    fat32 walks the chain skipping deleted/LFN/label entries
+    (LFN run supplies the name when present); the file server
+    forwards FS volumes only. Burn: Resolve_Volume REJECTED
+    volume-only names ("BD0:") — Colon = Len meant "empty
+    path" — which is exactly what readdir-of-root needs;
+    relaxed (downstream ops already reject empty paths
+    themselves). New crate userspace/dir -> Sys:C/Dir (user
+    ruling: user-space commands live in C/, Amiga-style);
+    the shell resolves bare names against the volume root
+    then C/ ("Dir" just works). Verified live: Sys:> Dir
+    lists README.TXT 37, BIG.BIN 65536, SUBDIR (dir),
+    LongFileName.txt 23 (LFN!), System (dir), C (dir) and the
+    fuzz-created files. 174 PASS SMP1+SMP4, fuzz failures=0,
+    host fsck clean. Next: the deferred list.
 
 Commit between each milestone.
 
