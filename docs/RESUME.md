@@ -15,7 +15,27 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: milestone 28 SLICE 1 — display-service
+Recently landed: milestone 28 SLICE 2 — Servers/Bureau
+(userspace/bureau, System/Bureau, devmgr-spawned after the GPU
+with console+display-EP Send caps) allocates the compositing
+buffer, Op_Set_Buffer/Op_Commit_Buffer/Op_Present through the
+display service, renders the WB3-style desktop + "Bureau"
+screen bar + matted window (gadtools bevels, blue active
+title, gadget placeholders), then blocks. Burned: scanout
+pixels are LE u32 AABBGGRR (low byte = RED) despite CREATE_2D
+format 1 "B8G8R8A8" — "blue" title rendered red; white/black
+text is channel-symmetric so the old console never noticed.
+Verify colors by EXACT channel decode of a screendump.
+font8x8 moved to rts/akernel (shared). Client display helpers
+in akernel_user-display.adb. 172 PASS at SMP 1/4 (170 pre-Bureau
++ 2 bureau selftests; blk pattern/readback skip on reused
+disk), fuzz failures=0. Next: slice 3 = terminal client
+(window protocol v1 on a Bureau endpoint: Create_Surface ->
+surface EP + shm chunks pushed client->server; terminal
+renders text grid into its surface, serves stream Op_Write as
+console sink, Op_Input into console FIFO; devmgr sink wiring
+moves from GPU EP to terminal EP), then slice 4 seat + hw
+cursor. Before that: 28 SLICE 1 — display-service
 protocol (akernel_user-display.ads, labels 10-13; 14/15
 reserved for hw cursor) served by virtio_gpu alongside the
 text sink. Burned: IPC replies carry WORDS ONLY (caps move
@@ -25,12 +45,8 @@ driver runs Mem_Object_PA; driver keeps them session-long,
 deliberate cap_delete exception); Op_Commit_Buffer re-attaches
 scanout backing onto the compositor's pages; Op_Present =
 band TRANSFER+FLUSH, zero-copy. Text console pixel-exact
-after the split (screendump decode err=0/6144 cells). Next:
-slice 2 = Servers/Bureau skeleton (Get_Info -> alloc buffer
--> Set/Commit -> render desktop + WB3-style screen bar +
-gadtools chrome -> Present loop; display client helpers go in
-akernel_user-display.adb), then slice 3 terminal client, 4
-seat + cursor. Cosmetic pre-existing flake: kernel direct-UART
+after the split (screendump decode err=0/6144 cells).
+Cosmetic pre-existing flake: kernel direct-UART
 lines interleave with console-server UART at SMP4, sometimes
 eating a serial "PASS " prefix (content intact); blk
 pattern/readback selftests skip on reused disk images.

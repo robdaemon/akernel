@@ -645,6 +645,35 @@ package body Device_Manager is
                Result := Cap_Delete (Sink);
             end if;
          end;
+
+         --  Bureau compositor (milestone 28): spawned right after
+         --  the GPU comes up; it takes over the scanout through
+         --  the display-service protocol (the GPU driver's text
+         --  console goes dark; Bureau's terminal client retakes
+         --  the sink in slice 3). Handles: 1 = console Send
+         --  (badged), 2 = display endpoint Send.
+         declare
+            Bureau_Img : constant U64 := Boot_Cap ("System/Bureau");
+         begin
+            if Bureau_Img = 0 then
+               Log ("devmgr: bureau image unknown");
+            else
+               Grant_Count := 0;
+               Set_Grant (Grant_Count, Console_Handle, Right_Send,
+                          Next_Id);
+               Grant_Count := Grant_Count + 1;
+               Set_Grant (Grant_Count, Svc_EP, Right_Send, 0);
+               Grant_Count := Grant_Count + 1;
+               if Spawn (Bureau_Img, Grant_Count, Process_Cap) = Spawn_Ok
+                 and then Process_Cap /= 0
+               then
+                  Next_Id := Next_Id + 1;
+                  Log ("devmgr: spawned System/Bureau");
+               else
+                  Log ("devmgr: bureau spawn failed");
+               end if;
+            end if;
+         end;
       end if;
    end Spawn_PCI_Driver;
 

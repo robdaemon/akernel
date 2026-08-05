@@ -65,4 +65,26 @@ package Akernel_User.Display is
    Status_No_Buffer  : constant U64 := 2;
    Status_Bad_Caps   : constant U64 := 3;
    Status_Device     : constant U64 := 4;
+
+   --  Client-side helpers (compositor). Get_Info returns the
+   --  mode geometry; Set_Buffer pushes up to 4 chunk caps per
+   --  call (Base = first chunk index covered by this call);
+   --  Commit_Buffer swaps the scanout backing; Present pushes a
+   --  pixel band. All return a Status_* code.
+   function Get_Info
+     (EP                    : U64;
+      Width, Height, Stride : out U64;
+      Total_Pages           : out U64) return U64;
+   function Set_Buffer
+     (EP   : U64;
+      Base : U64;
+      C0   : U64;
+      C1   : U64 := 0;
+      C2   : U64 := 0;
+      C3   : U64 := 0) return U64;
+   function Commit_Buffer (EP : U64) return U64;
+   function Present
+     (EP      : U64;
+      X, Y, W : U64;
+      H       : U64) return U64;
 end Akernel_User.Display;

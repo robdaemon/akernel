@@ -565,9 +565,22 @@ Next candidates (order open):
       virtio_gpu alongside the text sink; Op_Set_Buffer /
       Op_Commit_Buffer / Op_Present / Op_Get_Info all live;
       text console pixel-exact after the split (screendump
-      decode err=0). Slice 2 = BureauSrv skeleton
-      (desktop+bar+chrome), 3 = terminal client, 4 = seat +
-      hw cursor.
+      decode err=0). SLICE 2 DONE (committed): Servers/Bureau
+      (userspace/bureau, spawned by devmgr right after the GPU
+      with console + display-EP Send caps, image System/Bureau)
+      allocates the compositing buffer, pushes chunks, commits,
+      renders desktop + "Bureau" screen bar + matted window
+      (WB3 palette, gadtools bevels, blue active title,
+      close/depth gadget placeholders), presents the frame, then
+      blocks (no clients yet). font8x8 moved to rts/akernel
+      (shared client-side rendering). Burned: the scanout reads
+      LE u32 pixels as AABBGGRR (low byte = RED) despite
+      CREATE_2D format 1 "B8G8R8A8" — a "blue" title rendered
+      red; white/black text never noticed. Verify colors by
+      EXACT channel decode of a screendump. Client display
+      helpers live in akernel_user-display.adb (raw IPC_Call;
+      replies are words-only). Slice 3 = terminal client,
+      4 = seat + hw cursor.
     - Terminal = FIRST REAL CLIENT on window protocol v1:
       Create_Surface -> (surface EP + shm memobj),
       Commit(damage). Scroll = memmove inside the terminal's

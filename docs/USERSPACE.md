@@ -241,6 +241,24 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   (Bureau's terminal client takes the sink over in slice 3).
   Op_Set_Cursor/Op_Move_Cursor reserved for the hw cursor
   (cursorq UPDATE_CURSOR 0x300 / MOVE_CURSOR 0x301, slice 4).
+- `userspace/bureau/` — Bureau, the compositor / window server
+  (milestone 28, slice 2). Spawned by devmgr right after the
+  GPU driver (image System/Bureau; handles: 1 = console Send
+  badged, 2 = display-EP Send). Allocates the compositing
+  buffer (64-page chunks at 0x60000000), pushes chunk caps
+  (Op_Set_Buffer, minted Map+Read+Write+Manage+Transfer, its
+  minted copies deleted per call), commits, renders the
+  Workbench-3.x-style desktop: gray palette, "Bureau" screen
+  bar with a right-side gadget placeholder, one matted window
+  (dark frame + gadtools bevel + blue ACTIVE title bar with
+  close/depth placeholders + white pane), presents the frame,
+  then blocks (clients arrive in slice 3). Burned: pixels are
+  LE u32 AABBGGRR on the scanout (low byte = RED) despite
+  CREATE_2D format 1 "B8G8R8A8" — a "blue" title bar rendered
+  red; verify colors by exact channel decode of a screendump.
+  font8x8 lives in rts/akernel now (shared client rendering;
+  bit 0 = leftmost pixel). Client display helpers:
+  akernel_user-display.adb (raw IPC_Call).
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the
