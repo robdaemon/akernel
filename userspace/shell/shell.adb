@@ -309,6 +309,8 @@ procedure Shell is
       Is_Dir   : Boolean;
       Size     : U64;
       Idx      : U64;
+      A_Text   : String (1 .. 40);
+      A_Len    : Natural;
    begin
       if Cmd'Length = 0 then
          return;
@@ -333,10 +335,12 @@ procedure Shell is
             Akernel_User.Console.Put_Line
               ("  path          show the command search path");
             Akernel_User.Console.Put_Line
+              ("  assign [N: T] set/list path assigns (N: REMOVE drops)");
+            Akernel_User.Console.Put_Line
               ("  <cmd> [args]  run a program (Dir, Type, System/Shell)");
          elsif Word = "version" then
             Akernel_User.Console.Put_Line
-              ("akernel milestone 33a (shell)");
+              ("akernel milestone 36 (shell)");
          elsif Word = "exit" then
             Process_Exit;
          elsif Word = "set" then
@@ -418,6 +422,54 @@ procedure Shell is
             else
                Akernel_User.Console.Put_Line
                  ("search path: <root>;C/ (built-in default)");
+            end if;
+         elsif Word = "assign" then
+            if Rest'Length = 0 then
+               --  List all assigns (NAME: target).
+               Idx := 0;
+               loop
+                  St := Akernel_User.Files.Assign_List
+                    (Idx, A_Text, A_Len);
+                  exit when St /= Akernel_User.Files.Status_Ok;
+                  Akernel_User.Console.Put_Line (A_Text (1 .. A_Len));
+                  Idx := Idx + 1;
+               end loop;
+            else
+               --  assign NAME: TARGET (or NAME: REMOVE).
+               declare
+                  NW : Natural;
+                  NR : Natural;
+                  AN : Natural := 0;  --  colon position in word
+               begin
+                  Split_Cmd (Rest, NW, NR);
+                  for I in Rest'First .. NW loop
+                     if Rest (I) = ':' then
+                        AN := I;
+                        exit;
+                     end if;
+                  end loop;
+                  if AN = 0 then
+                     Akernel_User.Console.Put_Line
+                       ("usage: assign NAME: TARGET (or NAME: REMOVE)");
+                  elsif NR > Rest'Last then
+                     Akernel_User.Console.Put_Line
+                       ("usage: assign NAME: TARGET (or NAME: REMOVE)");
+                  elsif Rest (NR .. Rest'Last) = "REMOVE" then
+                     St := Akernel_User.Files.Assign_Set
+                       (Rest (Rest'First .. AN - 1), "");
+                     if St /= Akernel_User.Files.Status_Ok then
+                        Akernel_User.Console.Put_Line
+                          (Rest (Rest'First .. AN - 1) & ": not assigned");
+                     end if;
+                  else
+                     St := Akernel_User.Files.Assign_Set
+                       (Rest (Rest'First .. AN - 1),
+                        Rest (NR .. Rest'Last));
+                     if St /= Akernel_User.Files.Status_Ok then
+                        Akernel_User.Console.Put_Line ("assign failed");
+                     end if;
+                  end if;
+               end;
             end if;
          else
             Exec (Word, Rest);

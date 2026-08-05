@@ -327,4 +327,56 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Sync;
 
+   function Assign_Set (Name : String; Target : String) return U64 is
+   begin
+      if FS_Cap = 0 or else Name'Length = 0
+        or else Name'Length > 15 or else Target'Length > 31
+      then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_Assign;
+      Syscalls.Message.Words := (others => 0);
+      Pack_Name (Name, 0, 1);
+      Pack_Name (Target, 2, 5);
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Assign_Set;
+
+   function Assign_List
+     (Index : U64; Text : out String; Text_Len : out Natural)
+      return U64
+   is
+      Ch : Character;
+   begin
+      Text_Len := 0;
+      if FS_Cap = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_Assign_List;
+      Syscalls.Message.Words := (others => 0);
+      Syscalls.Message.Words (0) := Index;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         for P in 0 .. 39 loop
+            exit when P >= Text'Length;
+            Ch := Character'Val (Natural
+              ((Syscalls.Message.Words (1 + P / 8)
+                  / Shift_Left (1, (P mod 8) * 8)) and 16#FF#));
+            exit when Ch = Character'Val (0);
+            Text_Len := Text_Len + 1;
+            Text (Text'First + Text_Len - 1) := Ch;
+         end loop;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Assign_List;
+
 end Akernel_User.Files;

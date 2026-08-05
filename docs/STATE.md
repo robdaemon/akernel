@@ -196,7 +196,12 @@ QEMU virt RAM base:     0x80000000
   FSInfo; file data bypasses) — Op_Sync = 12 is a write-through
   no-op passthrough today, flush hook for later. The
   file server is a VFS in front, forwarding verbatim with
-  per-op buffer caps cap_delete'd at every layer.
+  per-op buffer caps cap_delete'd at every layer, and holds
+  the session assign table (milestone 36: Op_Assign = 14 /
+  Op_Assign_List = 15 — Amiga-style path aliases resolved
+  when volume lookup fails, target substituted + resolution
+  retried depth-capped; mounting the sys-labelled volume
+  seeds C: and ENV:).
 - DMA isolation: riscv-iommu (Arch.IOMMU, qemu
   -machine iommu-sys=on) translates all PCI DMA through a 3-level
   DDT + per-device Sv39 IO page tables; IOVA = PA identity

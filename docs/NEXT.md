@@ -1034,6 +1034,38 @@ Next candidates (order open):
     199 anchored lines SMP4 (delta = serial garbling; all check
     strings present), fuzz failures=0, host fsck clean.
 
+36. Assigns (DONE): Amiga-style session path aliases, pure
+    userspace. The file server (VFS) holds a global in-memory
+    assign table; every Resolve_Volume call site now goes
+    through Resolve_Full — on a volume miss the NAME: prefix
+    is matched case-insensitively against the table, the
+    target substituted (implied "/" between target and rest:
+    C:Dir expands Sys:C/Dir), and resolution retries
+    depth-capped at 4 (assign loops just fail Not_Found).
+    Expanded names ride a 96-char buffer; all five path
+    handlers (stat/open, read, write, readdir, path-ops)
+    forward the EXPANDED path to fs drivers. Wire ops:
+    Op_Assign = 14 (words 0..1 name, 2..5 target; empty
+    target removes) and Op_Assign_List = 15 (stateless
+    by-index, "NAME: target" packed in reply words 1..5 —
+    word 0 stays the status). Mounting the sys-labelled
+    volume seeds C: -> Sys:C and ENV: -> Sys:Prefs/Env
+    (skipped when already set). Shell builtin assign: bare
+    lists, "assign NAME: TARGET" sets, "NAME: REMOVE" drops.
+    Rejected design: file-backed assigns (Prefs/Assigns/<N>)
+    — persistence for free, but every lookup through an
+    alias costs an open+read round-trip to the fs driver
+    and Amiga assigns are session objects anyway; startup
+    files can recreate them. Test burn: the fuzz ENV: check
+    first failed because Sys:Prefs/Env only exists after a
+    shell runs (the shell Mkdirs it lazily) — the test now
+    mirrors that (Mkdir ignoring status) and exercises
+    write/stat/delete THROUGH the alias, verifying bytes
+    land at the direct path. 11 new checks, 212 PASS
+    SMP1+SMP4, fuzz failures=0, host fsck clean. Live: the
+    shell's assign lists "C: Sys:C" / "ENV: Sys:Prefs/Env"
+    and Dir C: lists Sys:C.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

@@ -92,6 +92,16 @@ package Akernel_User.Files is
    Op_Rmdir    : constant U64 := 11;
    Op_Sync     : constant U64 := 12;
    Op_ReadDir  : constant U64 := 13;
+   Op_Assign   : constant U64 := 14;
+   Op_Assign_List : constant U64 := 15;
+   --    Op_Assign = 14  words 0..1 = name[16] (no colon), words
+   --                      2..5 = target[32]; empty target removes
+   --                      -> (status, 0). Session path aliases,
+   --                      Amiga-style ("C" -> "Sys:C"), resolved by
+   --                      the VFS when volume lookup fails.
+   --    Op_Assign_List = 15  word 0 = entry index -> (status,
+   --                      packed "NAME: target"[40] in words 1..5);
+   --                      Status_Not_Found ends the enumeration.
    --    Op_ReadDir = 13  words 0..3 = path (32 chars, "" = volume
    --                      root), word 4 = entry index -> (status,
    --                      size, is_dir, entry name[24] in words
@@ -171,6 +181,14 @@ package Akernel_User.Files is
    --  directory, Rmdir removes an empty one. Boot-file and raw
    --  block volumes answer Status_Bad_Args.
    function Delete (Name : String) return U64;
+
+   --  Assigns (milestone 36): set (Target nonempty) or remove
+   --  (Target empty); Name without its colon. List enumerates
+   --  "NAME: target" strings by index until Status_Not_Found.
+   function Assign_Set (Name : String; Target : String) return U64;
+   function Assign_List
+     (Index : U64; Text : out String; Text_Len : out Natural)
+      return U64;
    function Truncate (Name : String) return U64;
    function Mkdir (Name : String) return U64;
    function Rmdir (Name : String) return U64;

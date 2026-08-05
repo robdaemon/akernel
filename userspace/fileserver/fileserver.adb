@@ -84,6 +84,26 @@ procedure Fileserver is
 
    Volumes : array (1 .. Max_Volumes) of Volume_Entry;
 
+   --  Assigns (milestone 36): session path aliases, Amiga-style.
+   --  When volume lookup fails on NAME:..., the prefix is matched
+   --  against this table (case-insensitive) and the target
+   --  substituted, then volume resolution runs again (depth-
+   --  capped: a target may itself start with an assign). Global
+   --  session state, in-memory; mounting the system volume seeds
+   --  C: and ENV:. Managed by Op_Assign / Op_Assign_List.
+   Max_Assigns  : constant := 8;
+   Max_Expanded : constant := 96;
+
+   type Assign_Entry is record
+      Valid    : Boolean := False;
+      Name     : String (1 .. 16) := (others => Character'Val (0));
+      Name_Len : Natural := 0;
+      Target   : String (1 .. 48) := (others => Character'Val (0));
+      Tgt_Len  : Natural := 0;
+   end record;
+
+   Assigns : array (1 .. Max_Assigns) of Assign_Entry;
+
    --  VA windows: per-file slots above the client-buffer window.
    File_Win_Base : constant U64 := 16#4400_0000#;
    Slot_Stride   : constant U64 := 64 * Syscalls.Page_Size;
@@ -203,6 +223,138 @@ procedure Fileserver is
       end loop;
       return 0;
    end Resolve_Volume;
+
+   function Find_Assign (Prefix : String) return Natural is
+   begin
+      for I in Assigns'Range loop
+         if Assigns (I).Valid
+           and then Match (Assigns (I).Name, Assigns (I).Name_Len,
+                           Prefix, True)
+         then
+            return I;
+         end if;
+      end loop;
+      return 0;
+   end Find_Assign;
+
+   --  Create or replace an assign; False = no slot / bad args.
+   function Set_Assign (Name : String; Target : String) return Boolean
+   is
+      Match_I : Natural := 0;
+      Free_I  : Natural := 0;
+      Slot    : Natural;
+   begin
+      if Name'Length = 0 or else Name'Length > 16
+        or else Target'Length = 0 or else Target'Length > 48
+      then
+         return False;
+      end if;
+      for I in Assigns'Range loop
+         if Assigns (I).Valid then
+            if Match (Assigns (I).Name, Assigns (I).Name_Len,
+                      Name, True)
+            then
+               Match_I := I;
+               exit;
+            end if;
+         elsif Free_I = 0 then
+            Free_I := I;
+         end if;
+      end loop;
+      Slot := (if Match_I /= 0 then Match_I else Free_I);
+      if Slot = 0 then
+         return False;
+      end if;
+      Assigns (Slot).Valid := True;
+      Assigns (Slot).Name := (others => Character'Val (0));
+      Assigns (Slot).Name (1 .. Name'Length) := Name;
+      Assigns (Slot).Name_Len := Name'Length;
+      Assigns (Slot).Target := (others => Character'Val (0));
+      Assigns (Slot).Target (1 .. Target'Length) := Target;
+      Assigns (Slot).Tgt_Len := Target'Length;
+      return True;
+   end Set_Assign;
+
+   --  Resolve a wire name to a volume, expanding assigns: on a
+   --  volume miss the prefix is substituted from the assign table
+   --  (implied "/" between target and rest, Amiga-style: C:Dir
+   --  expands Sys:C/Dir) and resolution repeats, depth-capped.
+   --  Expanded/Exp_Len carry the final wire name for the caller's
+   --  path packing; Volume = 0 means unknown/unqualified.
+   procedure Resolve_Full
+     (Name     : String;
+      Len      : Natural;
+      Expanded : out String;
+      Exp_Len  : out Natural;
+      Volume   : out Natural;
+      Path_Pos : out Natural)
+   is
+      Colon      : Natural;
+      A          : Natural;
+      Rest_First : Natural;
+      Need_Sep   : Boolean;
+      Add        : Natural;
+   begin
+      Volume := 0;
+      Path_Pos := 1;
+      Exp_Len := 0;
+      Expanded := (others => Character'Val (0));
+      if Len = 0 or else Len > Expanded'Length then
+         return;
+      end if;
+      Exp_Len := Len;
+      Expanded (1 .. Len) := Name (Name'First .. Name'First + Len - 1);
+
+      for Depth in 1 .. 4 loop
+         Volume := Resolve_Volume (Expanded, Exp_Len, Path_Pos);
+         if Volume /= 0 then
+            return;
+         end if;
+
+         Colon := 0;
+         for I in 1 .. Exp_Len loop
+            if Expanded (I) = ':' then
+               Colon := I;
+               exit;
+            end if;
+         end loop;
+         exit when Colon = 0;  --  unqualified: Volume stays 0
+
+         A := Find_Assign (Expanded (1 .. Colon - 1));
+         exit when A = 0;
+
+         Rest_First := Colon + 1;
+         Need_Sep := Rest_First <= Exp_Len
+           and then Assigns (A).Target (Assigns (A).Tgt_Len) /= ':'
+           and then Assigns (A).Target (Assigns (A).Tgt_Len) /= '/';
+         Add := Assigns (A).Tgt_Len + (if Need_Sep then 1 else 0)
+                + (Exp_Len - Colon);
+         if Add > Expanded'Length then
+            Exp_Len := 0;
+            Volume := 0;
+            return;
+         end if;
+         declare
+            New_Name : String (1 .. Max_Expanded) :=
+              (others => Character'Val (0));
+            P : Natural := Assigns (A).Tgt_Len;
+         begin
+            New_Name (1 .. P) :=
+              Assigns (A).Target (1 .. Assigns (A).Tgt_Len);
+            if Need_Sep then
+               P := P + 1;
+               New_Name (P) := '/';
+            end if;
+            if Rest_First <= Exp_Len then
+               New_Name (P + 1 .. P + (Exp_Len - Colon)) :=
+                 Expanded (Rest_First .. Exp_Len);
+            end if;
+            Exp_Len := Add;
+            Expanded := New_Name;
+         end;
+      end loop;
+      Volume := 0;
+   end Resolve_Full;
 
    function Find
      (Path   : String;
@@ -421,6 +573,34 @@ procedure Fileserver is
             Volumes (V).Is_FS := True;
             Volumes (V).FS_EP := EP;
 
+            --  Milestone 36: mounting the system volume (label
+            --  "sys") seeds the session assigns C: and ENV: —
+            --  the Amiga boot assigns — unless already set.
+            if Match ("sys", 3,
+                      Volumes (V).Label (1 .. Volumes (V).Lab_Len),
+                      True)
+            then
+               declare
+                  T  : String (1 .. 24) := (others => Character'Val (0));
+                  TL : Natural := Volumes (V).Lab_Len;
+               begin
+                  T (1 .. TL) := Volumes (V).Label (1 .. TL);
+                  if Find_Assign ("C") = 0 then
+                     T (TL + 1) := ':';
+                     T (TL + 2) := 'C';
+                     if Set_Assign ("C", T (1 .. TL + 2)) then
+                        null;
+                     end if;
+                  end if;
+                  if Find_Assign ("ENV") = 0 then
+                     T (TL + 1 .. TL + 10) := ":Prefs/Env";
+                     if Set_Assign ("ENV", T (1 .. TL + 10)) then
+                        null;
+                     end if;
+                  end if;
+               end;
+            end if;
+
             Reply2 (Files.Status_Ok, 0);
             return;
          end if;
@@ -459,6 +639,106 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Set_Name;
 
+   --  Op_Assign: words 0..1 = name (no colon), words 2..5 =
+   --  target; an empty target removes the assign.
+   procedure Handle_Assign is
+      Name  : String (1 .. 16);
+      N_Len : Natural;
+      Target : String (1 .. 32) := (others => Character'Val (0));
+      T_Len : Natural := 0;
+      C     : Character;
+      A     : Natural;
+      Bad   : Boolean := False;
+   begin
+      if not Name_Of (0, 1, Name, N_Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      for I in 1 .. N_Len loop
+         if Name (I) = ':' then
+            Bad := True;
+         end if;
+      end loop;
+      if Bad then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      for Pos in 0 .. 31 loop
+         C := Unpack_Char (2, Pos);
+         exit when C = Character'Val (0);
+         T_Len := T_Len + 1;
+         Target (T_Len) := C;
+      end loop;
+
+      if T_Len = 0 then
+         A := Find_Assign (Name (1 .. N_Len));
+         if A = 0 then
+            Reply2 (Files.Status_Not_Found, 0);
+         else
+            Assigns (A).Valid := False;
+            Reply2 (Files.Status_Ok, 0);
+         end if;
+         return;
+      end if;
+
+      if Set_Assign (Name (1 .. N_Len), Target (1 .. T_Len)) then
+         Reply2 (Files.Status_Ok, 0);
+      else
+         Reply2 (Files.Status_Bad_Args, 0);
+      end if;
+   end Handle_Assign;
+
+   --  Op_Assign_List: word 0 = index; reply words 1..5 pack
+   --  "NAME: target" (NUL-padded), word 0 = status. Stateless,
+   --  ReadDir-style: index N returns the N-th live entry.
+   procedure Handle_Assign_List is
+      Idx   : constant U64 := Syscalls.Message.Words (0);
+      Seen  : U64 := 0;
+      Line  : String (1 .. 40);
+      L_Len : Natural;
+   begin
+      for I in Assigns'Range loop
+         if Assigns (I).Valid then
+            if Seen = Idx then
+               L_Len := 0;
+               for K in 1 .. Assigns (I).Name_Len loop
+                  exit when L_Len >= 38;
+                  L_Len := L_Len + 1;
+                  Line (L_Len) := Assigns (I).Name (K);
+               end loop;
+               L_Len := L_Len + 1;
+               Line (L_Len) := ':';
+               L_Len := L_Len + 1;
+               Line (L_Len) := ' ';
+               for K in 1 .. Assigns (I).Tgt_Len loop
+                  exit when L_Len >= 40;
+                  L_Len := L_Len + 1;
+                  Line (L_Len) := Assigns (I).Target (K);
+               end loop;
+
+               Syscalls.Message.Label := 0;
+               Syscalls.Message.Words := (others => 0);
+               for P in 0 .. L_Len - 1 loop
+                  Syscalls.Message.Words (1 + P / 8) :=
+                    Syscalls.Message.Words (1 + P / 8)
+                      or Shl (U64 (Character'Pos (Line (P + 1))),
+                              (P mod 8) * 8);
+               end loop;
+               Syscalls.Message.Words (0) := Files.Status_Ok;
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+                  Akernel_User.Console.Put_Line
+                    ("fileserver: reply failed");
+               end if;
+               return;
+            end if;
+            Seen := Seen + 1;
+         end if;
+      end loop;
+      Reply2 (Files.Status_Not_Found, 0);
+   end Handle_Assign_List;
+
    --  Pack Name (Pos .. Len) into the outgoing message words
    --  First_Word .. 5 (NUL-padded): the VFS forwards the path
    --  portion of a volume-qualified name to the fs driver.
@@ -493,13 +773,15 @@ procedure Fileserver is
       Pos  : Natural;
       V    : Natural;
       Idx  : U64;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
    begin
       if not Name_Of (0, 3, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
 
-      V := Resolve_Volume (Name, Len, Pos);
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 or else not Volumes (V).Is_FS then
          Reply2 (Files.Status_Not_Found, 0);
          return;
@@ -507,7 +789,7 @@ procedure Fileserver is
 
       Idx := Syscalls.Message.Words (4);
       Syscalls.Message.Label := Files.Op_ReadDir;
-      Pack_Path (Name, Pos, Len, 0, 3);
+      Pack_Path (Exp, Pos, E_Len, 0, 3);
       Syscalls.Message.Words (4) := Idx;
       Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
@@ -528,13 +810,15 @@ procedure Fileserver is
       Pos  : Natural;
       V    : Natural;
       I    : Natural;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
    begin
       if not Name_Of (0, 5, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
 
-      V := Resolve_Volume (Name, Len, Pos);
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
          return;
@@ -543,7 +827,7 @@ procedure Fileserver is
       if Volumes (V).Is_FS then
          --  VFS forwarding: the fs driver speaks the same client
          --  protocol; the path portion rides words 0..5.
-         Pack_Path (Name, Pos, Len, 0);
+         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Caps := (others => 0);
          if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
             Reply2 (Syscalls.Message.Words (0),
@@ -556,7 +840,7 @@ procedure Fileserver is
 
       if Volumes (V).Is_Block then
          --  Block volumes expose the raw device as "disk".
-         if Match ("disk", 4, Name (Pos .. Len),
+         if Match ("disk", 4, Exp (Pos .. E_Len),
                    Volumes (V).Case_Insensitive)
          then
             Reply2 (Files.Status_Ok, Volumes (V).Blk_Size);
@@ -566,7 +850,7 @@ procedure Fileserver is
          return;
       end if;
 
-      I := Find (Name (Pos .. Len), V);
+      I := Find (Exp (Pos .. E_Len), V);
       if I = 0 then
          Reply2 (Files.Status_Not_Found, 0);
          return;
@@ -798,6 +1082,8 @@ procedure Fileserver is
       Count  : U64 := 0;
       Status : U64 := Files.Status_Ok;
       Mapped : Boolean := False;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
 
       procedure Process is
       begin
@@ -814,7 +1100,7 @@ procedure Fileserver is
             return;
          end if;
 
-         V := Resolve_Volume (Name, Len, Pos);
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
          if V = 0 then
             Status := Files.Status_Not_Found;
             return;
@@ -823,7 +1109,7 @@ procedure Fileserver is
          if Volumes (V).Is_FS then
             Syscalls.Message.Words (0) := Offset;
             Syscalls.Message.Words (1) := Length;
-            Pack_Path (Name, Pos, Len, 2);
+            Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
             if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
@@ -836,7 +1122,7 @@ procedure Fileserver is
          end if;
 
          if Volumes (V).Is_Block then
-            if not Match ("disk", 4, Name (Pos .. Len),
+            if not Match ("disk", 4, Exp (Pos .. E_Len),
                           Volumes (V).Case_Insensitive)
             then
                Status := Files.Status_Not_Found;
@@ -885,6 +1171,8 @@ procedure Fileserver is
       Status : U64 := Files.Status_Ok;
       Mapped : Boolean := False;
       Ok     : Boolean;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
 
       procedure Process is
       begin
@@ -901,7 +1189,7 @@ procedure Fileserver is
             return;
          end if;
 
-         V := Resolve_Volume (Name, Len, Pos);
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
          if V = 0 then
             Status := Files.Status_Not_Found;
             return;
@@ -914,7 +1202,7 @@ procedure Fileserver is
             --  its own copy; ours is deleted below).
             Syscalls.Message.Words (0) := Offset;
             Syscalls.Message.Words (1) := Length;
-            Pack_Path (Name, Pos, Len, 2);
+            Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Read;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
             if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
@@ -927,7 +1215,7 @@ procedure Fileserver is
          end if;
 
          if Volumes (V).Is_Block then
-            if not Match ("disk", 4, Name (Pos .. Len),
+            if not Match ("disk", 4, Exp (Pos .. E_Len),
                           Volumes (V).Case_Insensitive)
             then
                Status := Files.Status_Not_Found;
@@ -939,7 +1227,7 @@ procedure Fileserver is
             return;
          end if;
 
-         I := Find (Name (Pos .. Len), V);
+         I := Find (Exp (Pos .. E_Len), V);
          if I = 0 then
             Status := Files.Status_Not_Found;
             return;
@@ -1009,6 +1297,8 @@ procedure Fileserver is
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
    begin
       if not Names_Done then
          Reply2 (Files.Status_Not_Ready, 0);
@@ -1020,14 +1310,14 @@ procedure Fileserver is
          return;
       end if;
 
-      V := Resolve_Volume (Name, Len, Pos);
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
          return;
       end if;
 
       if Volumes (V).Is_FS then
-         Pack_Path (Name, Pos, Len, 0);
+         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Op;
          Syscalls.Message.Caps := (others => 0);
          if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
@@ -1075,6 +1365,10 @@ begin
          else
             Handle_Set_Name;
          end if;
+      elsif Syscalls.Message.Label = Files.Op_Assign then
+         Handle_Assign;
+      elsif Syscalls.Message.Label = Files.Op_Assign_List then
+         Handle_Assign_List;
       elsif Syscalls.Message.Label = Files.Op_Sync then
          Handle_Sync;
       elsif Syscalls.Message.Label = Files.Op_Stat

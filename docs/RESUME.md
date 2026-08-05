@@ -12,10 +12,23 @@ for init state reconstruction, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
-covers the IPC case). Assigns (C:/ENV: VFS aliases, from 33a)
-are the suggested next userspace slice.
+covers the IPC case).
 
-Recently landed: MILESTONE 35 — plain send (syscall 29):
+Recently landed: MILESTONE 36 — assigns (Amiga-style
+session path aliases, pure userspace). The file server
+holds a global in-memory table; every path resolution goes
+through Resolve_Full — volume-miss prefixes match the table
+case-insensitively, target substitutes (implied "/":
+C:Dir -> Sys:C/Dir), resolution retries depth-capped.
+Op_Assign = 14 set/remove, Op_Assign_List = 15 stateless
+by-index. Mounting the sys-labelled volume seeds C: and
+ENV:. Shell builtin: assign lists / assign N: T sets /
+N: REMOVE drops. Rejected file-backed assigns (per-lookup
+fs round-trip; session objects suffice). Burn: Sys:Prefs/Env
+exists only after a shell runs (lazy Mkdir) — tests must
+Mkdir ignoring status. 212 PASS SMP1+SMP4, fuzz
+failures=0, fsck clean; live: assign lists C:/ENV:, Dir C:
+works. Before that: MILESTONE 35 — plain send (syscall 29):
 the Call send-phase only. Sender queues (or hands off to a
 waiting receiver) and blocks only until a Receive takes the
 message; no reply cap minted, sender wakes with Ok. TCB

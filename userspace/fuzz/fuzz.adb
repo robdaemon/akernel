@@ -1638,6 +1638,76 @@ begin
       Check (Reaped, "send peers reaped");
    end;
 
+   --  Assigns (milestone 36): session path aliases resolved by
+   --  the VFS when volume lookup fails. Mounting the system
+   --  volume seeds C: -> Sys:C and ENV: -> Sys:Prefs/Env.
+   declare
+      use type Akernel_User.Syscalls.U64;
+      A_Text : String (1 .. 40);
+      A_Len  : Natural;
+      S1     : U64;
+      S2     : U64;
+      Found_C   : Boolean := False;
+      Found_ENV : Boolean := False;
+      Idx    : U64 := 0;
+      Count  : U64;
+      Txt    : aliased String := "fz36";
+   begin
+      Check (Akernel_User.Files.Stat ("C:Dir", S1) =
+               Akernel_User.Files.Status_Ok,
+             "boot assign C: resolves");
+      Check (Akernel_User.Files.Stat ("Sys:C/Dir", S2) =
+               Akernel_User.Files.Status_Ok and then S1 = S2,
+             "assign target matches direct path");
+
+      --  ENV: lands on Sys:Prefs/Env: create the dirs (already
+      --  present on reused images — status ignored), write
+      --  through the alias, verify at the direct path, delete
+      --  through the alias.
+      Ignore := Akernel_User.Files.Mkdir ("Sys:Prefs");
+      Ignore := Akernel_User.Files.Mkdir ("Sys:Prefs/Env");
+      Status := Akernel_User.Files.Write
+        ("ENV:FZTST", 0, Txt'Address, 4, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 4,
+             "boot assign ENV: write through alias");
+      Check (Akernel_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
+               Akernel_User.Files.Status_Ok and then S1 = 4,
+             "assign write lands on target path");
+      Check (Akernel_User.Files.Delete ("ENV:FZTST") =
+               Akernel_User.Files.Status_Ok,
+             "assign delete through alias");
+      Check (Akernel_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
+               Akernel_User.Files.Status_Not_Found,
+             "assign delete verified at target path");
+
+      loop
+         Status := Akernel_User.Files.Assign_List (Idx, A_Text, A_Len);
+         exit when Status /= Akernel_User.Files.Status_Ok;
+         if A_Len = 8 and then A_Text (1 .. 8) = "C: Sys:C" then
+            Found_C := True;
+         end if;
+         if A_Len >= 4 and then A_Text (1 .. 4) = "ENV:" then
+            Found_ENV := True;
+         end if;
+         Idx := Idx + 1;
+      end loop;
+      Check (Found_C and then Found_ENV, "boot assigns listed");
+
+      Check (Akernel_User.Files.Assign_Set ("FZ", "Sys:C") =
+               Akernel_User.Files.Status_Ok,
+             "assign set");
+      Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
+               Akernel_User.Files.Status_Ok and then S1 = S2,
+             "assign resolves after set (implied separator)");
+      Check (Akernel_User.Files.Assign_Set ("FZ", "") =
+               Akernel_User.Files.Status_Ok,
+             "assign removed");
+      Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
+               Akernel_User.Files.Status_Not_Found,
+             "removed assign stops resolving");
+   end;
+
    --  Notification objects: pending bits, OR-accumulation, the
    --  thread-bound fast path delivering a synthetic message through
    --  IPC_Recv, and irq_bind cap validation.
