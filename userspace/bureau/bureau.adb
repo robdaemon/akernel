@@ -562,6 +562,7 @@ procedure Bureau is
    --  Click-to-focus (slice b): button0 press inside a window
    --  raises it to the top and gives it the keys; a press in
    --  the title band also grabs the window for dragging.
+   procedure Forward_Close (S : Natural);
    procedure Pointer_Press (PX, PY : U64) is
    begin
       for I in reverse 1 .. Z_N loop
@@ -579,9 +580,20 @@ procedure Bureau is
                end if;
                Focus_Slot (S);
                if PY < Wins (S).Y + Frame + Title_H then
-                  Drag_Slot := S;
-                  Drag_DX := PX - Wins (S).X;
-                  Drag_DY := PY - Wins (S).Y;
+                  --  Title band: the LEFT gadget is close
+                  --  (CLOSEWINDOW to the client, no drag);
+                  --  anywhere else grabs the window.
+                  if PX >= Wins (S).X + Frame + 2
+                    and then PX < Wins (S).X + Frame + 2 + Title_H - 4
+                    and then PY >= Wins (S).Y + Frame + 2
+                    and then PY < Wins (S).Y + Frame + 2 + Title_H - 4
+                  then
+                     Forward_Close (S);
+                  else
+                     Drag_Slot := S;
+                     Drag_DX := PX - Wins (S).X;
+                     Drag_DY := PY - Wins (S).Y;
+                  end if;
                end if;
                return;
             end if;
@@ -622,6 +634,39 @@ procedure Bureau is
          Debug_Put_Line ("bureau input signal failed");
       end if;
    end Forward_Key;
+
+   --  Enqueue a close event (kind 3, CLOSEWINDOW analog) into
+   --  slot S's input queue and signal. The CLIENT decides what
+   --  to do (Surface_Destroy + exit); Bureau never kills the
+   --  window itself.
+   procedure Forward_Close (S : Natural) is
+      Q  : Word_Array
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (Queue_VA (S)));
+      Head : U64;
+      Tail : U64;
+      Slot : U64;
+      Res  : U64;
+   begin
+      if Wins (S).Queue_Cap = 0 then
+         return;
+      end if;
+      Head := Q (Win.Input_Queue_Head);
+      Tail := Q (Win.Input_Queue_Tail);
+      if Head - Tail >= Win.Input_Queue_Events then
+         return;  --  full: drop
+      end if;
+      Slot := Win.Input_Queue_First
+        + (Head mod Win.Input_Queue_Events) * 2;
+      Q (Slot)     := Win.Input_Event_Close;
+      Q (Slot + 1) := 0;
+      Q (Win.Input_Queue_Head) := Head + 1;
+      Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
+                          Win.Input_Signal_Bit);
+      if Res /= 0 then
+         Debug_Put_Line ("bureau input signal failed");
+      end if;
+   end Forward_Close;
 
    --  Enqueue the focused window's pointer state (v3, packed
    --  content-relative) and signal. Delivered only while the

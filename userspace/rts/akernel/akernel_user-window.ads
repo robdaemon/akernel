@@ -42,6 +42,10 @@ use type Akernel_User.Syscalls.U64;
 --    only while the pointer is inside the window content and
 --    no title drag is active; consecutive pointer events are
 --    COALESCED in place so moves cannot flood the ring).
+--    kind 3 = close (value unused): the close gadget was
+--    clicked — the CLOSEWINDOW analog. The client is expected
+--    to Surface_Destroy and exit; Bureau never kills the
+--    window itself.
 --
 --  Up to 4 windows. Bureau owns stacking, focus
 --  (click-to-focus/raise), title dragging and per-window
@@ -112,6 +116,7 @@ package Akernel_User.Window is
    Input_Queue_Events : constant := 255;  --  (512 - 2) / 2
    Input_Event_Key    : constant U64 := 1;
    Input_Event_Pointer : constant U64 := 2;
+   Input_Event_Close  : constant U64 := 3;
    Input_Signal_Bit   : constant U64 := 1;
 
    --  Pointer event value packing (content-relative).

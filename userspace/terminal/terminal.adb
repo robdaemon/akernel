@@ -252,6 +252,15 @@ procedure Terminal is
                Input_Put (Ch);
                Put_Char (Ch);
             end;
+         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Close
+         then
+            --  Close gadget (CLOSEWINDOW analog): destroy the
+            --  surface and leave; the shell's console channel
+            --  dies with us and the shell exits on its next
+            --  read.
+            Result := Akernel_User.Window.Surface_Destroy
+              (Win_EP, Surf_Id);
+            Process_Exit;
          end if;
          Tail := Tail + 1;
       end loop;

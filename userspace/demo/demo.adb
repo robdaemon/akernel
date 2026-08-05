@@ -311,6 +311,11 @@ begin
                     (Win.Pointer_X (Queue (Slot + 1)),
                      Win.Pointer_Y (Queue (Slot + 1)),
                      Win.Pointer_Buttons (Queue (Slot + 1)));
+               elsif Queue (Slot) = Win.Input_Event_Close then
+                  --  Close gadget: CLOSEWINDOW analog — destroy
+                  --  the surface and leave.
+                  Result := Win.Surface_Destroy (Win_EP, Surf_Id);
+                  Process_Exit;
                end if;
                Tail := Tail + 1;
             end loop;
