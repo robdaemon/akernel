@@ -252,10 +252,12 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   bar with a right-side gadget placeholder, one matted window
   (dark frame + gadtools bevel + blue ACTIVE title bar with
   close/depth placeholders + white pane), presents the frame,
-  then blocks (clients arrive in slice 3). Burned: pixels are
-  LE u32 AABBGGRR on the scanout (low byte = RED) despite
-  CREATE_2D format 1 "B8G8R8A8" — a "blue" title bar rendered
-  red; verify colors by exact channel decode of a screendump.
+  then blocks (clients arrive in slice 3). Burned (then un-burned): pixels are
+  B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE); a screendump
+  decoder with an R/B swap "proved" otherwise, the palette
+  "fix" produced a real salmon title (user caught it), and
+  the buggy decoder re-confirmed. Decode PPM bytes straight
+  (R,G,B); trust the user's eyes over the script.
   font8x8 lives in rts/akernel now (shared client rendering;
   bit 0 = leftmost pixel). Client display helpers:
   akernel_user-display.adb (raw IPC_Call). Slice 3 added the

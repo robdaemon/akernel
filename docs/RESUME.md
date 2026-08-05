@@ -21,11 +21,13 @@ with console+display-EP Send caps) allocates the compositing
 buffer, Op_Set_Buffer/Op_Commit_Buffer/Op_Present through the
 display service, renders the WB3-style desktop + "Bureau"
 screen bar + matted window (gadtools bevels, blue active
-title, gadget placeholders), then blocks. Burned: scanout
-pixels are LE u32 AABBGGRR (low byte = RED) despite CREATE_2D
-format 1 "B8G8R8A8" — "blue" title rendered red; white/black
-text is channel-symmetric so the old console never noticed.
-Verify colors by EXACT channel decode of a screendump.
+title, gadget placeholders), then blocks. Burned (then un-burned): scanout pixels
+are B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE); a screendump
+decoder with an R/B swap "proved" AABBGGRR, the palette "fix"
+produced a real salmon title (user caught it on screen), and
+the buggy decoder re-confirmed its own error. Decode PPM
+bytes straight (R,G,B); trust the user's eyes over the
+script.
 font8x8 moved to rts/akernel (shared). Client display helpers
 in akernel_user-display.adb. 172 PASS at SMP 1/4 (170 pre-Bureau
 + 2 bureau selftests; blk pattern/readback skip on reused

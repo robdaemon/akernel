@@ -29,6 +29,23 @@ with Akernel_User.Syscalls;
 --      w3 = w, w4 = h (damaged band in surface coords; clamped).
 --      Bureau copies the band and presents it. Reply w0 = status.
 --    Op_Surface_Destroy (24): w0 = surface id (no-op in v1).
+--
+--  Seat (slice 4): the device manager pushes the focused
+--  client's stream endpoint to Bureau (Op_Set_Focus, cap slot
+--  0); the virtio-input drivers push events to Bureau
+--  (Op_Key / Op_Pointer) once devmgr hands them Bureau's
+--  endpoint (seat-config message on their service endpoint).
+--  Bureau forwards keys to the focus as stream Op_Input bytes
+--  and software-sprites the pointer (hw cursor ops stay
+--  reserved in the display protocol; the software sprite is
+--  the arch-independent fallback by design).
+--    Op_Set_Focus (26): caps 0 = focused client's stream
+--      endpoint (Send+Transfer). Reply w0 = status.
+--    Op_Key (30): w0 = character code (translated by the
+--      keyboard driver's keymap). Reply w0 = status.
+--    Op_Pointer (31): w0 = x, w1 = y (raw absolute tablet
+--      coords, 0..32767 — Bureau scales to the mode), w2 =
+--      button bits (0 = left). Reply w0 = status.
 
 package Akernel_User.Window is
    subtype U64 is Syscalls.U64;
@@ -38,6 +55,9 @@ package Akernel_User.Window is
    Op_Surface_Commit_Buffer : constant U64 := 22;
    Op_Surface_Update        : constant U64 := 23;
    Op_Surface_Destroy       : constant U64 := 24;
+   Op_Set_Focus             : constant U64 := 26;
+   Op_Key                   : constant U64 := 30;
+   Op_Pointer               : constant U64 := 31;
 
    Status_Ok        : constant U64 := 0;
    Status_No_Slot   : constant U64 := 1;

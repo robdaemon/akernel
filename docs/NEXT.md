@@ -573,11 +573,14 @@ Next candidates (order open):
       (WB3 palette, gadtools bevels, blue active title,
       close/depth gadget placeholders), presents the frame, then
       blocks (no clients yet). font8x8 moved to rts/akernel
-      (shared client-side rendering). Burned: the scanout reads
-      LE u32 pixels as AABBGGRR (low byte = RED) despite
-      CREATE_2D format 1 "B8G8R8A8" — a "blue" title rendered
-      red; white/black text never noticed. Verify colors by
-      EXACT channel decode of a screendump. Client display
+      (shared client-side rendering). Burned (then un-burned): a screendump decoder that
+      swapped R/B reconstructing PPM pixels made the correct
+      AARRGGBB blue title "read as" red; "fixing" the palette
+      produced a REAL salmon title (user caught it) that the
+      buggy decoder re-confirmed as blue. Pixels really are
+      B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE). Decode PPM
+      bytes straight (R,G,B); trust the user's eyes over the
+      script. Client display
       helpers live in akernel_user-display.adb (raw IPC_Call;
       replies are words-only). SLICE 3 DONE (committed):
       window protocol v1 (akernel_user-window.ads, labels

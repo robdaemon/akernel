@@ -67,19 +67,22 @@ procedure Bureau is
 
    subtype Pixel is Interfaces.Unsigned_32;
 
-   --  Workbench-3.x-ish palette. Burned: the scanout interprets
-   --  each LE u32 pixel as AABBGGRR (low byte = RED) despite the
-   --  resource being created as format 1 "B8G8R8A8" — verified by
-   --  screendump channel decode (a 16#FF6068B0# "blue" title bar
-   --  rendered red). The old text console never noticed: white
-   --  and black are channel-symmetric.
-   Desktop    : constant Pixel := 16#FFA4_A0A0#;
-   Bar_Face   : constant Pixel := 16#FFC4_C0C0#;
-   Win_Face   : constant Pixel := 16#FFC4_C0C0#;
+   --  Workbench-3.x-ish palette (AARRGGBB; B8G8R8A8 little-endian
+   --  means the u32 low byte is BLUE — the format name's channel
+   --  order is memory byte order). Burned the OTHER way first: a
+   --  screendump decoder that swapped R/B when reconstructing
+   --  pixels from the PPM made a correct blue title "read as"
+   --  red; "fixing" the palette then produced a REAL salmon
+   --  title the buggy decoder re-confirmed as blue. Decode PPM
+   --  bytes straight (R,G,B) and trust the user's eyes over the
+   --  script.
+   Desktop    : constant Pixel := 16#FFA0_A0A4#;
+   Bar_Face   : constant Pixel := 16#FFC0_C0C4#;
+   Win_Face   : constant Pixel := 16#FFC0_C0C4#;
    Bevel_Hi   : constant Pixel := 16#FFFF_FFFF#;
    Bevel_Lo   : constant Pixel := 16#FF40_4040#;
    Border     : constant Pixel := 16#FF10_1010#;
-   Title_Blue : constant Pixel := 16#FFB0_6860#;
+   Title_Blue : constant Pixel := 16#FF60_68B0#;
    Title_Text : constant Pixel := 16#FFFF_FFFF#;
    Pane       : constant Pixel := 16#FFF8_F8F8#;
    Text_Dark  : constant Pixel := 16#FF20_2020#;
