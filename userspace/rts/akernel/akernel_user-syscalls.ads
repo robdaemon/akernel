@@ -163,6 +163,10 @@ package Akernel_User.Syscalls is
    Page_Size     : constant U64 := 4096;
    function IPC_Call (Cap : U64) return U64;
    function IPC_Recv (Cap : U64) return U64;
+   --  Plain send (milestone 35): rendezvous ends at delivery — the
+   --  sender blocks only until a Receive takes the message; no
+   --  reply cap is minted, so the receiver cannot reply.
+   function IPC_Send (Cap : U64) return U64;
    function IPC_Reply return U64;
 
    Reply_Cap_Handle : constant U64 := 254;

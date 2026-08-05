@@ -72,6 +72,7 @@ package body Arch.Traps is
    Sys_Cap_Delete        : constant U64 := 26;
    Sys_CPU_Count         : constant U64 := 27;
    Sys_Cap_Mint          : constant U64 := 28;
+   Sys_IPC_Send          : constant U64 := 29;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1120,6 +1121,40 @@ package body Arch.Traps is
       Advance_SEPC (Frame);
    end Handle_IPC_Call;
 
+   procedure Handle_IPC_Send (Frame : System.Address) is
+      Cap_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      IPC_Result       : Kernel.IPC.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      Kernel.IPC.Send (Current, Cap_Handle, IPC_Result);
+
+      if IPC_Result = Kernel.IPC.Would_Block then
+         --  Sender queued: block until a Receive takes the message
+         --  (or the endpoint fails) and writes the result code.
+         Advance_SEPC (Frame);
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Save_Current_Context (Frame);
+         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
+         Kernel.Tasks.Set_Boosted (Current.all, False);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
+         return;
+      end if;
+
+      Set_IPC_Result (Frame, IPC_Result);
+      Advance_SEPC (Frame);
+   end Handle_IPC_Send;
+
    procedure Handle_IPC_Recv (Frame : System.Address) is
       Cap_Handle  : Kernel.Capabilities.Handle :=
         Kernel.Capabilities.Invalid_Handle;
@@ -1857,6 +1892,9 @@ package body Arch.Traps is
          Handle_EP_Create (Frame);
       elsif Number = Sys_IPC_Call then
          Handle_IPC_Call (Frame);
+         return;
+      elsif Number = Sys_IPC_Send then
+         Handle_IPC_Send (Frame);
          return;
       elsif Number = Sys_IPC_Recv then
          Handle_IPC_Recv (Frame);

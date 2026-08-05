@@ -1328,6 +1328,7 @@ begin
       TD_Mem      : U64;
       Args_R_Mem  : U64;
       Args_C_Mem  : U64;
+      Send_EP     : U64;
       Proc        : U64;
       Procs       : array (1 .. 4) of U64 := (others => 0);
       TD_Off      : U64;
@@ -1524,6 +1525,117 @@ begin
          end if;
       end loop;
       Check (Reaped, "teardown children reaped");
+
+      --  Plain send (milestone 35): the rendezvous ends at
+      --  delivery. The sender wakes with Ok as soon as a Receive
+      --  takes its message (no reply cap is minted, so a Reply
+      --  attempt fails), and a send on the now-failed teardown
+      --  endpoint is rejected immediately with Endpoint_Gone.
+      Send_EP := Raw_Ecall (Number => Sys_EP_Create);
+      Check (Send_EP < 256 and then Send_EP /= Res_EP
+             and then Send_EP /= Svc_EP,
+             "send endpoint created");
+
+      --  Sender 1: fresh endpoint, queues behind no receiver.
+      Args_C := ('S', Character'Val (0));
+      Akernel_User.Syscalls.Set_Grant
+        (0, Send_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 4);
+      Akernel_User.Syscalls.Set_Grant
+        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (3, Args_C_Mem,
+         Akernel_User.Syscalls.Right_Map +
+           Akernel_User.Syscalls.Right_Read, 0);
+      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+      Procs (1) := Proc;
+      Check (Status = 0 and then Proc /= 0, "send peer spawned");
+
+      --  Take the sent message: words and badge must survive the
+      --  queueing, and no reply cap may be minted for a send.
+      Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Send_EP);
+      declare
+         S_Words : constant U64 := Akernel_User.Syscalls.Message.Words (0);
+         S_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+      begin
+         Akernel_User.Syscalls.Message.Label := 16#7D1#;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Check (Status = 0 and then S_Words = 16#5EAD_5EAD#
+                and then S_Badge = 0,
+                "plain send delivered words and badge");
+         Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Check (Status = 1, "reply after plain send rejected");
+      end;
+
+      --  Sender 1's report: Send returned Ok at delivery.
+      Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+      declare
+         R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+         R_Code  : constant U64 :=
+           Akernel_User.Syscalls.Message.Words (0);
+      begin
+         Akernel_User.Syscalls.Message.Label := 16#7D1#;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Check (Status = 0 and then R_Badge = 4 and then R_Code = 0,
+                "plain send woke with Ok on delivery");
+      end;
+
+      --  Sender 2: the teardown endpoint is failed by now, so the
+      --  send must fail immediately instead of queueing.
+      Akernel_User.Syscalls.Set_Grant
+        (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 5);
+      Akernel_User.Syscalls.Set_Grant
+        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (3, Args_C_Mem,
+         Akernel_User.Syscalls.Right_Map +
+           Akernel_User.Syscalls.Right_Read, 0);
+      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+      Procs (2) := Proc;
+      Check (Status = 0 and then Proc /= 0,
+             "send peer spawned on failed endpoint");
+
+      Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+      declare
+         R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+         R_Code  : constant U64 :=
+           Akernel_User.Syscalls.Message.Words (0);
+      begin
+         Akernel_User.Syscalls.Message.Label := 16#7D1#;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Check (Status = 0 and then R_Badge = 5 and then R_Code = 3,
+                "plain send on failed endpoint rejected");
+      end;
+
+      --  Reap the two senders.
+      Reaped := True;
+      for I in 1 .. 2 loop
+         if Procs (I) /= 0 then
+            declare
+               One_Reaped : Boolean := False;
+            begin
+               for Try in 1 .. 128 loop
+                  Status := Raw_Ecall
+                    (Number => Sys_Reap, A0 => Procs (I));
+                  if Status = 0 then
+                     One_Reaped := True;
+                     exit;
+                  end if;
+                  Ignore := Raw_Ecall (Number => Sys_Yield);
+               end loop;
+               Reaped := Reaped and then One_Reaped;
+            end;
+         end if;
+      end loop;
+      Check (Reaped, "send peers reaped");
    end;
 
    --  Notification objects: pending bits, OR-accumulation, the

@@ -543,6 +543,8 @@ package body Kernel.IPC is
          return;
       end if;
 
+      Kernel.Tasks.Set_Reply_Wanted (Caller.all, True);
+
       --  A failed endpoint fails fresh calls immediately instead of
       --  queuing the caller behind a dead server.
       if Object.Failed then
@@ -582,6 +584,68 @@ package body Kernel.IPC is
       Enqueue_Caller (Object.all, Caller);
       Result := Would_Block;
    end Call;
+
+   procedure Send
+     (Caller       : Kernel.Tasks.Thread_Access;
+      Endpoint_Cap : Kernel.Capabilities.Handle;
+      Result       : out Status)
+   is
+      Object       : Endpoint_Access;
+      Badge        : U64;
+      Receiver     : Kernel.Tasks.Thread_Access;
+      Transfer_St  : Status;
+   begin
+      if Buffer_Of (Caller) = null then
+         Result := Invalid_Task;
+         return;
+      end if;
+
+      Resolve_Endpoint
+        (Caller       => Caller,
+         Endpoint_Cap => Endpoint_Cap,
+         Needed       => Send_Right,
+         Result       => Result,
+         Object       => Object,
+         Badge        => Badge);
+
+      if Result /= Ok then
+         return;
+      end if;
+
+      Kernel.Tasks.Set_Reply_Wanted (Caller.all, False);
+
+      --  Same failed-endpoint rule as Call.
+      if Object.Failed then
+         Result := Endpoint_Gone;
+         return;
+      end if;
+
+      if Object.Waiting_Receiver /= null
+        and then not Is_Dead (Object.Waiting_Receiver)
+      then
+         --  Direct handoff: delivered at once, no reply phase, so
+         --  the sender returns Ok instead of blocking.
+         Receiver := Object.Waiting_Receiver;
+         Object.Waiting_Receiver := null;
+
+         Transfer_Message (Caller, Receiver, Badge, Transfer_St);
+         if Transfer_St /= Ok then
+            Wake_With_Result (Receiver, Result_Transfer_Failed);
+            Result := Transfer_St;
+            return;
+         end if;
+
+         Wake_With_Result (Receiver, Result_Ok);
+         Result := Ok;
+         return;
+      end if;
+
+      --  No receiver: enqueue FIFO; the dequeueing Receive wakes the
+      --  sender with Ok (Reply_Wanted is False, so no reply cap).
+      Kernel.Tasks.Set_IPC_Badge (Caller.all, Badge);
+      Enqueue_Caller (Object.all, Caller);
+      Result := Would_Block;
+   end Send;
 
    procedure Receive
      (Receiver     : Kernel.Tasks.Thread_Access;
@@ -639,6 +703,14 @@ package body Kernel.IPC is
       if Transfer_St /= Ok then
          Wake_With_Result (Caller, Result_Transfer_Failed);
          Result := Transfer_St;
+         return;
+      end if;
+
+      if not Kernel.Tasks.Is_Reply_Wanted (Caller.all) then
+         --  Plain send: delivery completes the rendezvous. No reply
+         --  cap is minted, so a Reply from this receiver fails.
+         Wake_With_Result (Caller, Result_Ok);
+         Result := Ok;
          return;
       end if;
 

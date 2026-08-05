@@ -8,13 +8,27 @@ kernel/userspace protocol designs.
 
 Open candidates: the deferred list:
 kernel introspection syscalls
-for init state reconstruction, plain send, register fast path,
+for init state reconstruction, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
-covers the IPC case).
+covers the IPC case). Assigns (C:/ENV: VFS aliases, from 33a)
+are the suggested next userspace slice.
 
-Recently landed: MILESTONE 34 — endpoint teardown failing of
+Recently landed: MILESTONE 35 — plain send (syscall 29):
+the Call send-phase only. Sender queues (or hands off to a
+waiting receiver) and blocks only until a Receive takes the
+message; no reply cap minted, sender wakes with Ok. TCB
+records Reply_Wanted at Call/Send time; the dequeueing
+Receive mints+park (call) or wakes immediately (send).
+Failed-endpoint fast path + teardown drain apply unchanged.
+A receiver learns call-vs-send only by replying — fails
+Invalid (1), the established no-reply-cap code. Test peer
+role "S" in userspace/teardown + fuzz choreography: delivery
+preserves words+badge, reply-after-send rejected, sender
+woke Ok, send on failed endpoint rejected Endpoint_Gone.
+200/199 PASS SMP1/SMP4, fuzz failures=0, fsck clean.
+Before that: MILESTONE 34 — endpoint teardown failing of
 queued callers (the orphaned-shell burn). Endpoints carry a
 Failed flag: closing a Receive-right endpoint cap with
 Thread_Dying fails the endpoint — queued callers and the

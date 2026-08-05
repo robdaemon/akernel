@@ -15,6 +15,11 @@ with Akernel_User.Syscalls;
 --    "C" — call handle 1, then report the wake result code in
 --          word 0 of a call on handle 2 so the fuzzer can check
 --          who woke with what.
+--    "S" — plain-send handle 1 (a marker in word 0), then report
+--          the send result code in word 0 of a call on handle 2.
+--          Send ends at delivery: the peer wakes with Ok as soon
+--          as the fuzzer receives, and the fuzzer's Reply attempt
+--          must fail.
 --
 --  Grant layout (handles): 1 = service endpoint, 2 = result
 --  endpoint (C only), 3 = filler (duplicated cap; the args page
@@ -36,6 +41,21 @@ begin
    if Arg_Ln > 0 and then Arg (1) = 'R' then
       --  One receive, no reply, exit.
       Result := IPC_Recv (Service_EP);
+      Process_Exit;
+   end if;
+
+   if Arg_Ln > 0 and then Arg (1) = 'S' then
+      --  Plain send: delivered, no reply phase, then report.
+      Message.Label := 16#5D#;
+      Message.Words := (0 => 16#5EAD_5EAD#, others => 0);
+      Message.Caps  := (others => 0);
+      Result := IPC_Send (Service_EP);
+
+      Message.Label := 16#7D0#;
+      Message.Words := (0 => Result, others => 0);
+      Message.Caps  := (others => 0);
+      Result := IPC_Call (Result_EP);
+
       Process_Exit;
    end if;
 

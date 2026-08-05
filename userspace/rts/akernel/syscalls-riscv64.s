@@ -97,6 +97,14 @@ akernel_sys_ipc_recv:
     ret
 .size akernel_sys_ipc_recv, . - akernel_sys_ipc_recv
 
+.global akernel_sys_ipc_send
+.type akernel_sys_ipc_send, @function
+akernel_sys_ipc_send:
+    li a7, 29
+    ecall
+    ret
+.size akernel_sys_ipc_send, . - akernel_sys_ipc_send
+
 .global akernel_sys_ipc_reply
 .type akernel_sys_ipc_reply, @function
 akernel_sys_ipc_reply:

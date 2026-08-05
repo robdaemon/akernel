@@ -69,6 +69,17 @@ per endpoint (single-receiver discipline, same as IRQ lines). Endpoint
 finalization fails every queued caller and the waiting receiver with
 `endpoint gone` (3).
 
+Plain send (milestone 35) shares the queue and transfer machinery
+but ends the rendezvous at delivery: the sender blocks only until a
+receive takes its message, no reply cap is minted, and the sender
+wakes with `ok`. A receiver cannot tell a call from a send by
+inspection — it learns it only if it tries to reply, which fails
+with `invalid` (1, the no-reply-cap code). Callers record
+`Reply_Wanted` on the TCB at Call/Send time; the dequeueing receive
+reads it to decide between minting a reply cap (call) and waking
+the sender immediately (send). Direct handoff to a waiting receiver
+returns `ok` to the sender at once, without blocking.
+
 Wake-with-status: the waker writes the result code into the blocked
 thread's saved trap-frame a0 in its TCB context
 (`Kernel.Tasks.Set_Saved_Result`) before `Scheduler.Wake`.
@@ -83,6 +94,7 @@ Userspace result codes (a0): 0 ok, 1 invalid, 2 transfer failed,
 12 call(a0 = ep_cap)  -> a0 status; blocks until reply
 13 recv(a0 = ep_cap)  -> a0 status; blocks until a caller arrives
 14 reply(a0 = 254)    -> a0 status; one-shot reply to current caller
+29 send(a0 = ep_cap)  -> a0 status; blocks only until received
 ```
 
 Rights checked: `call` requires `Send` on the endpoint cap;

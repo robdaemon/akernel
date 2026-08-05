@@ -101,6 +101,17 @@ package Kernel.IPC is
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Result       : out Status);
 
+   --  Send: like Call, but the rendezvous ends at delivery — no
+   --  reply cap is minted and the sender never waits for a reply.
+   --  A waiting receiver takes the message immediately and Send
+   --  returns Ok; otherwise the sender queues and wakes with Ok
+   --  when a later Receive takes the message. A receiver that
+   --  replies to a sent message gets Reply_Missing.
+   procedure Send
+     (Caller       : Kernel.Tasks.Thread_Access;
+      Endpoint_Cap : Kernel.Capabilities.Handle;
+      Result       : out Status);
+
    --  Receive: takes the head queued caller's message (transfer +
    --  reply cap mint), or blocks the receiver when the queue is empty.
    procedure Receive

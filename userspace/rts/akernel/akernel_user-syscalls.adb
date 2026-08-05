@@ -137,6 +137,9 @@ package body Akernel_User.Syscalls is
    function Raw_IPC_Recv (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_recv";
 
+   function Raw_IPC_Send (Cap : U64) return U64
+     with Import, Convention => C, External_Name => "akernel_sys_ipc_send";
+
    function Raw_IPC_Reply (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_reply";
 
@@ -319,6 +322,11 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_IPC_Recv (Cap);
    end IPC_Recv;
+
+   function IPC_Send (Cap : U64) return U64 is
+   begin
+      return Raw_IPC_Send (Cap);
+   end IPC_Send;
 
    function IPC_Reply return U64 is
    begin

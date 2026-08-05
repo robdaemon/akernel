@@ -1011,6 +1011,29 @@ Next candidates (order open):
     nested System/Terminal + close gadget destroys the window
     and the parent shell stays healthy.
 
+35. Plain send (DONE): syscall 29, the Call send-phase only — the
+    sender queues (or hands off directly to a waiting receiver)
+    and blocks only until a Receive takes the message; no reply
+    cap is minted and the sender wakes with Ok. Implementation
+    reuses the whole call machinery: callers record Reply_Wanted
+    on the TCB at Call (True) / Send (False) time; the dequeueing
+    Receive reads it — mint the reply cap and leave the caller
+    parked (call), or wake the sender with Ok immediately (send).
+    Direct handoff returns Ok without blocking. Endpoint teardown
+    and the failed-endpoint fast path apply unchanged (same
+    caller queue; Send checks Failed like Call). A receiver
+    cannot tell call from send except by replying — which fails
+    with Invalid (1, the no-reply-cap code; there is no distinct
+    user-visible Reply_Missing code — Set_IPC_Result maps it to
+    Invalid, and the early fuzz tests already assert that).
+    Test: teardown peer role "S" (send a marker, then report the
+    result code on the badged result endpoint): queued delivery
+    preserves words+badge, reply-after-send rejected, sender
+    woke Ok, send on the failed teardown endpoint rejected
+    immediately (Endpoint_Gone). 8 new checks, 200 PASS SMP1 /
+    199 anchored lines SMP4 (delta = serial garbling; all check
+    strings present), fuzz failures=0, host fsck clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -1020,7 +1043,7 @@ Commit between each milestone.
   cache + Op_Sync passthrough landed in 22; still open: write-back
   policy, device-level cache shared across fs drivers, real flush
   (VIRTIO_BLK_F_FLUSH), block-layer sync op.
-- Plain `send`, register fast path, >4 caps/msg.
+- Register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction.
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).

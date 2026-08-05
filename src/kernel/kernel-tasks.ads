@@ -141,6 +141,16 @@ package Kernel.Tasks is
 
    function Is_Awaiting_Reply (TCB : Thread_Control_Block) return Boolean;
 
+   --  Plain-send bookkeeping (milestone 35): set at Call (True) /
+   --  Send (False) before queueing; the receiver reads it to decide
+   --  whether to mint a reply cap and leave the caller parked, or
+   --  to wake the sender with Ok immediately on delivery.
+   procedure Set_Reply_Wanted
+     (TCB    : in out Thread_Control_Block;
+      Wanted : Boolean);
+
+   function Is_Reply_Wanted (TCB : Thread_Control_Block) return Boolean;
+
    --  Endpoint blocked-caller queue link (FIFO per endpoint).
    procedure Set_Endpoint_Queue_Next
      (TCB    : in out Thread_Control_Block;
@@ -285,6 +295,7 @@ private
       Kernel_Stack_Top : Kernel.Capabilities.U64;
       IPC_Buffer       : Kernel.Capabilities.U64;
       Awaiting_Reply   : Boolean;
+      Reply_Wanted     : Boolean;
       Queue_Next       : Thread_Access;
       Call_Badge       : Kernel.Capabilities.U64;
       Context          : Arch.Context.Thread_Context;

@@ -55,6 +55,7 @@ package body Kernel.Tasks is
       TCB.Kernel_Stack_Top := 0;
       TCB.IPC_Buffer := 0;
       TCB.Awaiting_Reply := False;
+      TCB.Reply_Wanted   := False;
       TCB.Queue_Next := null;
       TCB.Call_Badge := 0;
       Arch.Context.Initialize (TCB.Context);
@@ -292,6 +293,19 @@ package body Kernel.Tasks is
    begin
       return TCB.Awaiting_Reply;
    end Is_Awaiting_Reply;
+
+   procedure Set_Reply_Wanted
+     (TCB    : in out Thread_Control_Block;
+      Wanted : Boolean)
+   is
+   begin
+      TCB.Reply_Wanted := Wanted;
+   end Set_Reply_Wanted;
+
+   function Is_Reply_Wanted (TCB : Thread_Control_Block) return Boolean is
+   begin
+      return TCB.Reply_Wanted;
+   end Is_Reply_Wanted;
 
    procedure Set_Endpoint_Queue_Next
      (TCB  : in out Thread_Control_Block;
