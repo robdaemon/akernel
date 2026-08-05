@@ -22,7 +22,11 @@ package body Kernel.Processes is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
-   Max_Process_Slots : constant := 16;
+   --  16 filled up in practice: the boot set (init, drivers,
+   --  servers, Bureau, Terminal, Demo, Shell) occupies 15, and the
+   --  endpoint-teardown test needs four children at once (milestone
+   --  34). One thread per process.
+   Max_Process_Slots : constant := 32;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
    type Process_Slot_Array is array (Process_Index)
      of aliased Kernel.Tasks.Process_Control_Block;
@@ -557,7 +561,15 @@ package body Kernel.Processes is
         (Kernel.Capabilities.Invalid_Handle) ..
           Kernel.Capabilities.Handle'Last
       loop
-         Kernel.Tasks.Close_Cap (Thread, Cap, Cap_Result);
+         --  Thread_Dying => True: this IS thread-lifetime teardown
+         --  (Mark_Exited), so cap-close hooks must run their dying
+         --  variants: notification unbind (31a) and receiver-side
+         --  endpoint failure (34). Discard_Slot already passes
+         --  True; this exit path was the one that didn't, which
+         --  left Fail_Endpoint unreachable for a voluntarily
+         --  exiting server (milestone-34 burn).
+         Kernel.Tasks.Close_Cap
+           (Thread, Cap, Cap_Result, Thread_Dying => True);
       end loop;
    end Cleanup_Cap_Refs;
 

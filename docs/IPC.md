@@ -150,6 +150,18 @@ objects), so refcounting enters the object model:
   cap close decrements; zero destroys via kind-specific finalizer.
 - Finalizers: Endpoint — fail/wake any blocked caller and waiting
   receiver; Memory — return frames to PMM.
+- Endpoints also fail PERMANENTLY when their receiving side dies
+  (milestone 34): closing a Receive-right endpoint cap with
+  Thread_Dying marks the endpoint Failed — queued callers and the
+  waiting receiver wake with `Result_Endpoint_Gone`, and fresh
+  Call/Receive invocations fail immediately with the same code
+  instead of blocking behind a server that no longer exists (the
+  orphaned-shell burn: a shell whose terminal closed stayed blocked
+  in its read call forever). Send-only caps never trigger this, so
+  a dying client cannot take down a shared service endpoint. Both
+  thread-lifetime teardown paths — Discard_Slot (reap/kill) and
+  Cleanup_Cap_Refs (voluntary Process_Exit) — close caps with
+  Thread_Dying => True.
 - Existing static objects (boot MMIO region, IRQ lines) are *pinned*:
   refcount sentinel value, never destroyed. Static allocation stays.
 - `Kernel.Objects.Cleanup_Thread_Cap_Object` becomes the

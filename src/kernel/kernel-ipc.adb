@@ -198,6 +198,7 @@ package body Kernel.IPC is
       Object.Queue_Head := null;
       Object.Queue_Tail := null;
       Object.Waiting_Receiver := null;
+      Object.Failed := False;
       Object.Next_Free := System.Null_Address;
    end Initialize;
 
@@ -217,7 +218,6 @@ package body Kernel.IPC is
 
    function Release (Object : System.Address) return Boolean is
       Endpoint_Object : constant Endpoint_Access := To_Endpoint (Object);
-      Caller          : Kernel.Tasks.Thread_Access;
       use type Kernel.Objects.Refcount;
    begin
       if Endpoint_Object = null
@@ -237,6 +237,23 @@ package body Kernel.IPC is
       --  Last reference dropped: fail every queued caller and the
       --  waiting receiver (each wakes with Result_Endpoint_Gone),
       --  then return the slot to the slab.
+      Fail_Endpoint (Object);
+
+      Free_Endpoint (Endpoint_Object);
+      return True;
+   end Release;
+
+   procedure Fail_Endpoint (Object : System.Address) is
+      Endpoint_Object : constant Endpoint_Access :=
+        To_Endpoint (Object);
+      Caller          : Kernel.Tasks.Thread_Access;
+   begin
+      if Endpoint_Object = null or else Endpoint_Object.Failed then
+         return;
+      end if;
+
+      Endpoint_Object.Failed := True;
+
       while Endpoint_Object.Queue_Head /= null loop
          Caller := Endpoint_Object.Queue_Head;
          Endpoint_Object.Queue_Head :=
@@ -249,10 +266,7 @@ package body Kernel.IPC is
       Wake_With_Result (Endpoint_Object.Waiting_Receiver,
                         Result_Endpoint_Gone);
       Endpoint_Object.Waiting_Receiver := null;
-
-      Free_Endpoint (Endpoint_Object);
-      return True;
-   end Release;
+   end Fail_Endpoint;
 
    ------------------------------------------------------------------
    --  Caller queue
@@ -529,6 +543,13 @@ package body Kernel.IPC is
          return;
       end if;
 
+      --  A failed endpoint fails fresh calls immediately instead of
+      --  queuing the caller behind a dead server.
+      if Object.Failed then
+         Result := Endpoint_Gone;
+         return;
+      end if;
+
       if Object.Waiting_Receiver /= null
         and then not Is_Dead (Object.Waiting_Receiver)
       then
@@ -587,6 +608,11 @@ package body Kernel.IPC is
          Badge        => Badge);
 
       if Result /= Ok then
+         return;
+      end if;
+
+      if Object.Failed then
+         Result := Endpoint_Gone;
          return;
       end if;
 

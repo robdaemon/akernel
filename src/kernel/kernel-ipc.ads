@@ -43,6 +43,7 @@ package Kernel.IPC is
       Rights_Denied,
       Would_Block,
       Transfer_Failed,
+      Endpoint_Gone,
       Reply_Missing,
       No_Endpoints);
 
@@ -137,12 +138,23 @@ package Kernel.IPC is
    --  Caller wakes with Result_Reply_Gone.
    procedure Fail_Reply_Target (Caller_Object : System.Address);
 
+   --  Receiver-teardown hook: permanently fail an endpoint whose
+   --  receiving side is dying. Queued callers and a waiting
+   --  receiver wake with Result_Endpoint_Gone; later Calls and
+   --  Receives fail immediately with Endpoint_Gone instead of
+   --  blocking forever on a server that no longer exists (the
+   --  orphaned-shell burn: a shell whose terminal closed stayed
+   --  blocked in its read call). Idempotent; does not free the
+   --  endpoint (Send caps elsewhere keep it referenced).
+   procedure Fail_Endpoint (Object : System.Address);
+
 private
    type Endpoint is record
       Header           : Kernel.Objects.Object_Header;
       Queue_Head       : Kernel.Tasks.Thread_Access;
       Queue_Tail       : Kernel.Tasks.Thread_Access;
       Waiting_Receiver : Kernel.Tasks.Thread_Access;
+      Failed           : Boolean;
       Next_Free        : System.Address;
    end record;
 end Kernel.IPC;

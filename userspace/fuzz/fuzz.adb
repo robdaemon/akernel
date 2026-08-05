@@ -1305,6 +1305,227 @@ begin
    end loop;
    Check (Reaped, "echo reaped after exit");
 
+   --  Endpoint teardown (milestone 34): a receiver process's death
+   --  must fail the callers parked on its endpoint instead of
+   --  leaving them blocked forever (the orphaned-shell burn).
+   --  Choreography: two callers queue on a fresh service endpoint,
+   --  the receiver then takes the head caller and exits WITHOUT
+   --  replying -> the caller awaiting the reply wakes with
+   --  Reply_Gone (4), the queued caller with Endpoint_Gone (3),
+   --  and a fresh caller spawned after the death fails immediately
+   --  with Endpoint_Gone (3). Each caller reports its wake code in
+   --  word 0 over a result endpoint, badged 1/2/3 per caller.
+   declare
+      use System.Storage_Elements;
+      use type Akernel_User.Syscalls.U64;
+
+      TD_Stage_VA : constant U64 := 16#5480_0000#;
+      TD_Args_VA  : constant U64 := 16#5500_0000#;
+
+      Svc_EP      : U64;
+      Res_EP      : U64;
+      TD_Size     : U64;
+      TD_Mem      : U64;
+      Args_R_Mem  : U64;
+      Args_C_Mem  : U64;
+      Proc        : U64;
+      Procs       : array (1 .. 4) of U64 := (others => 0);
+      TD_Off      : U64;
+      TD_Chunk    : U64;
+      TD_Count    : U64;
+      TD_Staged   : Boolean := True;
+
+      Args_R : String (1 .. 2)
+        with Volatile, Address => System'To_Address
+          (Integer_Address (TD_Args_VA));
+      Args_C : String (1 .. 2)
+        with Volatile, Address => System'To_Address
+          (Integer_Address (TD_Args_VA + 4096));
+
+      Results : array (1 .. 3) of U64 := (others => 99);
+   begin
+      Svc_EP := Raw_Ecall (Number => Sys_EP_Create);
+      Res_EP := Raw_Ecall (Number => Sys_EP_Create);
+      Check (Svc_EP < 256 and then Res_EP < 256
+             and then Svc_EP /= Res_EP,
+             "teardown endpoints created");
+
+      --  Stage Tests/Teardown (memstage pattern).
+      Status := Akernel_User.Files.Stat ("Tests/Teardown", TD_Size);
+      Check (Status = Akernel_User.Files.Status_Ok and then TD_Size > 0,
+             "teardown size via fs");
+
+      TD_Mem := Akernel_User.Syscalls.Mem_Alloc ((TD_Size + 4095) / 4096);
+      Check (TD_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+             "teardown staging object allocated");
+      Check (Akernel_User.Syscalls.Mem_Map
+               (Address_Space =>
+                  Akernel_User.Syscalls.Address_Space_Cap,
+                Cap           => TD_Mem,
+                VA            => TD_Stage_VA,
+                Offset        => 0,
+                Length        => ((TD_Size + 4095) / 4096) * 4096,
+                Flags         => 3) = 0,
+             "teardown staging object mapped");
+
+      Status := Akernel_User.Files.Open ("Tests/Teardown", TD_Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "teardown open ok");
+      TD_Off := 0;
+      while TD_Off < TD_Size loop
+         TD_Chunk := U64'Min (TD_Size - TD_Off, 32768);
+         Status := Akernel_User.Files.Read
+           ("Tests/Teardown", TD_Off,
+            System'To_Address (Integer_Address (TD_Stage_VA + TD_Off)),
+            TD_Chunk, TD_Count);
+         TD_Staged := TD_Staged
+           and then Status = Akernel_User.Files.Status_Ok
+           and then TD_Count = TD_Chunk;
+         TD_Off := TD_Off + TD_Chunk;
+      end loop;
+      Check (TD_Staged, "teardown ELF staged into memory object");
+
+      --  Argument pages: role letter + NUL at grant index 3
+      --  (handle 4, Syscalls.Args_Handle).
+      Args_R_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
+      Args_C_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
+      Check (Args_R_Mem /= Akernel_User.Syscalls.Syscall_Failed
+             and then Args_C_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+             "teardown args objects allocated");
+      Check (Akernel_User.Syscalls.Mem_Map
+               (Akernel_User.Syscalls.Address_Space_Cap,
+                Args_R_Mem, TD_Args_VA, 0, 4096, 3) = 0
+             and then Akernel_User.Syscalls.Mem_Map
+               (Akernel_User.Syscalls.Address_Space_Cap,
+                Args_C_Mem, TD_Args_VA + 4096, 0, 4096, 3) = 0,
+             "teardown args objects mapped");
+      Args_R := ('R', Character'Val (0));
+      Args_C := ('C', Character'Val (0));
+
+      --  Callers 1+2 first so they queue with no receiver.
+      for I in 1 .. 2 loop
+         Akernel_User.Syscalls.Set_Grant
+           (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, Res_EP, Akernel_User.Syscalls.Right_Send, U64 (I));
+         Akernel_User.Syscalls.Set_Grant
+           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Procs (I) := Proc;
+         if Status /= 0 then
+            Put ("caller spawn status "); Put_Hex (Status); Put_Line ("");
+         end if;
+         Check (Status = 0 and then Proc /= 0,
+                "teardown caller spawned");
+      end loop;
+
+      --  Receiver: receives the head caller, exits without replying.
+      Akernel_User.Syscalls.Set_Grant
+        (0, Svc_EP,
+         Akernel_User.Syscalls.Right_Send +
+           Akernel_User.Syscalls.Right_Receive, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (3, Args_R_Mem,
+         Akernel_User.Syscalls.Right_Map +
+           Akernel_User.Syscalls.Right_Read, 0);
+      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+      Procs (3) := Proc;
+      if Status /= 0 then
+         Put ("receiver spawn status "); Put_Hex (Status); Put_Line ("");
+      end if;
+      Check (Status = 0 and then Proc /= 0, "teardown receiver spawned");
+
+      --  Let the receiver run and die before the fresh caller
+      --  (a handful of slices is enough; each yield can donate a
+      --  full timeslice to the Spin hog, so keep the count low).
+      for I in 1 .. 512 loop
+         Ignore := Raw_Ecall (Number => Sys_Yield);
+      end loop;
+
+      --  Caller 3: fresh call on the failed endpoint.
+      Akernel_User.Syscalls.Set_Grant
+        (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 3);
+      Akernel_User.Syscalls.Set_Grant
+        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (3, Args_C_Mem,
+         Akernel_User.Syscalls.Right_Map +
+           Akernel_User.Syscalls.Right_Read, 0);
+      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+      Procs (4) := Proc;
+      if Status /= 0 then
+         Put ("late spawn status "); Put_Hex (Status); Put_Line ("");
+      end if;
+      Check (Status = 0 and then Proc /= 0,
+             "teardown late caller spawned");
+
+      --  Collect the three wake-code reports (badge = caller
+      --  index). Each report is a Call: reply so the reporting
+      --  child can complete and exit (the last child otherwise
+      --  parks awaiting a reply that never comes).
+      for I in 1 .. 3 loop
+         Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+         declare
+            R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+            R_Code  : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (0);
+         begin
+            Akernel_User.Syscalls.Message.Label := 16#7D1#;
+            Akernel_User.Syscalls.Message.Words := (others => 0);
+            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+            Check (Status = 0, "teardown wake report delivered");
+            Put ("  report badge "); Put_Hex (R_Badge);
+            Put (" code "); Put_Hex (R_Code); Put_Line ("");
+            if R_Badge in 1 .. 3 then
+               Results (Integer (R_Badge)) := R_Code;
+            end if;
+         end;
+      end loop;
+      Check (Results (1) = 4,
+             "awaiting caller woke Reply_Gone on receiver exit");
+      Check (Results (2) = 3,
+             "queued caller woke Endpoint_Gone on receiver exit");
+      Check (Results (3) = 3,
+             "fresh call on failed endpoint fails immediately");
+
+      --  Reap all four children.
+      Reaped := True;
+      for I in 1 .. 4 loop
+         if Procs (I) /= 0 then
+            declare
+               One_Reaped : Boolean := False;
+            begin
+               for Try in 1 .. 128 loop
+                  Status := Raw_Ecall
+                    (Number => Sys_Reap, A0 => Procs (I));
+                  if Status = 0 then
+                     One_Reaped := True;
+                     exit;
+                  end if;
+                  Ignore := Raw_Ecall (Number => Sys_Yield);
+               end loop;
+               if not One_Reaped then
+                  Put ("  reap child "); Put_Hex (U64 (I));
+                  Put (" status "); Put_Hex (Status); Put_Line ("");
+               end if;
+               Reaped := Reaped and then One_Reaped;
+            end;
+         end if;
+      end loop;
+      Check (Reaped, "teardown children reaped");
+   end;
+
    --  Notification objects: pending bits, OR-accumulation, the
    --  thread-bound fast path delivering a synthetic message through
    --  IPC_Recv, and irq_bind cap validation.

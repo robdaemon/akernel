@@ -978,6 +978,39 @@ Next candidates (order open):
     VFS aliases stay deferred until a second volume pulls
     them).
 
+34. Endpoint teardown failing of queued callers (DONE): the
+    orphaned-shell burn — a shell whose terminal closed stayed
+    blocked in its read call forever because endpoint finalizers
+    only fired at refcount zero, and the client's Send caps keep
+    the endpoint referenced. Endpoints now carry a Failed flag:
+    closing a Receive-right endpoint cap with Thread_Dying calls
+    Kernel.IPC.Fail_Endpoint — queued callers and the waiting
+    receiver wake with Result_Endpoint_Gone, fresh Call/Receive
+    fail immediately with the new Endpoint_Gone status (maps to
+    the same user code 3). Send-only caps never fail an endpoint
+    (a dying client must not kill a shared service). TWO burns:
+    (1) Cleanup_Cap_Refs — the voluntary Process_Exit path —
+    closed caps WITHOUT Thread_Dying => True (only Discard_Slot
+    passed it, since 31a), so Fail_Endpoint was unreachable for a
+    voluntarily exiting server; both teardown paths now pass
+    True. (2) Max_Process_Slots 16 was silently full (boot set
+    occupies 15) — the four-child teardown test hit No_Slot;
+    now 32. Test peer userspace/teardown (role via spawn args:
+    R receives once and exits without replying; C calls and
+    reports its wake code over a badged result endpoint) driven
+    by a deterministic fuzz choreography: two queued callers, a
+    receiver that takes the head and exits -> awaiting caller
+    wakes Reply_Gone (4), queued caller Endpoint_Gone (3), and
+    a late caller spawned after the death fails immediately (3).
+    Test-observer burn: the reporters Call the result endpoint
+    and the fuzzer must REPLY (a0 = Reply_Cap_Handle 254) or the
+    last reporter parks awaiting reply and reaps Not_Exited.
+    Also: SMP1 yield loops donate full timeslices to the Spin
+    hog — keep settle loops at hundreds, not thousands. 192
+    PASS SMP1+SMP4, fuzz failures=0, host fsck clean. Live:
+    nested System/Terminal + close gadget destroys the window
+    and the parent shell stays healthy.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

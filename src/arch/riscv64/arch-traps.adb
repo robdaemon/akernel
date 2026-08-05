@@ -1078,6 +1078,8 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
       elsif Result = Kernel.IPC.Transfer_Failed then
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Transfer_Failed);
+      elsif Result = Kernel.IPC.Endpoint_Gone then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Endpoint_Gone);
       else
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
       end if;

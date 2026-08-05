@@ -16,6 +16,7 @@ FUZZ_ELF := bin/userspace/fuzz.elf
 SPIN_ELF := bin/userspace/spin.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
 ECHO_ELF := bin/userspace/echo.elf
+TEARDOWN_ELF := bin/userspace/teardown.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
 FAT32_ELF := bin/userspace/fat32.elf
 PARTMGR_ELF := bin/userspace/partmgr.elf
@@ -35,7 +36,7 @@ INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir type initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo teardown fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir type initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd bureau terminal demo shell dir type
 
@@ -61,6 +62,9 @@ memstage:
 
 echo:
 	$(MAKE) -C userspace/echo
+
+teardown:
+	$(MAKE) -C userspace/teardown
 
 fileserver:
 	$(MAKE) -C userspace/fileserver
@@ -141,7 +145,7 @@ initrd: $(INITRD_IMG)
 #  Bureau/Terminal deliberately NOT in the initrd (milestone 29):
 #  they live on the Sys filesystem (disk.img :System/) and the
 #  devmgr spawns them from there via Sys:System/Startup.
-$(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo teardown fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
@@ -162,6 +166,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo fileserver fat32 partmgr virt
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
 	cp $(MEMSTAGE_ELF) $(INITRD_ROOT)/Tests/Memstage
 	cp $(ECHO_ELF) $(INITRD_ROOT)/Tests/Echo
+	cp $(TEARDOWN_ELF) $(INITRD_ROOT)/Tests/Teardown
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo fs System/Manifest part0' >> $(INITRD_ROOT)/System/Manifest

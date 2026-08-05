@@ -12,11 +12,27 @@ for init state reconstruction, plain send, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
-covers the IPC case), endpoint-teardown failing of queued
-callers (a shell whose terminal closes stays blocked in its
-read call — inert but unkillable).
+covers the IPC case).
 
-Recently landed: MILESTONE 33a — environment + command-line
+Recently landed: MILESTONE 34 — endpoint teardown failing of
+queued callers (the orphaned-shell burn). Endpoints carry a
+Failed flag: closing a Receive-right endpoint cap with
+Thread_Dying fails the endpoint — queued callers and the
+waiting receiver wake with Result_Endpoint_Gone, fresh
+Call/Receive fail immediately (new Endpoint_Gone status).
+Send-only caps never fail an endpoint. Burns: (1)
+Cleanup_Cap_Refs (the voluntary Process_Exit path) closed caps
+WITHOUT Thread_Dying => True — only Discard_Slot passed it —
+so Fail_Endpoint was unreachable for an exiting server; both
+teardown paths now pass True. (2) Max_Process_Slots 16 was
+silently full at boot (15 used) — now 32. Test peer
+userspace/teardown (R = receive once, exit without reply; C =
+call and report the wake code on a badged result endpoint)
+with deterministic fuzz choreography: awaiting caller wakes 4,
+queued caller 3, late fresh call 3. Fuzzer must REPLY to
+result calls (a0 = 254) or the last reporter parks. 192 PASS
+SMP1+SMP4, fuzz failures=0, host fsck clean. Before that:
+MILESTONE 33a — environment + command-line
 conventions, Amiga-style (no env block, no argv ABI).
 Variables ARE files: BD0:Prefs/Env/<NAME>, global by
 construction. Shell builtins set [N=V] (bare set lists via

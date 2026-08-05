@@ -42,6 +42,16 @@ package body Kernel.Objects is
 
       case Cap.Kind is
          when Kernel.Capabilities.Endpoint_Object =>
+            --  Receiver-side teardown permanently fails the endpoint
+            --  so queued/current callers wake with
+            --  Result_Endpoint_Gone instead of blocking behind a
+            --  dead server (orphaned-shell burn). Gated on
+            --  Thread_Dying + the Receive right: a dying client's
+            --  Send-only cap must not fail a shared service
+            --  endpoint.
+            if Thread_Dying and then Cap.Rights.Receive then
+               Kernel.IPC.Fail_Endpoint (Cap.Object);
+            end if;
             Kernel.IPC.Cleanup_Thread_Cap (Thread, Cap.Object);
             if Kernel.IPC.Release (Cap.Object) then
                null;
