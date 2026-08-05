@@ -520,7 +520,12 @@ Next candidates (order open):
     loop. Debugging note: alr's build hash can go stale across
     interrupted builds — alr clean when a fixed error "persists".
     171/171 directed PASS at QEMU_SMP 1/4/8, fuzz failures=0,
-    host fsck.fat clean.
+    host fsck.fat clean. Followup fix (27b): font8x8 bit order —
+    bit 0 is the leftmost pixel, not bit 7 as the upstream
+    comment claims (first real-display check showed mirrored
+    glyphs); verified exactly by decoding screendump PPM cells
+    against the font table (err=0). Non-black/threshold checks
+    fool: mirrored glyphs still look glyphy.
 
 Commit between each milestone.
 

@@ -364,8 +364,11 @@ procedure Virtio_Gpu is
                Base : constant U64 :=
                  U64 ((GY + R * 2 + Rep) * Width + GX);
             begin
+               --  font8x8: bit 0 is the LEFTMOST pixel (the
+               --  header comment says bit 7 — wrong, mirrored
+               --  output proved it on the real display).
                for B in 0 .. 7 loop
-                  if (Interfaces.Shift_Right (Bits, 7 - B) and 1) = 1 then
+                  if (Interfaces.Shift_Right (Bits, B) and 1) = 1 then
                      FB (Base + U64 (B)) := FG;
                   else
                      FB (Base + U64 (B)) := BG;

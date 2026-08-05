@@ -1,7 +1,8 @@
 --  8x8 monochrome bitmap font, basic latin (U+0020 - U+007E).
 --  Source: font8x8 by Daniel Hepper, Public Domain
 --  (https://github.com/dhepper/font8x8). Row 0 is the glyph top;
---  bit 7 of each row byte is the leftmost pixel.
+--  bit 0 of each row byte is the leftmost pixel (the upstream
+--  comment claims bit 7 — the display proves otherwise).
 
 with Interfaces;
 

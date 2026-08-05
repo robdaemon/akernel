@@ -15,7 +15,16 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: virtio-gpu display console (27) — controlq 2D
+Recently landed: mirrored-glyph fix (27b) — font8x8 is bit 0 =
+leftmost pixel, not bit 7 as the upstream comment claims
+(screenshot 20260804_174859 showed mirrored text). Draw_Glyph
+flips the Shift_Right operand. Verified EXACTLY: screendump PPM
+cells decoded against the font table, err=0 on every glyph
+(threshold/non-black checks fool — mirrored glyphs still look
+glyphy). Also burned: pkill -f "qemu-system..." self-matches the
+invoking shell's own command line (killed the wrapper, qemu died
+on SIGTERM from make) — use pkill -f "[q]emu-system-riscv64"
+bracket form. Before that: virtio-gpu display console (27) — controlq 2D
 driver (font8x8 text, dirty-band TRANSFER+FLUSH), console server
 mirrors lines to stream-protocol sinks (Op_Attach_Sink,
 devmgr-wired, failing sinks dropped); verified headless via qemu
