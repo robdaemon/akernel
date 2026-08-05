@@ -302,6 +302,29 @@ begin
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
+      elsif Label = Akernel_User.Streams.Op_Input then
+         --  Seat input (Bureau forwards focused keys as Op_Input
+         --  bytes): inject into the console server's input FIFO,
+         --  same channel the UART RX and (pre-seat) keyboard
+         --  driver feed. A future shell reads it via Op_Read.
+         declare
+            Fwd   : Akernel_User.Streams.Stream_Request;
+            Fresp : Akernel_User.Streams.Stream_Response;
+            Rlbl  : U64;
+         begin
+            Fwd.Count := Request.Count;
+            Fwd.Data := Request.Data;
+            if RPC.Call (Console_EP, Akernel_User.Streams.Op_Input,
+                         Fwd, RPC.No_Caps, Rlbl, Fresp) /= IPC_Ok
+            then
+               Debug_Put_Line ("terminal console input failed");
+            end if;
+         end;
+         Response := (Count => Request.Count, Data => (others => 0));
+         if RPC.Reply (Label, Response) /= IPC_Ok then
+            Debug_Put_Line ("terminal reply failed");
+            Process_Exit;
+         end if;
       else
          --  Op_Read/Op_Input/unknown: no data.
          Response := (Count => 0, Data => (others => 0));

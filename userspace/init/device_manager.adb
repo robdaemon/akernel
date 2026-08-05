@@ -61,6 +61,15 @@ package body Device_Manager is
    Resource_Handle : U64 := 0;
    Block_EP        : U64 := 0;
    Bureau_Svc      : U64 := 0;  --  Bureau window service (Send)
+   --  Seat (milestone 28 slice 4): class-18 (virtio-input)
+   --  service endpoints, recorded at spawn; after Bureau +
+   --  terminal are up, devmgr pushes Bureau's endpoint to each
+   --  (Seat_Config_Label, cap slot 0) and the terminal's stream
+   --  endpoint to Bureau (Op_Set_Focus = 26).
+   Seat_Config_Label : constant U64 := U64'Last - 2;
+   Op_Set_Focus      : constant U64 := 26;
+   Input_Svc     : array (0 .. 3) of U64 := (others => 0);
+   Input_Count   : Natural := 0;
 
    function Block_Service return U64 is (Block_EP);
    Next_Id         : U64 := First_Driver_Id;
@@ -608,6 +617,10 @@ package body Device_Manager is
       if L.Class_Id = 2 and then Block_EP = 0 then
          Block_EP := Svc_EP;
       end if;
+      if L.Class_Id = 18 and then Input_Count < 4 then
+         Input_Svc (Input_Count) := Svc_EP;
+         Input_Count := Input_Count + 1;
+      end if;
       Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
 
       --  Driver config message: the driver replies with status 0.
@@ -702,6 +715,45 @@ package body Device_Manager is
                            Log ("devmgr: terminal sink attach failed");
                         end if;
                         Result := Cap_Delete (Sink);
+
+                        --  Seat wiring: Bureau learns the focus,
+                        --  the input drivers learn Bureau.
+                        Sink := Cap_Mint
+                          (Term_Sink, Right_Send + Right_Transfer, 0);
+                        if Sink = Syscall_Failed then
+                           Log ("devmgr: focus mint failed");
+                        else
+                           Message.Label := Op_Set_Focus;
+                           Message.Words := (others => 0);
+                           Message.Caps := (others => 0);
+                           Message.Caps (0) := Sink;
+                           if IPC_Call (Bureau_Svc) /= IPC_Ok
+                             or else Message.Words (0) /= 0
+                           then
+                              Log ("devmgr: focus push failed");
+                           end if;
+                           Result := Cap_Delete (Sink);
+                        end if;
+
+                        for I in 0 .. Input_Count - 1 loop
+                           Sink := Cap_Mint
+                             (Bureau_Svc, Right_Send + Right_Transfer,
+                              0);
+                           if Sink = Syscall_Failed then
+                              Log ("devmgr: seat mint failed");
+                           else
+                              Message.Label := Seat_Config_Label;
+                              Message.Words := (others => 0);
+                              Message.Caps := (others => 0);
+                              Message.Caps (0) := Sink;
+                              if IPC_Call (Input_Svc (I)) /= IPC_Ok
+                                or else Message.Words (0) /= 0
+                              then
+                                 Log ("devmgr: seat push failed");
+                              end if;
+                              Result := Cap_Delete (Sink);
+                           end if;
+                        end loop;
                      end if;
                   else
                      Log ("devmgr: terminal spawn failed");

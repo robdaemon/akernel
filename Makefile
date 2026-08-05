@@ -152,7 +152,8 @@ run: all $(DISK_IMG)
 	  -device virtio-keyboard-pci,addr=0x5 \
 	  -device virtio-tablet-pci,addr=0x6 \
 	  -device virtio-gpu-pci,addr=0x7 \
-	  -monitor unix:/tmp/qmon.sock,server,nowait
+	  -monitor unix:/tmp/qmon.sock,server,nowait \
+  -qmp unix:/tmp/qqmp.sock,server,nowait
 
 clean: clean-kernel clean-userspace clean-initrd
 

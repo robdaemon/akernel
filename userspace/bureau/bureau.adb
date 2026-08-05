@@ -4,6 +4,7 @@ with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Display;
 with Akernel_User.Window;
+with Akernel_User.Streams;
 with Font8x8;
 
 --  Bureau: the compositor / window server (milestone 28, slice 2).
@@ -138,6 +139,15 @@ procedure Bureau is
       end if;
    end Win_Reply;
 
+   --  Cursor state (bodies in the seat section below; Update_Band
+   --  redraws the sprite when a band clobbers it).
+   Cur_W : constant := 10;
+   Cur_H : constant := 16;
+   Cur_X   : U64 := 0;
+   Cur_Y   : U64 := 0;
+   Cur_Vis : Boolean := False;
+   procedure Cursor_Draw (NX, NY : U64);
+
    --  Copy a damaged band from the client surface into the
    --  compositing buffer at the pane origin, then present it.
    procedure Update_Band (X, Y, W, H : U64) is
@@ -159,7 +169,112 @@ procedure Bureau is
       end loop;
       Result := Akernel_User.Display.Present
         (Display_EP, Pane_X0 + CX, Pane_Y0 + CY, CW, CH);
+
+      --  The band copy may have clobbered the software cursor:
+      --  redraw it (re-saves the under-rect fresh).
+      if Cur_Vis
+        and then Pane_X0 + CX < Cur_X + Cur_W
+        and then Cur_X < Pane_X0 + CX + CW
+        and then Pane_Y0 + CY < Cur_Y + Cur_H
+        and then Cur_Y < Pane_Y0 + CY + CH
+      then
+         Cursor_Draw (Cur_X, Cur_Y);
+      end if;
    end Update_Band;
+
+   ------------------------------------------------------------------
+   --  Seat: focus endpoint + software cursor (the arch-independent
+   --  fallback by design; virtio hw cursor ops stay reserved in
+   --  the display protocol)
+   ------------------------------------------------------------------
+
+   Focus_EP : U64 := 0;  --  focused client's stream EP (Send)
+
+   --  Classic up-left arrow: '#' outline, 'O' fill, '.' clear.
+   Arrow : constant array (0 .. Cur_H - 1) of String (1 .. Cur_W) :=
+     ("#.........",
+      "##........",
+      "#O#.......",
+      "#OO#......",
+      "#OOO#.....",
+      "#OOOO#....",
+      "#OOOOO#...",
+      "#OOOOOO#..",
+      "#OOOOOOO#.",
+      "#OOOOOOOO#",
+      "#OOOOO####",
+      "#OO#OO#...",
+      "#O#.#OO#..",
+      "##..#OO#..",
+      "#....#OO#.",
+      ".....##...");
+   Cur_Outline : constant Pixel := 16#FF10_1010#;
+   Cur_Fill    : constant Pixel := 16#FFFF_FFFF#;
+
+   Under   : array (U64 range 0 .. Cur_W * Cur_H - 1) of Pixel;
+
+   --  Save the under-rect fresh, draw the sprite, present the band.
+   procedure Cursor_Draw (NX, NY : U64) is
+      CX : constant U64 := U64'Min (NX, Width - Cur_W);
+      CY : constant U64 := U64'Min (NY, Height - Cur_H);
+      Stride_Px : constant U64 := Stride / 4;
+      Idx : U64;
+   begin
+      Cur_X := CX;
+      Cur_Y := CY;
+      for R in 0 .. Cur_H - 1 loop
+         for C in 0 .. Cur_W - 1 loop
+            Idx := (CY + U64 (R)) * Stride_Px + CX + U64 (C);
+            Under (U64 (R) * Cur_W + U64 (C)) := Buf (Idx);
+            case Arrow (R) (C + 1) is
+               when '#' => Buf (Idx) := Cur_Outline;
+               when 'O' => Buf (Idx) := Cur_Fill;
+               when others => null;
+            end case;
+         end loop;
+      end loop;
+      Cur_Vis := True;
+      Result := Akernel_User.Display.Present
+        (Display_EP, CX, CY, Cur_W, Cur_H);
+   end Cursor_Draw;
+
+   procedure Cursor_Erase is
+      Stride_Px : constant U64 := Stride / 4;
+   begin
+      if not Cur_Vis then
+         return;
+      end if;
+      for R in 0 .. Cur_H - 1 loop
+         for C in 0 .. Cur_W - 1 loop
+            Buf ((Cur_Y + U64 (R)) * Stride_Px + Cur_X + U64 (C)) :=
+              Under (U64 (R) * Cur_W + U64 (C));
+         end loop;
+      end loop;
+      Cur_Vis := False;
+      Result := Akernel_User.Display.Present
+        (Display_EP, Cur_X, Cur_Y, Cur_W, Cur_H);
+   end Cursor_Erase;
+
+   procedure Cursor_Move (NX, NY : U64) is
+   begin
+      Cursor_Erase;
+      Cursor_Draw (NX, NY);
+   end Cursor_Move;
+
+   --  Forward one focused key as a stream Op_Input byte
+   --  (Stream_Request layout: Count = word 0, Data (1) = word 1
+   --  byte 0).
+   procedure Forward_Key (Ch : U64) is
+   begin
+      Message.Label := Akernel_User.Streams.Op_Input;
+      Message.Words := (others => 0);
+      Message.Words (0) := 1;
+      Message.Words (1) := Ch;
+      Message.Caps := (others => 0);
+      if IPC_Call (Focus_EP) /= IPC_Ok then
+         Debug_Put_Line ("bureau focus key forward failed");
+      end if;
+   end Forward_Key;
 
    procedure Fail (S : String) is
    begin
@@ -390,6 +505,9 @@ begin
    end if;
    Debug_Put_Line ("bureau desktop online");
 
+   --  Pointer starts centered.
+   Cursor_Draw (Width / 2, Height / 2);
+
    --  Window-protocol service loop: one surface slot (v1).
    loop
       if IPC_Recv (Win_Svc) /= IPC_Ok then
@@ -486,6 +604,35 @@ begin
          else
             Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
          end if;
+
+      elsif Label = Win.Op_Set_Focus then
+         --  Devmgr pushes the focused client's stream endpoint.
+         Focus_EP := Message.Caps (0);
+         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+
+      elsif Label = Win.Op_Key then
+         if Focus_EP /= 0 then
+            declare
+               Ch : constant U64 := Message.Words (0);
+            begin
+               --  Interim chain proof (remove when the shell
+               --  lands, milestone 30): serial-log each key.
+               Debug_Put_Line ("bureau key");
+               Forward_Key (Ch);
+            end;
+         end if;
+         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+
+      elsif Label = Win.Op_Pointer then
+         declare
+            NX : constant U64 :=
+              Message.Words (0) * Width / 32768;
+            NY : constant U64 :=
+              Message.Words (1) * Height / 32768;
+         begin
+            Cursor_Move (NX, NY);
+         end;
+         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
 
       else
          --  Op_Surface_Destroy (no-op in v1) and unknown labels.

@@ -71,6 +71,23 @@ procedure Virtio_Input is
 
    --  First service-endpoint message from the device manager.
    Driver_Config_Label : constant U64 := U64'Last - 1;
+   --  Seat config: devmgr pushes Bureau's window-service endpoint
+   --  (cap slot 0) once Bureau exists (GPU addr 0x7 scans after
+   --  the input functions, so this arrives as a SECOND message on
+   --  the service endpoint, after bring-up). From then on keys
+   --  and pointer go to Bureau (Op_Key / Op_Pointer); before,
+   --  keys fall back to the console input FIFO and pointer to
+   --  the serial log.
+   Seat_Config_Label : constant U64 := U64'Last - 2;
+   Op_Key_Label     : constant U64 := 30;
+   Op_Pointer_Label : constant U64 := 31;
+   Seat_EP : U64 := 0;
+
+   --  Pointer state (Last_X/Last_Y unset until the first ABS event).
+   Last_X : U64 := U64'Last;
+   Last_Y : U64 := U64'Last;
+   Buttons   : U64 := 0;
+   Abs_Dirty : Boolean := False;
 
    --  virtio-input config (Linux virtio_input.h layout, which is
    --  what QEMU implements: the region is the CURRENTLY SELECTED
@@ -199,6 +216,35 @@ procedure Virtio_Input is
       end if;
    end Send_Input_Char;
 
+   --  Seat channel (raw word messages to Bureau).
+   procedure Send_Seat_Key (Ch : Character) is
+      Res : U64;
+   begin
+      Message.Label := Op_Key_Label;
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Character'Pos (Ch));
+      Message.Caps := (others => 0);
+      Res := IPC_Call (Seat_EP);
+      if Res /= IPC_Ok then
+         Debug_Put_Line ("virtio-input seat key delivery failed");
+      end if;
+   end Send_Seat_Key;
+
+   procedure Send_Seat_Pointer is
+      Res : U64;
+   begin
+      Message.Label := Op_Pointer_Label;
+      Message.Words := (others => 0);
+      Message.Words (0) := Last_X;
+      Message.Words (1) := Last_Y;
+      Message.Words (2) := Buttons;
+      Message.Caps := (others => 0);
+      Res := IPC_Call (Seat_EP);
+      if Res /= IPC_Ok then
+         Debug_Put_Line ("virtio-input seat pointer delivery failed");
+      end if;
+   end Send_Seat_Pointer;
+
    ------------------------------------------------------------------
    --  US keymap (unshifted / shifted), codes 0 .. 127.
    ------------------------------------------------------------------
@@ -246,9 +292,6 @@ procedure Virtio_Input is
    Written   : Virtio.U32;
    Is_Keyboard : Boolean := False;
    Is_Pointer  : Boolean := False;
-
-   Last_X : U64 := U64'Last;
-   Last_Y : U64 := U64'Last;
 
    procedure Fail (S : String) is
    begin
@@ -377,8 +420,12 @@ procedure Virtio_Input is
       end if;
 
       if Ch /= NUL then
-         Debug_Put_Line ("input key delivered");
-         Send_Input_Char (Ch);
+         if Seat_EP /= 0 then
+            Send_Seat_Key (Ch);
+         else
+            Debug_Put_Line ("input key delivered");
+            Send_Input_Char (Ch);
+         end if;
       end if;
    end Handle_Key;
 
@@ -392,20 +439,33 @@ procedure Virtio_Input is
          if E_Code < 256 then
             Handle_Key (E_Code, E_Val /= 0);
             --  Autorepeat (value 2) counts as pressed for input.
+         elsif E_Code = 272 then  --  BTN_LEFT
+            Buttons := (Buttons and not 1) or (E_Val and 1);
+            Abs_Dirty := True;
+         elsif E_Code = 273 then  --  BTN_RIGHT
+            Buttons := (Buttons and not 2) or ((E_Val and 1) * 2);
+            Abs_Dirty := True;
          else
             Debug_Put_Line ("input button event");
          end if;
       elsif E_Type = Natural (Ev_Abs) then
          if E_Code = 0 then
             Last_X := E_Val;
+            Abs_Dirty := True;
          elsif E_Code = 1 then
             Last_Y := E_Val;
+            Abs_Dirty := True;
          end if;
-         Debug_Put_Line ("input abs move");
       elsif E_Type = Natural (Ev_Rel) then
          Debug_Put_Line ("input rel move");
       elsif E_Type = Natural (Ev_Syn) then
-         null;  --  event batch boundary
+         --  Event batch boundary: push one pointer message.
+         if Abs_Dirty and then Seat_EP /= 0
+           and then Last_X /= U64'Last and then Last_Y /= U64'Last
+         then
+            Abs_Dirty := False;
+            Send_Seat_Pointer;
+         end if;
       end if;
    end Handle_Event;
 
@@ -560,26 +620,53 @@ begin
    ------------------------------------------------------------------
 
    loop
-      Bits := Ntfn_Wait (Ntfn_Cap);
-
-      ISR := Dev.Interrupt_Status;
-      if ISR /= 0 then
-         Dev.ACK_Interrupt (ISR);
+      Result := IPC_Recv (Svc_EP);
+      if Result /= IPC_Ok then
+         Debug_Put_Line ("virtio-input recv failed");
+         Process_Exit;
       end if;
-      Result := IRQ_Ack (IRQ_Cap);
 
-      while Virtio.Queues.Has_Completed (Q) loop
-         Virtio.Queues.Pop (Q, Head, Written);
-
-         if Written >= Event_Len then
-            Handle_Event (Natural (Head));
+      if Message.Label = Notification_Label then
+         --  IRQ notification (synthetic message, NO reply cap):
+         --  drain completions and ack. Every IRQ cap holder must
+         --  ack after being poked (docs/IPC.md).
+         ISR := Dev.Interrupt_Status;
+         if ISR /= 0 then
+            Dev.ACK_Interrupt (ISR);
          end if;
+         Result := IRQ_Ack (IRQ_Cap);
 
-         --  Repost the same descriptor (descriptor id == slot).
-         Virtio.Queues.Set_Buffer
-           (Q, Head, Ev_PA + U64 (Head) * U64 (Event_Len), Event_Len,
-            Device_Writes => True);
-         Virtio.Queues.Submit (Q, Head);
-      end loop;
+         while Virtio.Queues.Has_Completed (Q) loop
+            Virtio.Queues.Pop (Q, Head, Written);
+
+            if Written >= Event_Len then
+               Handle_Event (Natural (Head));
+            end if;
+
+            --  Repost the same descriptor (descriptor id == slot).
+            Virtio.Queues.Set_Buffer
+              (Q, Head, Ev_PA + U64 (Head) * U64 (Event_Len),
+               Event_Len, Device_Writes => True);
+            Virtio.Queues.Submit (Q, Head);
+         end loop;
+
+      elsif Message.Label = Seat_Config_Label then
+         --  Devmgr pushes Bureau's window-service endpoint.
+         Seat_EP := Message.Caps (0);
+         Message.Words := (others => 0);
+         if IPC_Reply /= IPC_Ok then
+            Debug_Put_Line ("virtio-input seat reply failed");
+            Process_Exit;
+         end if;
+         Debug_Put_Line ("virtio-input seat online");
+
+      else
+         Message.Words := (others => 0);
+         Message.Words (0) := 3;
+         if IPC_Reply /= IPC_Ok then
+            Debug_Put_Line ("virtio-input reply failed");
+            Process_Exit;
+         end if;
+      end if;
    end loop;
 end Virtio_Input;

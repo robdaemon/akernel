@@ -600,7 +600,35 @@ Next candidates (order open):
       server mirrors to the terminal sink, and a terminal
       blocked in its own console RPC can never Receive (Bureau
       <-> terminal cycle proven live). 173/173 at SMP1, fuzz
-      failures=0. Slice 4 = seat + hw cursor.
+      failures=0. SLICE 4 DONE (committed): the seat.
+      devmgr records class-18 service EPs, pushes the terminal's
+      stream EP to Bureau (Op_Set_Focus 26, cap slot 0) and
+      Bureau's EP to both virtio-input instances
+      (Seat_Config_Label = U64'Last-2, second message on their
+      service EP — input functions scan BEFORE the GPU, so the
+      seat arrives post-bring-up; their event loop converted
+      from Ntfn_Wait to the rng-style IPC_Recv multiplex for
+      this). Keys: driver keymap -> Op_Key 30 -> Bureau ->
+      stream Op_Input byte into the focus (terminal) ->
+      console input FIFO (shell reads Op_Read in milestone 30);
+      interim "bureau key" serial log per key (remove at 30).
+      Pointer: ABS_X/Y batched on EV_SYN + BTN bits ->
+      Op_Pointer 31 (raw 0..32767, Bureau scales) -> SOFTWARE
+      cursor sprite in Bureau (chosen over the virtio hw
+      cursor: arch-independent fallback by design, works on
+      every future dumb display driver; cursorq ops stay
+      reserved in the display protocol). Bureau redraws the
+      sprite when an Update band clobbers it (re-saves the
+      under-rect fresh). Verified live: sendkey -> 2 bureau
+      key events, 0 delivery failures; QMP input-send-event
+      abs 20000/15000 -> arrow template-matched at EXACTLY
+      (625,351) = scaled coords. Burned: HMP mouse_move
+      produces NO absolute events for the virtio tablet
+      (buttons flowed, movement didn't) — absolute injection
+      needs QMP input-send-event; the run target now also
+      exposes -qmp unix:/tmp/qqmp.sock. 173/173 SMP1, fuzz
+      failures=0. Milestone 28 COMPLETE: 29 = multi-window +
+      focus, 30 = interactive shell in the terminal.
     - Terminal = FIRST REAL CLIENT on window protocol v1:
       Create_Surface -> (surface EP + shm memobj),
       Commit(damage). Scroll = memmove inside the terminal's

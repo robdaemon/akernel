@@ -15,7 +15,34 @@ today), pointer events into a structured channel, write-back
 cache policy + VIRTIO_BLK_F_FLUSH when more filesystems appear,
 true scheduler priorities (wakeup boost covers the IPC case).
 
-Recently landed: milestone 28 SLICE 2 — Servers/Bureau
+Recently landed: MILESTONE 28 COMPLETE (slices 1-4). Slice 4
+seat: devmgr records class-18 service EPs, pushes terminal's
+stream EP to Bureau (Op_Set_Focus 26) and Bureau's EP to both
+virtio-input instances (Seat_Config_Label = U64'Last-2, second
+message on their service EP — input scans before the GPU;
+their event loop is now the rng-style IPC_Recv multiplex).
+Keys: keymap -> Op_Key 30 -> Bureau -> stream Op_Input byte ->
+terminal -> console input FIFO ("bureau key" serial log per
+key, interim — remove at milestone 30). Pointer: ABS batched
+on EV_SYN + BTN bits -> Op_Pointer 31 -> Bureau SOFTWARE
+cursor sprite (chosen over virtio hw cursor: arch-independent;
+sprite re-saved/redrawn when update bands clobber it).
+Verified live: sendkey -> bureau key events, 0 failures; QMP
+input-send-event abs 20000/15000 -> arrow at EXACTLY (625,351)
+scaled coords. Burned: HMP mouse_move sends NO absolute events
+to the virtio tablet (buttons flow, movement doesn't) —
+absolute injection needs QMP input-send-event; run target
+exposes -qmp unix:/tmp/qqmp.sock. Also: user caught the title
+bar rendering SALMON — the "AABBGGRR scanout" burn was wrong:
+a screendump decoder script had an R/B swap, "verified" a
+false channel order, and the palette "fix" created the real
+bug. Pixels are B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE);
+decode PPM bytes straight (R,G,B); trust the user's eyes over
+the script (commit d56c59d). Next: milestone 29 = multi-window
++ focus + moving windows (Bureau window protocol v1 has ONE
+surface slot; generalize), 30 = interactive shell in the
+terminal (console FIFO + Op_Read + seat all in place). 173/173
+SMP1, fuzz failures=0. Before that: milestone 28 SLICE 2 — Servers/Bureau
 (userspace/bureau, System/Bureau, devmgr-spawned after the GPU
 with console+display-EP Send caps) allocates the compositing
 buffer, Op_Set_Buffer/Op_Commit_Buffer/Op_Present through the

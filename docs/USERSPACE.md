@@ -279,8 +279,29 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   terminal) logs via Debug_Put_Line only — any console print
   deadlocks against the console server's mirror into the
   terminal sink (Bureau <-> terminal cycle proven live).
-  Input arrives in slice 4 via the Bureau seat; Op_Read is
-  EOF.
+  Input arrives via the Bureau seat (slice 4): Bureau forwards
+  focused keys as stream Op_Input bytes, the terminal injects
+  them into the console input FIFO (shell reads Op_Read in
+  milestone 30).
+- Seat (slice 4, akernel_user-window.ads labels 26/30/31):
+  devmgr records class-18 service EPs at spawn, then after
+  Bureau + terminal are up pushes the terminal's stream EP to
+  Bureau (Op_Set_Focus, cap slot 0) and Bureau's EP to both
+  virtio-input instances (Seat_Config_Label = U64'Last-2 —
+  the input functions scan before the GPU, so this arrives as
+  a SECOND message post-bring-up; the virtio-input event loop
+  is now the rng-style IPC_Recv multiplex, IRQ notifications
+  arrive as synthetic Notification_Label messages). Keyboard
+  chars (driver keymap) -> Op_Key -> Bureau -> stream Op_Input
+  -> terminal -> console input FIFO. Tablet ABS_X/Y batched on
+  EV_SYN + BTN_LEFT/RIGHT bits -> Op_Pointer (raw 0..32767,
+  Bureau scales) -> Bureau's SOFTWARE cursor sprite (chosen
+  over the virtio hw cursor: arch-independent, works on any
+  dumb display driver; Bureau re-saves/redraws the sprite when
+  an update band clobbers it). Burned: HMP mouse_move produces
+  no absolute events for the virtio tablet — absolute pointer
+  injection needs QMP input-send-event (run target exposes
+  -qmp unix:/tmp/qqmp.sock alongside the HMP socket).
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the
