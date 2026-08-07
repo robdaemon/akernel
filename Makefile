@@ -20,6 +20,7 @@ TEARDOWN_ELF := bin/userspace/teardown.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
 FAT32_ELF := bin/userspace/fat32.elf
 PARTMGR_ELF := bin/userspace/partmgr.elf
+PROCFS_ELF := bin/userspace/procfs.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
@@ -36,7 +37,7 @@ INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo teardown fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir type initrd run clean clean-kernel clean-userspace clean-initrd
+.PHONY: all kernel userspace init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir type initrd run clean clean-kernel clean-userspace clean-initrd
 
 all: kernel initrd bureau terminal demo shell dir type
 
@@ -74,6 +75,9 @@ fat32:
 
 partmgr:
 	$(MAKE) -C userspace/partmgr
+
+procfs:
+	$(MAKE) -C userspace/procfs
 
 virtio_rng:
 	$(MAKE) -C userspace/virtio_rng
@@ -145,13 +149,14 @@ initrd: $(INITRD_IMG)
 #  Bureau/Terminal deliberately NOT in the initrd (milestone 29):
 #  they live on the Sys filesystem (disk.img :System/) and the
 #  devmgr spawns them from there via Sys:System/Startup.
-$(INITRD_IMG): init serial fuzz spin memstage echo teardown fileserver fat32 partmgr virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
+$(INITRD_IMG): init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
 	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
 	cp $(FAT32_ELF) $(INITRD_ROOT)/System/Fat32
 	cp $(PARTMGR_ELF) $(INITRD_ROOT)/System/Partmgr
+	cp $(PROCFS_ELF) $(INITRD_ROOT)/System/Procfs
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
@@ -173,6 +178,7 @@ $(INITRD_IMG): init serial fuzz spin memstage echo teardown fileserver fat32 par
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' '# file Tests/Echo' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)
 	python3 tools/mkinitrd.py $(INITRD_CPIO) $(INITRD_IMG)

@@ -1108,6 +1108,48 @@ Next candidates (order open):
     Proc:self alias (needs client identity forwarded
     through the VFS layer), generation counters on pids.
 
+    MILESTONE 37b — Proc: introspection volume. New crate
+    userspace/procfs (System/Procfs in the initrd, manifest
+    program 7: console, procfs_server = endpoint Receive,
+    device_resource = introspection authority) speaks the
+    file protocol subset (stat/open/read/readdir, read-only
+    like boot-file volumes); init mints PROCFS_EP at boot
+    and pushes Op_Add_FS (device+label Proc, ci) right
+    after spawn — the plain FS-driver volume path, zero VFS
+    changes. Every op renders fresh from process_info
+    snapshots (32-slot walk per render, binary in the
+    kernel, text in userspace): "" -> dir ("tree" + one
+    pid-named dir per live process), "tree" -> the forest
+    indented by spawner (roots = spawner dead or kernel),
+    "<pid>/status" -> key-value lines (process, spawner,
+    lifecycle, thread, caps, flags decoded, endpoint,
+    badge). Dir stat/open rejected Bad_Args, fat32-style;
+    mutating ops Bad_Args. Read slices the render at
+    offset/length; a death mid-read truncates, never
+    wedges. Burns: (1) fileserver Max_Files 16 was
+    SILENTLY FULL — System/Procfs made 17 boot files and
+    Tests/Teardown (last in cpio sort order) lost its
+    name-table slot; surfaced as teardown Stat Not_Found
+    long after the Proc checks passed (now 32, same shape
+    as the milestone-34 slot burn); (2) fuzz-side slice
+    length mismatch (7-slot target, 6-char source) raised
+    Constraint_Error and wedged the suite SILENTLY —
+    unhandled exceptions in a test peer just stop it;
+    (3) QMP pointer press must be sent as separate
+    move/down/up events with settle time — a batched
+    batch coalesces in place to buttons=0 and no
+    focus/click ever registers (RESUME already knew the
+    HMP mouse_move variant); (4) ':' is UNINJECTABLE via
+    synthetic input under VNC: shift+semicolon loses the
+    shift across QMP input-send-event, HMP sendkey AND
+    raw RFB keysyms (0x3a and 0xffe1+0x3b) while other
+    shifted chars work — interactive Dir Proc:/Type
+    Proc:tree verification needs GTK (milestone-31 path);
+    the shell round-trip itself (echo, spawn, fs error
+    path) verified live, and the 23 new protocol checks
+    drive the exact ops Dir/Type issue. 262 PASS
+    SMP1+SMP4, fuzz failures=0, host fsck clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

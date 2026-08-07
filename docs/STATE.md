@@ -201,7 +201,13 @@ QEMU virt RAM base:     0x80000000
   Op_Assign_List = 15 — Amiga-style path aliases resolved
   when volume lookup fails, target substituted + resolution
   retried depth-capped; mounting the sys-labelled volume
-  seeds C: and ENV:).
+  seeds C: and ENV:). System/Procfs serves the Proc:
+  introspection volume over the same FS-driver path
+  (milestone 37b): stat/open/read/readdir rendered fresh
+  from process_info snapshots — "" lists "tree" + pid
+  dirs, "tree" is the process forest indented by
+  spawner, "<pid>/status" one snapshot as key-value
+  lines; read-only.
 - DMA isolation: riscv-iommu (Arch.IOMMU, qemu
   -machine iommu-sys=on) translates all PCI DMA through a 3-level
   DDT + per-device Sv39 IO page tables; IOVA = PA identity

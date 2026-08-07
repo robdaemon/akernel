@@ -38,7 +38,11 @@ procedure Fileserver is
 
    EP : constant U64 := 1;  --  fs_server grant: Receive side
 
-   Max_Files : constant := 16;
+   --  16 was silently full: 17 boot files with System/Procfs
+   --  (milestone 37b) and Tests/Teardown, last in cpio sort
+   --  order, lost its name-table slot (same shape as the
+   --  milestone-34 Max_Process_Slots burn).
+   Max_Files : constant := 32;
    Max_Name  : constant := 32;
 
    type File_Entry is record

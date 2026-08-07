@@ -1,0 +1,14 @@
+name = "akernel_procfs"
+description = "akernel kernel-introspection filesystem (Proc: volume)"
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+tags = []
+
+project-files = ["procfs.gpr"]
+executables = ["procfs.elf"]
+
+[[depends-on]]
+gnat_riscv64_elf = "*"

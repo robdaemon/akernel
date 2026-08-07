@@ -1333,6 +1333,146 @@ begin
       Check (Child_Count = 1, "process_info links child spawner");
    end;
 
+   --  Proc: volume (milestone 37b): the procfs server renders
+   --  process_info snapshots as files over the fs protocol. It
+   --  spawns after the fuzzer (manifest order), so poll the
+   --  mount like any late volume. All reads race the live
+   --  process set, so checks assert shapes, not exact contents.
+   declare
+      use type Interfaces.Unsigned_8;
+      Size        : U64 := 0;
+      Count       : U64 := 0;
+      St          : U64;
+      Name        : String (1 .. 24) := (others => Character'Val (0));
+      Name_Len    : Natural;
+      Is_Dir      : Boolean;
+      Entries     : Natural := 0;
+      Dir_Entries : Natural := 0;
+      Tree_Seen   : Boolean := False;
+      Digits_Ok   : Boolean;
+      First_Len   : Natural := 0;
+      First_Dir   : String (1 .. 24) := (others => Character'Val (0));
+      Path        : String (1 .. 40);
+      Path_Len    : Natural;
+      Rbuf        : array (0 .. 4095) of Interfaces.Unsigned_8;
+
+      function Contains (S : String) return Boolean is
+      begin
+         if Count < U64 (S'Length) then
+            return False;
+         end if;
+         for I in 0 .. Natural (Count) - S'Length loop
+            declare
+               Hit : Boolean := True;
+            begin
+               for J in 0 .. S'Length - 1 loop
+                  if Character'Val (Natural (Rbuf (I + J)))
+                    /= S (S'First + J)
+                  then
+                     Hit := False;
+                     exit;
+                  end if;
+               end loop;
+               if Hit then
+                  return True;
+               end if;
+            end;
+         end loop;
+         return False;
+      end Contains;
+   begin
+      Check (Await_Volume ("Proc:tree"), "proc volume mounted");
+
+      St := Akernel_User.Files.Stat ("Proc:tree", Size);
+      Check (St = Akernel_User.Files.Status_Ok and then Size > 0,
+             "proc tree stat ok");
+
+      --  Tree content: pid lines with spawner links.
+      St := Akernel_User.Files.Open ("Proc:tree", Size);
+      Check (St = Akernel_User.Files.Status_Ok, "proc tree opens");
+      St := Akernel_User.Files.Read
+        ("Proc:tree", 0, Rbuf'Address, U64 (Rbuf'Length), Count);
+      Check (St = Akernel_User.Files.Status_Ok and then Count > 0,
+             "proc tree reads");
+      Check (Contains ("pid "), "proc tree lists pids");
+      Check (Contains ("spawner "), "proc tree links spawners");
+
+      --  Root listing: the tree file plus one directory per live
+      --  process, named by decimal pid.
+      for Index in 0 .. 40 loop
+         St := Akernel_User.Files.Read_Dir
+           ("Proc:", U64 (Index), Name, Name_Len, Is_Dir, Size);
+         exit when St /= Akernel_User.Files.Status_Ok;
+         Entries := Entries + 1;
+         if Is_Dir then
+            Dir_Entries := Dir_Entries + 1;
+            Digits_Ok := Name_Len > 0;
+            for C in 1 .. Name_Len loop
+               if Name (C) not in '0' .. '9' then
+                  Digits_Ok := False;
+               end if;
+            end loop;
+            Check (Digits_Ok, "proc dir named by pid");
+            if First_Len = 0 then
+               First_Len := Name_Len;
+               First_Dir (1 .. Name_Len) := Name (1 .. Name_Len);
+            end if;
+         elsif Name_Len = 4 and then Name (1 .. 4) = "tree" then
+            Tree_Seen := True;
+         end if;
+      end loop;
+      Check (Tree_Seen, "proc root lists tree");
+      Check (Dir_Entries >= 5, "proc root lists processes");
+
+      --  Per-process directory: the status file renders one
+      --  snapshot as key-value lines.
+      Check (First_Len > 0, "proc has a process dir");
+      if First_Len > 0 then
+         Path := (others => Character'Val (0));
+         Path (1 .. 5) := "Proc:";
+         Path (6 .. 5 + First_Len) := First_Dir (1 .. First_Len);
+         Path_Len := 5 + First_Len;
+
+         St := Akernel_User.Files.Read_Dir
+           (Path (1 .. Path_Len), 0, Name, Name_Len, Is_Dir, Size);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then not Is_Dir
+                and then Name_Len = 6
+                and then Name (1 .. 6) = "status",
+                "proc process dir lists status");
+
+         Path (6 + First_Len) := '/';
+         Path (7 + First_Len .. 12 + First_Len) := "status";
+         Path_Len := Path_Len + 7;
+
+         St := Akernel_User.Files.Open (Path (1 .. Path_Len), Size);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Size > 0, "proc status opens");
+         St := Akernel_User.Files.Read
+           (Path (1 .. Path_Len), 0, Rbuf'Address,
+            U64 (Rbuf'Length), Count);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Count > 0, "proc status reads");
+         Check (Contains ("process "), "proc status names process");
+         Check (Contains ("spawner "), "proc status names spawner");
+      end if;
+
+      --  Read-only volume: mutating ops and unknown paths.
+      Check (Akernel_User.Files.Delete ("Proc:tree") =
+               Akernel_User.Files.Status_Bad_Args,
+             "proc delete rejected read-only");
+      Check (Akernel_User.Files.Mkdir ("Proc:x") =
+               Akernel_User.Files.Status_Bad_Args,
+             "proc mkdir rejected read-only");
+      Check (Akernel_User.Files.Stat ("Proc:bogus", Size) =
+               Akernel_User.Files.Status_Not_Found,
+             "proc unknown path not found");
+      Check (Akernel_User.Files.Read_Dir
+               ("Proc:bogus", 0, Name, Name_Len, Is_Dir, Size) =
+               Akernel_User.Files.Status_Not_Found,
+             "proc unknown dir not found");
+   end;
+
    --  Round 1: badge + round-trip + first double-reply marker.
    --  NB: the reply is copied out of the IPC buffer before any
    --  Check, because Check prints through the console stream, which

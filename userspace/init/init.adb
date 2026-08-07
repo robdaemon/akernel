@@ -58,6 +58,14 @@ procedure Init is
    --  offset translation (zero-copy cap forwarding).
    PARTMGR_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  Procfs endpoint minted at boot: Receive side granted
+   --  (procfs_server token) to System/Procfs, Send side pushed
+   --  to the file server as Op_Add_FS (device/label Proc) after
+   --  the server spawns, so the VFS forwards Proc: paths to it.
+   --  Procfs also takes the device_resource token: process_info
+   --  introspection authority.
+   PROCFS_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  True once the manifest granted the part_server token, i.e. a
    --  partition manager will serve the partition endpoint.
    Partmgr_Seen : Boolean := False;
@@ -315,6 +323,32 @@ procedure Init is
       end if;
    end Push_Fat32_Mount;
 
+   --  Send Op_Add_FS (device "Proc", label "Proc") with the
+   --  procfs server's service endpoint (Send side, transferred
+   --  in cap slot 0) so the VFS mounts the introspection volume.
+   procedure Push_Procfs_Mount is
+      use Akernel_User.Syscalls;
+      Dev   : constant String := "Proc";
+      Lab   : constant String := "Proc";
+      Chars : constant String := Dev & Lab;
+   begin
+      Message.Label := 6;  --  Files.Op_Add_FS
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Dev'Length);
+      Message.Words (1) := U64 (Lab'Length);
+      Message.Words (2) := 1;  --  case-insensitive
+      for P in 1 .. Chars'Length loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Chars (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (0 => PROCFS_EP, others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("procfs mount push failed");
+      end if;
+   end Push_Procfs_Mount;
+
    --  Push the file server's (handle -> boot-file name) table as
    --  Op_Set_Name messages, one per boot-file cap it was granted,
    --  then a zero-handle terminator.
@@ -374,6 +408,7 @@ procedure Init is
       Result      : Akernel_User.Syscalls.U64;
       Is_FS       : Boolean := False;
       Is_Fat32    : Boolean := False;
+      Is_Procfs   : Boolean := False;
       FS_Base     : Akernel_User.Syscalls.U64 := 0;
       FS_Count    : Akernel_User.Syscalls.U64 := 0;
 
@@ -488,6 +523,9 @@ procedure Init is
          elsif Token_Equals (Token, Length, "part_server") then
             Partmgr_Seen := True;
             Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "procfs_server") then
+            Is_Procfs := True;
+            Grant (PROCFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Length = 5
            and then Token (1 .. 4) = "part"
            and then Token (5) in '0' .. '7'
@@ -549,6 +587,10 @@ procedure Init is
 
          if Is_Fat32 then
             Push_Fat32_Mount;
+         end if;
+
+         if Is_Procfs then
+            Push_Procfs_Mount;
          end if;
       else
          Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
@@ -615,6 +657,7 @@ begin
    FS_EP := Akernel_User.Syscalls.EP_Create;
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
+   PROCFS_EP := Akernel_User.Syscalls.EP_Create;
 
    --  Device-driven drivers before the static manifest programs:
    --  the console server (Drivers/Serial, class 0) must be serving
