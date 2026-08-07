@@ -214,3 +214,8 @@ QEMU virt RAM base:     0x80000000
 - The PMM honors reserved ranges (initrd, DTB); mem_object_pa
   exposes memory-object frame PAs for DMA; spawned processes get
   4 user stack pages.
+- Process introspection: process_info (syscall 30) snapshots one
+  process (ids incl. spawner, lifecycle/thread state, cap count,
+  IPC flags, blocked-on endpoint, call badge) into a caller
+  memobj; gated by the device_resource Kernel_Object+Manage cap,
+  granted down from init (basis for a userspace Proc: volume).

@@ -38,6 +38,7 @@ package body Kernel.Tasks is
    is
    begin
       PCB.Identifier := Id;
+      PCB.Spawner := 0;
       PCB.Root := 0;
       PCB.Status := Process_Initializing;
       Kernel.Capabilities.Initialize (PCB.Caps);
@@ -75,6 +76,19 @@ package body Kernel.Tasks is
    begin
       return PCB.Identifier;
    end Process_Id_Of;
+
+   function Spawner_Id (PCB : Process_Control_Block) return Process_Id is
+   begin
+      return PCB.Spawner;
+   end Spawner_Id;
+
+   procedure Set_Spawner_Id
+     (PCB     : in out Process_Control_Block;
+      Spawner : Process_Id)
+   is
+   begin
+      PCB.Spawner := Spawner;
+   end Set_Spawner_Id;
 
    function Owning_Process
      (TCB : Thread_Control_Block) return Process_Access

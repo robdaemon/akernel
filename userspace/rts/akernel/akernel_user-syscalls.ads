@@ -147,6 +147,37 @@ package Akernel_User.Syscalls is
    function Cap_Mint (Source : U64; Rights_Mask : U64; Badge : U64)
                       return U64;
 
+   --  Process_Info (syscall 30): kernel introspection snapshot of
+   --  one process, written as a 64-byte record into a caller-owned
+   --  memory object (Write right; Offset 8-aligned with the record
+   --  fully inside the object). Authority: Resource must be the
+   --  device_resource Kernel_Object cap with Manage — the same cap
+   --  that gates io_map/irq_create, granted down from init.
+   --  Slot names a process-table slot 0..31; Self_Slot names the
+   --  calling thread's own process (also covers kernel-started
+   --  processes, which have no table slot). Returns Info_Ok,
+   --  Info_Not_Found (unused or out-of-range slot — enumeration
+   --  end), or Syscall_Failed (authority/cap/offset rejected).
+   --  Record layout (words, U64): 0 process id; 1 spawner process
+   --  id (0 = kernel-started, stable after the spawner exits);
+   --  2 lifecycle (0 initializing, 1 alive, 2 dead); 3 thread
+   --  state (0 ready, 1 running, 2 blocked-send, 3 blocked-recv,
+   --  4 blocked-irq, 5 blocked-notification, 6 dead); 4 open cap
+   --  count; 5 flags (bit0 awaiting reply, bit1 reply wanted,
+   --  bit2 wakeup-boosted, bit3 ready-queued); 6 receive endpoint
+   --  object address (0 = none); 7 badge of the last Call.
+   Process_Info_Word_Count : constant := 8;
+   type Process_Info_Words is
+     array (0 .. Process_Info_Word_Count - 1) of U64;
+   Self_Slot      : constant U64 := U64'Last;
+   Info_Ok        : constant U64 := 0;
+   Info_Not_Found : constant U64 := 1;
+   function Process_Info
+     (Resource : U64;
+      Slot     : U64;
+      Buffer   : U64;
+      Offset   : U64 := 0) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

@@ -389,6 +389,10 @@ package body Kernel.Processes is
       New_Process_Id := Kernel.Tasks.Process_Id (Natural (Slot) + 4);
       New_Thread_Id := Kernel.Tasks.Thread_Id (Natural (Slot) + 4);
       Kernel.Tasks.Initialize_Process (Processes (Slot), New_Process_Id);
+      Kernel.Tasks.Set_Spawner_Id
+        (Processes (Slot),
+         Kernel.Tasks.Process_Id_Of
+           (Kernel.Tasks.Owning_Process (Parent.all).all));
       Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), Root);
       Kernel.Tasks.Install_Address_Space_Cap (Processes (Slot), Cap_Result);
       if Cap_Result /= Kernel.Capabilities.Ok then
@@ -656,4 +660,74 @@ package body Kernel.Processes is
       Discard_Slot (Slot, Close_Caps => False);
       Result := Ok;
    end Reap_Process;
+
+   procedure Fill_Info
+     (PCB   : Kernel.Tasks.Process_Control_Block;
+      TCB   : Kernel.Tasks.Thread_Control_Block;
+      Words : out Process_Info_Words)
+   is
+      Flags : U64 := 0;
+   begin
+      if Kernel.Tasks.Is_Awaiting_Reply (TCB) then
+         Flags := Flags or 1;
+      end if;
+      if Kernel.Tasks.Is_Reply_Wanted (TCB) then
+         Flags := Flags or 2;
+      end if;
+      if Kernel.Tasks.Is_Boosted (TCB) then
+         Flags := Flags or 4;
+      end if;
+      if Kernel.Tasks.Is_Queued (TCB) then
+         Flags := Flags or 8;
+      end if;
+      Words :=
+        (0 => U64 (Kernel.Tasks.Process_Id_Of (PCB)),
+         1 => U64 (Kernel.Tasks.Spawner_Id (PCB)),
+         2 => U64 (Kernel.Tasks.Process_State'Pos
+                     (Kernel.Tasks.Lifecycle_State (PCB))),
+         3 => U64 (Kernel.Tasks.Thread_State'Pos
+                     (Kernel.Tasks.State (TCB))),
+         4 => U64 (Kernel.Tasks.Process_Cap_Count (PCB)),
+         5 => Flags,
+         6 => U64 (System.Storage_Elements.To_Integer
+                     (Kernel.Tasks.Recv_Endpoint (TCB))),
+         7 => Kernel.Tasks.IPC_Badge (TCB));
+   end Fill_Info;
+
+   function Slot_Count return Natural is (Max_Process_Slots);
+
+   procedure Read_Process_Info
+     (Slot  : Natural;
+      Words : out Process_Info_Words;
+      Found : out Boolean)
+   is
+   begin
+      Words := (others => 0);
+      Found := False;
+      if Slot < Max_Process_Slots
+        and then Used (Process_Index (Slot))
+      then
+         Fill_Info
+           (Processes (Process_Index (Slot)),
+            Threads (Process_Index (Slot)), Words);
+         Found := True;
+      end if;
+   end Read_Process_Info;
+
+   procedure Read_Own_Process_Info
+     (Thread : Kernel.Tasks.Thread_Access;
+      Words  : out Process_Info_Words)
+   is
+   begin
+      Words := (others => 0);
+      if Thread = null
+        or else Kernel.Tasks.Owning_Process (Thread.all) = null
+      then
+         return;
+      end if;
+      Fill_Info
+        (Kernel.Tasks.Owning_Process (Thread.all).all,
+         Thread.all, Words);
+   end Read_Own_Process_Info;
+
 end Kernel.Processes;

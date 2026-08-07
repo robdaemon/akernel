@@ -49,6 +49,16 @@ package Kernel.Tasks is
 
    function Process_Id_Of (PCB : Process_Control_Block) return Process_Id;
 
+   --  Introspection (milestone 37a): the process that spawned this
+   --  one, recorded at spawn time (0 = kernel-started, e.g. init).
+   --  Historical record: stable for tree display/teardown even
+   --  after the spawner itself exits.
+   function Spawner_Id (PCB : Process_Control_Block) return Process_Id;
+
+   procedure Set_Spawner_Id
+     (PCB     : in out Process_Control_Block;
+      Spawner : Process_Id);
+
    function Owning_Process (TCB : Thread_Control_Block) return Process_Access;
 
    function State (TCB : Thread_Control_Block) return Thread_State;
@@ -283,6 +293,7 @@ package Kernel.Tasks is
 private
    type Process_Control_Block is record
       Identifier : Process_Id;
+      Spawner    : Process_Id;
       Root       : Kernel.Capabilities.U64;
       Caps       : Kernel.Capabilities.Cap_Table;
       Status     : Process_State;

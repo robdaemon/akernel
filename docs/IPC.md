@@ -426,6 +426,14 @@ cap_mint(cap, rights_mask, badge) -> cap     (syscall 28)
   Session-manager pattern: badging caps after spawn (init mints
   partN-badged partition-service caps). Note a cap transferred
   in a message must carry the Transfer right.
+process_info(resource, slot, buf, off) -> st (syscall 30)
+  kernel introspection: 64-byte process snapshot (ids incl.
+  spawner, lifecycle/thread state, cap count, IPC flags,
+  blocked-on endpoint, call badge) written into a caller-owned
+  memory object (Write right) through the physmap. slot 0..31
+  or U64'Last = self; 0 ok, 1 no-such-slot (enumeration end),
+  U64'Last rejected. Authority: the device_resource
+  Kernel_Object+Manage cap, same gate as io_map/irq_create.
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks
@@ -460,6 +468,8 @@ it; rng now drains + acks like every other driver).
 - Register fast path: `call_small`/`send_small` variants carrying
   label + 4 words + no caps in registers. Pure optimization, no
   protocol change; only if profiling justifies.
-- Kernel introspection syscalls for init state reconstruction.
+- Kernel introspection syscalls for init state reconstruction
+  (process_info snapshots landed in 37a; cap/register dumps and
+  object listings still open, admin-gated when they land).
 - IOMMU/DMA isolation.
 - Cap transfer beyond 4 per message.

@@ -121,6 +121,14 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_cap_mint";
 
+   function Raw_Process_Info
+     (Resource : U64;
+      Slot     : U64;
+      Buffer   : U64;
+      Offset   : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_process_info";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -299,6 +307,15 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Cap_Mint (Source, Rights_Mask, Badge);
    end Cap_Mint;
+
+   function Process_Info
+     (Resource : U64;
+      Slot     : U64;
+      Buffer   : U64;
+      Offset   : U64 := 0) return U64 is
+   begin
+      return Raw_Process_Info (Resource, Slot, Buffer, Offset);
+   end Process_Info;
 
    function Mem_Map_File
      (Address_Space : U64;

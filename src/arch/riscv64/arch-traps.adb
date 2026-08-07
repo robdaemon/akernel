@@ -73,6 +73,7 @@ package body Arch.Traps is
    Sys_CPU_Count         : constant U64 := 27;
    Sys_Cap_Mint          : constant U64 := 28;
    Sys_IPC_Send          : constant U64 := 29;
+   Sys_Process_Info      : constant U64 := 30;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1706,6 +1707,110 @@ package body Arch.Traps is
       end;
    end Handle_Mem_Object_PA;
 
+   --  process_info (a0 = resource cap, a1 = slot or U64'Last for
+   --  self, a2 = buffer memory-object cap, a3 = byte offset):
+   --  kernel introspection (milestone 37a). Writes one
+   --  Kernel.Processes.Process_Info_Words snapshot into the
+   --  caller's buffer through the physmap. Authority matches the
+   --  device-plumbing syscalls: the device_resource Kernel_Object
+   --  cap with Manage, granted down from init. Returns 0 ok,
+   --  1 no such slot (unused or out of range — enumeration end),
+   --  U64'Last on authority/cap/argument rejection.
+   procedure Handle_Process_Info (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Buf_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+      Words        : Kernel.Processes.Process_Info_Words;
+      Found        : Boolean;
+      Slot_Arg     : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Offset       : constant U64 := Trap_Frame_Get_A3 (Frame);
+      Total_Bytes  : U64;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Decode_Handle (Trap_Frame_Get_A2 (Frame), Buf_Handle, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Buf_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Cap_Info.Rights.Write
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Total_Bytes :=
+        Kernel.Memory.Page_Count (Cap_Info.Object) * Arch.MMU.Page_Size;
+      if Offset mod 8 /= 0
+        or else Offset > Total_Bytes
+        or else Total_Bytes - Offset
+                  < U64 (8 * Kernel.Processes.Info_Word_Count)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if Slot_Arg = U64'Last then
+         Kernel.Processes.Read_Own_Process_Info (Current, Words);
+         Found := True;
+      elsif Slot_Arg < U64 (Kernel.Processes.Slot_Count) then
+         Kernel.Processes.Read_Process_Info
+           (Natural (Slot_Arg), Words, Found);
+      else
+         Found := False;
+      end if;
+
+      if not Found then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      --  Per-word physmap writes: a record straddling frames needs
+      --  no special case. Bounds above guarantee Frame_At hits.
+      for I in Words'Range loop
+         declare
+            Byte_Off : constant U64 := Offset + U64 (I) * 8;
+            Frame_PA : constant U64 :=
+              Kernel.Memory.Frame_At
+                (Cap_Info.Object, Byte_Off / Arch.MMU.Page_Size);
+            Cell : U64
+              with Address => System'To_Address
+                (System.Storage_Elements.Integer_Address
+                   (Arch.Phys_To_Virt (Frame_PA)
+                    + (Byte_Off mod Arch.MMU.Page_Size)));
+         begin
+            Cell := Words (I);
+         end;
+      end loop;
+
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Process_Info;
+
    --  cap_delete: close one of the caller's own cap-table slots,
    --  running the same per-kind cleanup the exit/reap path runs
    --  (object release, endpoint/IRQ/notification thread hooks).
@@ -1934,6 +2039,8 @@ package body Arch.Traps is
          Trap_Frame_Set_A0 (Frame, U64 (Kernel.CPUs.Count));
       elsif Number = Sys_Cap_Mint then
          Handle_Cap_Mint (Frame);
+      elsif Number = Sys_Process_Info then
+         Handle_Process_Info (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

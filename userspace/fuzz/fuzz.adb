@@ -61,8 +61,9 @@ procedure Fuzz is
    Sys_Mem_Unmap      : constant U64 := 17;
    Sys_Cap_Delete     : constant U64 := 26;
    Sys_CPU_Count      : constant U64 := 27;
+   Sys_Process_Info   : constant U64 := 30;
 
-   Highest_Known      : constant U64 := 27;
+   Highest_Known      : constant U64 := 30;
 
    Failed : constant U64 := U64'Last;
 
@@ -1237,6 +1238,101 @@ begin
    Check (Status = 0 and then Echo_Process /= 0,
           "echo spawned with granted endpoint");
 
+   --  process_info (syscall 30): slot snapshots + spawner links.
+   --  The device_resource cap is manifest-granted at handle 7
+   --  (last token on the fuzz program line); echo (spawned above,
+   --  still running) must appear in the table with its spawner id
+   --  naming this process, and must be the ONLY live child (the
+   --  memstage child was reaped before this point).
+   declare
+      Resource_Cap : constant U64 := 7;  --  manifest grant order
+      Info_VA      : constant U64 := 16#5020_0000#;
+      type Info_Page is array (0 .. 511) of U64;
+      Page : Info_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Info_VA));
+      Info_Cap    : U64;
+      Self_Pid    : U64;
+      Self_Spawn  : U64;
+      Live_Slots  : Natural := 0;
+      Child_Count : Natural := 0;
+      States_Ok   : Boolean := True;
+      Unique_Ok   : Boolean := True;
+      Found_Self  : Boolean := False;
+      Pids        : array (0 .. 31) of U64 := (others => 0);
+   begin
+      Info_Cap := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
+      Check (Info_Cap /= U64'Last, "process_info buffer allocated");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A1 => Info_Cap, A2 => Info_VA,
+                A3 => 0, A4 => 4096, A5 => 3) = 0,
+             "process_info buffer mapped");
+
+      --  Authority, buffer, offset and range validation.
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 16#FEED_BEEF#,
+                        A1 => 0, A2 => Info_Cap) = U64'Last,
+             "process_info bad authority rejected");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Console_EP,
+                        A1 => 0, A2 => Info_Cap) = U64'Last,
+             "process_info wrong-kind authority rejected");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                        A1 => 0, A2 => Console_EP) = U64'Last,
+             "process_info wrong-kind buffer rejected");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                        A1 => 0, A2 => Info_Cap, A3 => 4) = U64'Last,
+             "process_info unaligned offset rejected");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                        A1 => 0, A2 => Info_Cap, A3 => 4064) = U64'Last,
+             "process_info overflowing offset rejected");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                        A1 => 32, A2 => Info_Cap) = 1,
+             "process_info out-of-range slot ends enumeration");
+
+      --  Self snapshot: alive, distinct nonzero spawner (init,
+      --  kernel-started, itself outside the spawn table).
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                        A1 => U64'Last, A2 => Info_Cap) = 0,
+             "process_info self snapshot ok");
+      Self_Pid   := Page (0);
+      Self_Spawn := Page (1);
+      Check (Self_Pid /= 0 and then Page (2) = 1
+             and then Self_Spawn /= 0 and then Self_Spawn /= Self_Pid,
+             "process_info self alive with distinct spawner");
+
+      --  Table walk: states in range, pids unique, self present,
+      --  exactly one live child linked back to this process.
+      for Slot in 0 .. 31 loop
+         if Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
+                       A1 => U64 (Slot), A2 => Info_Cap) = 0
+         then
+            if Page (2) > 2 or else Page (3) > 6 then
+               States_Ok := False;
+            end if;
+            for J in 0 .. Live_Slots - 1 loop
+               if Pids (J) = Page (0) then
+                  Unique_Ok := False;
+               end if;
+            end loop;
+            Pids (Live_Slots) := Page (0);
+            Live_Slots := Live_Slots + 1;
+            if Page (0) = Self_Pid then
+               Found_Self := True;
+            end if;
+            if Page (1) = Self_Pid then
+               Child_Count := Child_Count + 1;
+            end if;
+         end if;
+      end loop;
+      Check (Live_Slots >= 5, "process_info enumerates the boot set");
+      Check (States_Ok, "process_info states in enum range");
+      Check (Unique_Ok, "process_info pids unique");
+      Check (Found_Self, "process_info self appears in table walk");
+      Check (Child_Count = 1, "process_info links child spawner");
+   end;
+
    --  Round 1: badge + round-trip + first double-reply marker.
    --  NB: the reply is copied out of the IPC buffer before any
    --  Check, because Check prints through the console stream, which
@@ -1770,16 +1866,19 @@ begin
    --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
    --  constrained to printable to keep the log readable.
    while Total_Calls < Iterations loop
-      Number := Next_Random mod 27;
+      Number := Next_Random mod 31;
       if (Next_Random and 16#F#) = 0 then
          Number := Next_Random;  --  occasionally a huge syscall number
       end if;
 
       --  Skip exit (9), the blocking IPC trio (12-14), ntfn_wait
-      --  (19) and cap_delete (26): a random call/recv/wait with no
-      --  peer or no pending bits would block this thread forever,
-      --  and a random delete could close this process's granted
-      --  caps (console, fs) out from under the test flow.
+      --  (19), cap_delete (26), cap_mint (28) and ipc_send (29):
+      --  a random call/recv/wait/send with no peer or no pending
+      --  bits would block this thread forever, a random delete
+      --  could close this process's granted caps (console, fs) out
+      --  from under the test flow, and a random mint could only
+      --  fill cap-table slots.  process_info (30) stays in: it
+      --  validates arguments before any write and never blocks.
       --  Directed IPC coverage is a separate milestone.
       if Number /= Sys_Exit
         and then Number /= Sys_IPC_Call
@@ -1787,6 +1886,8 @@ begin
         and then Number /= Sys_IPC_Reply
         and then Number /= 19
         and then Number /= Sys_Cap_Delete
+        and then Number /= 28
+        and then Number /= 29
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

@@ -243,3 +243,11 @@ akernel_sys_cap_mint:
     ecall
     ret
 .size akernel_sys_cap_mint, . - akernel_sys_cap_mint
+
+.global akernel_sys_process_info
+.type akernel_sys_process_info, @function
+akernel_sys_process_info:
+    li a7, 30
+    ecall
+    ret
+.size akernel_sys_process_info, . - akernel_sys_process_info
