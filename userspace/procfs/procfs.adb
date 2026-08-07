@@ -140,7 +140,9 @@ procedure Procfs is
    --  Snapshot collection
    ------------------------------------------------------------------
 
-   Max_Slots : constant := 32;
+   --  Walk bound = the spawn-table size (userspace mirror in
+   --  the syscalls package; kernel Max_Process_Slots).
+   Max_Slots : constant := Syscalls.Process_Table_Slots;
 
    type Proc_Snap is record
       Live      : Boolean := False;

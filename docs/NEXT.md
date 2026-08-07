@@ -1150,6 +1150,39 @@ Next candidates (order open):
     drive the exact ops Dir/Type issue. 262 PASS
     SMP1+SMP4, fuzz failures=0, host fsck clean.
 
+    FOLLOWUP (Dir fix + headroom): Dir prepended BD0: to
+    any argument not literally starting "BD0:" —
+    "Dir Proc:" listed BD0:Proc: (nothing), same for
+    C:/ENV:. Now any arg containing ':' is fully
+    qualified, and a first-entry ReadDir failure prints
+    "Dir: can't open <path>" instead of silent empty.
+    Headroom bumps: fileserver Max_Files 32 -> 128,
+    kernel Max_Process_Slots 32 -> 128 with an O(1) free
+    list (spawn PEEKS Free_Head, pops at the commit point
+    so Load_Failed early returns need no undo;
+    Discard_Slot pushes only for a committed slot — the
+    Scheduler_Failed path discards uncommitted slots),
+    scheduler Max_Tasks 32 -> 144. BIG burn: the
+    fileserver's client-buffer window address was DERIVED
+    from Max_Files (File_Win_Base + Max_Files *
+    Slot_Stride) — the bump slid Buf_Win_VA/Blk_Buf_VA
+    onto the user TEXT base 0x4600_0000, and the server
+    copied file data over its own code. Every data-copy
+    check failed (fs reads, blk/part volume IO, memstage
+    staging) while stat/open passed; kernel reverts did
+    nothing, stash-control proved the baseline green, and
+    the fix is fixed window addresses in the heap/text
+    gap (0x4040_0000 files, 0x4240_0000 buffers) plus a
+    compile-time Windows_Fit division-by-zero guard so a
+    future bump fails the BUILD instead of the tests.
+    Lesson: VA windows must be fixed literals with a
+    static overlap guard, never derived from table
+    sizes; when data-compare checks fail across several
+    servers at once, suspect a shared server's mapping
+    layout before the kernel. 261 PASS SMP1+SMP4 (same
+    as the pre-change baseline), fuzz failures=0, fsck
+    clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

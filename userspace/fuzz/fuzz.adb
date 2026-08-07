@@ -42,6 +42,14 @@ procedure Fuzz is
      with Import, Convention => C, External_Name => "fuzz_last_a1",
           Volatile;
 
+   --  Static, not stack: the fuzz main frame is already near the
+   --  16KiB user stack — a 1KiB local array here silently
+   --  corrupted unrelated earlier checks (stack spills into the
+   --  heap mappings below).
+   Pids : array
+     (0 .. Akernel_User.Syscalls.Process_Table_Slots - 1)
+     of U64 := (others => 0);
+
    Sys_Yield          : constant U64 := 0;
    Sys_Debug_Putchar  : constant U64 := 1;
    Sys_Map_MMIO       : constant U64 := 2;
@@ -1260,7 +1268,6 @@ begin
       States_Ok   : Boolean := True;
       Unique_Ok   : Boolean := True;
       Found_Self  : Boolean := False;
-      Pids        : array (0 .. 31) of U64 := (others => 0);
    begin
       Info_Cap := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
       Check (Info_Cap /= U64'Last, "process_info buffer allocated");
@@ -1304,7 +1311,7 @@ begin
 
       --  Table walk: states in range, pids unique, self present,
       --  exactly one live child linked back to this process.
-      for Slot in 0 .. 31 loop
+      for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1 loop
          if Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
                        A1 => U64 (Slot), A2 => Info_Cap) = 0
          then

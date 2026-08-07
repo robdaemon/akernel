@@ -22,11 +22,11 @@ package body Kernel.Processes is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
-   --  16 filled up in practice: the boot set (init, drivers,
-   --  servers, Bureau, Terminal, Demo, Shell) occupies 15, and the
-   --  endpoint-teardown test needs four children at once (milestone
-   --  34). One thread per process.
-   Max_Process_Slots : constant := 32;
+   --  128 slots: room for real session workloads (windows,
+   --  editors, nested shells, test children). Slot alloc/reap is
+   --  O(1) via a free list — a linear Used-scan was fine at 32,
+   --  wrong shape at scale. One thread per process.
+   Max_Process_Slots : constant := 128;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
    type Process_Slot_Array is array (Process_Index)
      of aliased Kernel.Tasks.Process_Control_Block;
@@ -37,6 +37,17 @@ package body Kernel.Processes is
    Processes : Process_Slot_Array;
    Threads   : Thread_Slot_Array;
    Used      : Slot_Used_Array := (others => False);
+
+   --  Free list over unused slots. Invariant: a slot is on the
+   --  list iff Used (slot) = False. Spawn PEEKS the head and
+   --  pops only at the commit point (Used := True), so the many
+   --  Load_Failed early returns need no undo; Discard_Slot
+   --  pushes only for a committed slot.
+   Free_None : constant := -1;
+   type Free_Index is range Free_None .. Max_Process_Slots - 1;
+   Free_Next : array (Process_Index) of Free_Index :=
+     (others => Free_None);
+   Free_Head : Free_Index := Free_None;
 
    Stack_Top : constant U64 := 16#7000_0000#;
 
@@ -66,6 +77,14 @@ package body Kernel.Processes is
    procedure Initialize is
    begin
       Used := (others => False);
+      for I in Process_Index loop
+         if I = Process_Index'Last then
+            Free_Next (I) := Free_None;
+         else
+            Free_Next (I) := Free_Index (I + 1);
+         end if;
+      end loop;
+      Free_Head := Free_Index (Process_Index'First);
    end Initialize;
 
    --  Mint the parent's grant-list entries (in the parent's IPC
@@ -211,7 +230,11 @@ package body Kernel.Processes is
       Kernel.Tasks.Set_Process_State
         (PCB       => Processes (Slot),
          New_State => Kernel.Tasks.Process_Dead);
-      Used (Slot) := False;
+      if Used (Slot) then
+         Used (Slot) := False;
+         Free_Next (Slot) := Free_Head;
+         Free_Head := Free_Index (Slot);
+      end if;
    end Discard_Slot;
 
    procedure Spawn_Image
@@ -227,7 +250,6 @@ package body Kernel.Processes is
       Cap_Result   : Kernel.Capabilities.Status;
       Sched_Result : Kernel.Scheduler.Status;
       Slot         : Process_Index := Process_Index'First;
-      Found_Slot   : Boolean := False;
       New_Process_Id : Kernel.Tasks.Process_Id;
       New_Thread_Id  : Kernel.Tasks.Thread_Id;
       Root               : U64 := 0;
@@ -243,18 +265,13 @@ package body Kernel.Processes is
          return;
       end if;
 
-      for Candidate in Process_Index loop
-         if not Used (Candidate) then
-            Slot := Candidate;
-            Found_Slot := True;
-            exit;
-         end if;
-      end loop;
-
-      if not Found_Slot then
+      if Free_Head = Free_None then
          Result := No_Slot;
          return;
       end if;
+      --  Peek only; the pop happens at the commit point below so
+      --  the Load_Failed early returns leave the list untouched.
+      Slot := Process_Index (Free_Head);
 
       Arch.MMU.New_User_Address_Space (MMU_Result, Root);
       if MMU_Result /= Arch.MMU.Ok then
@@ -460,6 +477,7 @@ package body Kernel.Processes is
       end if;
 
       Used (Slot) := True;
+      Free_Head := Free_Next (Slot);
       Result := Ok;
    end Spawn_Image;
 

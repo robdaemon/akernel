@@ -430,7 +430,7 @@ process_info(resource, slot, buf, off) -> st (syscall 30)
   kernel introspection: 64-byte process snapshot (ids incl.
   spawner, lifecycle/thread state, cap count, IPC flags,
   blocked-on endpoint, call badge) written into a caller-owned
-  memory object (Write right) through the physmap. slot 0..31
+  memory object (Write right) through the physmap. slot 0..127
   or U64'Last = self; 0 ok, 1 no-such-slot (enumeration end),
   U64'Last rejected. Authority: the device_resource
   Kernel_Object+Manage cap, same gate as io_map/irq_create.

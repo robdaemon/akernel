@@ -41,8 +41,9 @@ procedure Fileserver is
    --  16 was silently full: 17 boot files with System/Procfs
    --  (milestone 37b) and Tests/Teardown, last in cpio sort
    --  order, lost its name-table slot (same shape as the
-   --  milestone-34 Max_Process_Slots burn).
-   Max_Files : constant := 32;
+   --  milestone-34 Max_Process_Slots burn). 128 leaves real
+   --  headroom for windows, editors, nested shells.
+   Max_Files : constant := 128;
    Max_Name  : constant := 32;
 
    type File_Entry is record
@@ -108,11 +109,24 @@ procedure Fileserver is
 
    Assigns : array (1 .. Max_Assigns) of Assign_Entry;
 
-   --  VA windows: per-file slots above the client-buffer window.
-   File_Win_Base : constant U64 := 16#4400_0000#;
+   --  VA windows. Userspace VA map (see s-memory.adb): heap
+   --  0x4000_0000..0x4020_0000, TEXT at 0x4600_0000, args
+   --  0x4800_0000, stack/IPC 0x6FFx_xxxx. File windows sit in
+   --  the gap above the heap; the client-buffer and block-bounce
+   --  windows are FIXED addresses — never derive them from a
+   --  table size again: bumping Max_Files 32->128 slid
+   --  Buf_Win_VA onto the text base and the server copied file
+   --  data over its own code (37b-followup burn).
+   File_Win_Base : constant U64 := 16#4040_0000#;
    Slot_Stride   : constant U64 := 64 * Syscalls.Page_Size;
-   Buf_Win_VA    : constant U64 :=
-     File_Win_Base + Max_Files * Slot_Stride;
+   Buf_Win_VA    : constant U64 := 16#4240_0000#;
+   --  Compile-time guard: file windows must stay below the
+   --  buffer window, and the buffer window below the text.
+   Windows_Fit   : constant :=
+     1 / Boolean'Pos
+       (File_Win_Base + Max_Files * Slot_Stride <= Buf_Win_VA
+        and then Buf_Win_VA + 64 * Syscalls.Page_Size
+                   <= 16#4600_0000#);
 
    --  Bounce buffer for block-driver calls: one page (the block
    --  protocol caps a request at 8 sectors = 4 KiB), transferred

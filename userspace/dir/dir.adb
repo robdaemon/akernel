@@ -11,6 +11,8 @@ with Akernel_User.Files;
 --
 --  No argument lists the root of the default volume BD0:;
 --  "Dir <path>" (argument page, handle 4) lists that directory.
+--  A path containing ':' is taken as fully qualified (any volume
+--  — C:, ENV:, Proc:, ...); a bare path is resolved against BD0:.
 --  Directories print with a "(dir)"
 --  tag; files with their byte size. Enumeration is stateless:
 --  entry index 0.. until the file protocol says Not_Found.
@@ -32,6 +34,7 @@ procedure Dir is
    Arg_Len  : Natural;
    Path     : String (1 .. 256);
    Path_Len : Natural;
+   Qualified : Boolean := False;
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
    Akernel_User.Files.Bind (FS_EP);
@@ -41,16 +44,21 @@ begin
    if Arg_Len = 0 then
       Path_Len := 4;
       Path (1 .. 4) := "BD0:";
-   elsif Arg_Len >= 4 and then Arg_Buf (1) = 'B'
-     and then Arg_Buf (2) = 'D'
-     and then Arg_Buf (3) = '0' and then Arg_Buf (4) = ':'
-   then
-      Path_Len := Arg_Len;
-      Path (1 .. Arg_Len) := Arg_Buf (1 .. Arg_Len);
    else
-      Path_Len := 4 + Arg_Len;
-      Path (1 .. 4) := "BD0:";
-      Path (5 .. Path_Len) := Arg_Buf (1 .. Arg_Len);
+      for I in 1 .. Arg_Len loop
+         if Arg_Buf (I) = ':' then
+            Qualified := True;
+            exit;
+         end if;
+      end loop;
+      if Qualified then
+         Path_Len := Arg_Len;
+         Path (1 .. Arg_Len) := Arg_Buf (1 .. Arg_Len);
+      else
+         Path_Len := 4 + Arg_Len;
+         Path (1 .. 4) := "BD0:";
+         Path (5 .. Path_Len) := Arg_Buf (1 .. Arg_Len);
+      end if;
    end if;
 
    loop
@@ -66,6 +74,11 @@ begin
       end if;
       Index := Index + 1;
    end loop;
+
+   if Index = 0 then
+      Akernel_User.Console.Put_Line
+        ("Dir: can't open " & Path (1 .. Path_Len));
+   end if;
 
    Process_Exit;
 end Dir;

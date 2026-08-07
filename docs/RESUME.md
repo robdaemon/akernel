@@ -215,6 +215,14 @@ Working rules burned in (details in NEXT.md):
   events with settle sleeps (batching coalesces to no
   press); ':' untypable under VNC — use
   QEMU_ARGS="-display gtk" for interactive volume paths.
+- Userspace VA windows are FIXED literals + a static
+  overlap guard, never derived from table sizes — the
+  Max_Files bump slid the fileserver buffer window onto
+  the text base 0x4600_0000 and every data-copy check
+  failed (37b followup). Data-compare failures across
+  several servers at once = suspect a shared server's
+  mapping layout, then stash-control against the last
+  green commit before touching the kernel.
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
   form; a self-matching pattern kills the invoking shell).

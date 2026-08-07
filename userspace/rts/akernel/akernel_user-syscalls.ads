@@ -153,7 +153,7 @@ package Akernel_User.Syscalls is
    --  fully inside the object). Authority: Resource must be the
    --  device_resource Kernel_Object cap with Manage — the same cap
    --  that gates io_map/irq_create, granted down from init.
-   --  Slot names a process-table slot 0..31; Self_Slot names the
+   --  Slot names a process-table slot 0..127; Self_Slot names the
    --  calling thread's own process (also covers kernel-started
    --  processes, which have no table slot). Returns Info_Ok,
    --  Info_Not_Found (unused or out-of-range slot — enumeration
@@ -169,6 +169,11 @@ package Akernel_User.Syscalls is
    Process_Info_Word_Count : constant := 8;
    type Process_Info_Words is
      array (0 .. Process_Info_Word_Count - 1) of U64;
+   --  Spawn-table size — mirror of the kernel's
+   --  Max_Process_Slots (enumeration walks slots
+   --  0 .. Process_Table_Slots - 1; no-slot answers mean
+   --  skip / end, Op_ReadDir idiom).
+   Process_Table_Slots : constant := 128;
    Self_Slot      : constant U64 := U64'Last;
    Info_Ok        : constant U64 := 0;
    Info_Not_Found : constant U64 := 1;
