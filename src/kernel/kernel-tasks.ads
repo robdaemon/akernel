@@ -26,8 +26,12 @@ package Kernel.Tasks is
    type Thread_Control_Block is private;
    type Thread_Access is access all Thread_Control_Block;
 
+   --  FIXED ABI value: userspace hardcodes 255 (s-memory.adb
+   --  AS_Cap). Was Handle'Last — when Max_Caps grew past 256 this
+   --  silently moved the handle and every userspace mem_map broke
+   --  (milestone 38 burn). Never derive ABI handles from Max_Caps.
    Address_Space_Cap_Handle : constant Kernel.Capabilities.Handle :=
-     Kernel.Capabilities.Handle'Last;
+     255;
 
    --  Per-thread IPC buffer page user VA (just below user stack top).
    --  Fixed per address space: one IPC buffer page per process while

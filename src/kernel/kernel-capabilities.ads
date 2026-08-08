@@ -4,7 +4,12 @@ with System;
 package Kernel.Capabilities is
    subtype U64 is Interfaces.Unsigned_64;
 
-   Max_Caps : constant := 256;
+   --  16K handles per process. The table is PAGED (milestone 38):
+   --  one 4 KiB PMM frame per 128 caps, allocated on demand and
+   --  accessed through the physmap, so a small process costs one
+   --  frame and the 128-slot PCB array costs root arrays only
+   --  (~1.5 KB each) instead of 10 KB of static entries each.
+   Max_Caps : constant := 16384;
 
    type Handle is range 0 .. Max_Caps - 1;
    Invalid_Handle : constant Handle := 0;
@@ -71,13 +76,30 @@ package Kernel.Capabilities is
    function To_Rights (Mask : U64) return Rights;
    function To_Mask (R : Rights) return U64;
 
+   --  Layout is FORCED to exactly 32 bytes by the rep clause:
+   --  128 entries then fill a 4 KiB cap page precisely, and the
+   --  compiler rejects any drift (a plain pragma Assert is no
+   --  guard here — assertions are disabled in the kernel build,
+   --  which let a 40-byte entry spill slot 127 past the frame end
+   --  and into the next page's frame, wiped by its Zero_Page;
+   --  milestone-38 bringup burn). Field order keeps Object/Badge
+   --  8-aligned; a zeroed frame remains a page of Null_Cap.
    type Cap_Entry is record
+      Object : System.Address;
+      Badge  : U64;
+      Rights : Kernel.Capabilities.Rights;
       Valid  : Boolean;
       Kind   : Object_Kind;
-      Object : System.Address;
-      Rights : Kernel.Capabilities.Rights;
-      Badge  : U64;
    end record;
+
+   for Cap_Entry use record
+      Object at  0 range 0 .. 63;
+      Badge  at  8 range 0 .. 63;
+      Rights at 16 range 0 .. 79;
+      Valid  at 26 range 0 ..  7;
+      Kind   at 27 range 0 ..  7;
+   end record;
+   for Cap_Entry'Size use 256;
 
    Null_Cap : constant Cap_Entry :=
      (Valid  => False,
@@ -142,9 +164,18 @@ package Kernel.Capabilities is
    function Used_Count (Table : Cap_Table) return Natural;
 
 private
-   type Cap_Array is array (Handle) of Cap_Entry;
+   Caps_Per_Page : constant := 128;
+   Page_Count    : constant := Max_Caps / Caps_Per_Page;  --  128
+   --  Page fit is compile-time guaranteed by the Cap_Entry size
+   --  clause above: 128 x 32 bytes = 4096 exactly.
+
+   type Page_Index is range 0 .. Page_Count - 1;
+   type Root_Array  is array (Page_Index) of U64;     --  frame PA or 0
+   type Count_Array is array (Page_Index) of Natural; --  live entries
 
    type Cap_Table is record
-      Entries : Cap_Array;
+      Root  : Root_Array := (others => 0);
+      Count : Count_Array := (others => 0);
+      Total : Natural := 0;
    end record;
 end Kernel.Capabilities;

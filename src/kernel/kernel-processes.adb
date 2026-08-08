@@ -442,6 +442,7 @@ package body Kernel.Processes is
          return;
       end if;
 
+
       Kernel.Tasks.Set_Process_State
         (PCB       => Processes (Slot),
          New_State => Kernel.Tasks.Process_Alive);

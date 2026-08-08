@@ -9,7 +9,7 @@ package Kernel.Boot_Files is
    --  per initrd file, enumerated at boot and handed to init. Spawn
    --  consumes them as ELF images; the cap-based byte API lets init
    --  parse the manifest without the kernel ever parsing a path.
-   Max_Files       : constant := 24;
+   Max_Files       : constant := 256;  --  was 24: Bad_Image unbootable board at 25
    Max_Name_Length : constant := 48;
 
    type Status is
