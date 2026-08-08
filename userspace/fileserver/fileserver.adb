@@ -4,6 +4,7 @@ with Interfaces;
 with Akernel_User.Syscalls;
 with Akernel_User.Files;
 with Akernel_User.Console;
+with Fileserver_Tables;
 
 --  File server (docs/IPC.md "file protocol"): holds every boot-file
 --  cap (granted via the boot_files manifest token at handles 3..N)
@@ -20,10 +21,14 @@ with Akernel_User.Console;
 --  case-insensitively; path comparison uses the volume's flag.
 --
 --  Boot files are mapped as borrowed read-only pages (mem_map on a
---  Boot_File_Object cap) into per-file windows; file data starts
---  Lead_In bytes into the first page (cpio alignment). Op_Read
---  copies bytes into the client-owned buffer whose cap arrives in
---  cap slot 0; the most recent buffer stays mapped.
+--  Boot_File_Object cap) into ONE shared window on demand per
+--  Op_Read, copied, unmapped (38b: no per-file VA windows — the
+--  single-threaded loop never needs two files at once, so VA cost
+--  is one window regardless of file count, and files larger than
+--  the window read in chunked passes). File data starts Lead_In
+--  bytes into the first page (cpio alignment). Op_Read copies
+--  bytes into the client-owned buffer whose cap arrives in cap
+--  slot 0; the most recent buffer stays mapped.
 
 procedure Fileserver is
    use type Akernel_User.Syscalls.U64;
@@ -32,99 +37,42 @@ procedure Fileserver is
    package Syscalls renames Akernel_User.Syscalls;
    package Files renames Akernel_User.Files;
 
+   --  Big tables (File_Table/Volumes/Assigns + the Max_*
+   --  constants and entry types) live in library-level package
+   --  Fileserver_Tables — in this declarative part they would
+   --  ride the 16 KiB mapped main stack (38b burn redux).
+   use Fileserver_Tables;
+
    subtype U64 is Syscalls.U64;
    subtype Byte is Interfaces.Unsigned_8;
    type Byte_Array is array (U64 range <>) of Byte;
 
    EP : constant U64 := 1;  --  fs_server grant: Receive side
 
-   --  16 was silently full: 17 boot files with System/Procfs
-   --  (milestone 37b) and Tests/Teardown, last in cpio sort
-   --  order, lost its name-table slot (same shape as the
-   --  milestone-34 Max_Process_Slots burn). 128 leaves real
-   --  headroom for windows, editors, nested shells.
-   Max_Files : constant := 128;
-   Max_Name  : constant := 32;
-
-   type File_Entry is record
-      Valid   : Boolean := False;
-      Handle  : U64 := 0;
-      Name    : String (1 .. Max_Name) := (others => Character'Val (0));
-      Name_Len : Natural := 0;
-      Size    : U64 := 0;
-      Mapped  : Boolean := False;
-      Lead_In : U64 := 0;
-      Win_VA  : U64 := 0;
-   end record;
-
-   File_Table : array (1 .. Max_Files) of File_Entry;
    Names_Done : Boolean := False;
 
-   --  Volumes (Amiga-style device/label mounts): the boot-file set
-   --  is mounted under a device name and a volume label, either
-   --  resolves on the wire.
-   Max_Volumes : constant := 8;
-
-   type Volume_Entry is record
-      Valid   : Boolean := False;
-      Device  : String (1 .. 16) := (others => Character'Val (0));
-      Dev_Len : Natural := 0;
-      Label   : String (1 .. 16) := (others => Character'Val (0));
-      Lab_Len : Natural := 0;
-      Case_Insensitive : Boolean := False;
-      --  Block-backed volume (Op_Add_Block): the single file
-      --  "disk" is the raw device, Blk_Size bytes, served by the
-      --  block driver at Blk_EP (block protocol, see
-      --  Akernel_User.Files).
-      Is_Block : Boolean := False;
-      Blk_EP   : U64 := 0;
-      Blk_Size : U64 := 0;
-      --  FS-driver volume (Op_Add_FS): stat/open/read for its
-      --  paths are forwarded verbatim to the fs driver at FS_EP
-      --  (this server is the VFS layer; filesystems are
-      --  independent driver processes).
-      Is_FS    : Boolean := False;
-      FS_EP    : U64 := 0;
-   end record;
-
-   Volumes : array (1 .. Max_Volumes) of Volume_Entry;
-
-   --  Assigns (milestone 36): session path aliases, Amiga-style.
-   --  When volume lookup fails on NAME:..., the prefix is matched
-   --  against this table (case-insensitive) and the target
-   --  substituted, then volume resolution runs again (depth-
-   --  capped: a target may itself start with an assign). Global
-   --  session state, in-memory; mounting the system volume seeds
-   --  C: and ENV:. Managed by Op_Assign / Op_Assign_List.
-   Max_Assigns  : constant := 8;
+   --  Volume/assign/entry docs live with the tables in
+   --  fileserver_tables.ads.
    Max_Expanded : constant := 96;
-
-   type Assign_Entry is record
-      Valid    : Boolean := False;
-      Name     : String (1 .. 16) := (others => Character'Val (0));
-      Name_Len : Natural := 0;
-      Target   : String (1 .. 48) := (others => Character'Val (0));
-      Tgt_Len  : Natural := 0;
-   end record;
-
-   Assigns : array (1 .. Max_Assigns) of Assign_Entry;
 
    --  VA windows. Userspace VA map (see s-memory.adb): heap
    --  0x4000_0000..0x4020_0000, TEXT at 0x4600_0000, args
-   --  0x4800_0000, stack/IPC 0x6FFx_xxxx. File windows sit in
-   --  the gap above the heap; the client-buffer and block-bounce
-   --  windows are FIXED addresses — never derive them from a
-   --  table size again: bumping Max_Files 32->128 slid
-   --  Buf_Win_VA onto the text base and the server copied file
-   --  data over its own code (37b-followup burn).
-   File_Win_Base : constant U64 := 16#4040_0000#;
-   Slot_Stride   : constant U64 := 64 * Syscalls.Page_Size;
-   Buf_Win_VA    : constant U64 := 16#4240_0000#;
-   --  Compile-time guard: file windows must stay below the
+   --  0x4800_0000, stack/IPC 0x6FFx_xxxx. The file window is ONE
+   --  shared 256 KiB window mapped on demand per read; the
+   --  client-buffer and block-bounce windows are FIXED addresses
+   --  — never derive them from a table size again: bumping
+   --  Max_Files 32->128 slid Buf_Win_VA onto the text base and
+   --  the server copied file data over its own code
+   --  (37b-followup burn).
+   File_Win_VA    : constant U64 := 16#4040_0000#;
+   File_Win_Pages : constant U64 := 64;  --  256 KiB shared window
+   Buf_Win_VA     : constant U64 := 16#4240_0000#;
+   --  Compile-time guard: the file window must stay below the
    --  buffer window, and the buffer window below the text.
-   Windows_Fit   : constant :=
+   Windows_Fit    : constant :=
      1 / Boolean'Pos
-       (File_Win_Base + Max_Files * Slot_Stride <= Buf_Win_VA
+       (File_Win_VA + File_Win_Pages * Syscalls.Page_Size
+          <= Buf_Win_VA
         and then Buf_Win_VA + 64 * Syscalls.Page_Size
                    <= 16#4600_0000#);
 
@@ -404,22 +352,21 @@ procedure Fileserver is
       end if;
    end Reply2;
 
-   procedure Ensure_Mapped (Index : Natural; Ok : out Boolean) is
-      F  : File_Entry renames File_Table (Index);
-      Pages  : U64;
-      Dummy  : U64;
+   --  Lazy cpio lead-in discovery: map one page at the shared
+   --  window, learn Lead_In, drop the mapping. Reads then map
+   --  the file's chunk at the window on demand.
+   procedure Ensure_Lead_In (Index : Natural; Ok : out Boolean) is
+      F : File_Entry renames File_Table (Index);
    begin
       Ok := True;
-      if F.Mapped then
+      if F.Lead_Known then
          return;
       end if;
 
-      --  First page: learn the lead-in, then map the rest of the
-      --  file's true page span.
       if Syscalls.Mem_Map_File
         (Address_Space => Syscalls.Address_Space_Cap,
          Cap           => F.Handle,
-         VA            => F.Win_VA,
+         VA            => File_Win_VA,
          Offset        => 0,
          Length        => Syscalls.Page_Size,
          Lead_In       => F.Lead_In) /= 0
@@ -428,23 +375,19 @@ procedure Fileserver is
          return;
       end if;
 
-      Pages := (F.Lead_In + F.Size + Syscalls.Page_Size - 1)
-        / Syscalls.Page_Size;
-      if Pages > 1
-        and then Syscalls.Mem_Map_File
-          (Address_Space => Syscalls.Address_Space_Cap,
-           Cap           => F.Handle,
-           VA            => F.Win_VA + Syscalls.Page_Size,
-           Offset        => Syscalls.Page_Size,
-           Length        => (Pages - 1) * Syscalls.Page_Size,
-           Lead_In       => Dummy) /= 0
+      if Syscalls.Mem_Unmap
+        (Address_Space => Syscalls.Address_Space_Cap,
+         VA            => File_Win_VA,
+         Length        => Syscalls.Page_Size) /= 0
       then
+         Akernel_User.Console.Put_Line
+           ("fileserver: lead-in unmap failed");
          Ok := False;
          return;
       end if;
 
-      F.Mapped := True;
-   end Ensure_Mapped;
+      F.Lead_Known := True;
+   end Ensure_Lead_In;
 
    procedure Handle_Mount is
       Dev_Len : constant Natural := Natural (Syscalls.Message.Words (0));
@@ -647,8 +590,6 @@ procedure Fileserver is
             end loop;
             File_Table (I).Size :=
               Syscalls.Boot_File_Size (Handle);
-            File_Table (I).Win_VA :=
-              File_Win_Base + U64 (I - 1) * Slot_Stride;
             Reply2 (Files.Status_Ok, 0);
             return;
          end if;
@@ -1256,7 +1197,7 @@ procedure Fileserver is
             return;
          end if;
 
-         Ensure_Mapped (I, Ok);
+         Ensure_Lead_In (I, Ok);
          if not Ok then
             Status := Files.Status_Not_Found;
             return;
@@ -1271,14 +1212,80 @@ procedure Fileserver is
          Count := U64'Min (Length, File_Table (I).Size - Offset);
          Count := U64'Min (Count, Buf_Bytes);
 
+         --  Chunked pass through the shared window: map the pages
+         --  covering the next up-to-256 KiB of file data, copy
+         --  into the client buffer window, unmap. One iteration
+         --  for any read that fits the window (today always:
+         --  client buffers cap at 32 KiB); files larger than the
+         --  window just take more passes.
          declare
-            Src : Byte_Array (0 .. Count - 1)
-              with Address => To_Address (Integer_Address
-                (File_Table (I).Win_VA + File_Table (I).Lead_In + Offset));
-            Dst : Byte_Array (0 .. Count - 1)
-              with Address => To_Address (Integer_Address (Buf_Win_VA));
+            F : File_Entry renames File_Table (I);
+            File_Pages : constant U64 :=
+              (F.Lead_In + F.Size + Syscalls.Page_Size - 1)
+                / Syscalls.Page_Size;
+            Done      : U64 := 0;
+            Pos       : U64 := Offset;
+            Left      : U64 := Count;
+            Dummy_LI  : U64;
          begin
-            Dst := Src;
+            while Left > 0 loop
+               declare
+                  Page_Base : constant U64 :=
+                    (F.Lead_In + Pos) / Syscalls.Page_Size;
+                  Span : constant U64 :=
+                    U64'Min (File_Win_Pages, File_Pages - Page_Base);
+                  Skip : constant U64 :=
+                    (F.Lead_In + Pos) mod Syscalls.Page_Size;
+                  Chunk : constant U64 :=
+                    U64'Min (Left, Span * Syscalls.Page_Size - Skip);
+               begin
+                  if Syscalls.Mem_Map_File
+                    (Address_Space => Syscalls.Address_Space_Cap,
+                     Cap           => F.Handle,
+                     VA            => File_Win_VA,
+                     Offset        => Page_Base * Syscalls.Page_Size,
+                     Length        => Span * Syscalls.Page_Size,
+                     Lead_In       => Dummy_LI) /= 0
+                  then
+                     Status := Files.Status_Not_Found;
+                     Count := 0;
+                     exit;
+                  end if;
+
+                  declare
+                     Src : Byte_Array (0 .. Chunk - 1)
+                       with Address => To_Address (Integer_Address
+                         (File_Win_VA + Skip));
+                     Dst : Byte_Array (0 .. Chunk - 1)
+                       with Address => To_Address (Integer_Address
+                         (Buf_Win_VA + Done));
+                  begin
+                     --  Byte loop, not Dst := Src: the variable-
+                     --  size array assignment made GNAT spill a
+                     --  ~40 KiB temp into the main frame and blow
+                     --  the 16 KiB mapped stack (38b burn).
+                     for B in 0 .. Chunk - 1 loop
+                        Dst (B) := Src (B);
+                     end loop;
+                  end;
+
+                  if Syscalls.Mem_Unmap
+                    (Address_Space => Syscalls.Address_Space_Cap,
+                     VA            => File_Win_VA,
+                     Length        => Span * Syscalls.Page_Size) /= 0
+                  then
+                     Akernel_User.Console.Put_Line
+                       ("fileserver: window unmap failed");
+                     Status := Files.Status_Not_Found;
+                     Count := 0;
+                     exit;
+                  end if;
+
+                  Done := Done + Chunk;
+                  Pos := Pos + Chunk;
+                  Left := Left - Chunk;
+               end;
+            end loop;
          end;
       end Process;
    begin
