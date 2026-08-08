@@ -6,15 +6,18 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates — NEXT UP, user-approved design in
-docs/NEXT.md: MILESTONE 38 file headroom with the
-DYNAMIC CAP TABLE redesign (two-level paged caps via
-physmap PMM frames, 16K handles; replaces static
-256/PCB). Steps: kernel boot_files 24 -> 256 (board
-won't boot past 24 — 17 in use, urgent), dynamic cap
-table, fileserver shared VA window + 512 names, tests
-(gen-files initrd + cap-stress + FAT32 300-file proof).
-Rest of the deferred list:
+Open candidates — NEXT UP, finish MILESTONE 38 (design
+in docs/NEXT.md; 38a DONE, commit f9d3a6a): 38b
+fileserver — DELETE the per-file 256KiB VA window,
+map on demand into ONE shared window with chunked
+passes for >window files (single-threaded loop needs
+one file at a time), name table 512, keep
+fixed-literal VA rule; then tests (~64 generated tiny
+initrd files Tests/Gen/fNN via Makefile recipe, fuzz
+cap-stress minting >300 caps to force a second cap
+page + teardown frame accounting, FAT32 300-file
+create/walk/count/delete proof on BD0); then docs +
+final commit. Rest of the deferred list:
 caps/regs introspection dumps (dedicated admin cap kind,
 not the reused device_resource gate), Proc:self (needs
 client identity through the VFS), pid generation
@@ -24,7 +27,19 @@ write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
 covers the IPC case).
 
-Recently landed: 37b-followup (4076c55) — Dir qualified
+Recently landed: 38a (f9d3a6a) — kernel boot_files 24
+-> 256 (was 7 files from an unbootable Bad_Image
+board); DYNAMIC PAGED CAP TABLES: 16384 handles per
+process, 128-entry root per PCB (~1.5 KB, replaces
+10 KB static array, ~1 MB BSS saved over 128 slots),
+128-cap pages PMM-allocated on demand and accessed via
+Arch.Phys_To_Virt, page freed at last close, all freed
+at teardown; Cap_Entry rep+size clause (exactly 32
+bytes, 128/page = one frame, compile-time enforced).
+Bringup burns above (To_Mask copy-paste, Handle'Last
+ABI handle, frame-spill). 261 PASS SMP1+SMP4, fuzz
+failures=0, fsck clean. Before that: 37b-followup
+(4076c55) — Dir qualified
 paths (arg with ':' = fully qualified; bare = BD0:;
 ReadDir failure prints an error instead of silent
 empty), fileserver Max_Files 128, process slots 128
@@ -246,6 +261,20 @@ Working rules burned in (details in NEXT.md):
   several servers at once = suspect a shared server's
   mapping layout, then stash-control against the last
   green commit before touching the kernel.
+- Guards on record layout/table fit must be rep clauses
+  or size clauses (compile errors), NEVER pragma Assert
+  — assertions are disabled in the kernel build. A
+  40-byte Cap_Entry spilled slot 127 past the 4 KiB cap
+  frame into the next frame, wiped by Zero_Page; the
+  assert guard never fired (38a burn). Same class:
+  never derive ABI constants from table sizes —
+  Address_Space_Cap_Handle was Handle'Last and silently
+  moved 255 -> 16383 when Max_Caps grew while userspace
+  hardcodes 255; now pinned to literal 255.
+- Kernel debug instrumentation pattern that works:
+  Board.UART.Put_Line_Unsafe/Put_Hex_Unsafe tag prints
+  at every candidate failure exit, one build+run per
+  narrowing. Remove before commit.
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
   form; a self-matching pattern kills the invoking shell).

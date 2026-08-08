@@ -134,7 +134,12 @@ QEMU virt RAM base:     0x80000000
   serialized by a big kernel lock (SMP: all harts run user code in
   parallel, kernel execution single-file; shared ready queue + IPI
   wakeup); process table 128 slots with an O(1) free
-  list, 144 task slots.
+  list, 144 task slots. Capability tables are PAGED:
+  16384 handles per process, 128-entry root per PCB,
+  128-cap pages PMM-allocated on demand via physmap and
+  freed at last close/teardown; Cap_Entry layout forced
+  to 32 bytes by rep/size clause. Kernel boot-file
+  table holds 256 initrd files.
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is
