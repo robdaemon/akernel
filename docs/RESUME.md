@@ -6,7 +6,15 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates: the deferred list:
+Open candidates — NEXT UP, user-approved design in
+docs/NEXT.md: MILESTONE 38 file headroom with the
+DYNAMIC CAP TABLE redesign (two-level paged caps via
+physmap PMM frames, 16K handles; replaces static
+256/PCB). Steps: kernel boot_files 24 -> 256 (board
+won't boot past 24 — 17 in use, urgent), dynamic cap
+table, fileserver shared VA window + 512 names, tests
+(gen-files initrd + cap-stress + FAT32 300-file proof).
+Rest of the deferred list:
 caps/regs introspection dumps (dedicated admin cap kind,
 not the reused device_resource gate), Proc:self (needs
 client identity through the VFS), pid generation
@@ -16,7 +24,22 @@ write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear, true scheduler priorities (wakeup boost
 covers the IPC case).
 
-Recently landed: MILESTONE 37 (a+b) — kernel process
+Recently landed: 37b-followup (4076c55) — Dir qualified
+paths (arg with ':' = fully qualified; bare = BD0:;
+ReadDir failure prints an error instead of silent
+empty), fileserver Max_Files 128, process slots 128
+with O(1) free list (spawn peeks Free_Head, pops at
+commit; Discard_Slot pushes only committed slots),
+Max_Tasks 144. BIG burn fixed: fileserver client-buffer
+window was DERIVED from Max_Files — the bump slid it
+onto user text base 0x4600_0000 and the server copied
+file data over its own code; 9 data-compare checks
+failed while stat/open passed. Fixed windows are now
+literals (0x4040_0000 files / 0x4240_0000 buffers) with
+a compile-time Windows_Fit guard; bisect lesson:
+stash-control against last green before touching the
+kernel. 261 PASS SMP1+SMP4, fuzz failures=0, fsck
+clean. Before that: MILESTONE 37 (a+b) — kernel process
 introspection syscall + the Proc: volume. 37a:
 Sys_Process_Info = 30 (resource cap, slot 0..31 or
 U64'Last self, buffer memobj, offset) writes a 64-byte

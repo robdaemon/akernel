@@ -1183,6 +1183,73 @@ Next candidates (order open):
     as the pre-change baseline), fuzz failures=0, fsck
     clean.
 
+    MILESTONE 38 (DESIGNED, NOT STARTED — user decision:
+    dynamic cap table, not a static bump). Goal: file
+    headroom. The limit is a stack of four, worst first:
+    (1) kernel boot_files.Max_Files = 24 — initrd parse
+    returns Bad_Image and the board REFUSES TO BOOT past
+    24 files; 17 in use today, most urgent;
+    (2) kernel Max_Caps = 256 per process — fileserver
+    holds 1 cap per boot file, init holds them first,
+    ~15 overhead caps on top;
+    (3) fileserver Max_Files = 128 name entries;
+    (4) fileserver reserves a 256KiB VA window PER FILE
+    (32MiB for 128) and silently caps single boot files
+    at 256KiB. FAT32 volumes have NO file-count table —
+    path walk per request, stateless ReadDir — already
+    disk-bound, nothing to do. Historical frame: AmigaOS
+    (1985) heap-allocated FileHandles, Plan 9 realloc'd
+    fd tables, Linux 2.4 slab + tunables — all RAM-bound;
+    our static tables exist only because the kernel has
+    no heap, just the PMM.
+
+    AGREED SCOPE:
+    a. Kernel boot_files.Max_Files 24 -> 256 (BSS ~16KB,
+       boot-time linear lookups fine).
+    b. DYNAMIC CAP TABLE replacing the static
+       Cap_Array(0..255) embedded per-PCB (kernel-tasks.ads
+       ~298, ~40B/entry = ~10KB/PCB = 1.2MB BSS today):
+       two-level paged table — handle[hi] indexes a root
+       of page PAs in the PCB (e.g. 64 root slots x
+       256-cap pages = 16K handles), cap pages allocated
+       on demand from the PMM and read/written THROUGH
+       THE PHYSMAP (kernel can dereference any frame via
+       Physmap_Base + PA — the process_info per-word
+       write pattern is the precedent), freed when their
+       last cap closes (per-page used count), all pages
+       freed at process teardown. O(1) lookup, ~zero
+       memory for small processes (1-2 pages), handle
+       space 16K. Touchpoints: kernel-capabilities.adb
+       (Lookup/Insert/Delete/Reset walk pages),
+       kernel-tasks.ads (PCB field: root array + count),
+       kernel-processes.adb teardown (Reset_Process_Caps,
+       Cleanup_Cap_Refs walks pages), arch-traps.adb mint
+       /grant/transfer paths (page alloc on first handle
+       in a page), akernel.adb bootstrap PCB setup.
+       Big-kernel-lock means no fine-grained locking.
+       Watch: every Handle range check / Decode_Handle /
+       Max_Caps reference across arch-traps.
+    c. Fileserver: DELETE the per-file VA window —
+       single-threaded request loop maps the file on
+       demand into ONE shared 256KiB window, copies,
+       unmaps; >256KiB files get chunked passes (kills
+       the VA scaling limit AND the 256KiB-per-file cap).
+       Name table static 512 (~24KB RAM-only); the
+       Windows_Fit static guard shrinks to protect one
+       slot. Keep the fixed-literal VA rule.
+    d. Tests: initrd gains ~64 generated tiny files
+       (Tests/Gen/fNN, Makefile recipe) forcing the whole
+       stack past 24/64 entries; fuzz stats+reads
+       samples, ReadDir-walks and counts; FAT32 proof:
+       fuzz creates 300 files on BD0, walks, counts,
+       deletes. Cap-stress: fuzz mints >300 caps (memobj
+       allocs), forces a second cap page, deletes, checks
+       teardown frees pages (frame accounting).
+    e. Docs + burn note: boot-file overflow = Bad_Image
+       unbootable board is the worst failure mode in the
+       system; static-table bumps must fail the build or
+       scale by RAM.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
