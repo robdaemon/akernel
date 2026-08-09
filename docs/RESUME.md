@@ -6,39 +6,39 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates — NEXT UP, finish MILESTONE 38 (design
-in docs/NEXT.md; 38a DONE, commit f9d3a6a): 38b
-fileserver — DELETE the per-file 256KiB VA window,
-map on demand into ONE shared window with chunked
-passes for >window files (single-threaded loop needs
-one file at a time), name table 512, keep
-fixed-literal VA rule; then tests (~64 generated tiny
-initrd files Tests/Gen/fNN via Makefile recipe, fuzz
-cap-stress minting >300 caps to force a second cap
-page + teardown frame accounting, FAT32 300-file
-create/walk/count/delete proof on BD0); then docs +
-final commit. Rest of the deferred list:
+Open candidates — milestone 38 COMPLETE; next from
+the deferred list (design notes in docs/NEXT.md):
 caps/regs introspection dumps (dedicated admin cap kind,
 not the reused device_resource gate), Proc:self (needs
 client identity through the VFS), pid generation
 counters, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
-filesystems appear, true scheduler priorities (wakeup boost
-covers the IPC case).
+filesystems appear (also re-raise the FAT stress proof
+64 -> 300 files once sync is cheap), true scheduler
+priorities (wakeup boost covers the IPC case).
 
-Recently landed: 38a (f9d3a6a) — kernel boot_files 24
--> 256 (was 7 files from an unbootable Bad_Image
-board); DYNAMIC PAGED CAP TABLES: 16384 handles per
-process, 128-entry root per PCB (~1.5 KB, replaces
-10 KB static array, ~1 MB BSS saved over 128 slots),
-128-cap pages PMM-allocated on demand and accessed via
-Arch.Phys_To_Virt, page freed at last close, all freed
-at teardown; Cap_Entry rep+size clause (exactly 32
-bytes, 128/page = one frame, compile-time enforced).
-Bringup burns above (To_Mask copy-paste, Handle'Last
-ABI handle, frame-spill). 261 PASS SMP1+SMP4, fuzz
-failures=0, fsck clean. Before that: 37b-followup
+Recently landed: MILESTONE 38 COMPLETE (f9d3a6a,
+48da866, a29864d) — file headroom end to end:
+boot_files 256; DYNAMIC PAGED CAP TABLES (16384
+handles/process, 128-entry PCB root, PMM pages via
+physmap, freed at last close/teardown; Cap_Entry 32
+bytes by rep+size clause = compile-time fit guard);
+fileserver per-file VA windows replaced by ONE shared
+256 KiB window mapped per Op_Read (chunked passes),
+name table 512; multi-page bootinfo (8 pages, 511
+entries — was silently full at 63); boot-file caps
+transfer WITH their Op_Set_Name messages (spawn
+grant lists cap at 32 — didn't scale); user stacks 8
+pages (16 KiB overflowed by cumulative declare-block
+locals); LOUD last_chance (LCH:<file>:<line> via
+debug putchar — a silent spin wedged the suite
+invisibly twice); fat32 ReadDir skips . and ..
+(subdir counts were off by 2); tests: 64 generated
+initrd files, 300-cap mint/close crossing cap pages,
+FAT32 64-file create/walk/count/delete with leftover
+sweep. 272 PASS SMP1+SMP4, fuzz failures=0, fsck
+clean. Before that: 37b-followup
 (4076c55) — Dir qualified
 paths (arg with ':' = fully qualified; bare = BD0:;
 ReadDir failure prints an error instead of silent
@@ -275,6 +275,21 @@ Working rules burned in (details in NEXT.md):
   Board.UART.Put_Line_Unsafe/Put_Hex_Unsafe tag prints
   at every candidate failure exit, one build+run per
   narrowing. Remove before commit.
+- Userspace exceptions hit last_chance and used to
+  yield-loop SILENTLY = invisible system wedge (the
+  "two adjacent source lines never executed" paradox
+  means somebody crashed). Now prints
+  LCH:<file>:<line> via the debug putchar ecall.
+  Check the log for LCH FIRST on any hang; QMP
+  "info registers" mid-hang names the spinning
+  process/pc.
+- Mind string literal lengths in table-driven tests:
+  "Tests/Gen/f00" is 13 chars — a String(1..12)
+  declaration raises Constraint_Error at block
+  elaboration, before any debug print in the body.
+- A mutating FAT op costs ~0.4 s (write-through sync
+  scaling with FAT size): keep FAT stress loops at
+  ~64 ops per phase inside the suite budget.
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
   form; a self-matching pattern kills the invoking shell).

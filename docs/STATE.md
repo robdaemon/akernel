@@ -139,7 +139,14 @@ QEMU virt RAM base:     0x80000000
   128-cap pages PMM-allocated on demand via physmap and
   freed at last close/teardown; Cap_Entry layout forced
   to 32 bytes by rep/size clause. Kernel boot-file
-  table holds 256 initrd files.
+  table holds 256 initrd files; the init bootinfo
+  region grows to 8 contiguously-mapped pages on
+  demand (511 entries); spawned user threads get 8
+  stack pages (32 KiB). Boot-file caps reach the file
+  server TRANSFERRED with their Op_Set_Name messages
+  (spawn grant lists cap at 32); the file server maps
+  boot files on demand into one shared 256 KiB window
+  (no per-file VA), 512 name slots.
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is

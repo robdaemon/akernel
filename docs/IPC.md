@@ -212,9 +212,11 @@ System/Fileserver (holds every boot-file cap via the `boot_files`
 manifest token) and clients (hold only the `fs` endpoint Send cap):
 
 ```text
-Op_Set_Name = 0  init -> server: (handle, length, name[32]), one per
-                 granted boot file, pushed right after spawn, then a
-                 zero-handle terminator
+Op_Set_Name = 0  init -> server: (sentinel, length, name[32]) with
+                 the boot-file cap TRANSFERRED in slot 0 (grant
+                 lists cap at 32 — caps ride the name push since
+                 milestone 38b), one per boot file, pushed right
+                 after spawn, then a zero-word no-cap terminator
 Op_Stat     = 1  words = name[48] -> (status, size)
 Op_Open     = 2  words = name[48] -> (status, size); client then
                  allocates/maps its read buffer (memory object)
@@ -281,8 +283,8 @@ the transferred cap pins the frames while the server holds it. The
 server maps boot files via the mem_map boot-file branch (borrowed
 RO pages + lead-in offset) and copies into the client buffer mapped
 in its own AS. Manifest tokens: `fs_server` (Receive side),
-`fs` (Send side), `boot_files` (all boot-file caps in bootinfo
-order).
+`fs` (Send side), `boot_files` (push the boot-file name table
+with caps transferred per Op_Set_Name after spawn).
 
 ## Namespaces and spawn v2
 
@@ -335,10 +337,12 @@ files directly.
   parent may send a `(handle -> name)` table as first message on a
   well-known endpoint cap placed at handle 1 by convention.
 - Init gets its bootstrap table from the kernel-provided read-only
-  bootinfo page at `0x6FFE0000` (implemented): magic + count header,
-  then 64-byte (handle, kind, rights mask, name) entries covering
-  every boot file cap and the device_resource authority cap,
-  so init hardcodes no handle numbers.
+  bootinfo region at `0x6FFE0000` (implemented): magic + count
+  header, then 64-byte (handle, kind, rights mask, name) entries
+  covering every boot file cap and the device_resource authority
+  cap, so init hardcodes no handle numbers. The region grows in
+  4 KiB pages mapped contiguously on demand (up to 8 pages / 511
+  entries) — one page was silently full at 63 entries.
 
 ### Manifest stays boot-launch only
 

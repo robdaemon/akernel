@@ -1183,38 +1183,69 @@ Next candidates (order open):
     as the pre-change baseline), fuzz failures=0, fsck
     clean.
 
-    MILESTONE 38 (IN PROGRESS — 38a committed f9d3a6a):
-    (a) boot_files.Max_Files 24 -> 256 DONE;
-    (b) dynamic paged cap table DONE: 16384 handles,
-    128-entry PCB root, PMM pages via physmap, freed at
-    last close / teardown; Cap_Entry forced to 32 bytes
-    by rep+size clause (compile-time fit guard —
-    assertions are OFF in kernel builds, an assert let
-    a 40-byte entry spill slot 127 past the frame and
-    Zero_Page of the next frame wiped it; also pinned
-    Address_Space_Cap_Handle to literal 255 after
-    Handle'Last moved it under userspace's hardcoded
-    AS_Cap). REMAINING (38b):
-    c. Fileserver: DELETE the per-file VA window —
-       single-threaded request loop maps the file on
-       demand into ONE shared 256KiB window, copies,
-       unmaps; >256KiB files get chunked passes (kills
-       the VA scaling limit AND the 256KiB-per-file cap).
-       Name table static 512 (~24KB RAM-only); the
-       Windows_Fit static guard shrinks to protect one
-       slot. Keep the fixed-literal VA rule.
-    d. Tests: initrd gains ~64 generated tiny files
-       (Tests/Gen/fNN, Makefile recipe) forcing the whole
-       stack past 24/64 entries; fuzz stats+reads
-       samples, ReadDir-walks and counts; FAT32 proof:
-       fuzz creates 300 files on BD0, walks, counts,
-       deletes. Cap-stress: fuzz mints >300 caps (memobj
-       allocs), forces a second cap page, deletes, checks
-       teardown frees pages (frame accounting).
-    e. Docs + burn note: boot-file overflow = Bad_Image
-       unbootable board is the worst failure mode in the
-       system; static-table bumps must fail the build or
-       scale by RAM.
+    MILESTONE 38 COMPLETE (a: f9d3a6a, b-core: 48da866,
+    b-tests: a29864d) — file headroom end to end.
+    (a) kernel boot_files 24 -> 256 (the board refused
+    to boot past 24, Bad_Image — the worst failure mode
+    in the system; static-table bumps must fail the
+    build or scale by RAM). (b) DYNAMIC PAGED CAP
+    TABLES: 16384 handles/process, 128-entry PCB root
+    (~1.5 KB replaces 10 KB static, ~1 MB BSS saved),
+    128-cap pages PMM-allocated via physmap, freed at
+    last close / teardown; Cap_Entry forced to exactly
+    32 bytes by rep+size clause — a compile-time guard,
+    because assertions are OFF in kernel builds and the
+    pragma-Assert guard never fired when a 40-byte
+    entry spilled slot 127 past the 4 KiB frame into
+    the next frame, wiped by its Zero_Page. Also
+    pinned Address_Space_Cap_Handle to literal 255
+    (Handle'Last silently moved it under userspace's
+    hardcoded AS_Cap). (c) Fileserver per-file VA
+    windows DELETED: one shared 256 KiB window mapped
+    on demand per Op_Read, chunked passes for larger
+    files, lazy lead-in; name table 512 RAM-only.
+    (d) Tests: 64 generated initrd files
+    (Tests/Gen/fNN, Makefile recipe) push every table
+    at once; fuzz stats all + reads f42 content; cap
+    stress mints/closes 300 memobjs (crosses cap pages
+    1 and 2, table reusable after); FAT32 64-file
+    create/walk/count/delete proof on BD0:STRESS with
+    a walk-by-actual-name leftover sweep. 272 PASS
+    SMP1+SMP4, fuzz failures=0, fsck clean.
+    38b burns, in order of pain:
+    - Bootinfo was silently FULL at 63 entries (one
+      page): 81 files pushed device_resource and late
+      program images off the end -> "missing
+      device_resource", unbootable. Now up to 8 pages
+      mapped contiguously on demand (511 entries).
+    - Spawn grant lists cap at 32 (one IPC page):
+      boot_files grants don't scale. Boot-file caps
+      now ride WITH their Op_Set_Name messages (init
+      Cap_Mint + transfer + delete; fileserver keeps
+      the received cap as the file). Scales to 256.
+    - A SILENT last_chance handler turned every
+      userspace exception into an invisible system
+      wedge (the "adjacent source lines never
+      executed" paradox = somebody crashed). It now
+      prints LCH:<file>:<line> via the debug putchar
+      ecall (no console server) before yielding.
+      First catch: "Tests/Gen/f00" is 13 chars, not
+      12 — Constraint_Error at block elaboration.
+    - 16 KiB user stacks were tight: cumulative
+      sibling declare-block locals + deep RPC chains
+      overflowed by 64 bytes once test blocks grew.
+      Spawn now maps 8 stack pages (32 KiB).
+    - fat32 ReadDir never skipped "."/".." — the
+      milestone-32 root walk can't see them, any
+      subdir count is off by 2. Fixed.
+    - A mutating FAT op costs ~0.4 s under
+      write-through sync and the cost scales with FAT
+      size: the designed 300-file proof (900 ops)
+      blows the suite budget; shipped 64 (crosses
+      every 32/63 boundary; FAT32 has no count
+      table). Re-raise when write-back caching lands.
+    - QMP "info registers" mid-hang names the
+      spinning process/pc when the UART goes quiet.
 
 Commit between each milestone.
 
