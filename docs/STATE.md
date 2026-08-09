@@ -146,7 +146,13 @@ QEMU virt RAM base:     0x80000000
   server TRANSFERRED with their Op_Set_Name messages
   (spawn grant lists cap at 32); the file server maps
   boot files on demand into one shared 256 KiB window
-  (no per-file VA), 512 name slots.
+  (no per-file VA), 512 name slots. Introspection is
+  admin-gated by capability, not by any user model:
+  init holds the boot's only Admin_Object cap
+  (bootinfo "admin"); Sys_Process_Info (device_resource
+  gate), Sys_Cap_Info + Sys_Thread_Regs (admin gate)
+  write physmap snapshots; Proc: renders them as
+  <pid>/status, <pid>/caps, <pid>/regs.
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is

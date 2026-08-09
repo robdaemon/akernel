@@ -1247,9 +1247,9 @@ Next candidates (order open):
     - QMP "info registers" mid-hang names the
       spinning process/pc when the UART goes quiet.
 
-    MILESTONE 39 (IN PROGRESS) — admin-gated
-    introspection dumps (caps + registers). Locked
-    design:
+    MILESTONE 39 COMPLETE (a: 0b37978, b: a6800a0,
+    c: 29392a8) — admin-gated introspection dumps.
+    The design below shipped unchanged:
     - No user model in the kernel, ever: authority =
       holding a dedicated ADMIN_OBJECT cap kind (empty
       object, existence only). Kernel mints one at boot
@@ -1298,6 +1298,30 @@ Next candidates (order open):
       re-delegate; Transfer stays on init's bootinfo
       copy (and Elevated's, for minting). Revocation =
       kill Elevated / stop delegating.
+    39 shipped notes: Admin_Object added LAST in the
+    Object_Kind enum (positions ride the bootinfo
+    wire); admin cap = init bootinfo handle
+    File_Count+2 with Manage+Transfer; manifest token
+    `admin` flows through init's generic bootinfo
+    token path (zero init.adb changes); holders:
+    procfs (handle 4), fuzz (handle 8).
+    Proc:<pid>/caps renders a sparse cap walk,
+    <pid>/regs the saved frame or a "thread live"
+    line. Fuzz: 11 admin checks (denials, entry
+    fields, cap walk count == process_info count,
+    blocked-echo frame dump, running = Busy) + 8
+    proc caps/regs checks. Burns: (1) the admin echo
+    needed its OWN endpoint — a second receiver on
+    the shared EP steals Echo_Process's rounds and
+    a dying receiver fails the endpoint (M34),
+    cascading into every later echo check; (2)
+    bare-yield reap polls outrun a console-printing
+    child under SMP4 — pace with per-round checks;
+    (3) drive IPC calls with cleared message
+    registers — echo round 3 echoes stale caps
+    words. 303/304 PASS SMP4/SMP1 (one-check delta
+    = UART line interleave), fuzz failures=0, fsck
+    clean.
 
 Commit between each milestone.
 
@@ -1310,9 +1334,9 @@ Commit between each milestone.
   (VIRTIO_BLK_F_FLUSH), block-layer sync op.
 - Register fast path, >4 caps/msg.
 - Kernel introspection syscalls for init state reconstruction
-  (37a landed: process_info process/thread snapshots with
-  spawner ids; still open: cap/register dumps — admin-gated —
-  endpoint/notification object listing, scheduler stats).
+  (37a process/thread snapshots + 39 admin-gated cap/register
+  dumps landed; still open: endpoint/notification object
+  listing, scheduler stats).
 - Finer-grained kernel locking / per-hart runqueues if hart counts
   grow (BKL serializes all kernel execution; fine at hobby scale).
 - Tasking runtime; uniform program ABI (milestone 31b: one

@@ -6,19 +6,37 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates — milestone 38 COMPLETE; next from
-the deferred list (design notes in docs/NEXT.md):
-caps/regs introspection dumps (dedicated admin cap kind,
-not the reused device_resource gate), Proc:self (needs
-client identity through the VFS), pid generation
-counters, register fast path,
+Open candidates — milestones 38+39 COMPLETE; next
+from the deferred list (design notes in docs/NEXT.md):
+System/Elevated + Sys:C/Elevate (userspace-only sudo,
+design locked in the NEXT.md milestone 39 entry),
+Proc:self (needs client identity through the VFS),
+pid generation counters, register fast path,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear (also re-raise the FAT stress proof
 64 -> 300 files once sync is cheap), true scheduler
 priorities (wakeup boost covers the IPC case).
 
-Recently landed: MILESTONE 38 COMPLETE (f9d3a6a,
+Recently landed: MILESTONE 39 COMPLETE (0b37978,
+a6800a0, 29392a8) — admin-gated introspection dumps.
+No user model in the kernel ever: authority = holding
+the Admin_Object cap (kind added LAST in the enum —
+positions ride bootinfo), minted at boot into init's
+bootinfo as "admin" (Manage+Transfer, handle
+File_Count+2); the manifest token flows through
+init's generic bootinfo token path. Sys_Cap_Info = 31
+(sparse cap-slot walk) and Sys_Thread_Regs = 32
+(blocked threads only — saved trap frame; running =
+Busy, no cross-hart stop-the-world) write physmap
+snapshots like process_info. Proc:<pid>/caps and
+<pid>/regs render them (procfs holds admin at handle
+4). Burns: a second receiver on the shared echo
+endpoint steals rounds and its death fails the
+endpoint (M34) — test peers get their own endpoints;
+bare-yield reap polls outrun a console-printing
+child under SMP4. 303/304 PASS SMP4/SMP1, fuzz
+failures=0, fsck clean. Before that: MILESTONE 38 COMPLETE (f9d3a6a,
 48da866, a29864d) — file headroom end to end:
 boot_files 256; DYNAMIC PAGED CAP TABLES (16384
 handles/process, 128-entry PCB root, PMM pages via
