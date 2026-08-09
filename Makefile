@@ -37,77 +37,47 @@ INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
 INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 
-.PHONY: all kernel userspace init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu bureau terminal demo shell dir type initrd run clean clean-kernel clean-userspace clean-initrd
+#  Crate inventory (milestone 40c): every userspace crate builds
+#  through the generic $(CRATES) rule; disk-resident crates are
+#  installed by capitalized name into Sys:System/ or Sys:C/.
+#  `make new-crate NAME=foo DEST=c|system` appends here.
+INITRD_CRATES := init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
+DISK_CRATES_SYSTEM := bureau terminal demo shell
+DISK_CRATES_C := dir type
+CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
-all: kernel initrd bureau terminal demo shell dir type
+.PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
+
+all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
 kernel:
 	alr build
 
-userspace: init serial fuzz spin memstage echo fileserver fat32 partmgr
+userspace: $(CRATES)
 
-init:
-	$(MAKE) -C userspace/init
+$(CRATES):
+	$(MAKE) -C userspace/$@
 
-serial:
-	$(MAKE) -C userspace/serial
 
-fuzz:
-	$(MAKE) -C userspace/fuzz
 
-spin:
-	$(MAKE) -C userspace/spin
 
-memstage:
-	$(MAKE) -C userspace/memstage
 
-echo:
-	$(MAKE) -C userspace/echo
 
-teardown:
-	$(MAKE) -C userspace/teardown
 
-fileserver:
-	$(MAKE) -C userspace/fileserver
 
-fat32:
-	$(MAKE) -C userspace/fat32
 
-partmgr:
-	$(MAKE) -C userspace/partmgr
 
-procfs:
-	$(MAKE) -C userspace/procfs
 
-virtio_rng:
-	$(MAKE) -C userspace/virtio_rng
 
-virtio_blk:
-	$(MAKE) -C userspace/virtio_blk
 
-virtio_input:
-	$(MAKE) -C userspace/virtio_input
 
-virtio_gpu:
-	$(MAKE) -C userspace/virtio_gpu
 
-bureau:
-	$(MAKE) -C userspace/bureau
 
-terminal:
-	$(MAKE) -C userspace/terminal
 
-demo:
-	$(MAKE) -C userspace/demo
 
-shell:
-	$(MAKE) -C userspace/shell
 
-dir:
-	$(MAKE) -C userspace/dir
 
-type:
-	$(MAKE) -C userspace/type
+
 
 #  64 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
@@ -118,7 +88,7 @@ type:
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): bureau terminal demo shell dir type
+$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 	mkdir -p $(INITRD_OUT)
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
@@ -134,13 +104,11 @@ $(DISK_IMG): bureau terminal demo shell dir type
 	mcopy -i $@@@1048576 $(INITRD_OUT)/hello.txt ::SUBDIR/HELLO.TXT
 	mcopy -i $@@@1048576 $(INITRD_OUT)/longfile.txt "::LongFileName.txt"
 	mmd -i $@@@1048576 ::System
-	mcopy -i $@@@1048576 $(BUREAU_ELF) ::System/Bureau
-	mcopy -i $@@@1048576 $(TERMINAL_ELF) ::System/Terminal
-	mcopy -i $@@@1048576 $(DEMO_ELF) ::System/Demo
-	mcopy -i $@@@1048576 $(SHELL_ELF) ::System/Shell
 	mmd -i $@@@1048576 ::C
-	mcopy -i $@@@1048576 $(DIR_ELF) ::C/Dir
-	mcopy -i $@@@1048576 $(TYPE_ELF) ::C/Type
+	for c in $(DISK_CRATES_SYSTEM); do \
+	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done
+	for c in $(DISK_CRATES_C); do \
+	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done
 	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
@@ -149,7 +117,7 @@ initrd: $(INITRD_IMG)
 #  Bureau/Terminal deliberately NOT in the initrd (milestone 29):
 #  they live on the Sys filesystem (disk.img :System/) and the
 #  devmgr spawns them from there via Sys:System/Startup.
-$(INITRD_IMG): init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu tools/mkinitrd.py
+$(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
@@ -213,8 +181,32 @@ clean-kernel:
 	alr clean
 
 clean-userspace:
-	$(MAKE) -C userspace/init clean
-	$(MAKE) -C userspace/serial clean
+	for c in $(CRATES); do $(MAKE) -C userspace/$$c clean; done
+	rm -rf obj/userspace lib/userspace
+
+#  Crate scaffolding (milestone 40c): make new-crate NAME=foo
+#  DEST=c|system generates the crate wired to the RTS and
+#  registers it in this Makefile. The skeleton main is a CLI
+#  command (Akernel_User.CLI); DEST=system installs into
+#  Sys:System/, DEST=c into Sys:C/.
+new-crate:
+	@test -n "$(NAME)" || { echo "usage: make new-crate NAME=foo DEST=c|system"; exit 1; }
+	@test "$(DEST)" = "c" -o "$(DEST)" = "system" || { echo "DEST must be c or system"; exit 1; }
+	@test ! -e userspace/$(NAME) || { echo "userspace/$(NAME) exists"; exit 1; }
+	mkdir -p userspace/$(NAME)
+	printf '.PHONY: all clean\n\nall:\n\talr build\n\nclean:\n\talr clean\n' > userspace/$(NAME)/Makefile
+	printf 'name = "akernel_$(NAME)"\ndescription = "akernel $(NAME)"\nversion = "0.1.0-dev"\n\nauthors = ["Robert Roland"]\nmaintainers = ["Robert Roland <rob@retronauts.org>"]\nlicenses = "MIT OR Apache-2.0 WITH LLVM-exception"\ntags = []\n\nproject-files = ["$(NAME).gpr"]\nexecutables = ["$(NAME).elf"]\n\n[[depends-on]]\ngnat_riscv64_elf = "*"\n' > userspace/$(NAME)/alire.toml
+	cap=$$(printf '%s' $(NAME) | sed 's/^./\u&/'); \
+	printf 'project %s extends "../rts/akernel_program.gpr" is\n   for Source_Dirs use (".");\n   for Exec_Dir use "../../bin/userspace";\n   for Object_Dir use "../../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $(NAME) $(NAME) $(NAME) $(NAME) $$cap > userspace/$(NAME)/$(NAME).gpr; \
+	printf 'with Akernel_User.CLI;\nwith Akernel_User.Console;\n\nprocedure %s is\n   package CLI renames Akernel_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Akernel_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > userspace/$(NAME)/$(NAME).adb
+	sed -i 's/^CRATES := \(.*\)/CRATES := \1 $(NAME)/' Makefile
+	@if [ "$(DEST)" = "c" ]; then \
+	  sed -i 's/^DISK_CRATES_C := \(.*\)/DISK_CRATES_C := \1 $(NAME)/' Makefile; \
+	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:C/"; \
+	else \
+	  sed -i 's/^DISK_CRATES_SYSTEM := \(.*\)/DISK_CRATES_SYSTEM := \1 $(NAME)/' Makefile; \
+	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:System/ (add to System/Startup in the disk recipe to launch)"; \
+	fi
 
 clean-initrd:
 	rm -rf $(INITRD_ROOT) $(INITRD_OUT)
