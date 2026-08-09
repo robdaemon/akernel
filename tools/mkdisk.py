@@ -181,10 +181,21 @@ tree = {
     'C': {},
 }
 
-DISK_CRATES_SYSTEM = ['bureau', 'terminal', 'demo', 'shell']
-DISK_CRATES_C = ['dir', 'type', 'copy', 'delete', 'rename', 'makedir',
-                 'info', 'set', 'get', 'unset', 'assign', 'echo',
-                 'which', 'version', 'fault']
+#  Crate lists come from the Makefile (single source of truth —
+#  make new-crate edits it, and a hardcoded copy here silently
+#  drifted once already).
+import re
+
+def crate_list(var):
+    with open('Makefile') as f:
+        m = re.search(r'^' + var + r'\s*:?=\s*(.*)$', f.read(),
+                      re.MULTILINE)
+    if not m:
+        raise RuntimeError(var + ' not found in Makefile')
+    return m.group(1).split()
+
+DISK_CRATES_SYSTEM = crate_list('DISK_CRATES_SYSTEM')
+DISK_CRATES_C = crate_list('DISK_CRATES_C')
 BIN = 'bin/userspace'
 
 def cap_name(n):

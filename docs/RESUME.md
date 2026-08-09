@@ -6,38 +6,38 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 41b SHIPPED):
-- Shell thinned to help/exit; set/get/unset/assign/version moved
-  to standalone Sys:C/ commands; Echo/Which/Fault added.
-- CLI.Resolve_Command is the shell path-search helper.
-- Fuzzer Run_Command helper + directed end-to-end tests added.
-- tools/mkdisk.py now generates an fsck.fat- AND sgdisk-clean
-  GPT/FAT32 image with no host tools (BPB two-byte fields, one
-  write per dir chain with dots leading, LFN 0x0000 terminator,
-  proper backup GPT + entry-array CRC, multi-cluster C: drawer,
-  '..' = 0 for root children, backup boot/FSInfo at 6/7).
-  Makefile prefers host sgdisk/mkfs.vfat/mtools, falls back to
-  mkdisk.py. Suite verified green on BOTH image sources:
-  423 PASS SMP1+SMP4, failures=0, fsck clean pre/post suite.
+CURRENT SESSION STATE (milestone 41 COMPLETE):
+- 41c SHIPPED: Sys:C/Join, Search, Sort, List + idempotent
+  fuzz end-to-end tests (Join/Sort verified by output
+  readback, Search/List by exit code). 500 PASS SMP1+SMP4
+  on both image sources (host tools + tools/mkdisk.py),
+  failures=0, fsck clean pre/post suite.
+- Burns logged in NEXT.md: Sort line table on the stack
+  (heap, always); Op_ReadDir Not_Found ambiguity (List
+  Stat-probes first); Run_Command reap poll 2048x32 for
+  ~21-line children; new-crate CRATES double-register
+  fixed; mkdisk.py now parses DISK_CRATES_* from the
+  Makefile.
 
-Open candidates — milestones 38+39+40 COMPLETE;
-milestone 41 in progress (41a SHIPPED a328369, 41b SHIPPED):
-41c Join/Search/Sort/List (full slice list and the
-consciously-deferred command groups — CD/cwd, scripts,
-pipes, job control, clock — in docs/NEXT.md).
-Then the deferred list (design notes in
-docs/NEXT.md): System/Elevated + Sys:C/Elevate
-(userspace-only sudo, design locked in the NEXT.md
-milestone 39 entry), Proc:self (needs client identity
-through the VFS), pid generation counters, register
-fast path, custom GNAT runtime for userspace,
-virtio-net, MSI-X for virtio-pci (INTx shared chains today),
-write-back cache policy + VIRTIO_BLK_F_FLUSH when more
-filesystems appear (also re-raise the FAT stress proof
-64 -> 300 files once sync is cheap), true scheduler
-priorities (wakeup boost covers the IPC case).
+Open candidates — milestone 41 COMPLETE (41a a328369,
+41b 17c6b7c+cddaf5b, 41c this commit). Next: the
+deferred list (design notes in docs/NEXT.md):
+System/Elevated + Sys:C/Elevate (userspace-only sudo,
+design locked in the NEXT.md milestone 39 entry),
+Proc:self (needs client identity through the VFS),
+pid generation counters, register fast path, custom
+GNAT runtime for userspace, virtio-net, MSI-X for
+virtio-pci (INTx shared chains today), write-back
+cache policy + VIRTIO_BLK_F_FLUSH, true scheduler
+priorities. Also the 41-deferred shell groups:
+CD/cwd, scripts, pipes, job control, clock.
 
-Recently landed: MILESTONE 41b — Sys:C/ session
+Recently landed: MILESTONE 41 COMPLETE — 41c
+data commands (Join/Search/Sort/List) with
+idempotent fuzz end-to-end tests. 500 PASS
+SMP1+SMP4 on both image sources, failures=0,
+fsck clean pre/post suite. Burns in NEXT.md
+(41c entry). Before that: MILESTONE 41b — Sys:C/ session
 commands (Set/Get/Unset/Assign/Echo/Which/Version/
 Fault), shell thins to help/exit +
 CLI.Resolve_Command, fuzz Run_Command end-to-end
@@ -367,7 +367,12 @@ Working rules burned in (details in NEXT.md):
   ~64 ops per phase inside the suite budget.
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
-  form; a self-matching pattern kills the invoking shell).
+  form) in a command that does NOT also invoke qemu: the
+  invoking shell's own cmdline carries the literal
+  "qemu-system-riscv64" from the qemu arguments and pkill -f
+  kills the shell mid-script (silent truncation right after the
+  last successful step — a stale test log then "confirms"
+  results that never ran; check log timestamps).
 - QMP input-send-event for absolute pointer (HMP mouse_move
   sends nothing to the virtio tablet); run target exposes
   -qmp unix:/tmp/qqmp.sock + -monitor unix:/tmp/qmon.sock.

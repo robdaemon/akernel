@@ -1519,6 +1519,45 @@ Next candidates (order open):
     sgdisk -v clean pre- and post-suite.
     MILESTONE 41c next: Join/Search/Sort/List.
 
+    41c SHIPPED — the data commands. Join (f1 f2
+    [...] TO out, case-insensitive keyword,
+    truncate-overwrite, self-join rejected),
+    Search (file string; case-sensitive substring,
+    matching lines print; whole-file heap slurp,
+    2 MiB heap cap = the size limit), Sort (from
+    to; LF-line split, byte-wise insertion sort,
+    every written line LF-terminated), List
+    ([dir]; name + right-aligned size, "(dir)"
+    tag — no date column, the protocol carries
+    no timestamps). Fuzz: idempotent inputs
+    rewritten per boot, Join/Sort verified by
+    output readback, Search/List by exit code
+    (console output is not capturable yet —
+    pipes are the deferred shell milestone).
+    Burns: (1) Sort's 4096-entry line table sat
+    in the MAIN declarative part — 64 KiB on the
+    32 KiB process stack, store fault below the
+    IPC buffer page mid-suite; big tables are
+    heap, ALWAYS (the Type burn class, third
+    strike). (2) Op_ReadDir answers Not_Found
+    for BOTH a missing path and an exhausted
+    enumeration — List must Stat-probe the path
+    first or a missing directory exits RC_Ok.
+    (3) The Run_Command reap poll (512 tries x
+    32 yields, sized for ~6-line 41a children)
+    was outrun by List's ~21 console lines
+    through the terminal-render pipeline under
+    SMP4 — 2048 x 32 now. (4) make new-crate
+    double-registered CRATES (its sed appended
+    while DISK_CRATES_* already feeds CRATES) —
+    the CRATES sed is gone; and tools/mkdisk.py
+    had its own crate list drifting from the
+    Makefile's — it parses DISK_CRATES_* out of
+    the Makefile now (single source). 500 PASS
+    SMP1+SMP4 on both image sources, failures=0,
+    fsck clean pre/post suite. MILESTONE 41
+    COMPLETE.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

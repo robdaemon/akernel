@@ -1,0 +1,10 @@
+project List extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/list";
+   for Main use ("list.adb");
+
+   package Builder is
+      for Executable ("list.adb") use "list.elf";
+   end Builder;
+end List;

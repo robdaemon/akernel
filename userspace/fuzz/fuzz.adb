@@ -286,7 +286,11 @@ procedure Fuzz is
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
-      for Try in 1 .. 512 loop
+      --  Reap poll: batch the yields — a console-printing child
+      --  outruns a bare yield-per-try poll under SMP4 (the 39b /
+      --  41a burn). 2048 x 32 covers the ~20-line List output
+      --  through the terminal-render console pipeline.
+      for Try in 1 .. 2048 loop
          Status := Akernel_User.Syscalls.Reap_Process_Code (Proc, Code);
          if Status = 0 then
             Done := True;
@@ -2597,6 +2601,113 @@ begin
       Run_Command ("Sys:C/Unset", "FZTST42", 0, "unset command");
       Run_Command ("Sys:C/Get", "FZTST42", 10,
                    "get command after unset");
+
+      --  Data commands (milestone 41c): Join/Search/Sort/List.
+      --  Join and Sort produce verifiable file outputs; Search
+      --  and List print to the console, so only exit codes are
+      --  checked. Inputs are rewritten with the same bytes every
+      --  boot (idempotent across reused images).
+      declare
+         Buf     : array (0 .. 63) of Interfaces.Unsigned_8;
+         Size    : U64;
+         Count   : U64;
+         Match   : Boolean;
+         use type Interfaces.Unsigned_8;
+         J1 : constant String := "Hello, ";
+         J2 : constant String := "joined!" & ASCII.LF;
+         S1 : constant String := "pear" & ASCII.LF & "apple"
+           & ASCII.LF & "cherry" & ASCII.LF;
+      begin
+         for I in J1'Range loop
+            Buf (I - 1) :=
+              Interfaces.Unsigned_8 (Character'Pos (J1 (I)));
+         end loop;
+         Status := Akernel_User.Files.Write
+           ("BD0:J1.TXT", 0, Buf'Address, U64 (J1'Length), Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = U64 (J1'Length),
+                "join input 1 written");
+         for I in J2'Range loop
+            Buf (I - 1) :=
+              Interfaces.Unsigned_8 (Character'Pos (J2 (I)));
+         end loop;
+         Status := Akernel_User.Files.Write
+           ("BD0:J2.TXT", 0, Buf'Address, U64 (J2'Length), Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = U64 (J2'Length),
+                "join input 2 written");
+         for I in S1'Range loop
+            Buf (I - 1) :=
+              Interfaces.Unsigned_8 (Character'Pos (S1 (I)));
+         end loop;
+         Status := Akernel_User.Files.Write
+           ("BD0:SORTIN.TXT", 0, Buf'Address, U64 (S1'Length),
+            Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = U64 (S1'Length),
+                "sort input written");
+
+      Run_Command ("Sys:C/Join", "BD0:J1.TXT BD0:J2.TXT TO BD0:JOUT.TXT",
+                   0, "join command");
+      declare
+         Want : constant String := "Hello, joined!" & ASCII.LF;
+      begin
+         Status := Akernel_User.Files.Stat ("BD0:JOUT.TXT", Size);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Size = U64 (Want'Length);
+         for I in 0 .. 63 loop
+            Buf (I) := 0;
+         end loop;
+         Status := Akernel_User.Files.Read
+           ("BD0:JOUT.TXT", 0, Buf'Address, 64, Count);
+         Match := Match
+           and then Status = Akernel_User.Files.Status_Ok
+           and then Count = U64 (Want'Length);
+         for I in Want'Range loop
+            Match := Match
+              and then Buf (I - 1) =
+                Interfaces.Unsigned_8 (Character'Pos (Want (I)));
+         end loop;
+         Check (Match, "join output is the concatenation");
+      end;
+      Run_Command ("Sys:C/Join", "BD0:NOPE1.TXT TO BD0:JX.TXT",
+                   10, "join missing input fails");
+
+      Run_Command ("Sys:C/Sort", "BD0:SORTIN.TXT BD0:SORTOUT.TXT",
+                   0, "sort command");
+      declare
+         Want : constant String := "apple" & ASCII.LF & "cherry"
+           & ASCII.LF & "pear" & ASCII.LF;
+      begin
+         Status := Akernel_User.Files.Stat ("BD0:SORTOUT.TXT", Size);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Size = U64 (Want'Length);
+         for I in 0 .. 63 loop
+            Buf (I) := 0;
+         end loop;
+         Status := Akernel_User.Files.Read
+           ("BD0:SORTOUT.TXT", 0, Buf'Address, 64, Count);
+         Match := Match
+           and then Status = Akernel_User.Files.Status_Ok
+           and then Count = U64 (Want'Length);
+         for I in Want'Range loop
+            Match := Match
+              and then Buf (I - 1) =
+                Interfaces.Unsigned_8 (Character'Pos (Want (I)));
+         end loop;
+         Check (Match, "sort output ordered");
+      end;
+      Run_Command ("Sys:C/Sort", "BD0:NOPE2.TXT BD0:SX.TXT",
+                   10, "sort missing input fails");
+
+      Run_Command ("Sys:C/Search", "BD0:SORTIN.TXT apple",
+                   0, "search command");
+      Run_Command ("Sys:C/Search", "BD0:NOPE3.TXT x",
+                   10, "search missing file fails");
+      Run_Command ("Sys:C/List", "BD0:C", 0, "list command");
+      Run_Command ("Sys:C/List", "BD0:NOSUCHDIR",
+                   10, "list missing dir fails");
+      end;
 
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive

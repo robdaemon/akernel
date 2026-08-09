@@ -43,7 +43,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
 DISK_CRATES_SYSTEM := bureau terminal demo shell
-DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
 .PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
@@ -204,7 +204,6 @@ new-crate:
 	cap=$$(printf '%s' $(NAME) | sed 's/^./\u&/'); \
 	printf 'project %s extends "../rts/akernel_program.gpr" is\n   for Source_Dirs use (".");\n   for Exec_Dir use "../../bin/userspace";\n   for Object_Dir use "../../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $(NAME) $(NAME) $(NAME) $(NAME) $$cap > userspace/$(NAME)/$(NAME).gpr; \
 	printf 'with Akernel_User.CLI;\nwith Akernel_User.Console;\n\nprocedure %s is\n   package CLI renames Akernel_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Akernel_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > userspace/$(NAME)/$(NAME).adb
-	sed -i 's/^CRATES := \(.*\)/CRATES := \1 $(NAME)/' Makefile
 	@if [ "$(DEST)" = "c" ]; then \
 	  sed -i 's/^DISK_CRATES_C := \(.*\)/DISK_CRATES_C := \1 $(NAME)/' Makefile; \
 	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:C/"; \

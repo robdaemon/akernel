@@ -200,7 +200,11 @@ QEMU virt RAM base:     0x80000000
   via the file protocol's Op_ReadDir; C/ also holds Type, Copy,
   Delete, Rename, Makedir, Info (milestone 41a — Op_Rename +
   Op_Volume_Info behind Rename/Info; commands are CLI-package
-  programs with Amiga exit codes). Windows close via the
+  programs with Amiga exit codes), the session/vars commands
+  Set/Get/Unset/Assign plus Echo, Which, Version, Fault
+  (41b — the shell thins to help/exit; CLI.Resolve_Command
+  shares the Path search with Which), and the data commands
+  Join, Search, Sort, List (41c). Windows close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and
   exits). Every program spawned from

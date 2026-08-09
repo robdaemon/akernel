@@ -1,0 +1,10 @@
+project Join extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/join";
+   for Main use ("join.adb");
+
+   package Builder is
+      for Executable ("join.adb") use "join.elf";
+   end Builder;
+end Join;
