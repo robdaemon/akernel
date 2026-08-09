@@ -36,6 +36,12 @@ package Akernel_User.CLI is
    function Get_Env (Name : String) return String;
    function Set_Env (Name : String; Value : String) return U64;
 
+   --  Resolve a command name against the Path variable (or the
+   --  built-in default search list). Returns the fully-qualified
+   --  path to the executable, or "" if not found. Qualified names
+   --  (containing ':' or '/') are returned unchanged.
+   function Resolve_Command (Name : String) return String;
+
    --  Print Message to the console, then exit with Code.
    procedure Fail_With (Message : String; Code : U64 := RC_Error)
      with No_Return;

@@ -90,6 +90,60 @@ package body Akernel_User.CLI is
          U64 (Value'Length), Count);
    end Set_Env;
 
+   function Resolve_Command (Name : String) return String is
+      Size      : U64 := 0;
+      Path      : constant String := Get_Env ("Path");
+      Candidate : String (1 .. 256);
+      CLen      : Natural;
+      P0        : Natural;
+
+      function Try (S : String) return Boolean is
+      begin
+         return Files.Stat (S, Size) = Files.Status_Ok;
+      end Try;
+   begin
+      for C of Name loop
+         if C = ':' or else C = '/' then
+            return Name;
+         end if;
+      end loop;
+
+      if Path'Length > 0 then
+         P0 := Path'First;
+         for I in Path'Range loop
+            if Path (I) = ';' then
+               if I > P0 then
+                  CLen := I - P0;
+                  Candidate (1 .. CLen) := Path (P0 .. I - 1);
+                  Candidate (CLen + 1 .. CLen + Name'Length) := Name;
+                  CLen := CLen + Name'Length;
+                  if Try (Candidate (1 .. CLen)) then
+                     return Candidate (1 .. CLen);
+                  end if;
+               end if;
+               P0 := I + 1;
+            elsif I = Path'Last then
+               CLen := I - P0 + 1;
+               Candidate (1 .. CLen) := Path (P0 .. I);
+               Candidate (CLen + 1 .. CLen + Name'Length) := Name;
+               CLen := CLen + Name'Length;
+               if Try (Candidate (1 .. CLen)) then
+                  return Candidate (1 .. CLen);
+               end if;
+            end if;
+         end loop;
+      else
+         if Try (Name) then
+            return Name;
+         end if;
+         if Try ("C/" & Name) then
+            return "C/" & Name;
+         end if;
+      end if;
+
+      return "";
+   end Resolve_Command;
+
    procedure Fail_With (Message : String; Code : U64 := RC_Error) is
    begin
       Console.Put_Line (Message);

@@ -1,0 +1,10 @@
+project Unset extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/unset";
+   for Main use ("unset.adb");
+
+   package Builder is
+      for Executable ("unset.adb") use "unset.elf";
+   end Builder;
+end Unset;

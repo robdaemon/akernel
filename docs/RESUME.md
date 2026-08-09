@@ -6,12 +6,37 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
+CURRENT SESSION STATE (milestone 41b in progress):
+- Shell thinned to help/exit; set/get/unset/assign/version moved
+  to standalone Sys:C/ commands; Echo/Which/Fault added.
+- CLI.Resolve_Command is the new shell path-search helper.
+- Fuzzer Run_Command helper + directed end-to-end tests added.
+- Blocker FIXED: Files.Write now lazily allocates its shared
+  client buffer (Set_Env was calling Truncate, not Open, so
+  Buf_Cap was 0 and Write returned Status_Bad_Args before sending).
+  Set/Get/Unset/Assign/Echo/Which/Version/Fault directed tests
+  now PASS.  The disk.img is now built with tools/mkdisk.py because
+  the host lacks sgdisk/mkfs.vfat/mtools; three pre-existing FAT
+  tests still fail on this host-built image (LongFileName.txt LFN
+  stat/read and fat volume info), so 41b is not fully green yet.
+- Still open: get the disk-image generator to produce a fully
+  fsck-compatible FAT32 layout so the LFN and volume-info checks
+  pass, then ship 41b.
+
 Open candidates — milestones 38+39+40 COMPLETE;
 milestone 41 in progress (41a SHIPPED a328369):
 41b set/get/unset/assign extracted to commands +
-Echo/Which/Version/Fault, 41c Join/Search/Sort/
-List (full slice list and the consciously-
-deferred command groups — CD/cwd, scripts,
+Echo/Which/Version/Fault MOSTLY GREEN. The shell now
+thins to help/exit; command resolution uses the new
+CLI.Resolve_Command. Directed fuzz tests added via
+Run_Command helper. The ENV: Bad_Args blocker is fixed
+(Files.Write now ensures its shared buffer). Three fuzz
+failures remain on the host-built disk image
+(LongFileName.txt LFN stat/read + fat volume info) — the
+code is the same that was green with host mkfs.vfat; the
+new tools/mkdisk.py generator needs a layout tweak.
+41c Join/Search/Sort/List (full slice list and the
+consciously-deferred command groups — CD/cwd, scripts,
 pipes, job control, clock — in docs/NEXT.md).
 Then the deferred list (design notes in
 docs/NEXT.md): System/Elevated + Sys:C/Elevate

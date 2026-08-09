@@ -15,7 +15,7 @@ SERIAL_ELF := bin/userspace/serial.elf
 FUZZ_ELF := bin/userspace/fuzz.elf
 SPIN_ELF := bin/userspace/spin.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
-ECHO_ELF := bin/userspace/echo.elf
+ECHO_SERVER_ELF := bin/userspace/echo_server.elf
 TEARDOWN_ELF := bin/userspace/teardown.elf
 FILESERVER_ELF := bin/userspace/fileserver.elf
 FAT32_ELF := bin/userspace/fat32.elf
@@ -41,10 +41,10 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
+INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
 DISK_CRATES_SYSTEM := bureau terminal demo shell
-DISK_CRATES_C := dir type copy delete rename makedir info
-CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) copy delete rename makedir info
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault
+CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
 .PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
 
@@ -138,7 +138,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
 	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
 	cp $(MEMSTAGE_ELF) $(INITRD_ROOT)/Tests/Memstage
-	cp $(ECHO_ELF) $(INITRD_ROOT)/Tests/Echo
+	cp $(ECHO_SERVER_ELF) $(INITRD_ROOT)/Tests/Echo_Server
 	cp $(TEARDOWN_ELF) $(INITRD_ROOT)/Tests/Teardown
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -146,12 +146,12 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	done
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
-	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo fs System/Manifest part0 device_resource admin' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
-	printf '%s\n' '# file Tests/Echo' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' '# file Tests/Echo_Server' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)
 	python3 tools/mkinitrd.py $(INITRD_CPIO) $(INITRD_IMG)
 

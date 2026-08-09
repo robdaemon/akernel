@@ -7,8 +7,9 @@ with Akernel_User.IPC;
 with Akernel_User.Streams;
 with Akernel_User.Console;
 with Akernel_User.Files;
+with Akernel_User.CLI;
 
---  Shell: interactive command line (milestone 31). A plain CLI
+--  Shell: interactive command line (milestone 31 / 41b). A plain CLI
 --  program — it opens no window; its console channel decides where
 --  the session lives. Spawned with the uniform namespace
 --  (milestone 31b):
@@ -25,13 +26,14 @@ with Akernel_User.Files;
 --  Op_Read cannot block (the terminal is a single-threaded
 --  receiver), so the shell polls with yields between drains.
 --
---  Commands: "help", "version"; anything else is a program path
---  (unqualified names resolve against the default volume BD0:) —
---  staged through the file server into a memory object (memstage
---  pattern), spawned with this shell's own console + fs + Bureau
---  svc caps (the uniform namespace — children may open windows),
---  and awaited (reap-poll) before the next prompt. "System/Shell"
---  gives a nested shell on the same channel, Amiga-style.
+--  Builtins: "help", "exit".  Everything else is resolved as a
+--  command via the Path variable and the C: search path
+--  (milestone 41b) — staged through the file server into a memory
+--  object (memstage pattern), spawned with this shell's own
+--  console + fs + Bureau svc caps (the uniform namespace — children
+--  may open windows), and awaited (reap-poll) before the next prompt.
+--  "System/Shell" gives a nested shell on the same channel,
+--  Amiga-style.
 
 procedure Shell is
    use Akernel_User.Syscalls;
@@ -60,60 +62,6 @@ procedure Shell is
    begin
       Akernel_User.Console.Put ("Sys:> ");
    end Prompt;
-
-   ------------------------------------------------------------------
-   --  Environment variables are FILES (milestone 33a, the Amiga
-   --  ENV:/ENVARC: analog): BD0:Prefs/Env/<NAME> holds the value.
-   --  Global by construction — no per-process environment block,
-   --  no spawn ABI; nested shells and spawned programs all read
-   --  the same files.
-   ------------------------------------------------------------------
-
-   Env_Dir : constant String := "BD0:Prefs/Env";
-   Env_Buf : String (1 .. 256);  --  value staging (library-level)
-
-   procedure Env_Ensure is
-      St : U64;
-   begin
-      St := Akernel_User.Files.Mkdir ("BD0:Prefs");
-      St := Akernel_User.Files.Mkdir (Env_Dir);
-   end Env_Ensure;
-
-   --  Read variable Name into Env_Buf; Len = value length.
-   function Env_Read (Name : String; Len : out Natural) return U64 is
-      Size  : U64 := 0;
-      Count : U64 := 0;
-      St    : U64;
-   begin
-      Len := 0;
-      St := Akernel_User.Files.Open (Env_Dir & "/" & Name, Size);
-      if St /= Akernel_User.Files.Status_Ok then
-         return St;
-      end if;
-      Size := U64'Min (Size, U64 (Env_Buf'Length));
-      St := Akernel_User.Files.Read
-        (Env_Dir & "/" & Name, 0, Env_Buf'Address, Size, Count);
-      if St = Akernel_User.Files.Status_Ok then
-         Len := Natural (Count);
-      end if;
-      return St;
-   end Env_Read;
-
-   function Env_Write (Name : String; Value : String) return U64 is
-      Count : U64 := 0;
-      St    : U64;
-   begin
-      Env_Ensure;
-      St := Akernel_User.Files.Truncate (Env_Dir & "/" & Name);
-      for I in Value'Range loop
-         Env_Buf (I - Value'First + 1) := Value (I);
-      end loop;
-      --  Write creates the file when missing.
-      St := Akernel_User.Files.Write
-        (Env_Dir & "/" & Name, 0, Env_Buf'Address,
-         U64 (Value'Length), Count);
-      return St;
-   end Env_Write;
 
    --  Split a command line into its first word and the trimmed
    --  remainder: Word = Cmd (Cmd'First .. W_Last), the rest is
@@ -170,7 +118,7 @@ procedure Shell is
             Chunk, Count);
          exit when St /= Akernel_User.Files.Status_Ok
            or else Count /= Chunk;
-         Off := Off + Chunk;
+         Off := Off + Count;
       end loop;
       if Mem_Unmap (Address_Space_Cap, Stage_VA, Pages * 4096) /= 0
         or else Off < Size
@@ -186,10 +134,6 @@ procedure Shell is
    --  is non-empty — a one-page argument string memory object at
    --  handle 4 (the Amiga command-line analog; milestone 33a).
    --  Then reap-poll until it exits.
-   --  Bare names (no ':' and no '/') resolve Amiga-style against
-   --  the command search path: ';'-separated directory prefixes
-   --  from the Path variable (BD0:Prefs/Env/Path), defaulting to
-   --  the volume root and C/ (Sys:C).
    Args_Stage_VA : constant U64 := 16#5440_0000#;
 
    procedure Exec (Word : String; Args : String) is
@@ -199,50 +143,21 @@ procedure Shell is
       Args_Cap : U64 := 0;
       Result   : U64;
       Reaped   : Boolean := False;
-      Bare     : Boolean := True;
-      Path_Len : Natural := 0;
       Grant_N  : U64 := 3;
       type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
       Args_Page : Byte_Array (0 .. 4095)
         with Address => To_Address (Integer_Address (Args_Stage_VA));
+      Resolved : constant String := Akernel_User.CLI.Resolve_Command (Word);
    begin
-      for C of Word loop
-         if C = ':' or else C = '/' then
-            Bare := False;
-            exit;
-         end if;
-      end loop;
-
-      if not Bare then
-         Mem_Cap := Stage (Word);
-      else
-         --  Search path: the Path variable when set, else the
-         --  built-in default (volume root, then C/).
-         if Env_Read ("Path", Path_Len) = Akernel_User.Files.Status_Ok
-           and then Path_Len > 0
-         then
-            declare
-               P0 : Natural := 1;
-            begin
-               for I in 1 .. Path_Len + 1 loop
-                  if I > Path_Len or else Env_Buf (I) = ';' then
-                     if I > P0 and then Mem_Cap = 0 then
-                        Mem_Cap := Stage (Env_Buf (P0 .. I - 1) & Word);
-                     end if;
-                     P0 := I + 1;
-                  end if;
-               end loop;
-            end;
-         else
-            Mem_Cap := Stage (Word);
-            if Mem_Cap = 0 then
-               Mem_Cap := Stage ("C/" & Word);
-            end if;
-         end if;
+      if Resolved'Length = 0 then
+         Akernel_User.Console.Put_Line ("unknown command: " & Word);
+         return;
       end if;
 
+      Mem_Cap := Stage (Resolved);
       if Mem_Cap = 0 then
-         Akernel_User.Console.Put_Line ("unknown command: " & Word);
+         Akernel_User.Console.Put_Line
+           ("command found but failed to stage: " & Word);
          return;
       end if;
 
@@ -302,15 +217,6 @@ procedure Shell is
    procedure Execute (Cmd : String) is
       W_Last   : Natural;
       R_First  : Natural;
-      V_Len    : Natural := 0;
-      St       : U64;
-      Name     : String (1 .. 24);
-      Name_Len : Natural;
-      Is_Dir   : Boolean;
-      Size     : U64;
-      Idx      : U64;
-      A_Text   : String (1 .. 40);
-      A_Len    : Natural;
    begin
       if Cmd'Length = 0 then
          return;
@@ -322,155 +228,12 @@ procedure Shell is
            (if R_First > Cmd'Last then "" else Cmd (R_First .. Cmd'Last));
       begin
          if Word = "help" then
-            Akernel_User.Console.Put_Line ("akernel shell — commands:");
+            Akernel_User.Console.Put_Line ("akernel shell — builtins:");
             Akernel_User.Console.Put_Line ("  help          this text");
-            Akernel_User.Console.Put_Line ("  version       system version");
             Akernel_User.Console.Put_Line ("  exit          leave the shell");
-            Akernel_User.Console.Put_Line
-              ("  set [N=V]     set/list variables (files in Prefs/Env)");
-            Akernel_User.Console.Put_Line
-              ("  get N         print a variable");
-            Akernel_User.Console.Put_Line
-              ("  unset N       delete a variable");
-            Akernel_User.Console.Put_Line
-              ("  path          show the command search path");
-            Akernel_User.Console.Put_Line
-              ("  assign [N: T] set/list path assigns (N: REMOVE drops)");
-            Akernel_User.Console.Put_Line
-              ("  <cmd> [args]  run a program (Dir, Type, System/Shell)");
-         elsif Word = "version" then
-            Akernel_User.Console.Put_Line
-              ("akernel milestone 36 (shell)");
+            Akernel_User.Console.Put_Line ("  <cmd> [args]  run a C: or Sys: command");
          elsif Word = "exit" then
             Process_Exit;
-         elsif Word = "set" then
-            if Rest'Length = 0 then
-               --  List all variables (NAME=value).
-               Idx := 0;
-               loop
-                  St := Akernel_User.Files.Read_Dir
-                    (Env_Dir, Idx, Name, Name_Len, Is_Dir, Size);
-                  exit when St /= Akernel_User.Files.Status_Ok;
-                  if not Is_Dir then
-                     St := Env_Read (Name (1 .. Name_Len), V_Len);
-                     Akernel_User.Console.Put_Line
-                       (Name (1 .. Name_Len) & "="
-                        & Env_Buf (1 .. V_Len));
-                  end if;
-                  Idx := Idx + 1;
-               end loop;
-            else
-               --  set NAME=VALUE (or set NAME VALUE).
-               declare
-                  Eq : Natural := 0;
-               begin
-                  for I in Rest'Range loop
-                     if Rest (I) = '=' then
-                        Eq := I;
-                        exit;
-                     end if;
-                  end loop;
-                  if Eq > Rest'First then
-                     St := Env_Write
-                       (Rest (Rest'First .. Eq - 1),
-                        Rest (Eq + 1 .. Rest'Last));
-                  else
-                     declare
-                        NW : Natural;
-                        NR : Natural;
-                     begin
-                        Split_Cmd (Rest, NW, NR);
-                        if NR <= Rest'Last then
-                           St := Env_Write
-                             (Rest (Rest'First .. NW),
-                              Rest (NR .. Rest'Last));
-                        else
-                           Akernel_User.Console.Put_Line
-                             ("usage: set NAME=VALUE");
-                           return;
-                        end if;
-                     end;
-                  end if;
-                  if St /= Akernel_User.Files.Status_Ok then
-                     Akernel_User.Console.Put_Line ("set failed");
-                  end if;
-               end;
-            end if;
-         elsif Word = "get" then
-            if Rest'Length = 0 then
-               Akernel_User.Console.Put_Line ("usage: get NAME");
-            elsif Env_Read (Rest, V_Len) =
-                    Akernel_User.Files.Status_Ok
-            then
-               Akernel_User.Console.Put_Line (Env_Buf (1 .. V_Len));
-            else
-               Akernel_User.Console.Put_Line (Rest & ": not set");
-            end if;
-         elsif Word = "unset" then
-            if Rest'Length = 0 then
-               Akernel_User.Console.Put_Line ("usage: unset NAME");
-            else
-               St := Akernel_User.Files.Delete (Env_Dir & "/" & Rest);
-            end if;
-         elsif Word = "path" then
-            if Env_Read ("Path", V_Len) =
-                 Akernel_User.Files.Status_Ok
-              and then V_Len > 0
-            then
-               Akernel_User.Console.Put_Line
-                 ("search path: " & Env_Buf (1 .. V_Len));
-            else
-               Akernel_User.Console.Put_Line
-                 ("search path: <root>;C/ (built-in default)");
-            end if;
-         elsif Word = "assign" then
-            if Rest'Length = 0 then
-               --  List all assigns (NAME: target).
-               Idx := 0;
-               loop
-                  St := Akernel_User.Files.Assign_List
-                    (Idx, A_Text, A_Len);
-                  exit when St /= Akernel_User.Files.Status_Ok;
-                  Akernel_User.Console.Put_Line (A_Text (1 .. A_Len));
-                  Idx := Idx + 1;
-               end loop;
-            else
-               --  assign NAME: TARGET (or NAME: REMOVE).
-               declare
-                  NW : Natural;
-                  NR : Natural;
-                  AN : Natural := 0;  --  colon position in word
-               begin
-                  Split_Cmd (Rest, NW, NR);
-                  for I in Rest'First .. NW loop
-                     if Rest (I) = ':' then
-                        AN := I;
-                        exit;
-                     end if;
-                  end loop;
-                  if AN = 0 then
-                     Akernel_User.Console.Put_Line
-                       ("usage: assign NAME: TARGET (or NAME: REMOVE)");
-                  elsif NR > Rest'Last then
-                     Akernel_User.Console.Put_Line
-                       ("usage: assign NAME: TARGET (or NAME: REMOVE)");
-                  elsif Rest (NR .. Rest'Last) = "REMOVE" then
-                     St := Akernel_User.Files.Assign_Set
-                       (Rest (Rest'First .. AN - 1), "");
-                     if St /= Akernel_User.Files.Status_Ok then
-                        Akernel_User.Console.Put_Line
-                          (Rest (Rest'First .. AN - 1) & ": not assigned");
-                     end if;
-                  else
-                     St := Akernel_User.Files.Assign_Set
-                       (Rest (Rest'First .. AN - 1),
-                        Rest (NR .. Rest'Last));
-                     if St /= Akernel_User.Files.Status_Ok then
-                        Akernel_User.Console.Put_Line ("assign failed");
-                     end if;
-                  end if;
-               end;
-            end if;
          else
             Exec (Word, Rest);
          end if;

@@ -12,7 +12,7 @@ with Akernel_User.Streams;
 --  pseudo-random argument values and verifies the kernel stays alive and
 --  keeps returning clean status codes.  Runs as a manifest-spawned user
 --  process granted the ipc_test endpoint (handle 1, badge 0xEC40), the
---  console endpoint Send cap (handle 2) and the Tests/Echo
+--  console endpoint Send cap (handle 2) and the Tests/Echo_Server
 --  Boot_File_Object image cap (handle 3).  Test output goes through
 --  the console server (Akernel_User.Console over the endpoint stream);
 --  the random phase still hits the raw debug_putchar syscall as a
@@ -179,6 +179,9 @@ procedure Fuzz is
       return False;
    end Await_Volume;
 
+
+
+
    Status   : U64;
    Number   : U64;
    A0, A1, A2, A3, A4, A5 : U64;
@@ -190,8 +193,119 @@ procedure Fuzz is
    Ignore        : U64;
 
    --  Granted caps: ipc_test endpoint at handle 1, console Send cap
-   --  at handle 2, Tests/Echo image cap at handle 3.
+   --  at handle 2, Tests/Echo_Server image cap at handle 3.
    Console_EP : constant U64 := 2;
+
+   --  Helper: stage a C: command from disk and spawn it under the
+   --  uniform ABI, exactly as the shell does.  Args is the
+   --  NUL-terminated argument string; Expected is the required
+   --  exit code (Amiga RC).  The label prefix is used for PASS/FAIL
+   --  messages.
+   procedure Run_Command
+     (Path     : String;
+      Args     : String;
+      Expected : U64;
+      Prefix   : String)
+   is
+      use type Akernel_User.Syscalls.U64;
+      use System.Storage_Elements;
+
+      Stage_VA : constant U64 := 16#5700_0000#;
+      Args_VA  : constant U64 := 16#5800_0000#;
+      Size     : U64;
+      Mem_Cap  : U64;
+      Args_Cap : U64;
+      Proc     : U64;
+      Code     : U64 := 0;
+      Done     : Boolean := False;
+      Off      : U64;
+      Chunk    : U64;
+      Count    : U64;
+      Staged   : Boolean := True;
+      AS       : constant U64 := Akernel_User.Syscalls.Address_Space_Cap;
+      Args_Page : String (1 .. Args'Length + 1)
+        with Volatile, Address => System'To_Address
+          (Integer_Address (Args_VA));
+      Discard : U64;
+   begin
+      Status := Akernel_User.Files.Stat (Path, Size);
+      Check (Status = Akernel_User.Files.Status_Ok and then Size > 0,
+             Prefix & " stat");
+
+      Mem_Cap := Akernel_User.Syscalls.Mem_Alloc ((Size + 4095) / 4096);
+      Check (Mem_Cap /= Akernel_User.Syscalls.Syscall_Failed,
+             Prefix & " staging object allocated");
+      Check (Akernel_User.Syscalls.Mem_Map
+               (Address_Space => AS,
+                Cap           => Mem_Cap,
+                VA            => Stage_VA,
+                Offset        => 0,
+                Length        => ((Size + 4095) / 4096) * 4096,
+                Flags         => 3) = 0,
+             Prefix & " staging object mapped");
+
+      Status := Akernel_User.Files.Open (Path, Size);
+      Check (Status = Akernel_User.Files.Status_Ok,
+             Prefix & " open ok");
+      Off := 0;
+      while Off < Size loop
+         Chunk := U64'Min (Size - Off, 32768);
+         Status := Akernel_User.Files.Read
+           (Path, Off,
+            System'To_Address (Integer_Address (Stage_VA + Off)),
+            Chunk, Count);
+         Staged := Staged
+           and then Status = Akernel_User.Files.Status_Ok
+           and then Count = Chunk;
+         Off := Off + Chunk;
+      end loop;
+      Check (Staged, Prefix & " ELF staged into memory object");
+
+      Args_Cap := Akernel_User.Syscalls.Mem_Alloc (1);
+      Check (Args_Cap /= Akernel_User.Syscalls.Syscall_Failed
+             and then Akernel_User.Syscalls.Mem_Map
+               (AS, Args_Cap, Args_VA, 0, 4096, 3) = 0,
+             Prefix & " args object mapped");
+      for I in Args'Range loop
+         Args_Page (I) := Args (I);
+      end loop;
+      Args_Page (Args'Length + 1) := Character'Val (0);
+
+      Akernel_User.Syscalls.Set_Grant
+        (0, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Akernel_User.Files.Endpoint,
+         Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (2, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Akernel_User.Syscalls.Set_Grant
+        (3, Args_Cap,
+         Akernel_User.Syscalls.Right_Map +
+           Akernel_User.Syscalls.Right_Read, 0);
+      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 4, Proc);
+      Check (Status = 0 and then Proc /= 0,
+             Prefix & " spawned");
+
+      for Try in 1 .. 512 loop
+         Status := Akernel_User.Syscalls.Reap_Process_Code (Proc, Code);
+         if Status = 0 then
+            Done := True;
+            exit;
+         end if;
+         for Y in 1 .. 32 loop
+            Discard := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+      end loop;
+      Check (Done, Prefix & " reaped");
+      Check (Done and then Code = Expected,
+             Prefix & " exit code");
+
+      Discard := Akernel_User.Syscalls.Mem_Unmap
+        (AS, Stage_VA, ((Size + 4095) / 4096) * 4096);
+      Discard := Akernel_User.Syscalls.Cap_Delete (Mem_Cap);
+      Discard := Akernel_User.Syscalls.Mem_Unmap (AS, Args_VA, 4096);
+      Discard := Akernel_User.Syscalls.Cap_Delete (Args_Cap);
+   end Run_Command;
    Echo_Image : constant U64 := 3;
 
    package Console_RPC is new Akernel_User.IPC
@@ -2465,6 +2579,24 @@ begin
          Check (CI_Done and then CI_Code = 0,
                 "info command exits RC_Ok");
       end;
+
+      --  C: command set end-to-end (milestone 41b): exercise the
+      --  session/vars commands + Echo/Which/Version/Fault.  Each is
+      --  staged and spawned like the shell does it; only exit codes
+      --  are checked here (output goes to the console server).
+      Run_Command ("Sys:C/Version", "", 0, "version command");
+      Run_Command ("Sys:C/Echo", "hello world", 0, "echo command");
+      Run_Command ("Sys:C/Which", "Dir", 0, "which command");
+      Run_Command ("Sys:C/Set", "FZTST42=42", 0, "set command");
+      Run_Command ("Sys:C/Get", "FZTST42", 0, "get command");
+      Run_Command ("Sys:C/Fault", "10", 0, "fault command");
+      Run_Command ("Sys:C/Assign", "FZTEST: Sys:C", 0,
+                   "assign set command");
+      Run_Command ("Sys:C/Assign", "FZTEST: REMOVE", 0,
+                   "assign remove command");
+      Run_Command ("Sys:C/Unset", "FZTST42", 0, "unset command");
+      Run_Command ("Sys:C/Get", "FZTST42", 10,
+                   "get command after unset");
 
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive

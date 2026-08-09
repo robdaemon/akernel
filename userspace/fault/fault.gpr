@@ -1,0 +1,10 @@
+project Fault extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/fault";
+   for Main use ("fault.adb");
+
+   package Builder is
+      for Executable ("fault.adb") use "fault.elf";
+   end Builder;
+end Fault;

@@ -255,12 +255,15 @@ package body Akernel_User.Files is
    begin
       Count := 0;
       Qualified (Name, Q, Len);
-      if Buf_Cap = 0
-        or else FS_Cap = 0
+      if FS_Cap = 0
         or else Len = 0
         or else Length = 0
       then
          return Status_Bad_Args;
+      end if;
+
+      if not Ensure_Buffer then
+         return Status_Not_Found;
       end if;
 
       N := U64'Min (Length, Buf_Bytes);

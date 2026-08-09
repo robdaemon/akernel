@@ -1,0 +1,10 @@
+project Get extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/get";
+   for Main use ("get.adb");
+
+   package Builder is
+      for Executable ("get.adb") use "get.elf";
+   end Builder;
+end Get;
