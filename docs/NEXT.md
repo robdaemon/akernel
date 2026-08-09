@@ -1433,6 +1433,41 @@ Next candidates (order open):
     RemRAD, MakeLink (FAT has no links). LATER:
     MultiView + AddDataTypes (datatypes).
 
+    41a SHIPPED (a328369) — Op_Rename=16 +
+    Op_Volume_Info=17, then the first commands.
+    Op_Rename: FROM in words 0..5, TO NUL-
+    terminated in the client buffer cap (Op_Write
+    shape); the VFS resolves BOTH volumes (cross-
+    volume Bad_Args), rewrites the buffer volume-
+    stripped, forwards. fat32: Create_Link_Entry
+    (Create_Entry's short/LFN-run machinery minus
+    allocation) preserves cluster+size+attr;
+    Fix_Dotdot points a moved directory's ".." at
+    the new parent; old run deleted WITHOUT
+    Free_Chain; case-folded ancestor guard.
+    Op_Volume_Info: (status, total, free, cluster
+    bytes) from BPB geometry + FSInfo sector read
+    fresh (free = U64'Last unknown); Total_Sectors
+    now saved at probe. RTS: Files.Rename/
+    Volume_Info; Ensure_Buffer factored out of
+    Open. Commands (make new-crate, Sys:C/): Copy
+    (32 KiB heap chunk loop, truncates an existing
+    destination), Delete/MakeDir (multi-arg, worst
+    RC wins), Rename, Info (default Sys:). Fuzz:
+    16 rename/info checks + a C:-command end-to-
+    end (Sys:C/Info staged off disk, spawned under
+    the uniform ABI, reaped, RC_Ok checked).
+    Burns: (1) the command child prints ~6 console
+    lines — the bare yield-per-try reap poll
+    outran it under SMP4 AGAIN (the 39b echo2
+    burn); batched 32 yields per try, and the RC
+    check must not pass on the initialized 0 when
+    the reap itself failed (check CI_Done AND the
+    code). (2) IPC.md's op list had silently gone
+    stale (13..15 missing) — op additions update
+    docs/IPC.md in the same commit. 332 PASS
+    SMP1+SMP4, failures=0, fsck clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

@@ -197,7 +197,10 @@ QEMU virt RAM base:     0x80000000
   program on its stream endpoint; builtins + spawn-and-await of
   FS-resident programs, nestable; bare command names resolve
   against the volume root then C/ — Sys:C/Dir lists a directory
-  via the file protocol's Op_ReadDir). Windows close via the
+  via the file protocol's Op_ReadDir; C/ also holds Type, Copy,
+  Delete, Rename, Makedir, Info (milestone 41a — Op_Rename +
+  Op_Volume_Info behind Rename/Info; commands are CLI-package
+  programs with Amiga exit codes). Windows close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and
   exits). Every program spawned from

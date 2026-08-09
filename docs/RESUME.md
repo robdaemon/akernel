@@ -6,14 +6,13 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates — milestones 38+39+40 COMPLETE; next:
-MILESTONE 41 = base command set (scoped + confirmed,
-full slice list and the consciously-deferred command
-groups — CD/cwd, scripts, pipes, job control, clock —
-in docs/NEXT.md): 41a Op_Rename + Op_VolumeInfo
-protocol ops then Copy/Delete/Rename/MakeDir/Info,
+Open candidates — milestones 38+39+40 COMPLETE;
+milestone 41 in progress (41a SHIPPED a328369):
 41b set/get/unset/assign extracted to commands +
-Echo/Which/Version/Fault, 41c Join/Search/Sort/List.
+Echo/Which/Version/Fault, 41c Join/Search/Sort/
+List (full slice list and the consciously-
+deferred command groups — CD/cwd, scripts,
+pipes, job control, clock — in docs/NEXT.md).
 Then the deferred list (design notes in
 docs/NEXT.md): System/Elevated + Sys:C/Elevate
 (userspace-only sudo, design locked in the NEXT.md
@@ -26,7 +25,20 @@ filesystems appear (also re-raise the FAT stress proof
 64 -> 300 files once sync is cheap), true scheduler
 priorities (wakeup boost covers the IPC case).
 
-Recently landed: MILESTONE 40 COMPLETE (4570ceb,
+Recently landed: MILESTONE 41a (a328369) —
+Op_Rename (two-path wire: FROM words + TO in the
+buffer cap; VFS resolves both volumes; fat32
+cluster/size/attr-preserving dirent rewrite with
+".." fixup) and Op_Volume_Info (BPB geometry +
+FSInfo free count), then Sys:C/Copy, Delete,
+Rename, Makedir, Info on make new-crate +
+Akernel_User.CLI. Burns: console-printing child
+outruns a bare yield-per-try reap poll under
+SMP4 AGAIN (batch yields per try; never pass an
+RC check on the initialized 0); IPC.md's op list
+goes stale silently — new ops land there in the
+same commit. 332 PASS SMP1+SMP4, failures=0,
+fsck clean. Before that: MILESTONE 40 COMPLETE (4570ceb,
 86b80a5, 64b4996) — the userspace RTS. RTS sources are
 a static library (akernel_rts.gpr -> libakernel_user.a,
 built once) + abstract base project

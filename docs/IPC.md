@@ -244,6 +244,29 @@ Op_Sync     = 12 no words -> (status, 0); server fans out to every
                  fs-driver volume. Write-through everywhere today,
                  so a verified no-op passthrough; becomes a real
                  flush with write-back caches / device flush.
+Op_ReadDir  = 13 words 0..3 = path[32] ("" = volume root), word 4
+                 = entry index -> (status, size, is_dir, entry
+                 name[24] in words 3..5). Stateless; Not_Found
+                 ends the enumeration. FS-driver volumes only.
+Op_Assign   = 14 words 0..1 = name[16] (no colon), words 2..5 =
+                 target[32]; empty target removes -> (status, 0).
+                 Session path aliases ("C" -> "Sys:C"), resolved
+                 by the VFS when volume lookup fails.
+Op_Assign_List = 15 word 0 = index -> (status, packed
+                 "NAME: target"[40] in words 1..5); Not_Found
+                 ends the enumeration.
+Op_Rename   = 16 words 0..5 = FROM path[48] + client buffer cap
+                 in slot 0 holding the NUL-terminated TO path.
+                 The VFS resolves BOTH volumes (must match), re-
+                 writes the buffer volume-stripped, and forwards.
+                 fat32 creates a new dirent preserving cluster,
+                 size and attributes, fixes ".." for directories,
+                 deletes the old run WITHOUT freeing the chain;
+                 TO must not exist; subtree moves rejected.
+Op_Volume_Info = 17 words 0..5 = any volume-qualified path ->
+                 (status, total bytes, free bytes, bytes per
+                 cluster). Free = U64'Last when the FSInfo count
+                 is unavailable. Boot-file volumes: Bad_Args.
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
 
