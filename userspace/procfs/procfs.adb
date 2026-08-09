@@ -31,6 +31,7 @@ procedure Procfs is
    Console_Cap  : constant U64 := 1;
    Svc_EP       : constant U64 := 2;
    Resource_Cap : constant U64 := 3;
+   Admin_Cap    : constant U64 := 4;
 
    Op_Stat     : constant U64 := 1;
    Op_Open     : constant U64 := 2;
@@ -75,6 +76,15 @@ procedure Procfs is
    --  64-byte record at offset 0 through the physmap).
    type Info_Words is array (0 .. 7) of U64;
    Info : Info_Words
+     with Volatile, Address => To_Address (Info_VA);
+
+   --  cap_info records are read at byte offset 64 of the same
+   --  page (never collides with a process_info snapshot); the
+   --  thread_regs record (320 bytes) uses offset 0 inside the
+   --  dedicated regs render only, after Snapshot is done.
+   CapW : Syscalls.Cap_Info_Words
+     with Volatile, Address => To_Address (Info_VA + 64);
+   Regs : Syscalls.Thread_Regs_Words
      with Volatile, Address => To_Address (Info_VA);
 
    --  Render scratch page + cursor (library level: big buffers
@@ -335,6 +345,99 @@ procedure Procfs is
       Put_Char (LF);
    end Render_Status;
 
+   function Kind_Name (Kind : U64) return String is
+     (case Kind is
+         when 0      => "null",
+         when 1      => "frame",
+         when 2      => "address-space",
+         when 3      => "process",
+         when 4      => "thread",
+         when 5      => "endpoint",
+         when 6      => "reply",
+         when 7      => "irq",
+         when 8      => "mmio",
+         when 9      => "dma",
+         when 10     => "kernel",
+         when 11     => "boot-file",
+         when 12     => "memory",
+         when 13     => "notification",
+         when 14     => "admin",
+         when others => "?");
+
+   --  "<pid>/caps": cap-table walk via Sys_Cap_Info (admin-gated).
+   --  Stops once the process_info cap count is reached; the hard
+   --  bound keeps a racing target from extending the walk.
+   procedure Render_Caps (Idx : Natural) is
+      Found : U64 := 0;
+   begin
+      Render_Len := 0;
+      Put_Str ("handle kind rights object badge");
+      Put_Char (LF);
+      for Cap_Index in U64'(1) .. U64'(16383) loop
+         exit when Found >= Snaps (Idx).Caps;
+         if Syscalls.Cap_Info
+              (Admin     => Admin_Cap,
+               Slot      => U64 (Idx),
+               Cap_Index => Cap_Index,
+               Buffer    => Info_Cap,
+               Offset    => 64) = Syscalls.Info_Ok
+         then
+            Found := Found + 1;
+            Put_Dec (CapW (0));
+            Put_Char (' ');
+            Put_Str (Kind_Name (CapW (1)));
+            Put_Str (" rights=");
+            Put_Hex (CapW (2));
+            Put_Str (" object=");
+            Put_Hex (CapW (3));
+            Put_Str (" badge=");
+            Put_Hex (CapW (4));
+            Put_Char (LF);
+         end if;
+      end loop;
+   end Render_Caps;
+
+   --  "<pid>/regs": saved frame via Sys_Thread_Regs (admin-gated,
+   --  blocked threads only; a live thread renders a state line).
+   procedure Render_Regs (Idx : Natural) is
+      Reg_Names : constant array (1 .. 31) of String (1 .. 2) :=
+        ("ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1",
+         "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+         "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "sa", "sb",
+         "t3", "t4", "t5", "t6");
+      Status : constant U64 := Syscalls.Thread_Regs
+        (Admin  => Admin_Cap,
+         Slot   => U64 (Idx),
+         Buffer => Info_Cap,
+         Offset => 0);
+   begin
+      Render_Len := 0;
+      if Status = Syscalls.Info_Busy then
+         Put_Str ("thread live (no stable frame)");
+         Put_Char (LF);
+         return;
+      elsif Status /= Syscalls.Info_Ok then
+         Put_Str ("thread gone");
+         Put_Char (LF);
+         return;
+      end if;
+      Put_Str ("state ");
+      Put_Str (Thread_Name (Regs (33)));
+      Put_Char (LF);
+      Put_Str ("sepc ");
+      Put_Hex (Regs (31));
+      Put_Char (LF);
+      Put_Str ("satp ");
+      Put_Hex (Regs (32));
+      Put_Char (LF);
+      for R in 1 .. 31 loop
+         Put_Str (Reg_Names (R));
+         Put_Char (' ');
+         Put_Hex (Regs (R - 1));
+         Put_Char (LF);
+      end loop;
+   end Render_Regs;
+
    ------------------------------------------------------------------
    --  Request plumbing
    ------------------------------------------------------------------
@@ -410,7 +513,8 @@ procedure Procfs is
 
    --  Resolve a path against a fresh snapshot. Kind: 0 = not
    --  found, 1 = root dir, 2 = tree file, 3 = process dir,
-   --  4 = status file; Idx is the snapshot index for 3/4.
+   --  4 = status file, 5 = caps file, 6 = regs file; Idx is the
+   --  snapshot index (= process slot) for 3/4/5/6.
    procedure Resolve
      (Path : String;
       Kind : out Natural;
@@ -446,10 +550,14 @@ procedure Procfs is
          end if;
       else
          Idx := Pid_Component (Path (Path'First .. Slash - 1));
-         if Idx < Max_Slots
-           and then Match (Path (Slash + 1 .. Path'Last), "status")
-         then
-            Kind := 4;
+         if Idx < Max_Slots then
+            if Match (Path (Slash + 1 .. Path'Last), "status") then
+               Kind := 4;
+            elsif Match (Path (Slash + 1 .. Path'Last), "caps") then
+               Kind := 5;
+            elsif Match (Path (Slash + 1 .. Path'Last), "regs") then
+               Kind := 6;
+            end if;
          end if;
       end if;
    end Resolve;
@@ -469,6 +577,12 @@ procedure Procfs is
             Reply2 (Status_Ok, U64 (Render_Len));
          when 4 =>
             Render_Status (Idx);
+            Reply2 (Status_Ok, U64 (Render_Len));
+         when 5 =>
+            Render_Caps (Idx);
+            Reply2 (Status_Ok, U64 (Render_Len));
+         when 6 =>
+            Render_Regs (Idx);
             Reply2 (Status_Ok, U64 (Render_Len));
          when 1 | 3 =>
             Reply2 (Status_Bad_Args, 0);  --  no dir stat/open
@@ -500,6 +614,10 @@ procedure Procfs is
                Render_Tree;
             when 4 =>
                Render_Status (Idx);
+            when 5 =>
+               Render_Caps (Idx);
+            when 6 =>
+               Render_Regs (Idx);
             when others =>
                Status := Status_Not_Found;
          end case;
@@ -618,6 +736,16 @@ procedure Procfs is
             Name (1 .. 6) := "status";
             Name_Len := 6;
             Render_Status (P_Idx);
+            Size := U64 (Render_Len);
+         elsif Idx = 1 then
+            Name (1 .. 4) := "caps";
+            Name_Len := 4;
+            Render_Caps (P_Idx);
+            Size := U64 (Render_Len);
+         elsif Idx = 2 then
+            Name (1 .. 4) := "regs";
+            Name_Len := 4;
+            Render_Regs (P_Idx);
             Size := U64 (Render_Len);
          end if;
       end if;

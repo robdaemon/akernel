@@ -1849,6 +1849,47 @@ begin
                 and then Count > 0, "proc status reads");
          Check (Contains ("process "), "proc status names process");
          Check (Contains ("spawner "), "proc status names spawner");
+
+         --  Milestone 39: the caps and regs files (admin-gated
+         --  dumps rendered by procfs, which holds the admin cap).
+         St := Akernel_User.Files.Read_Dir
+           (Path (1 .. 5 + First_Len), 1, Name, Name_Len, Is_Dir,
+            Size);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Name_Len = 4
+                and then Name (1 .. 4) = "caps",
+                "proc process dir lists caps");
+         St := Akernel_User.Files.Read_Dir
+           (Path (1 .. 5 + First_Len), 2, Name, Name_Len, Is_Dir,
+            Size);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Name_Len = 4
+                and then Name (1 .. 4) = "regs",
+                "proc process dir lists regs");
+
+         Path (6 + First_Len) := '/';
+         Path (7 + First_Len .. 10 + First_Len) := "caps";
+         Path_Len := 10 + First_Len;
+         St := Akernel_User.Files.Open (Path (1 .. Path_Len), Size);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Size > 0, "proc caps opens");
+         St := Akernel_User.Files.Read
+           (Path (1 .. Path_Len), 0, Rbuf'Address,
+            U64 (Rbuf'Length), Count);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Count > 0, "proc caps reads");
+         Check (Contains ("handle kind rights"),
+                "proc caps header");
+         Check (Contains ("rights="), "proc caps lists entries");
+
+         Path (7 + First_Len .. 10 + First_Len) := "regs";
+         St := Akernel_User.Files.Read
+           (Path (1 .. Path_Len), 0, Rbuf'Address,
+            U64 (Rbuf'Length), Count);
+         Check (St = Akernel_User.Files.Status_Ok
+                and then Count > 0, "proc regs reads");
+         Check (Contains ("sepc ") or else Contains ("thread live"),
+                "proc regs frame or live line");
       end if;
 
       --  Read-only volume: mutating ops and unknown paths.
