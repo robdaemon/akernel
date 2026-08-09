@@ -1375,6 +1375,64 @@ Next candidates (order open):
     interleave, strings present), fuzz failures=0,
     fsck clean.
 
+    MILESTONE 41 (scoped, user-confirmed) — the
+    base command set (Amiga C: reference, OS 3.x),
+    built on the milestone-40 RTS: `make new-crate
+    NAME=x DEST=c` + Akernel_User.CLI per command.
+    SLICES:
+    - 41a protocol ops + first commands: Op_Rename
+      (VFS forward + fat32 dirent name/LFN-run
+      rewrite — NOT copy+delete, that breaks dirs)
+      and Op_VolumeInfo (fat32 already tracks the
+      FSInfo free count; passthrough) added to the
+      file protocol with fuzz checks; then Copy,
+      Delete, Rename, MakeDir, Info.
+    - 41b session/vars become COMMANDS: set/get/
+      unset/assign leave the shell (they are
+      file/protocol-backed globals — Amiga splits
+      exactly this way: locals are builtins,
+      globals are commands); shell thins. Plus
+      Echo, Which (reuse the shell's Path search),
+      Version (command form), Fault (RC -> text,
+      RCs are real since 40b).
+    - 41c data commands: Join (concat), Search
+      (grep-lite), Sort (lines), List (ReadDir +
+      Stat details: sizes/dates).
+    CONSCIOUSLY DEFERRED (named prerequisites, not
+    41):
+    - CD / relative paths: NO cwd exists anywhere;
+      per-process cwd is Amiga-fundamental but
+      ENV: is global (naive ENV:CWD breaks nested
+      shells) — design + shell milestone.
+    - Script interpreter: Execute, If/Else/EndIf,
+      Skip/EndSkip, Lab, Quit, FailAt, Alias,
+      Prompt, Resident, Why (System/Startup is
+      already a degenerate script).
+    - Pipes/redirection: cheap architecturally
+      (spawn with console Send at a shell-served
+      capture endpoint, no kernel work) but shell
+      plumbing, with the script/shell milestone.
+    - Job control: Run (background), Break (needs
+      process signaling — no kill-from-outside
+      syscall), Status as a real job list (a thin
+      Proc: walker version may ride 41c).
+    - Clock group: Wait (uptime/timer-tick
+      syscall), Date/Time/SetDate/SetClock (no
+      RTC; dirents stamp fixed 2025-01-01).
+    - Avail: PMM stats introspection syscall
+      (rides the deferred scheduler-stats item).
+    - Ed/Edit/MEmacs: editor milestone (terminal
+      exists).
+    SKIPPED FOREVER (no such hardware concept):
+    printer (PrintFiles/PRT:), sound/speech (Say),
+    requesters (RequestChoice/RequestFile),
+    palette/overscan/pointer/screenmode/font prefs,
+    Workbench (LoadWB/WBRun/IconX), CPU/SetPatch/
+    NoFastMem, Mount (boot protocol does mounts),
+    DiskChange/Lock/Format/Install/AddBuffers/
+    RemRAD, MakeLink (FAT has no links). LATER:
+    MultiView + AddDataTypes (datatypes).
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

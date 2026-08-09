@@ -7,9 +7,14 @@ docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
 Open candidates — milestones 38+39+40 COMPLETE; next:
-MILESTONE 41 = base command set on the new RTS (C:
-commands via make new-crate + Akernel_User.CLI; scope
-TBD), then the deferred list (design notes in
+MILESTONE 41 = base command set (scoped + confirmed,
+full slice list and the consciously-deferred command
+groups — CD/cwd, scripts, pipes, job control, clock —
+in docs/NEXT.md): 41a Op_Rename + Op_VolumeInfo
+protocol ops then Copy/Delete/Rename/MakeDir/Info,
+41b set/get/unset/assign extracted to commands +
+Echo/Which/Version/Fault, 41c Join/Search/Sort/List.
+Then the deferred list (design notes in
 docs/NEXT.md): System/Elevated + Sys:C/Elevate
 (userspace-only sudo, design locked in the NEXT.md
 milestone 39 entry), Proc:self (needs client identity
