@@ -1,6 +1,7 @@
 with "../virtio/virtio.gpr";
 project Virtio_Rng extends "../rts/akernel_program.gpr" is
    for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
    for Object_Dir use "../../obj/userspace/virtio_rng";
    for Main use ("virtio_rng.adb");
 

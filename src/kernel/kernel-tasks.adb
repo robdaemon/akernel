@@ -40,7 +40,8 @@ package body Kernel.Tasks is
       PCB.Identifier := Id;
       PCB.Spawner := 0;
       PCB.Root := 0;
-      PCB.Status := Process_Initializing;
+      PCB.Status    := Process_Initializing;
+      PCB.Exit_Code := 0;
       Kernel.Capabilities.Initialize (PCB.Caps);
    end Initialize_Process;
 
@@ -81,6 +82,17 @@ package body Kernel.Tasks is
    begin
       return PCB.Spawner;
    end Spawner_Id;
+
+   procedure Set_Exit_Code
+     (PCB  : in out Process_Control_Block;
+      Code : Kernel.Capabilities.U64) is
+   begin
+      PCB.Exit_Code := Code;
+   end Set_Exit_Code;
+
+   function Exit_Code
+     (PCB : Process_Control_Block) return Kernel.Capabilities.U64
+   is (PCB.Exit_Code);
 
    procedure Set_Spawner_Id
      (PCB     : in out Process_Control_Block;

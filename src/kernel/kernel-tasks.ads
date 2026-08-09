@@ -59,6 +59,16 @@ package Kernel.Tasks is
    --  after the spawner itself exits.
    function Spawner_Id (PCB : Process_Control_Block) return Process_Id;
 
+   --  Exit status (milestone 40b): the code the process passed to
+   --  the exit syscall (Amiga RC convention in userspace: 0 ok,
+   --  5 warn, 10 error, 20 fail); 0 when the process died without
+   --  exiting (fault, teardown).
+   procedure Set_Exit_Code
+     (PCB  : in out Process_Control_Block;
+      Code : Kernel.Capabilities.U64);
+   function Exit_Code
+     (PCB : Process_Control_Block) return Kernel.Capabilities.U64;
+
    procedure Set_Spawner_Id
      (PCB     : in out Process_Control_Block;
       Spawner : Process_Id);
@@ -308,6 +318,7 @@ private
       Root       : Kernel.Capabilities.U64;
       Caps       : Kernel.Capabilities.Cap_Table;
       Status     : Process_State;
+      Exit_Code  : Kernel.Capabilities.U64;
    end record;
 
    type Thread_Control_Block is record

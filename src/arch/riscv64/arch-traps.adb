@@ -730,13 +730,20 @@ package body Arch.Traps is
       Decode_Handle (Trap_Frame_Get_A0 (Frame), Process_Cap, Handle_Valid);
       if not Handle_Valid then
          Trap_Frame_Set_A0 (Frame, 1);
+         Trap_Frame_Set_A1 (Frame, 0);
          return;
       end if;
 
-      Kernel.Processes.Reap_Process
-        (Parent      => Current,
-         Process_Cap => Process_Cap,
-         Result      => Result);
+      declare
+         Exit_Code : U64 := 0;
+      begin
+         Kernel.Processes.Reap_Process
+           (Parent      => Current,
+            Process_Cap => Process_Cap,
+            Exit_Code   => Exit_Code,
+            Result      => Result);
+         Trap_Frame_Set_A1 (Frame, Exit_Code);
+      end;
 
       if Result = Kernel.Processes.Ok then
          Trap_Frame_Set_A0 (Frame, 0);
@@ -1020,7 +1027,8 @@ package body Arch.Traps is
       end if;
 
       Flush_Debug_Line (Current);
-      Kernel.Processes.Mark_Exited (Current);
+      Kernel.Processes.Mark_Exited
+        (Current, Trap_Frame_Get_A0 (Frame));
       Advance_SEPC (Frame);
       Kernel.Scheduler.Exit_Current (Exit_Result);
       if Exit_Result /= Kernel.Scheduler.Ok then

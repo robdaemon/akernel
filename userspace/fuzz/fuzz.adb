@@ -2197,6 +2197,41 @@ begin
       end loop;
       Check (Reaped, "teardown children reaped");
 
+      --  Exit codes (milestone 40b): role "X 42" exits with 42;
+      --  Reap_Process_Code must read the code back in a1.
+      declare
+         Args_X : String (1 .. 5)
+           with Volatile, Address => System'To_Address
+             (Integer_Address (TD_Args_VA + 4096));
+         X_Proc : U64;
+         X_Code : U64 := 0;
+         X_Done : Boolean := False;
+      begin
+         Args_X := ('X', ' ', '4', '2', Character'Val (0));
+         for G in 0 .. 2 loop
+            Akernel_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         end loop;
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, X_Proc);
+         Check (Status = 0 and then X_Proc /= 0,
+                "exit-code peer spawned");
+         for Try in 1 .. 1024 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (X_Proc, X_Code);
+            if Status = 0 then
+               X_Done := True;
+               exit;
+            end if;
+            Ignore := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+         Check (X_Done, "exit-code peer reaped");
+         Check (X_Code = 42, "exit code rides reap a1");
+      end;
+
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive
       --  takes its message (no reply cap is minted, so a Reply

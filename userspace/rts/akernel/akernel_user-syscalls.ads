@@ -55,8 +55,14 @@ package Akernel_User.Syscalls is
    function Boot_Read_Byte
      (Cap     : U64;
       Offset  : U64) return U64;
-   procedure Process_Exit;
+   --  Exit status (milestone 40b): a0 of the exit syscall rides
+   --  into the PCB; the reaper reads it back as a1 of reap
+   --  (Amiga RC conventions live in Akernel_User.CLI).
+   procedure Process_Exit (Code : U64 := 0);
    function Reap_Process (Process_Cap : U64) return U64;
+   function Reap_Process_Code
+     (Process_Cap : U64;
+      Code        : out U64) return U64;
    function EP_Create return U64;
 
    --  Memory objects (PMM-backed frame bundles, refcounted).

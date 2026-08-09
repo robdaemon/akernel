@@ -601,7 +601,9 @@ package body Kernel.Processes is
       end loop;
    end Cleanup_Cap_Refs;
 
-   procedure Mark_Exited (Thread : Kernel.Tasks.Thread_Access) is
+   procedure Mark_Exited
+     (Thread : Kernel.Tasks.Thread_Access;
+      Code   : Kernel.Capabilities.U64) is
       Process : Kernel.Tasks.Process_Access;
    begin
       if Thread = null then
@@ -611,6 +613,7 @@ package body Kernel.Processes is
       Cleanup_Cap_Refs (Thread);
       Process := Kernel.Tasks.Owning_Process (Thread.all);
       if Process /= null then
+         Kernel.Tasks.Set_Exit_Code (Process.all, Code);
          Kernel.Tasks.Set_Process_State
            (PCB       => Process.all,
             New_State => Kernel.Tasks.Process_Dead);
@@ -620,6 +623,7 @@ package body Kernel.Processes is
    procedure Reap_Process
      (Parent      : Kernel.Tasks.Thread_Access;
       Process_Cap : Kernel.Capabilities.Handle;
+      Exit_Code   : out U64;
       Result      : out Status)
    is
       use type Kernel.Capabilities.Object_Kind;
@@ -629,6 +633,7 @@ package body Kernel.Processes is
       Found      : Boolean := False;
       Slot       : Process_Index := Process_Index'First;
    begin
+      Exit_Code := 0;
       if Parent = null then
          Result := Invalid_Parent;
          return;
@@ -671,6 +676,7 @@ package body Kernel.Processes is
          return;
       end if;
 
+      Exit_Code := Kernel.Tasks.Exit_Code (Processes (Slot));
       Kernel.Tasks.Close_Cap (Parent, Process_Cap, Cap_Result);
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Cap_Failed;

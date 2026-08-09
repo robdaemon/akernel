@@ -20,6 +20,9 @@ with Akernel_User.Syscalls;
 --          Send ends at delivery: the peer wakes with Ok as soon
 --          as the fuzzer receives, and the fuzzer's Reply attempt
 --          must fail.
+--    "X <n>" — exit immediately with status <n> (decimal):
+--          milestone-40b exit-code channel; the fuzzer's
+--          Reap_Process_Code must read <n> back.
 --
 --  Grant layout (handles): 1 = service endpoint, 2 = result
 --  endpoint (C only), 3 = filler (duplicated cap; the args page
@@ -42,6 +45,21 @@ begin
       --  One receive, no reply, exit.
       Result := IPC_Recv (Service_EP);
       Process_Exit;
+   end if;
+
+   if Arg_Ln > 2 and then Arg (1) = 'X' and then Arg (2) = ' ' then
+      declare
+         Code : U64 := 0;
+      begin
+         for I in 3 .. Arg_Ln loop
+            if Arg (I) in '0' .. '9' then
+               Code := Code * 10
+                 + U64 (Character'Pos (Arg (I))
+                          - Character'Pos ('0'));
+            end if;
+         end loop;
+         Process_Exit (Code);
+      end;
    end if;
 
    if Arg_Ln > 0 and then Arg (1) = 'S' then

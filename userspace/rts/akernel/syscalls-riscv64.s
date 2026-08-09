@@ -73,6 +73,18 @@ akernel_sys_reap_process:
     ret
 .size akernel_sys_reap_process, . - akernel_sys_reap_process
 
+.global akernel_sys_reap_process_code
+.type akernel_sys_reap_process_code, @function
+# a0 = process cap, a1 = code out pointer; reap returns the
+# child's exit code in a1, clobbering the pointer — save it first.
+akernel_sys_reap_process_code:
+    mv t0, a1
+    li a7, 10
+    ecall
+    sd a1, 0(t0)
+    ret
+.size akernel_sys_reap_process_code, . - akernel_sys_reap_process_code
+
 .global akernel_sys_ep_create
 .type akernel_sys_ep_create, @function
 akernel_sys_ep_create:

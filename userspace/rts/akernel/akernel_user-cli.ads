@@ -1,0 +1,46 @@
+--  Command-line support for C: commands (milestone 40b) — the
+--  amiga.lib analog: one place for the conventions every CLI
+--  program shares, so commands are logic-only.
+--
+--  Return codes follow the Amiga convention: a command exits with
+--  RC_Ok on success; RC_Warn/RC_Error/RC_Fail are increasing
+--  severities (scripts and the shell can branch on thresholds).
+--  The code rides the exit syscall into the PCB and the spawner
+--  reads it back through Reap_Process_Code (kernel milestone 40b).
+--
+--  Arguments are the whitespace-separated tokens of the spawn-time
+--  args page (milestone 33a); Argument (1) is the FIRST token —
+--  there is no argv[0], the caller knows its own name.
+--
+--  Variables are files (milestone 33a): ENV:<Name> holds the
+--  value, global by construction.
+with Interfaces;
+
+package Akernel_User.CLI is
+   subtype U64 is Interfaces.Unsigned_64;
+   use type U64;
+   RC_Ok    : constant U64 := 0;
+   RC_Warn  : constant U64 := 5;
+   RC_Error : constant U64 := 10;
+   RC_Fail  : constant U64 := 20;
+
+   --  Whitespace-separated tokens of the args page (no quoting
+   --  yet). Argument returns "" for an out-of-range index.
+   function Arg_Count return Natural;
+   function Argument (Index : Positive) return String;
+
+   --  ENV:<Name> read/write. Get_Env returns "" when unset or
+   --  unreadable; values are truncated at 255 characters.
+   --  Set_Env returns the file-protocol status (Status_Ok on
+   --  success).
+   function Get_Env (Name : String) return String;
+   function Set_Env (Name : String; Value : String) return U64;
+
+   --  Print Message to the console, then exit with Code.
+   procedure Fail_With (Message : String; Code : U64 := RC_Error)
+     with No_Return;
+
+   --  Exit with an explicit code (RC_Ok default).
+   procedure Exit_With (Code : U64 := RC_Ok)
+     with No_Return;
+end Akernel_User.CLI;

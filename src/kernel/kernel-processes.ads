@@ -37,9 +37,12 @@ package Kernel.Processes is
    procedure Reap_Process
      (Parent      : Kernel.Tasks.Thread_Access;
       Process_Cap : Kernel.Capabilities.Handle;
+      Exit_Code   : out Kernel.Capabilities.U64;
       Result      : out Status);
 
-   procedure Mark_Exited (Thread : Kernel.Tasks.Thread_Access);
+   procedure Mark_Exited
+     (Thread : Kernel.Tasks.Thread_Access;
+      Code   : Kernel.Capabilities.U64);
 
    --  Process introspection (milestone 37a): fixed-size binary
    --  snapshot of one process for the process_info syscall; the
