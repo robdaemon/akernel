@@ -1323,6 +1323,58 @@ Next candidates (order open):
     = UART line interleave), fuzz failures=0, fsck
     clean.
 
+    MILESTONE 40 COMPLETE (a: 4570ceb, b: 86b80a5,
+    c: 64b4996) — the userspace RTS, replacing the
+    hacked-together per-crate compilation of
+    userspace/rts/akernel sources.
+    (a) RTS as a static library:
+    userspace/rts/akernel_rts.gpr builds
+    libakernel_user.a ONCE (glue asm, s-memory heap
+    override, vendored -gnatg runtime units, all
+    Akernel_User.*); the abstract base project
+    akernel_program.gpr carries Languages/Target/
+    Runtime/linker-script/Create_Missing_Dirs so a
+    program crate is ~10 lines. Stays on the stock
+    light-rv64imafdc GNAT runtime (user-confirmed);
+    a custom GNAT runtime (runtime.xml + rebuilt
+    adalib) is recorded as the deferred purist
+    upgrade.
+    (b) Akernel_User.CLI — the amiga.lib analog for
+    C: commands: Argument/Arg_Count over the args
+    page, Get_Env/Set_Env over ENV: files,
+    Fail_With/Exit_With, Amiga return codes
+    RC_Ok/Warn/Error/Fail = 0/5/10/20 (adopted).
+    Exit codes are REAL: the exit syscall's a0
+    rides into a new PCB Exit_Code field and reap
+    returns it in a1 (new asm stub saves the out
+    pointer before the ecall clobbers a1);
+    teardown peer role "X <n>" exits with <n>, fuzz
+    reaps and checks 42.
+    (c) Makefile crate inventory lists
+    (INITRD_CRATES/DISK_CRATES_SYSTEM/DISK_CRATES_C
+    + generic build/install/clean rules; 21 stanzas
+    deleted) and `make new-crate NAME=foo DEST=c|
+    system` scaffolding (crate dir + alire.toml +
+    gpr + CLI skeleton main + Makefile registration,
+    auto-installed into Sys:C/ or Sys:System/).
+    Burns: (1) gpr project extension does NOT
+    propagate Exec_Dir — the 40a base project's
+    Exec_Dir was silently ignored and gprbuild
+    linked into obj/, leaving pre-migration ELFs in
+    bin/userspace; invisible while 40a changed no
+    sources, caught the moment 40b touched fuzz.adb
+    (new check strings absent from the ELF). Every
+    crate carries its own Exec_Dir line now; the
+    40b suite run is the first one on genuinely
+    post-migration binaries. (2) alr/gprbuild
+    up-to-date hashing is timestamp+hash based — a
+    fresh-looking "up to date" can still mean
+    stale; verify the ELF contains new strings
+    (strings(1)) before blaming the runtime. 307
+    PASS SMP1, 305 anchored SMP4 (deltas = UART
+    interleave, strings present), fuzz failures=0,
+    fsck clean.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)
@@ -1333,6 +1385,11 @@ Commit between each milestone.
   policy, device-level cache shared across fs drivers, real flush
   (VIRTIO_BLK_F_FLUSH), block-layer sync op.
 - Register fast path, >4 caps/msg.
+- Custom GNAT runtime for userspace (runtime.xml + rebuilt
+  adalib with s-memory/a-stream vendored in, replacing the
+  stock light-rv64imafdc) — the milestone-40 RTS library is
+  the pragmatic 90%; this is the purist end state, zero
+  user-visible gain, toolchain-coupled build cost.
 - Kernel introspection syscalls for init state reconstruction
   (37a process/thread snapshots + 39 admin-gated cap/register
   dumps landed; still open: endpoint/notification object

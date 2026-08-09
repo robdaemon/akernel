@@ -6,19 +6,37 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-Open candidates — milestones 38+39 COMPLETE; next
-from the deferred list (design notes in docs/NEXT.md):
-System/Elevated + Sys:C/Elevate (userspace-only sudo,
-design locked in the NEXT.md milestone 39 entry),
-Proc:self (needs client identity through the VFS),
-pid generation counters, register fast path,
+Open candidates — milestones 38+39+40 COMPLETE; next:
+MILESTONE 41 = base command set on the new RTS (C:
+commands via make new-crate + Akernel_User.CLI; scope
+TBD), then the deferred list (design notes in
+docs/NEXT.md): System/Elevated + Sys:C/Elevate
+(userspace-only sudo, design locked in the NEXT.md
+milestone 39 entry), Proc:self (needs client identity
+through the VFS), pid generation counters, register
+fast path, custom GNAT runtime for userspace,
 virtio-net, MSI-X for virtio-pci (INTx shared chains today),
 write-back cache policy + VIRTIO_BLK_F_FLUSH when more
 filesystems appear (also re-raise the FAT stress proof
 64 -> 300 files once sync is cheap), true scheduler
 priorities (wakeup boost covers the IPC case).
 
-Recently landed: MILESTONE 39 COMPLETE (0b37978,
+Recently landed: MILESTONE 40 COMPLETE (4570ceb,
+86b80a5, 64b4996) — the userspace RTS. RTS sources are
+a static library (akernel_rts.gpr -> libakernel_user.a,
+built once) + abstract base project
+(akernel_program.gpr); program crates are ~10 lines.
+Akernel_User.CLI is the command layer: args tokens,
+ENV: variables, Amiga RC convention 0/5/10/20 made
+REAL by the exit-code channel (exit a0 -> PCB -> reap
+a1; Reap_Process_Code). make new-crate NAME=x DEST=c|
+system scaffolds a crate into Sys:C/ or Sys:System/.
+Burns: gpr extension does NOT propagate Exec_Dir (per-
+crate line required — stale-bin trap: invisible until
+the first real source change, verify with strings(1));
+alr/gprbuild "up to date" can lie after interrupted
+builds (alr clean). 307 PASS SMP1, fuzz failures=0,
+fsck clean. Before that: MILESTONE 39 COMPLETE (0b37978,
 a6800a0, 29392a8) — admin-gated introspection dumps.
 No user model in the kernel ever: authority = holding
 the Admin_Object cap (kind added LAST in the enum —

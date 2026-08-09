@@ -152,7 +152,13 @@ QEMU virt RAM base:     0x80000000
   (bootinfo "admin"); Sys_Process_Info (device_resource
   gate), Sys_Cap_Info + Sys_Thread_Regs (admin gate)
   write physmap snapshots; Proc: renders them as
-  <pid>/status, <pid>/caps, <pid>/regs.
+  <pid>/status, <pid>/caps, <pid>/regs. Userspace
+  builds on ONE RTS static library
+  (userspace/rts/akernel_rts.gpr, layers: glue /
+  kernel ABI / service APIs) plus the Akernel_User.CLI
+  command layer (args, ENV:, Amiga RC 0/5/10/20 via
+  the exit-code channel exit-a0 -> PCB -> reap-a1);
+  new commands scaffold with make new-crate.
 - Spawn ABI v2: images are `Boot_File_Object` caps (grant lists in
   spawner's IPC buffer, rights-subset enforced); init discovers its
   caps by name in the read-only bootinfo page. Boot byte API is
