@@ -1082,6 +1082,141 @@ begin
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat lfn delete gone");
 
+      --  38b: 64-file create/walk/count/delete proof on BD0 --
+      --  FAT32 volumes are disk-bound; no VFS or driver table
+      --  may silently fill (64 crosses every historic 32/63
+      --  boundary; 300 was designed but each mutating FAT op
+      --  costs ~0.4 s under write-through sync -- the cost
+      --  scales with FAT size -- so 900 ops blow the suite
+      --  budget; re-raise once the deferred write-back cache
+      --  lands). Cleanup walks and deletes only leftovers, so
+      --  a clean run pays nothing.
+      declare
+         WName     : String (1 .. 14) := "BD0:STRESS/F00";
+         DName     : String (1 .. 24);
+         DLen      : Natural;
+         DDir      : Boolean;
+         DSize     : U64;
+         Create_Ok : Boolean := True;
+         Delete_Ok : Boolean := True;
+         Seen      : Natural;
+         St2       : U64;
+         C2        : U64;
+      begin
+         St2 := Akernel_User.Files.Mkdir ("BD0:STRESS");
+
+         --  Leftover sweep (interrupted earlier run): delete any
+         --  F* file the walk turns up, by its ACTUAL name
+         --  (residue shapes from older test revisions differ).
+         --  Always index 0: deleting renumbers the rest; the
+         --  loop bound keeps a failed delete from spinning.
+         declare
+            Full : String (1 .. 40);
+            FLen : Natural;
+         begin
+            for Index in 0 .. 400 loop
+               St2 := Akernel_User.Files.Read_Dir
+                 ("BD0:STRESS", 0, DName, DLen, DDir, DSize);
+               exit when St2 /= Akernel_User.Files.Status_Ok;
+               if DLen > 0 and then DName (1) = 'F'
+                 and then not DDir
+               then
+                  Full := (others => Character'Val (0));
+                  Full (1 .. 11) := "BD0:STRESS/";
+                  Full (12 .. 11 + DLen) := DName (1 .. DLen);
+                  FLen := 11 + DLen;
+                  St2 := Akernel_User.Files.Delete (Full (1 .. FLen));
+               end if;
+            end loop;
+         end;
+
+         for N in 0 .. 63 loop
+            WName (13) := Character'Val (48 + N / 10);
+            WName (14) := Character'Val (48 + N mod 10);
+            St2 := Akernel_User.Files.Write
+              (WName, 0, Buf'Address, 4, C2);
+            if St2 /= Akernel_User.Files.Status_Ok or else C2 /= 4 then
+               Create_Ok := False;
+            end if;
+         end loop;
+         Check (Create_Ok, "fat stress 64 creates ok");
+
+         Seen := 0;
+         for Index in 0 .. 100 loop
+            St2 := Akernel_User.Files.Read_Dir
+              ("BD0:STRESS", U64 (Index), DName, DLen, DDir, DSize);
+            exit when St2 /= Akernel_User.Files.Status_Ok;
+            Seen := Seen + 1;
+         end loop;
+         Check (Seen = 64, "fat stress walk counts 64");
+
+         for N in 0 .. 63 loop
+            WName (13) := Character'Val (48 + N / 10);
+            WName (14) := Character'Val (48 + N mod 10);
+            if Akernel_User.Files.Delete (WName) /= Akernel_User.Files.Status_Ok
+            then
+               Delete_Ok := False;
+            end if;
+         end loop;
+         Check (Delete_Ok, "fat stress 64 deletes ok");
+
+         Seen := 0;
+         for Index in 0 .. 10 loop
+            St2 := Akernel_User.Files.Read_Dir
+              ("BD0:STRESS", U64 (Index), DName, DLen, DDir, DSize);
+            exit when St2 /= Akernel_User.Files.Status_Ok;
+            Seen := Seen + 1;
+         end loop;
+         Check (Seen = 0, "fat stress dir empty after deletes");
+      end;
+
+      --  38b: 64 generated tiny boot files (Makefile recipe)
+      --  push every table past the old limits at once: kernel
+      --  boot_files 24 -> 81 in use, init/fileserver cap tables,
+      --  the 512-slot name table.
+      declare
+         GName  : String (1 .. 13) := "Tests/Gen/f00";
+         GSize  : U64;
+         GCount : U64;
+         GStat  : U64;
+         All_Ok : Boolean := True;
+         RBuf   : array (0 .. 11) of Interfaces.Unsigned_8;
+         RMatch : Boolean := True;
+      begin
+         for N in 0 .. 63 loop
+            GName (12) := Character'Val (48 + N / 10);
+            GName (13) := Character'Val (48 + N mod 10);
+            GStat := Akernel_User.Files.Stat (GName, GSize);
+            if GStat /= Akernel_User.Files.Status_Ok
+              or else GSize /= 12
+            then
+               All_Ok := False;
+            end if;
+         end loop;
+         Check (All_Ok, "gen 64 boot files stat ok");
+
+         GStat := Akernel_User.Files.Open ("Tests/Gen/f42", GSize);
+         Check (GStat = Akernel_User.Files.Status_Ok
+                and then GSize = 12, "gen file f42 opens");
+         GStat := Akernel_User.Files.Read
+           ("Tests/Gen/f42", 0, RBuf'Address, 12, GCount);
+         declare
+            Expect : constant String :=
+              "GENFILE f42" & Character'Val (10);
+         begin
+            for B in 0 .. 11 loop
+               if RBuf (B) /= Interfaces.Unsigned_8
+                 (Character'Pos (Expect (B + 1)))
+               then
+                  RMatch := False;
+               end if;
+            end loop;
+         end;
+         Check (GStat = Akernel_User.Files.Status_Ok
+                and then GCount = 12 and then RMatch,
+                "gen file f42 content reads");
+      end;
+
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap
       --  involved), reap the exited child.
@@ -1338,6 +1473,43 @@ begin
       Check (Unique_Ok, "process_info pids unique");
       Check (Found_Self, "process_info self appears in table walk");
       Check (Child_Count = 1, "process_info links child spawner");
+   end;
+
+   --  38a/38b cap stress: the paged cap table allocates a page
+   --  per 128 handles. Minting 300 one-page memory objects must
+   --  cross handles 128 and 256 (pages 1 and 2); closing them
+   --  frees the pages again and the table keeps working.
+   declare
+      Stress_Caps : array (1 .. 300) of U64 := (others => U64'Last);
+      Mint_Ok     : Boolean := True;
+      Close_Ok    : Boolean := True;
+      Max_H       : U64 := 0;
+      Reuse       : U64;
+   begin
+      for I in Stress_Caps'Range loop
+         Stress_Caps (I) := Akernel_User.Syscalls.Mem_Alloc (1);
+         if Stress_Caps (I) = Akernel_User.Syscalls.Syscall_Failed then
+            Mint_Ok := False;
+         elsif Stress_Caps (I) > Max_H then
+            Max_H := Stress_Caps (I);
+         end if;
+      end loop;
+      Check (Mint_Ok, "cap stress minted 300");
+      Check (Max_H >= 256, "cap stress crossed second page");
+
+      for I in Stress_Caps'Range loop
+         if Stress_Caps (I) /= Akernel_User.Syscalls.Syscall_Failed
+           and then Akernel_User.Syscalls.Cap_Delete (Stress_Caps (I)) /= 0
+         then
+            Close_Ok := False;
+         end if;
+      end loop;
+      Check (Close_Ok, "cap stress closed 300");
+
+      Reuse := Akernel_User.Syscalls.Mem_Alloc (1);
+      Check (Reuse /= Akernel_User.Syscalls.Syscall_Failed
+             and then Akernel_User.Syscalls.Cap_Delete (Reuse) = 0,
+             "cap stress table reusable after close");
    end;
 
    --  Proc: volume (milestone 37b): the procfs server renders

@@ -5,7 +5,9 @@ with Akernel_User.Syscalls;
 --  server (System/Fileserver) holds the boot-file caps; clients hold
 --  only an endpoint Send cap. Protocol labels on the message:
 --
---    Op_Set_Name = 0   init -> server: (handle, length, name[32])
+--    Op_Set_Name = 0   init -> server: (sentinel, length,
+--                       name[32]) + boot-file cap transferred in
+--                       slot 0; zero words + no cap = table done
 --    Op_Stat     = 1   words = name[48] -> (status, size)
 --    Op_Open     = 2   words = name[48] -> (status, size)
 --    Op_Read     = 3   (offset, length, name[32]) + buffer memory

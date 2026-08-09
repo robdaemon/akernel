@@ -52,8 +52,12 @@ package body Kernel.Processes is
    Stack_Top : constant U64 := 16#7000_0000#;
 
    --  User stack pages per spawned process (fuzz overflowed the
-   --  original single page with on-stack buffers).
-   Stack_Pages : constant := 4;
+   --  original single page with on-stack buffers; 16 KiB then
+   --  proved tight once test blocks accumulated ~10 KiB of
+   --  sibling declare-block locals plus deep RPC call chains —
+   --  38b bumped to 8 pages; the VA below stays clear of the IPC
+   --  buffer at 0x6FFF_0000).
+   Stack_Pages : constant := 8;
 
    --  ELF image handed to the loader: a byte source (physmap range
    --  or memory-object frames) + size.

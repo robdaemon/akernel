@@ -254,10 +254,13 @@ package Akernel_User.Syscalls is
       Rights_Mask : U64;
       Badge       : U64);
 
-   --  Bootinfo page (init only): read-only kernel-written table of
-   --  (handle, kind, rights mask, name) entries for every cap the
-   --  kernel handed init at boot. Kind values match the kernel
-   --  Object_Kind enumeration positions.
+   --  Bootinfo region (init only): read-only kernel-written table
+   --  of (handle, kind, rights mask, name) entries for every cap
+   --  the kernel handed init at boot. Kind values match the kernel
+   --  Object_Kind enumeration positions. Up to 8 pages mapped
+   --  contiguously by the kernel as entries grow (one page was
+   --  silently full at 63 entries — milestone 38b burn); the
+   --  overlay spans the maximum so Count-bounded walks just work.
    Bootinfo_VA    : constant U64 := 16#6FFE_0000#;
    Bootinfo_Magic : constant U64 := 16#4B41_494E_464F_3031#;
 
@@ -277,7 +280,7 @@ package Akernel_User.Syscalls is
       Name        : Bootinfo_Name;
    end record;
 
-   type Bootinfo_Entry_Array is array (0 .. 62) of Bootinfo_Entry;
+   type Bootinfo_Entry_Array is array (0 .. 510) of Bootinfo_Entry;
 
    type Bootinfo_Page is record
       Magic   : U64;

@@ -38,7 +38,7 @@ procedure Init is
    --  File-server endpoint minted at boot: Receive side granted
    --  (fs_server token) to System/Fileserver, Send side (fs token)
    --  to clients. After spawning the file server init pushes the
-   --  (handle -> name) table for its boot-file caps as Op_Set_Name
+   --  boot-file name table as Op_Set_Name messages, each
    --  messages (docs/IPC.md file protocol).
    FS_EP : Akernel_User.Syscalls.U64 := 0;
 
@@ -349,24 +349,33 @@ procedure Init is
       end if;
    end Push_Procfs_Mount;
 
-   --  Push the file server's (handle -> boot-file name) table as
-   --  Op_Set_Name messages, one per boot-file cap it was granted,
-   --  then a zero-handle terminator.
-   procedure Push_FS_Names
-     (Base  : Akernel_User.Syscalls.U64;
-      Count : Akernel_User.Syscalls.U64)
-   is
+   --  Push the file server's boot-file table as Op_Set_Name
+   --  messages, one per boot file, then a zero-handle
+   --  terminator. Since milestone 38b each message TRANSFERS a
+   --  minted copy of the boot-file cap in slot 0 (deleted here
+   --  after the call) — the caps used to ride the spawn grant
+   --  list, but that list caps at 32 entries and 81+ files blew
+   --  past it (spawn failed, "fileserver online" never printed).
+   procedure Push_FS_Names is
       use Akernel_User.Syscalls;
-      J   : U64 := 0;
-      Len : Natural;
+      J      : U64 := 0;
+      Len    : Natural;
+      Minted : U64;
    begin
       for I in 0 .. Natural (Bootinfo.Count) - 1 loop
-         exit when J >= Count;
          if Bootinfo.Entries (I).Kind = Kind_Boot_File then
+            Minted := Cap_Mint
+              (Bootinfo.Entries (I).Handle,
+               Bootinfo.Entries (I).Rights_Mask, 0);
+            if Minted = Syscall_Failed then
+               Debug_Put_Line ("fs name mint failed");
+               return;
+            end if;
+
             Len := Natural (Bootinfo.Entries (I).Name_Length);
-            Message.Label := 0;
+            Message.Label := 0;  --  Files.Op_Set_Name
             Message.Words := (others => 0);
-            Message.Words (0) := Base + J;
+            Message.Words (0) := J + 1;
             Message.Words (1) := U64 (Len);
             for P in 1 .. Len loop
                Message.Words (2 + (P - 1) / 8) :=
@@ -375,16 +384,19 @@ procedure Init is
                      (U64 (Character'Pos (Bootinfo.Entries (I).Name (P))),
                       ((P - 1) mod 8) * 8);
             end loop;
-            Message.Caps := (others => 0);
+            Message.Caps := (0 => Minted, others => 0);
             if IPC_Call (FS_EP) /= IPC_Ok then
                Debug_Put_Line ("fs name push failed");
                return;
+            end if;
+            if Cap_Delete (Minted) /= 0 then
+               Debug_Put_Line ("fs name mint delete failed");
             end if;
             J := J + 1;
          end if;
       end loop;
 
-      Message.Label := 0;
+      Message.Label := 0;  --  Files.Op_Set_Name
       Message.Words := (others => 0);
       Message.Caps := (others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
@@ -409,8 +421,7 @@ procedure Init is
       Is_FS       : Boolean := False;
       Is_Fat32    : Boolean := False;
       Is_Procfs   : Boolean := False;
-      FS_Base     : Akernel_User.Syscalls.U64 := 0;
-      FS_Count    : Akernel_User.Syscalls.U64 := 0;
+      Wants_Names : Boolean := False;
 
       procedure Grant
         (Source_Cap  : Akernel_User.Syscalls.U64;
@@ -541,21 +552,10 @@ procedure Init is
             Is_FS := True;
             Grant (FS_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "boot_files") then
-            --  Every boot-file cap in bootinfo order; the name
-            --  table is pushed to the file server after spawn.
-            FS_Base := Grant_Count + 1;
-            FS_Count := 0;
-            for I in 0 .. Natural (Akernel_User.Syscalls.Bootinfo.Count) - 1 loop
-               if Akernel_User.Syscalls.Bootinfo.Entries (I).Kind =
-                 Akernel_User.Syscalls.Kind_Boot_File
-               then
-                  Grant
-                    (Akernel_User.Syscalls.Bootinfo.Entries (I).Handle,
-                     Akernel_User.Syscalls.Bootinfo.Entries (I).Rights_Mask,
-                     0);
-                  FS_Count := FS_Count + 1;
-               end if;
-            end loop;
+            --  Boot-file caps are no longer spawn-granted (the
+            --  grant list caps at 32); Push_FS_Names transfers a
+            --  minted copy with each Op_Set_Name after spawn.
+            Wants_Names := True;
          else
             Grant (Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length)),
                    Akernel_User.Syscalls.Boot_Cap_Rights
@@ -581,7 +581,10 @@ procedure Init is
             if Vol_Set then
                Push_FS_Mount;
             end if;
-            Push_FS_Names (FS_Base, FS_Count);
+         end if;
+
+         if Wants_Names then
+            Push_FS_Names;
             Akernel_User.Syscalls.Debug_Put_Line ("fs name table pushed");
          end if;
 

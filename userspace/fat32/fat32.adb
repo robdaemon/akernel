@@ -631,6 +631,15 @@ procedure Fat32 is
                Collect_LFN (Base);
             elsif (Attr and 16#08#) /= 0 then
                LFN_Len := 0;  --  volume label
+            elsif B0 = 16#2E#
+              and then (Bounce (Base + 1) = 16#20#
+                        or else (Bounce (Base + 1) = 16#2E#
+                                 and then Bounce (Base + 2) = 16#20#))
+            then
+               --  "." / ".." pseudo-entries (subdirectories only;
+               --  the milestone-32 root walk never met them —
+               --  38b's subdir stress count did).
+               LFN_Len := 0;
             else
                if N = Index then
                   if LFN_Len > 0 then

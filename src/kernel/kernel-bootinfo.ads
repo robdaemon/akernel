@@ -3,17 +3,24 @@ with Interfaces;
 package Kernel.Bootinfo is
    subtype U64 is Interfaces.Unsigned_64;
 
-   --  Bootinfo page (docs/IPC.md): one read-only page mapped into
-   --  init's address space at a fixed VA, listing every cap the
-   --  kernel handed it as (handle, kind, rights mask, name) entries.
-   --  Init discovers its namespace by name instead of hardcoding
-   --  handle numbers. Written by the kernel via the physmap before
-   --  init enters user mode; mapped read-only to userspace.
-   VA         : constant U64 := 16#6FFE_0000#;
-   Magic      : constant U64 := 16#4B41_494E_464F_3031#;  --  "AKINFO01"
-   Max_Name   : constant := 32;
-   Entry_Size : constant := 64;
-   Max_Entries : constant := 63;
+   --  Bootinfo region (docs/IPC.md): read-only pages mapped
+   --  CONTIGUOUSLY into init's address space at a fixed VA,
+   --  listing every cap the kernel handed it as (handle, kind,
+   --  rights mask, name) entries. Init discovers its namespace by
+   --  name instead of hardcoding handle numbers. Written by the
+   --  kernel via the physmap before init enters user mode; mapped
+   --  read-only to userspace. Pages are allocated and mapped on
+   --  demand as entries grow — one page was silently FULL at 63
+   --  entries when the initrd grew past ~60 files (milestone 38b:
+   --  64 generated files pushed device_resource and late program
+   --  images past the end; boot died with "missing
+   --  device_resource"). 8 pages = 511 entries.
+   VA          : constant U64 := 16#6FFE_0000#;
+   Magic       : constant U64 := 16#4B41_494E_464F_3031#;  --  "AKINFO01"
+   Max_Name    : constant := 32;
+   Entry_Size  : constant := 64;
+   Max_Pages   : constant := 8;
+   Max_Entries : constant := (Max_Pages * 4096 - 16) / Entry_Size;
 
    type Status is
      (Ok,

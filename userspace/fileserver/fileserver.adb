@@ -12,8 +12,10 @@ with Fileserver_Tables;
 --  sends Op_Mount (from the manifest's volume directive) binding a
 --  device name (RD0) and volume label (Initrd) plus a
 --  case-sensitivity flag to the boot-file set, then pushes the
---  (handle -> path) table as Op_Set_Name messages; until the table
---  is complete Stat/Open/Read answer Status_Not_Ready.
+--  name table as Op_Set_Name messages, each TRANSFERRING its
+--  boot-file cap in slot 0 (38b: spawn grant lists cap at 32);
+--  until the table is complete Stat/Open/Read answer
+--  Status_Not_Ready.
 --
 --  Wire names are volume-qualified (VOL:path or LABEL:path);
 --  unqualified names are rejected (client-side PATH resolution
@@ -570,11 +572,17 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Add_FS;
 
+   --  Op_Set_Name: words 0..1 = (nonzero sentinel, name length),
+   --  words 2..5 = name; the boot-file cap ARRIVES TRANSFERRED in
+   --  cap slot 0 (milestone 38b — spawn grant lists cap at 32
+   --  entries, far under the 256-file headroom target). The cap
+   --  stays in this table for the file's lifetime — it IS the
+   --  file, not a per-op borrow.
    procedure Handle_Set_Name is
-      Handle : constant U64 := Syscalls.Message.Words (0);
+      Handle : constant U64 := Syscalls.Message.Caps (0);
       Len    : constant Natural := Natural (Syscalls.Message.Words (1));
    begin
-      if Len = 0 or else Len > Max_Name then
+      if Len = 0 or else Len > Max_Name or else Handle = 0 then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
