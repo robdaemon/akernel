@@ -28,7 +28,12 @@ package Kernel.Capabilities is
       Kernel_Object,
       Boot_File_Object,
       Memory_Object,
-      Notification_Object);
+      Notification_Object,
+      --  Admin authority token (milestone 39): empty object,
+      --  existence + Manage = introspection-dump authority
+      --  (cap tables, register snapshots). Added LAST — kind
+      --  position values ride the bootinfo wire format.
+      Admin_Object);
 
    type Rights is record
       Read     : Boolean;

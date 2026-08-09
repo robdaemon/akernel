@@ -74,6 +74,8 @@ package body Arch.Traps is
    Sys_Cap_Mint          : constant U64 := 28;
    Sys_IPC_Send          : constant U64 := 29;
    Sys_Process_Info      : constant U64 := 30;
+   Sys_Cap_Info          : constant U64 := 31;
+   Sys_Thread_Regs       : constant U64 := 32;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1479,6 +1481,110 @@ package body Arch.Traps is
         and then Cap_Info.Rights.Manage;
    end Has_Device_Resource;
 
+   --  Admin introspection authority (milestone 39): the Admin_Object
+   --  cap with Manage, granted down from init ("admin" bootinfo
+   --  entry, manifest token). Capability possession IS the identity
+   --  — the kernel has no user model by design.
+   function Has_Admin_Authority
+     (Current : Kernel.Tasks.Thread_Access;
+      Raw     : U64) return Boolean
+   is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      Cap_Handle : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+   begin
+      Decode_Handle (Raw, Cap_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         return False;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      return Cap_Result = Kernel.Capabilities.Ok
+        and then Cap_Info.Kind = Kernel.Capabilities.Admin_Object
+        and then Cap_Info.Rights.Manage;
+   end Has_Admin_Authority;
+
+   --  Shared buffer validation for the snapshot syscalls: Raw must
+   --  resolve to a writable memory-object cap with Need_Bytes room
+   --  at Offset (8-aligned). On success Cap_Info holds the entry.
+   function Snapshot_Buffer_Ok
+     (Current    : Kernel.Tasks.Thread_Access;
+      Raw        : U64;
+      Offset     : U64;
+      Need_Bytes : U64;
+      Cap_Info   : out Kernel.Capabilities.Cap_Entry) return Boolean
+   is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      Buf_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Total_Bytes  : U64;
+   begin
+      Decode_Handle (Raw, Buf_Handle, Handle_Valid);
+      if not Handle_Valid or else Current = null then
+         return False;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Buf_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Cap_Info.Rights.Write
+      then
+         return False;
+      end if;
+
+      Total_Bytes :=
+        Kernel.Memory.Page_Count (Cap_Info.Object) * Arch.MMU.Page_Size;
+      return Offset mod 8 = 0
+        and then Offset <= Total_Bytes
+        and then Total_Bytes - Offset >= Need_Bytes;
+   end Snapshot_Buffer_Ok;
+
+   --  Per-word physmap writes of a word snapshot into a validated
+   --  memory object (bounds already checked by Snapshot_Buffer_Ok;
+   --  Frame_At always hits).
+   type Snapshot_Word_Array is array (Natural range <>) of U64;
+
+   procedure Write_Snapshot
+     (Obj    : System.Address;
+      Offset : U64;
+      Words  : Snapshot_Word_Array)
+   is
+   begin
+      for I in Words'Range loop
+         declare
+            Byte_Off : constant U64 :=
+              Offset + U64 (I - Words'First) * 8;
+            Frame_PA : constant U64 :=
+              Kernel.Memory.Frame_At
+                (Obj, Byte_Off / Arch.MMU.Page_Size);
+            Cell : U64
+              with Address => System'To_Address
+                (System.Storage_Elements.Integer_Address
+                   (Arch.Phys_To_Virt (Frame_PA)
+                    + (Byte_Off mod Arch.MMU.Page_Size)));
+         begin
+            Cell := Words (I);
+         end;
+      end loop;
+   end Write_Snapshot;
+
    MMIO_Device_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => True,
       Write    => True,
@@ -1811,6 +1917,103 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, 0);
    end Handle_Process_Info;
 
+   --  Sys_Cap_Info (a0 = admin cap, a1 = slot 0..127 or U64'Last
+   --  for self, a2 = cap-table index, a3 = buffer memory-object
+   --  cap, a4 = byte offset): one cap-table slot snapshot into the
+   --  caller's buffer through the physmap. Admin-gated
+   --  (Admin_Object + Manage). Returns 0 ok, 1 no such slot / empty
+   --  cap slot (enumeration miss), U64'Last on rejection.
+   procedure Handle_Cap_Info (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Info : Kernel.Capabilities.Cap_Entry;
+      Words    : Kernel.Processes.Cap_Info_Words;
+      Found    : Boolean;
+      Slot_Arg : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Cap_Arg  : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Offset   : constant U64 := Trap_Frame_Get_A4 (Frame);
+   begin
+      if not Has_Admin_Authority (Current, Trap_Frame_Get_A0 (Frame))
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if not Snapshot_Buffer_Ok
+        (Current, Trap_Frame_Get_A3 (Frame), Offset,
+         U64 (8 * Kernel.Processes.Cap_Info_Word_Count), Cap_Info)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if Slot_Arg = U64'Last then
+         Kernel.Processes.Read_Own_Cap_Info
+           (Current, Cap_Arg, Words, Found);
+      elsif Slot_Arg < U64 (Kernel.Processes.Slot_Count) then
+         Kernel.Processes.Read_Cap_Info
+           (Natural (Slot_Arg), Cap_Arg, Words, Found);
+      else
+         Found := False;
+      end if;
+
+      if not Found then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Write_Snapshot (Cap_Info.Object, Offset, Snapshot_Word_Array (Words));
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_Cap_Info;
+
+   --  Sys_Thread_Regs (a0 = admin cap, a1 = slot 0..127, a2 =
+   --  buffer memory-object cap, a3 = byte offset): saved trap-frame
+   --  snapshot of the slot's thread. BLOCKED threads only — a
+   --  ready/running thread has no stable frame; returns 2 (busy).
+   --  Returns 0 ok, 1 no such slot, U64'Last on rejection.
+   procedure Handle_Thread_Regs (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Info : Kernel.Capabilities.Cap_Entry;
+      Words    : Kernel.Processes.Thread_Reg_Words;
+      Found    : Boolean;
+      Busy     : Boolean;
+      Slot_Arg : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Offset   : constant U64 := Trap_Frame_Get_A3 (Frame);
+   begin
+      if not Has_Admin_Authority (Current, Trap_Frame_Get_A0 (Frame))
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if not Snapshot_Buffer_Ok
+        (Current, Trap_Frame_Get_A2 (Frame), Offset,
+         U64 (8 * Kernel.Processes.Regs_Word_Count), Cap_Info)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if Slot_Arg < U64 (Kernel.Processes.Slot_Count) then
+         Kernel.Processes.Read_Thread_Regs
+           (Natural (Slot_Arg), Words, Found, Busy);
+      else
+         Found := False;
+         Busy  := False;
+      end if;
+
+      if not Found then
+         Trap_Frame_Set_A0 (Frame, 1);
+      elsif Busy then
+         Trap_Frame_Set_A0 (Frame, 2);
+      else
+         Write_Snapshot
+           (Cap_Info.Object, Offset, Snapshot_Word_Array (Words));
+         Trap_Frame_Set_A0 (Frame, 0);
+      end if;
+   end Handle_Thread_Regs;
+
    --  cap_delete: close one of the caller's own cap-table slots,
    --  running the same per-kind cleanup the exit/reap path runs
    --  (object release, endpoint/IRQ/notification thread hooks).
@@ -2041,6 +2244,10 @@ package body Arch.Traps is
          Handle_Cap_Mint (Frame);
       elsif Number = Sys_Process_Info then
          Handle_Process_Info (Frame);
+      elsif Number = Sys_Cap_Info then
+         Handle_Cap_Info (Frame);
+      elsif Number = Sys_Thread_Regs then
+         Handle_Thread_Regs (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

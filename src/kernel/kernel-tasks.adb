@@ -262,6 +262,13 @@ package body Kernel.Tasks is
       return Arch.Context.Valid (TCB.Context);
    end Has_Context;
 
+   procedure Read_Context_Words
+     (TCB   : Thread_Control_Block;
+      Words : out Arch.Context.Context_Word_Array) is
+   begin
+      Arch.Context.Read_Words (TCB.Context, Words);
+   end Read_Context_Words;
+
    function Is_Queued (TCB : Thread_Control_Block) return Boolean is
    begin
       return TCB.Queued;

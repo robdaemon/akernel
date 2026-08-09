@@ -126,6 +126,13 @@ package Kernel.Tasks is
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean;
 
+   --  Snapshot of the saved frame for introspection
+   --  (Sys_Thread_Regs); meaningful only while the thread is
+   --  blocked (a running thread's live registers are not here).
+   procedure Read_Context_Words
+     (TCB   : Thread_Control_Block;
+      Words : out Arch.Context.Context_Word_Array);
+
    function Is_Queued (TCB : Thread_Control_Block) return Boolean;
 
    procedure Set_Queued

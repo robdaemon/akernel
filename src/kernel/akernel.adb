@@ -135,6 +135,27 @@ procedure Akernel is
    Device_Resource_Object : aliased Kernel.Objects.Object_Header :=
      (Count => Kernel.Objects.Pinned_Refcount);
 
+   --  Admin authority token for the introspection-dump syscalls
+   --  (cap_info / thread_regs, milestone 39): init holds the only
+   --  Admin_Object cap, listed in bootinfo as "admin". Empty
+   --  pinned object; only kind + Manage are checked. Transfer is
+   --  set so init (and a future Elevate-style daemon) can
+   --  delegate by mint.
+   Admin_Resource_Object : aliased Kernel.Objects.Object_Header :=
+     (Count => Kernel.Objects.Pinned_Refcount);
+
+   Admin_Resource_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => False,
+      Write    => False,
+      Execute  => False,
+      Map      => False,
+      Send     => False,
+      Receive  => False,
+      Wait     => False,
+      Ack      => False,
+      Transfer => True,
+      Manage   => True);
+
    Device_Resource_Rights : constant Kernel.Capabilities.Rights :=
      (Read     => False,
       Write    => False,
@@ -782,6 +803,26 @@ begin
                   Kernel.Capabilities.Kernel_Object,
                   Device_Resource_Rights,
                   "device_resource");
+            end if;
+
+            --  Admin introspection authority (cap_info /
+            --  thread_regs) at the next handle.
+            if Result = Kernel.Capabilities.Ok then
+               Kernel.Tasks.Insert_Cap_At
+                 (TCB    => Init_Task,
+                  Cap    => Kernel.Capabilities.Handle
+                    (Kernel.Boot_Files.File_Count + 2),
+                  Kind   => Kernel.Capabilities.Admin_Object,
+                  Object => Admin_Resource_Object'Address,
+                  Rights => Admin_Resource_Rights,
+                  Badge  => 0,
+                  Result => Result);
+               Add_Bootinfo
+                 (Kernel.Capabilities.U64
+                    (Kernel.Boot_Files.File_Count + 2),
+                  Kernel.Capabilities.Admin_Object,
+                  Admin_Resource_Rights,
+                  "admin");
             end if;
 
             if not Bootinfo_Broken

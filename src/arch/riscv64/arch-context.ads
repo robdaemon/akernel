@@ -6,6 +6,17 @@ package Arch.Context is
 
    type Thread_Context is private;
 
+   --  Snapshot of a blocked thread's saved frame (milestone 39
+   --  introspection): words 0..30 = x1..x31, 31 = sepc,
+   --  32 = satp, 33 = pad.
+   Context_Word_Count : constant := 34;
+   type Context_Word_Array is array
+     (Natural range 0 .. Context_Word_Count - 1) of U64;
+
+   procedure Read_Words
+     (Context : Thread_Context;
+      Words   : out Context_Word_Array);
+
    procedure Initialize (Context : out Thread_Context);
 
    procedure Initialize_User

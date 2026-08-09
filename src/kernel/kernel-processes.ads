@@ -77,4 +77,42 @@ package Kernel.Processes is
    procedure Read_Own_Process_Info
      (Thread : Kernel.Tasks.Thread_Access;
       Words  : out Process_Info_Words);
+
+   --  Sys_Cap_Info record (milestone 39): one cap-table slot.
+   --    0 handle, 1 object-kind position, 2 rights mask (To_Mask
+   --    encoding), 3 object address, 4 badge, 5 valid (0/1),
+   --    6..7 zero
+   Cap_Info_Word_Count : constant := 8;
+   type Cap_Info_Words is array (0 .. Cap_Info_Word_Count - 1) of U64;
+
+   --  Snapshot cap Cap_Index of slot Slot; Found is False for an
+   --  unused process slot, an out-of-range index, or an empty
+   --  cap-table slot (sparse by-index walk, Op_ReadDir idiom).
+   procedure Read_Cap_Info
+     (Slot      : Natural;
+      Cap_Index : U64;
+      Words     : out Cap_Info_Words;
+      Found     : out Boolean);
+
+   procedure Read_Own_Cap_Info
+     (Thread    : Kernel.Tasks.Thread_Access;
+      Cap_Index : U64;
+      Words     : out Cap_Info_Words;
+      Found     : out Boolean);
+
+   --  Sys_Thread_Regs record (milestone 39): saved trap frame.
+   --    0..30 = x1..x31, 31 = sepc, 32 = satp, 33 = thread-state
+   --    position, 34 = process id, 35..39 zero
+   Regs_Word_Count : constant := 40;
+   type Thread_Reg_Words is array (0 .. Regs_Word_Count - 1) of U64;
+
+   --  Snapshot slot Slot's thread. Found is False for an unused
+   --  slot. Busy is True (and Words zero) when the thread is ready
+   --  or running — its live registers are not in the saved frame;
+   --  there is deliberately no cross-hart stop-the-world.
+   procedure Read_Thread_Regs
+     (Slot  : Natural;
+      Words : out Thread_Reg_Words;
+      Found : out Boolean;
+      Busy  : out Boolean);
 end Kernel.Processes;

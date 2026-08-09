@@ -1247,6 +1247,58 @@ Next candidates (order open):
     - QMP "info registers" mid-hang names the
       spinning process/pc when the UART goes quiet.
 
+    MILESTONE 39 (IN PROGRESS) — admin-gated
+    introspection dumps (caps + registers). Locked
+    design:
+    - No user model in the kernel, ever: authority =
+      holding a dedicated ADMIN_OBJECT cap kind (empty
+      object, existence only). Kernel mints one at boot
+      into init's bootinfo ("admin"); init is root by
+      construction. A future user/login model = which
+      process init delegates to; zero kernel changes.
+    - Gate: Kind = Admin_Object + Rights.Manage.
+      Sys_Process_Info (37a) keeps its device_resource
+      gate — harmless metadata, already shipped. The
+      dumps (cap tables, registers) are the sensitive
+      ones; kernel addresses in dumps are fine (admin
+      is omnipotent by definition).
+    - Sys_Cap_Info = 31: (admin cap, slot or U64'Last
+      self, cap index, buffer memobj, offset) ->
+      64-byte record (handle, kind, rights, object PA,
+      badge, valid); sparse by-index walk over the
+      16384-handle space, Not_Found on empty slots.
+    - Sys_Thread_Regs = 32: (admin cap, slot, thread
+      index, buffer memobj, offset) -> 256-byte
+      trap-frame snapshot (31 GPRs + sepc +
+      sstatus/scause). BLOCKED threads only — a running
+      thread has no stable frame; Busy status, no
+      cross-hart stop-the-world.
+    - Manifest token `admin`; holders: procfs
+      (renders Proc:<pid>/caps and <pid>/regs), fuzz
+      (tests).
+    - Tests: fuzz walks own caps, count matches
+      cap_count from process_info (two syscalls
+      cross-checked); reg dump of a blocked teardown
+      peer (sepc in text range, sp in stack window);
+      denials: no cap / minted-without-Manage /
+      wrong-kind -> status 1.
+    - FOLLOW-UP (userspace-only, after 39): elevation
+      = System/Elevated daemon holds the admin cap;
+      Sys:C/Elevate is a dumb client that calls it
+      ("Elevate ShowCaps 7"). Elevated applies policy
+      (today: allow + log; later: Prefs/Sudoers,
+      console confirmation, session-badge checks —
+      kernel badges authenticate the caller for free),
+      stages+spawns the target with admin in ITS grant
+      list (memstage pattern), replies with exit
+      status. The admin cap NEVER lands in the
+      client's namespace; spawner pid shows the
+      elevation in Proc: tree. Hygiene: Elevated mints
+      child copies WITHOUT Transfer so children can't
+      re-delegate; Transfer stays on init's bootinfo
+      copy (and Elevated's, for minting). Revocation =
+      kill Elevated / stop delegating.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

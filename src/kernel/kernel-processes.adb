@@ -2,6 +2,7 @@ with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
 with Arch;
+with Arch.Context;
 with Arch.MMU;
 with Kernel.ELF;
 with Kernel.Memory;
@@ -752,5 +753,113 @@ package body Kernel.Processes is
         (Kernel.Tasks.Owning_Process (Thread.all).all,
          Thread.all, Words);
    end Read_Own_Process_Info;
+
+   procedure Fill_Cap_Info
+     (TCB       : Kernel.Tasks.Thread_Control_Block;
+      Cap_Index : U64;
+      Words     : out Cap_Info_Words;
+      Found     : out Boolean)
+   is
+      use type Kernel.Capabilities.Status;
+      Result : Kernel.Capabilities.Status;
+      Ent    : Kernel.Capabilities.Cap_Entry;
+   begin
+      Words := (others => 0);
+      Found := False;
+      if Cap_Index = 0
+        or else Cap_Index >= U64 (Kernel.Capabilities.Max_Caps)
+      then
+         return;
+      end if;
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => TCB,
+         Cap       => Kernel.Capabilities.Handle (Cap_Index),
+         Result    => Result,
+         Out_Entry => Ent);
+      if Result /= Kernel.Capabilities.Ok
+        or else not Ent.Valid
+      then
+         return;
+      end if;
+      Words :=
+        (0 => Cap_Index,
+         1 => U64 (Kernel.Capabilities.Object_Kind'Pos (Ent.Kind)),
+         2 => Kernel.Capabilities.To_Mask (Ent.Rights),
+         3 => U64 (System.Storage_Elements.To_Integer (Ent.Object)),
+         4 => Ent.Badge,
+         5 => 1,
+         others => 0);
+      Found := True;
+   end Fill_Cap_Info;
+
+   procedure Read_Cap_Info
+     (Slot      : Natural;
+      Cap_Index : U64;
+      Words     : out Cap_Info_Words;
+      Found     : out Boolean)
+   is
+   begin
+      Words := (others => 0);
+      Found := False;
+      if Slot < Max_Process_Slots
+        and then Used (Process_Index (Slot))
+      then
+         Fill_Cap_Info
+           (Threads (Process_Index (Slot)), Cap_Index, Words, Found);
+      end if;
+   end Read_Cap_Info;
+
+   procedure Read_Own_Cap_Info
+     (Thread    : Kernel.Tasks.Thread_Access;
+      Cap_Index : U64;
+      Words     : out Cap_Info_Words;
+      Found     : out Boolean)
+   is
+   begin
+      Words := (others => 0);
+      Found := False;
+      if Thread /= null then
+         Fill_Cap_Info (Thread.all, Cap_Index, Words, Found);
+      end if;
+   end Read_Own_Cap_Info;
+
+   procedure Read_Thread_Regs
+     (Slot  : Natural;
+      Words : out Thread_Reg_Words;
+      Found : out Boolean;
+      Busy  : out Boolean)
+   is
+      use type Kernel.Tasks.Thread_State;
+      Frame : Arch.Context.Context_Word_Array;
+      State : Kernel.Tasks.Thread_State;
+   begin
+      Words := (others => 0);
+      Found := False;
+      Busy  := False;
+      if Slot >= Max_Process_Slots
+        or else not Used (Process_Index (Slot))
+      then
+         return;
+      end if;
+      Found := True;
+      State := Kernel.Tasks.State (Threads (Process_Index (Slot)));
+      if State = Kernel.Tasks.Ready
+        or else State = Kernel.Tasks.Running
+        or else not Kernel.Tasks.Has_Context
+          (Threads (Process_Index (Slot)))
+      then
+         --  Live registers are not in the saved frame.
+         Busy := True;
+         return;
+      end if;
+      Kernel.Tasks.Read_Context_Words
+        (Threads (Process_Index (Slot)), Frame);
+      for I in Frame'Range loop
+         Words (I) := Frame (I);
+      end loop;
+      Words (33) := U64 (Kernel.Tasks.Thread_State'Pos (State));
+      Words (34) :=
+        U64 (Kernel.Tasks.Process_Id_Of (Processes (Process_Index (Slot))));
+   end Read_Thread_Regs;
 
 end Kernel.Processes;

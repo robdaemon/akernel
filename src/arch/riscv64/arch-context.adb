@@ -9,6 +9,13 @@ package body Arch.Context is
       Context : System.Address)
      with Import, Convention => C, External_Name => "trap_frame_load_context";
 
+   procedure Read_Words
+     (Context : Thread_Context;
+      Words   : out Context_Word_Array) is
+   begin
+      Words := Context_Word_Array (Context.Trap_Frame);
+   end Read_Words;
+
    procedure Initialize (Context : out Thread_Context) is
    begin
       Context.Trap_Frame := (others => 0);
