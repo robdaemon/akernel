@@ -417,6 +417,7 @@ begin
       Big_Buf       : array (0 .. 511) of Interfaces.Unsigned_8;
       Size          : U64 := 0;
       Count         : U64 := 0;
+      Match_U       : U64 := 0;
       Status        : U64;
       Tries         : Natural := 0;
       Match         : Boolean;
@@ -1083,6 +1084,139 @@ begin
       Status := Akernel_User.Files.Stat ("BD0:DeleteLongName.dat", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat lfn delete gone");
+
+      --  41a: rename/move + volume info. Idempotent across
+      --  reused images: the prelude drops leftover RENTEST
+      --  state from a prior boot (end state below leaves
+      --  RENTEST/MOVED/C.TXT behind on purpose).
+      Status := Akernel_User.Files.Delete ("BD0:RENTEST/MOVED/C.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:RENTEST/SUB/C.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:RENTEST/B.TXT");
+      Status := Akernel_User.Files.Delete ("BD0:RENTEST/A.TXT");
+      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST/MOVED");
+      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST/SUB");
+      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST");
+
+      Status := Akernel_User.Files.Mkdir ("BD0:RENTEST");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rename mkdir ok");
+
+      declare
+         Text : constant String := "AKRENAME";
+      begin
+         for I in 0 .. 7 loop
+            Buf (I) :=
+              Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Status := Akernel_User.Files.Write
+        ("BD0:RENTEST/A.TXT", 0, Buf'Address, 8, Count);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Count = 8,
+             "fat rename setup write ok");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST/A.TXT", "BD0:RENTEST/B.TXT");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rename ok");
+
+      Status := Akernel_User.Files.Stat ("BD0:RENTEST/A.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat rename old gone");
+
+      for I in 0 .. 7 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("BD0:RENTEST/B.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      declare
+         Text : constant String := "AKRENAME";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat rename readback ok");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST/B.TXT", "BD0:RENTEST/B.TXT");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat rename exists rejected");
+
+      Status := Akernel_User.Files.Mkdir ("BD0:RENTEST/SUB");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rename subdir ok");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST/B.TXT", "BD0:RENTEST/SUB/C.TXT");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rename move ok");
+
+      Status := Akernel_User.Files.Stat ("BD0:RENTEST/B.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Not_Found,
+             "fat rename move old gone");
+
+      for I in 0 .. 7 loop
+         Buf (I) := 0;
+      end loop;
+      Status := Akernel_User.Files.Read
+        ("BD0:RENTEST/SUB/C.TXT", 0, Buf'Address, 64, Count);
+      Match := Status = Akernel_User.Files.Status_Ok
+        and then Count = 8;
+      declare
+         Text : constant String := "AKRENAME";
+      begin
+         for I in 0 .. 7 loop
+            Match := Match
+              and then Buf (I) =
+                Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+         end loop;
+      end;
+      Check (Match, "fat rename move readback ok");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST/SUB", "BD0:RENTEST/MOVED");
+      Check (Status = Akernel_User.Files.Status_Ok,
+             "fat rename dir ok");
+
+      Status := Akernel_User.Files.Stat ("BD0:RENTEST/MOVED/C.TXT", Size);
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 8,
+             "fat rename dir keeps contents");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST", "BD0:RENTEST/MOVED/X");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat rename subtree rejected");
+
+      Status := Akernel_User.Files.Rename
+        ("BD0:RENTEST/MOVED/C.TXT", "Initrd:RENTEST-X.TXT");
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "fat rename cross-volume rejected");
+
+      declare
+         Total   : U64;
+         Free    : U64;
+         Cluster : U64;
+      begin
+         Status := Akernel_User.Files.Volume_Info
+           ("BD0:", Total, Free, Cluster);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Total > 0
+                and then Cluster > 0
+                and then Free /= U64'Last
+                and then Free <= Total,
+                "fat volume info ok");
+      end;
+
+      Status := Akernel_User.Files.Volume_Info
+        ("Initrd:System/Init", Size, Count, Match_U);
+      Check (Status = Akernel_User.Files.Status_Bad_Args,
+             "boot volume info rejected");
 
       --  38b: 64-file create/walk/count/delete proof on BD0 --
       --  FAT32 volumes are disk-bound; no VFS or driver table
@@ -2230,6 +2364,106 @@ begin
          end loop;
          Check (X_Done, "exit-code peer reaped");
          Check (X_Code = 42, "exit code rides reap a1");
+      end;
+
+      --  C: commands end-to-end (milestone 41a): Sys:C/Info is
+      --  staged off the disk volume and spawned under the
+      --  uniform program ABI (console/fs/args grants) exactly as
+      --  the shell does it; its no-arg report drives
+      --  Op_Volume_Info and the exit code must come back RC_Ok.
+      declare
+         CI_Stage_VA : constant U64 := 16#5580_0000#;
+         CI_Args_VA  : constant U64 := 16#5600_0000#;
+         CI_Size   : U64;
+         CI_Mem    : U64;
+         CI_Args_Mem : U64;
+         CI_Proc   : U64;
+         CI_Code   : U64 := 0;
+         CI_Done   : Boolean := False;
+         CI_Off    : U64;
+         CI_Chunk  : U64;
+         CI_Count  : U64;
+         CI_Staged : Boolean := True;
+         CI_Args   : String (1 .. 1)
+           with Volatile, Address => System'To_Address
+             (Integer_Address (CI_Args_VA));
+      begin
+         Status := Akernel_User.Files.Stat ("Sys:C/Info", CI_Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then CI_Size > 0,
+                "info command on Sys:C");
+
+         CI_Mem := Akernel_User.Syscalls.Mem_Alloc
+           ((CI_Size + 4095) / 4096);
+         Check (CI_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+                "info staging object allocated");
+         Check (Akernel_User.Syscalls.Mem_Map
+                  (Address_Space =>
+                     Akernel_User.Syscalls.Address_Space_Cap,
+                   Cap           => CI_Mem,
+                   VA            => CI_Stage_VA,
+                   Offset        => 0,
+                   Length        => ((CI_Size + 4095) / 4096) * 4096,
+                   Flags         => 3) = 0,
+                "info staging object mapped");
+
+         Status := Akernel_User.Files.Open ("Sys:C/Info", CI_Size);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "info open ok");
+         CI_Off := 0;
+         while CI_Off < CI_Size loop
+            CI_Chunk := U64'Min (CI_Size - CI_Off, 32768);
+            Status := Akernel_User.Files.Read
+              ("Sys:C/Info", CI_Off,
+               System'To_Address (Integer_Address (CI_Stage_VA + CI_Off)),
+               CI_Chunk, CI_Count);
+            CI_Staged := CI_Staged
+              and then Status = Akernel_User.Files.Status_Ok
+              and then CI_Count = CI_Chunk;
+            CI_Off := CI_Off + CI_Chunk;
+         end loop;
+         Check (CI_Staged, "info ELF staged into memory object");
+
+         CI_Args_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
+         Check (CI_Args_Mem /= Akernel_User.Syscalls.Syscall_Failed
+                and then Akernel_User.Syscalls.Mem_Map
+                  (Akernel_User.Syscalls.Address_Space_Cap,
+                   CI_Args_Mem, CI_Args_VA, 0, 4096, 3) = 0,
+                "info args object mapped");
+         CI_Args (1) := Character'Val (0);
+
+         Akernel_User.Syscalls.Set_Grant
+           (0, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, Akernel_User.Files.Endpoint,
+            Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (2, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, CI_Args_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (CI_Mem, 4, CI_Proc);
+         Check (Status = 0 and then CI_Proc /= 0,
+                "info command spawned");
+
+         --  Batched yields: Info prints ~6 console lines (slow
+         --  stream RPCs) and a bare yield-per-try poll outruns
+         --  it under SMP4 (the echo2 reap burn, milestone 39).
+         for Try in 1 .. 512 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (CI_Proc, CI_Code);
+            if Status = 0 then
+               CI_Done := True;
+               exit;
+            end if;
+            for Y in 1 .. 32 loop
+               Ignore := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+         end loop;
+         Check (CI_Done, "info command reaped");
+         Check (CI_Done and then CI_Code = 0,
+                "info command exits RC_Ok");
       end;
 
       --  Plain send (milestone 35): the rendezvous ends at

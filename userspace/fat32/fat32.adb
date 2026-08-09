@@ -49,6 +49,8 @@ procedure Fat32 is
    Op_Rmdir    : constant U64 := 11;
    Op_Sync     : constant U64 := 12;
    Op_ReadDir  : constant U64 := 13;
+   Op_Rename   : constant U64 := 16;
+   Op_Volume_Info : constant U64 := 17;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -82,6 +84,7 @@ procedure Fat32 is
    Num_Fats     : U64 := 0;
    Data_Start   : U64 := 0;  --  first data sector (cluster 2)
    Root_Clus    : U64 := 0;
+   Total_Sectors : U64 := 0;  --  BPB 32-bit sector count (info op)
    Next_Free    : U64 := 2;  --  allocation scan hint
 
    function LE16 (Off : U64) return U64 is
@@ -1186,6 +1189,111 @@ procedure Fat32 is
       return True;
    end Create_Entry;
 
+   --  Create a dirent for an object that ALREADY has a cluster
+   --  chain (Op_Rename, milestone 41): same short/LFN-run
+   --  machinery as Create_Entry but no allocation — cluster,
+   --  size and attributes are preserved from the old entry and
+   --  no "."/".." are initialized (the directory keeps its own).
+   function Create_Link_Entry
+     (Parent_Clus : U64;
+      Comp        : String;
+      Is_Dir      : Boolean;
+      Clus        : U64;
+      Size        : U64;
+      Attr        : Interfaces.Unsigned_8) return Boolean
+   is
+      Short   : Byte_Array (0 .. 10);
+      N_LFN   : Natural := 0;
+      Run_C   : U64;
+      Run_E   : U64;
+      CC      : U64;
+      EE      : U64;
+      Sec     : U64;
+      Off     : U64;
+      Check   : Interfaces.Unsigned_8;
+   begin
+      if not Make_Short_Name (Comp, Short) then
+         if not Valid_LFN (Comp) then
+            return False;
+         end if;
+         N_LFN := (Comp'Length + 12) / 13;
+         if not Make_Alias (Parent_Clus, Comp, Short) then
+            return False;
+         end if;
+      end if;
+
+      if not Find_Free_Dirents (Parent_Clus, U64 (N_LFN) + 1,
+                                Run_C, Run_E)
+      then
+         return False;
+      end if;
+
+      Check := LFN_Checksum (Short);
+      CC := Run_C;
+      EE := Run_E;
+      for K in 0 .. N_LFN loop
+         Sec := Cluster_Sector (CC) + EE / 16;
+         Off := (EE mod 16) * 32;
+         if not Meta_Read (Sec) then
+            return False;
+         end if;
+
+         if K < N_LFN then
+            Put_LFN_Entry (Off, N_LFN - K, K = 0, Comp, Check);
+         else
+            for I in 0 .. 31 loop
+               Bounce (Off + U64 (I)) := 0;
+            end loop;
+            for I in 0 .. 10 loop
+               Bounce (Off + U64 (I)) := Short (U64 (I));
+            end loop;
+            Bounce (Off + 11) := Attr;
+            Put16 (Off + 14, Fixed_Time);
+            Put16 (Off + 16, Fixed_Date);
+            Put16 (Off + 18, Fixed_Date);
+            Put16 (Off + 22, Fixed_Time);
+            Put16 (Off + 24, Fixed_Date);
+            Put16 (Off + 20, Clus / 16#1_0000#);
+            Put16 (Off + 26, Clus mod 16#1_0000#);
+            Put32 (Off + 28, Size);
+         end if;
+
+         if not Meta_Write (Sec, 1) then
+            return False;
+         end if;
+
+         if K < N_LFN then
+            EE := EE + 1;
+            if EE >= Sec_Per_Clus * 16 then
+               EE := 0;
+               CC := Next_Cluster (CC);
+            end if;
+         end if;
+      end loop;
+      return True;
+   end Create_Link_Entry;
+
+   --  Point the ".." entry of a moved directory at its new
+   --  parent (Op_Rename): entry index 1 of the first cluster,
+   --  root parent conventionally recorded as cluster 0.
+   function Fix_Dotdot (Dir_Clus : U64; Parent_Clus : U64) return Boolean
+   is
+      Parent_Dot : constant U64 :=
+        (if Parent_Clus = Root_Clus then 0 else Parent_Clus);
+   begin
+      if not Meta_Read (Cluster_Sector (Dir_Clus)) then
+         return False;
+      end if;
+      if Bounce (32) /= Character'Pos ('.')
+        or else Bounce (33) /= Character'Pos ('.')
+      then
+         return False;  --  not a well-formed directory
+      end if;
+      Put16 (32 + 20, Parent_Dot / 16#1_0000#);
+      Put16 (32 + 26, Parent_Dot mod 16#1_0000#);
+      return Meta_Write (Cluster_Sector (Dir_Clus), 1);
+   end Fix_Dotdot;
+
    --  Free every cluster of the chain at Start (raw zero entries —
    --  Set_Fat_Entry's preserve-bits mask would not mark them
    --  free), FSInfo free count / next-free and the allocation hint
@@ -1991,6 +2099,224 @@ procedure Fat32 is
       end;
    end Handle_Rmdir;
 
+   ------------------------------------------------------------------
+   --  Op_Rename (milestone 41): FROM path in words 0..5 like the
+   --  other path ops; the VFS already stripped both volume
+   --  prefixes and placed the bare TO path NUL-terminated in the
+   --  buffer (cap slot 0). Rename/move within the volume: the new
+   --  dirent preserves cluster, size and attributes; directories
+   --  get ".." pointed at the new parent; the old dirent run is
+   --  deleted WITHOUT freeing the chain.
+   ------------------------------------------------------------------
+
+   procedure Handle_Rename is
+      Buf     : constant U64 := Syscalls.Message.Caps (0);
+      Entry_Clus  : U64;
+      Entry_Size  : U64;
+      Is_Dir      : Boolean;
+      Dir_Sector  : U64;
+      Dir_Off     : U64;
+      Parent      : U64;
+      Parent_Last : U64;
+      Comp_First  : Natural;
+      Found_Clus  : U64;
+      Found_Ent   : U64;
+      Run_Clus    : U64;
+      Run_Ent     : U64;
+      T_Entry_Clus  : U64;
+      T_Entry_Size  : U64;
+      T_Is_Dir      : Boolean;
+      T_Dir_Sector  : U64;
+      T_Dir_Off     : U64;
+      T_Parent      : U64;
+      T_Parent_Last : U64;
+      T_Comp_First  : Natural;
+      T_Found_Clus  : U64;
+      T_Found_Ent   : U64;
+      T_Run_Clus    : U64;
+      T_Run_Ent     : U64;
+      Attr    : Interfaces.Unsigned_8 := 0;
+      Status  : U64 := Status_Ok;
+      Mapped  : Boolean := False;
+      Win     : Byte_Array (0 .. 47)
+        with Address => To_Address (Integer_Address (Buf_Win_VA));
+
+      procedure Process is
+      begin
+         if not Fat_Ok then
+            Status := Status_Not_Found;
+            return;
+         end if;
+
+         if Buf = 0 then
+            Status := Status_Bad_Args;
+            return;
+         end if;
+
+         declare
+            Path : constant String := Path_Of (0);
+            To   : String (1 .. 32);
+            To_Len : Natural := 0;
+         begin
+            if Path'Length = 0 then
+               Status := Status_Bad_Args;
+               return;
+            end if;
+
+            if not Map_Buf (Buf) then
+               Status := Status_Not_Found;
+               return;
+            end if;
+            Mapped := True;
+            for I in U64 (0) .. 31 loop
+               exit when Win (I) = 0;
+               To_Len := To_Len + 1;
+               To (To_Len) := Character'Val (Natural (Win (I)));
+            end loop;
+            if Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+            then
+               Akernel_User.Console.Put_Line
+                 ("fat32: buffer unmap failed");
+            end if;
+            Mapped := False;
+
+            if To_Len = 0 then
+               Status := Status_Bad_Args;
+               return;
+            end if;
+
+            --  Ancestor guard (case-folded): moving a directory
+            --  into its own subtree is rejected.
+            if To_Len > Path'Length
+              and then To (Path'Length + 1) = '/'
+            then
+               declare
+                  Match : Boolean := True;
+               begin
+                  for I in 1 .. Path'Length loop
+                     if Upper (To (I)) /= Upper (Path (I)) then
+                        Match := False;
+                        exit;
+                     end if;
+                  end loop;
+                  if Match then
+                     Status := Status_Bad_Args;
+                     return;
+                  end if;
+               end;
+            end if;
+
+            if not Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                                 Dir_Sector, Dir_Off, Parent,
+                                 Parent_Last, Comp_First, Found_Clus,
+                                 Found_Ent, Run_Clus, Run_Ent)
+            then
+               Status := Status_Not_Found;
+               return;
+            end if;
+
+            --  Preserve the attribute byte from the old entry.
+            if not Meta_Read (Dir_Sector) then
+               Status := Status_Not_Found;
+               return;
+            end if;
+            Attr := Bounce (Dir_Off + 11);
+
+            if Resolve_Path (To (1 .. To_Len), T_Entry_Clus,
+                             T_Entry_Size, T_Is_Dir, T_Dir_Sector,
+                             T_Dir_Off, T_Parent, T_Parent_Last,
+                             T_Comp_First, T_Found_Clus, T_Found_Ent,
+                             T_Run_Clus, T_Run_Ent)
+            then
+               Status := Status_Bad_Args;  --  TO exists
+               return;
+            end if;
+
+            if T_Parent = 0 then
+               Status := Status_Not_Found;  --  bad intermediate
+               return;
+            end if;
+
+            if not Create_Link_Entry
+              (T_Parent, To (T_Comp_First .. To_Len), Is_Dir,
+               Entry_Clus, Entry_Size, Attr)
+            then
+               Status := Status_Bad_Args;  --  invalid component
+               return;
+            end if;
+
+            if Is_Dir
+              and then not Fix_Dotdot (Entry_Clus, T_Parent)
+            then
+               Status := Status_Not_Found;
+               return;
+            end if;
+
+            if Delete_Dirent (Run_Clus, Run_Ent, Found_Clus, Found_Ent)
+            then
+               Status := Status_Ok;
+            else
+               Status := Status_Not_Found;
+            end if;
+         end;
+      end Process;
+   begin
+      Process;
+
+      if Mapped
+        and then Syscalls.Mem_Unmap
+          (Address_Space => Syscalls.Address_Space_Cap,
+           VA            => Buf_Win_VA,
+           Length        => Buf_Bytes) /= 0
+      then
+         Akernel_User.Console.Put_Line ("fat32: buffer unmap failed");
+      end if;
+      if Buf /= 0
+        and then Syscalls.Cap_Delete (Buf) /= 0
+      then
+         Akernel_User.Console.Put_Line ("fat32: buffer cap delete failed");
+      end if;
+
+      Reply2 (Status, 0);
+   end Handle_Rename;
+
+   ------------------------------------------------------------------
+   --  Op_Volume_Info (milestone 41): (status, total bytes, free
+   --  bytes, bytes per cluster). Free rides the FSInfo count read
+   --  fresh from sector 1; U64'Last = unknown.
+   ------------------------------------------------------------------
+
+   procedure Handle_Volume_Info is
+      Total_Clus : U64;
+      Free_Clus  : U64 := U64'Last;
+   begin
+      if not Fat_Ok or else Total_Sectors <= Data_Start then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      Total_Clus := (Total_Sectors - Data_Start) / Sec_Per_Clus;
+
+      --  FSInfo (sector 1): free count at 488; 0xFFFFFFFF = unknown.
+      if Meta_Read (1) and then LE32 (488) /= 16#FFFF_FFFF# then
+         Free_Clus := LE32 (488);
+      end if;
+
+      Syscalls.Message.Words (0) := Status_Ok;
+      Syscalls.Message.Words (1) := Total_Clus * Clus_Bytes;
+      Syscalls.Message.Words (2) :=
+        (if Free_Clus = U64'Last then U64'Last
+         else Free_Clus * Clus_Bytes);
+      Syscalls.Message.Words (3) := Clus_Bytes;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+         Fail ("fat32 reply failed");
+      end if;
+   end Handle_Volume_Info;
+
 begin
    Akernel_User.Console.Set_Endpoint (Console_Cap);
    Akernel_User.Console.Put_Line ("fat32 starting");
@@ -2040,6 +2366,7 @@ begin
       Fat_Sectors := LE32 (36);
       Data_Start := Fat_Start + Num_Fats * Fat_Sectors;
       Root_Clus := LE32 (44);
+      Total_Sectors := LE32 (32);
       Fat_Ok := Num_Fats >= 1
         and then Fat_Sectors > 0
         and then Root_Clus >= 2;
@@ -2074,6 +2401,10 @@ begin
          Handle_Mkdir;
       elsif Syscalls.Message.Label = Op_Rmdir then
          Handle_Rmdir;
+      elsif Syscalls.Message.Label = Op_Rename then
+         Handle_Rename;
+      elsif Syscalls.Message.Label = Op_Volume_Info then
+         Handle_Volume_Info;
       elsif Syscalls.Message.Label = Op_Sync then
          --  Write-through cache: nothing dirty to flush (the hook
          --  exists for future write-back or device flush).

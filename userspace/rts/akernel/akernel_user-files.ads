@@ -96,6 +96,31 @@ package Akernel_User.Files is
    Op_ReadDir  : constant U64 := 13;
    Op_Assign   : constant U64 := 14;
    Op_Assign_List : constant U64 := 15;
+   Op_Rename   : constant U64 := 16;
+   Op_Volume_Info : constant U64 := 17;
+   --    Op_Rename = 16  words 0..5 = FROM path[48]; cap slot 0 =
+   --                      an 8-page buffer memobj whose first
+   --                      bytes hold the NUL-terminated TO path
+   --                      (volume-qualified). The VFS resolves
+   --                      BOTH volumes: they must match (cross-
+   --                      volume rename rejected Bad_Args), then
+   --                      rewrites the buffer with the volume-
+   --                      stripped TO path and forwards verbatim.
+   --                      The fs driver renames/moves within the
+   --                      volume: new dirent preserving cluster,
+   --                      size and attributes; directories get
+   --                      their ".." entry pointed at the new
+   --                      parent; the old dirent run is deleted
+   --                      WITHOUT freeing the chain. TO must not
+   --                      exist; moving a directory into its own
+   --                      subtree is rejected Bad_Args.
+   --    Op_Volume_Info = 17  words 0..5 = any volume-qualified
+   --                      path (only the volume matters) ->
+   --                      (status, total bytes, free bytes,
+   --                      bytes per cluster). Free = U64'Last
+   --                      when the filesystem does not know
+   --                      (FAT FSInfo count unavailable).
+   --                      Boot-file volumes answer Bad_Args.
    --    Op_Assign = 14  words 0..1 = name[16] (no colon), words
    --                      2..5 = target[32]; empty target removes
    --                      -> (status, 0). Session path aliases,
@@ -183,6 +208,20 @@ package Akernel_User.Files is
    --  directory, Rmdir removes an empty one. Boot-file and raw
    --  block volumes answer Status_Bad_Args.
    function Delete (Name : String) return U64;
+
+   --  Rename/move within one volume (milestone 41): TO must not
+   --  exist; both names resolve to the same volume. Directories
+   --  move with their contents (".." fixed up). Allocates the
+   --  shared client buffer on first use like Open.
+   function Rename (From, To : String) return U64;
+
+   --  Volume capacity (milestone 41): Name picks the volume;
+   --  Free = U64'Last when the filesystem cannot report it.
+   function Volume_Info
+     (Name    : String;
+      Total   : out U64;
+      Free    : out U64;
+      Cluster : out U64) return U64;
 
    --  Assigns (milestone 36): set (Target nonempty) or remove
    --  (Target empty); Name without its colon. List enumerates

@@ -1,0 +1,10 @@
+project Delete extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/delete";
+   for Main use ("delete.adb");
+
+   package Builder is
+      for Executable ("delete.adb") use "delete.elf";
+   end Builder;
+end Delete;

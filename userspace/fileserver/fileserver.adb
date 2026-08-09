@@ -34,6 +34,7 @@ with Fileserver_Tables;
 
 procedure Fileserver is
    use type Akernel_User.Syscalls.U64;
+   use type Interfaces.Unsigned_8;
    use System.Storage_Elements;
 
    package Syscalls renames Akernel_User.Syscalls;
@@ -1365,6 +1366,177 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Path_Op;
 
+   --  Op_Rename (milestone 41): FROM path rides words 0..5 like a
+   --  path op; the TO path arrives NUL-terminated in the client
+   --  buffer (cap slot 0). Both volumes must resolve to the same
+   --  fs-driver volume; the buffer is rewritten with the volume-
+   --  stripped TO path and forwarded verbatim.
+   procedure Handle_Rename is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Name   : String (1 .. 48);
+      Len    : Natural;
+      To     : String (1 .. 48);
+      To_Len : Natural := 0;
+      Pos    : Natural;
+      V      : Natural;
+      Pos2   : Natural;
+      V2     : Natural;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+      Exp2   : String (1 .. Max_Expanded);
+      E_Len2 : Natural;
+      Status : U64 := Files.Status_Ok;
+      Mapped : Boolean := False;
+      Win    : Byte_Array (0 .. 47)
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (Buf_Win_VA));
+
+      procedure Process is
+      begin
+         if not Names_Done then
+            Status := Files.Status_Not_Ready;
+            return;
+         end if;
+
+         if Buf = 0 or else not Name_Of (0, 5, Name, Len) then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
+
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+         if not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
+
+         if not Map_Buf (Buf) then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+         Mapped := True;
+
+         for I in U64 (0) .. 47 loop
+            exit when Win (I) = 0;
+            To_Len := To_Len + 1;
+            To (To_Len) := Character'Val (Natural (Win (I)));
+         end loop;
+         if To_Len = 0 then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
+
+         Resolve_Full (To, To_Len, Exp2, E_Len2, V2, Pos2);
+         if V2 = 0 then
+            Status := Files.Status_Not_Found;
+            return;
+         end if;
+         if V2 /= V then
+            Status := Files.Status_Bad_Args;  --  cross-volume
+            return;
+         end if;
+
+         --  Rewrite the buffer with the bare TO path (NUL-padded
+         --  through 48 bytes) for the fs driver.
+         for I in U64 (0) .. 47 loop
+            Win (I) :=
+              (if I < U64 (E_Len2 - Pos2 + 1)
+               then Byte (Character'Pos (Exp2 (Pos2 + Natural (I))))
+               else 0);
+         end loop;
+
+         if Syscalls.Mem_Unmap
+           (Address_Space => Syscalls.Address_Space_Cap,
+            VA            => Buf_Win_VA,
+            Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer unmap failed");
+         end if;
+         Mapped := False;
+
+         Pack_Path (Exp, Pos, E_Len, 0);
+         Syscalls.Message.Label := Files.Op_Rename;
+         Syscalls.Message.Caps := (0 => Buf, others => 0);
+         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+            Status := Syscalls.Message.Words (0);
+         else
+            Status := Files.Status_Not_Found;
+         end if;
+      end Process;
+   begin
+      Process;
+
+      if Buf /= 0 then
+         if Mapped
+           and then Syscalls.Mem_Unmap
+             (Address_Space => Syscalls.Address_Space_Cap,
+              VA            => Buf_Win_VA,
+              Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer unmap failed");
+         end if;
+         if Syscalls.Cap_Delete (Buf) /= 0 then
+            Akernel_User.Console.Put_Line
+              ("fileserver: buffer cap delete failed");
+         end if;
+      end if;
+
+      Reply2 (Status, 0);
+   end Handle_Rename;
+
+   --  Op_Volume_Info (milestone 41): any volume-qualified path
+   --  picks the volume; fs-driver volumes relay (status, total,
+   --  free, cluster), everything else answers Bad_Args.
+   procedure Handle_Volume_Info is
+      Name : String (1 .. 48);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
+   begin
+      if not Names_Done then
+         Reply2 (Files.Status_Not_Ready, 0);
+         return;
+      end if;
+
+      if not Name_Of (0, 5, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+      if V = 0 then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_FS then
+         Pack_Path (Exp, Pos, E_Len, 0);
+         Syscalls.Message.Label := Files.Op_Volume_Info;
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok
+           and then Syscalls.Message.Words (0) = Files.Status_Ok
+         then
+            Syscalls.Message.Caps := (others => 0);
+            if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+               Akernel_User.Console.Put_Line
+                 ("fileserver: reply failed");
+            end if;
+            return;
+         end if;
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      Reply2 (Files.Status_Bad_Args, 0);
+   end Handle_Volume_Info;
+
 begin
    Akernel_User.Console.Set_Endpoint (2);  --  console grant
    Akernel_User.Console.Put_Line ("fileserver online");
@@ -1404,6 +1576,10 @@ begin
          Handle_Assign_List;
       elsif Syscalls.Message.Label = Files.Op_Sync then
          Handle_Sync;
+      elsif Syscalls.Message.Label = Files.Op_Rename then
+         Handle_Rename;
+      elsif Syscalls.Message.Label = Files.Op_Volume_Info then
+         Handle_Volume_Info;
       elsif Syscalls.Message.Label = Files.Op_Stat
         or else Syscalls.Message.Label = Files.Op_Open
       then

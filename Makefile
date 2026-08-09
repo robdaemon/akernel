@@ -43,8 +43,8 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin memstage echo teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
 DISK_CRATES_SYSTEM := bureau terminal demo shell
-DISK_CRATES_C := dir type
-CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
+DISK_CRATES_C := dir type copy delete rename makedir info
+CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) copy delete rename makedir info
 
 .PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
 

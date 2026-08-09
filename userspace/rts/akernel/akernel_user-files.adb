@@ -158,6 +158,28 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Read_Dir;
 
+   --  Allocate + map the shared client buffer on first use.
+   function Ensure_Buffer return Boolean is
+   begin
+      if Buf_Cap /= 0 then
+         return True;
+      end if;
+      Buf_Cap := Syscalls.Mem_Alloc (Buf_Pages);
+      if Buf_Cap = Syscalls.Syscall_Failed
+        or else Syscalls.Mem_Map
+          (Address_Space => Syscalls.Address_Space_Cap,
+           Cap           => Buf_Cap,
+           VA            => Buffer_VA,
+           Offset        => 0,
+           Length        => Buf_Bytes,
+           Flags         => 3) /= 0
+      then
+         Buf_Cap := 0;
+         return False;
+      end if;
+      return True;
+   end Ensure_Buffer;
+
    function Open (Name : String; Size : out U64) return U64 is
       Status : constant U64 := Stat (Name, Size);
    begin
@@ -165,20 +187,8 @@ package body Akernel_User.Files is
          return Status;
       end if;
 
-      if Buf_Cap = 0 then
-         Buf_Cap := Syscalls.Mem_Alloc (Buf_Pages);
-         if Buf_Cap = Syscalls.Syscall_Failed
-           or else Syscalls.Mem_Map
-             (Address_Space => Syscalls.Address_Space_Cap,
-              Cap           => Buf_Cap,
-              VA            => Buffer_VA,
-              Offset        => 0,
-              Length        => Buf_Bytes,
-              Flags         => 3) /= 0
-         then
-            Buf_Cap := 0;
-            return Status_Not_Found;
-         end if;
+      if not Ensure_Buffer then
+         return Status_Not_Found;
       end if;
 
       return Status_Ok;
@@ -306,6 +316,73 @@ package body Akernel_User.Files is
 
    function Delete (Name : String) return U64 is
      (Path_Op (Op_Delete, Name));
+
+   function Rename (From, To : String) return U64 is
+      QF : String (1 .. 48);
+      QT : String (1 .. 48);
+      LF : Natural;
+      LT : Natural;
+      Dst : Byte_Array (0 .. Buf_Bytes - 1)
+        with Address => To_Address (Integer_Address (Buffer_VA));
+   begin
+      Qualified (From, QF, LF);
+      Qualified (To, QT, LT);
+      if FS_Cap = 0 or else LF = 0 or else LT = 0 then
+         return Status_Bad_Args;
+      end if;
+      if not Ensure_Buffer then
+         return Status_Not_Found;
+      end if;
+
+      --  TO path NUL-terminated at offset 0 of the shared buffer.
+      for I in 0 .. U64 (LT) loop
+         Dst (I) :=
+           (if I < U64 (LT)
+            then Byte (Character'Pos (QT (Natural (I) + 1)))
+            else 0);
+      end loop;
+
+      Syscalls.Message.Label := Op_Rename;
+      Pack_Name (QF (1 .. LF), 0, 5);
+      Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Rename;
+
+   function Volume_Info
+     (Name    : String;
+      Total   : out U64;
+      Free    : out U64;
+      Cluster : out U64) return U64
+   is
+      Q   : String (1 .. 48);
+      Len : Natural;
+   begin
+      Total := 0;
+      Free := 0;
+      Cluster := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_Volume_Info;
+      Pack_Name (Q (1 .. Len), 0, 5);
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Total := Syscalls.Message.Words (1);
+         Free := Syscalls.Message.Words (2);
+         Cluster := Syscalls.Message.Words (3);
+      end if;
+      return Syscalls.Message.Words (0);
+   end Volume_Info;
 
    function Truncate (Name : String) return U64 is
      (Path_Op (Op_Truncate, Name));

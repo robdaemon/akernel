@@ -1,0 +1,10 @@
+project Info extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/info";
+   for Main use ("info.adb");
+
+   package Builder is
+      for Executable ("info.adb") use "info.elf";
+   end Builder;
+end Info;
