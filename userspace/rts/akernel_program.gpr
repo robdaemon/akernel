@@ -1,0 +1,26 @@
+--  Base project for every userspace program (milestone 40): crates
+--  `extend` this and inherit the RTS dependency, toolchain,
+--  runtime, exec dir and linker script. A program project is:
+--
+--    project Foo extends "../rts/akernel_program.gpr" is
+--       for Source_Dirs use (".");
+--       for Object_Dir use "../../obj/userspace/foo";
+--       for Main use ("foo.adb");
+--       package Builder is
+--          for Executable ("foo.adb") use "foo.elf";
+--       end Builder;
+--    end Foo;
+with "akernel_rts.gpr";
+
+abstract project Akernel_Program is
+   for Languages use ("Ada", "Asm");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "light-rv64imafdc";
+   for Exec_Dir use "../../bin/userspace";
+   for Create_Missing_Dirs use "True";
+
+   package Linker is
+      for Switches ("Ada") use
+        ("-T", Akernel_RTS'Project_Dir & "/akernel/linker-riscv64.ld");
+   end Linker;
+end Akernel_Program;

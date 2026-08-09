@@ -1,0 +1,32 @@
+--  The akernel userspace runtime (milestone 40): every userspace
+--  program links this ONE static library instead of compiling the
+--  akernel/ sources into itself.
+--
+--  Layers (physical = this directory, akernel/):
+--    glue          start/stub/syscall asm, linker script, s-memory
+--                  heap override, vendored runtime units (a-stream,
+--                  a-ioexce) — invisible to programs
+--    kernel ABI    Akernel_User.Syscalls, .IPC
+--    service APIs  .Streams, .Console, .Files, .MMIO, .Display,
+--                  .Window, .CLI, Font8x8
+--
+--  The vendored Ada.* units are runtime descendants: GNAT only
+--  accepts them in implementation mode (-gnatg).
+library project Akernel_RTS is
+   for Source_Dirs use ("akernel");
+   for Object_Dir use "../../obj/userspace/rts";
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "../../lib/userspace/rts";
+   for Library_Name use "akernel_user";
+   for Library_Kind use "static";
+   for Languages use ("Ada", "Asm");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "light-rv64imafdc";
+
+   package Compiler is
+      for Switches ("a-stream.ads") use ("-gnatg");
+      for Switches ("a-stream.adb") use ("-gnatg");
+      for Switches ("a-ioexce.ads") use ("-gnatg");
+      for Switches ("s-memory.adb") use ("-gnatg");
+   end Compiler;
+end Akernel_RTS;

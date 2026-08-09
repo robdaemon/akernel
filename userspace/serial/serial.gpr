@@ -1,28 +1,9 @@
-project Serial is
-   for Source_Dirs use (".", "../rts/akernel");
+project Serial extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
    for Object_Dir use "../../obj/userspace/serial";
-   for Create_Missing_Dirs use "True";
-   for Exec_Dir use "../../bin/userspace";
-   for Languages use ("Ada", "Asm");
    for Main use ("serial.adb");
-   for Target use "riscv64-elf";
-   for Runtime ("Ada") use "light-rv64imafdc";
 
    package Builder is
       for Executable ("serial.adb") use "serial.elf";
    end Builder;
-
-   --  Vendored light-runtime additions (Ada.Streams + friends live
-   --  in ../rts/akernel): GNAT only accepts descendants of package
-   --  Ada in implementation mode.
-   package Compiler is
-      for Switches ("a-stream.ads") use ("-gnatg");
-      for Switches ("a-stream.adb") use ("-gnatg");
-      for Switches ("a-ioexce.ads") use ("-gnatg");
-      for Switches ("s-memory.adb") use ("-gnatg");
-   end Compiler;
-
-   package Linker is
-      for Switches ("Ada") use ("-T", Project'Project_Dir & "../rts/akernel/linker-riscv64.ld");
-   end Linker;
 end Serial;
