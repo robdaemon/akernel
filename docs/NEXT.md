@@ -1468,6 +1468,57 @@ Next candidates (order open):
     docs/IPC.md in the same commit. 332 PASS
     SMP1+SMP4, failures=0, fsck clean.
 
+    41b SHIPPED (17c6b7c + mkdisk followup) —
+    set/get/unset/assign extracted to Sys:C/
+    commands + Echo/Which/Version/Fault; the
+    shell thins to help/exit + spawn with
+    CLI.Resolve_Command (new: Path-variable
+    search shared with Which). Fuzzer gained a
+    Run_Command helper (stage from Sys:, spawn
+    under the uniform ABI, reap, RC check) +
+    directed end-to-end tests per command.
+    Blocker fixed in 17c6b7c: Files.Write
+    lazily allocates its shared client buffer
+    (Set_Env calls Truncate not Open, so
+    Buf_Cap stayed 0 and Write returned
+    Bad_Args before sending — ENV: writes
+    silently no-opped). tools/mkdisk.py
+    generates the whole GPT+FAT32 disk without
+    host sgdisk/mkfs.vfat/mtools (Makefile
+    recipe prefers the host tools, falls back);
+    getting it fsck/gpt-clean burned four
+    layout bugs: (1) BPB SectorsPerTrack/Heads
+    are TWO-byte fields — 1-byte writes shifted
+    HiddenSectors/TotalSectors32 two bytes
+    early and fsck read TotalSectors=1
+    ("Failed to read sector 4294967295" at the
+    last-sector access check; diff the BPB
+    against a known-good mkfs image, do not
+    guess); (2) subdir '.'/'..' were written
+    into the cluster sector and then the entry
+    flush OVERWROTE the same sector — one
+    write per chain, dots lead the record
+    list; (3) the LFN pad loop never appended
+    the 0x0000 terminator (32 %% 26 = 6 path
+    spins on 0xFFFF fill) — terminator first,
+    then 0xFFFF to the entry boundary; (4)
+    backup GPT header was assembled with
+    4-byte pokes into 8-byte LBA fields plus a
+    zero partition-entry-array CRC — both
+    headers now come from one constructor.
+    Plus: FAT32 root children carry '..' = 0
+    (fsck rejects the root cluster NUMBER
+    there), the backup boot sector + FSInfo
+    mirror must exist at sectors 6/7, and the
+    C: drawer outgrew one cluster (15 commands
+    x 32 B + dots > 512) — directories are
+    sized from their entry counts and span
+    multi-cluster chains now. Suite verified
+    on BOTH image sources: 423 PASS
+    SMP1+SMP4, failures=0, host fsck.fat +
+    sgdisk -v clean pre- and post-suite.
+    MILESTONE 41c next: Join/Search/Sort/List.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

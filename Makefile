@@ -88,29 +88,34 @@ $(CRATES):
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
-	mkdir -p $(INITRD_OUT)
-	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt
-	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"
-	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt
-	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt
+$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) tools/mkdisk.py
 	rm -f $@
-	truncate -s 67108864 $@
-	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:Sys $@ >/dev/null
-	mkfs.vfat -F 32 -S 512 -s 1 -n Sys --offset 2048 $@ 61440 >/dev/null
-	mcopy -i $@@@1048576 $(INITRD_OUT)/readme.txt ::README.TXT
-	mcopy -i $@@@1048576 $(INITRD_OUT)/big.bin ::BIG.BIN
-	mmd -i $@@@1048576 ::SUBDIR
-	mcopy -i $@@@1048576 $(INITRD_OUT)/hello.txt ::SUBDIR/HELLO.TXT
-	mcopy -i $@@@1048576 $(INITRD_OUT)/longfile.txt "::LongFileName.txt"
-	mmd -i $@@@1048576 ::System
-	mmd -i $@@@1048576 ::C
+	@if command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null; then \
+	mkdir -p $(INITRD_OUT); \
+	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt; \
+	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"; \
+	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt; \
+	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt; \
+	truncate -s 67108864 $@; \
+	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:Sys $@ >/dev/null; \
+	mkfs.vfat -F 32 -S 512 -s 1 -n Sys --offset 2048 $@ 61440 >/dev/null; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/readme.txt ::README.TXT; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/big.bin ::BIG.BIN; \
+	mmd -i $@@@1048576 ::SUBDIR; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/hello.txt ::SUBDIR/HELLO.TXT; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/longfile.txt "::LongFileName.txt"; \
+	mmd -i $@@@1048576 ::System; \
+	mmd -i $@@@1048576 ::C; \
 	for c in $(DISK_CRATES_SYSTEM); do \
-	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done
+	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
 	for c in $(DISK_CRATES_C); do \
-	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done
-	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup
-	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
+	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
+	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup; \
+	else \
+	echo "host sgdisk/mkfs.vfat/mtools absent; generating $@ with tools/mkdisk.py"; \
+	python3 tools/mkdisk.py $@; \
+	fi
 
 initrd: $(INITRD_IMG)
 

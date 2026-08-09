@@ -78,10 +78,6 @@ def alloc_chain(length):
         fat[c] = 0x0FFFFFFF if i == length - 1 else c + 1
     return start
 
-# Allocate the root cluster up front so subdirectories cannot
-# overwrite it.
-root_cluster = alloc_chain(1)
-
 def cluster_sector_abs(c):
     return rel_to_abs(DATA_START_REL + (c - 2) * BPB['SectorsPerCluster'])
 
@@ -124,14 +120,15 @@ def make_lfn_entries(name, short_name11):
         # Can fit in 8.3; caller should just use short name.
         return []
     ucs = list(name.encode('utf-16-le'))
-    # Pad UCS-2 bytes to a multiple of one LFN entry (26 bytes).
-    # The terminator (two zero bytes) is placed immediately after the
-    # last real character; remaining slots are filled with 0xFFFF.
+    #  Pad UCS-2 bytes to a multiple of one LFN entry (26 bytes):
+    #  a 0x0000 terminator right after the last real character (only
+    #  when the name does not end exactly on an entry boundary), then
+    #  0xFFFF fill to the boundary.
+    ucs = bytes(ucs)
+    if len(ucs) % 26:
+        ucs += b'\x00\x00'
     while len(ucs) % 26:
-        if len(ucs) % 26 == 2:
-            ucs += b'\x00\x00'
-        else:
-            ucs += b'\xff\xff'
+        ucs += b'\xff\xff'
     total = len(ucs) // 26
     checksum = fat32_short_checksum(short_name11)
     entries = []
@@ -159,11 +156,11 @@ def make_short_entry(name, attr, cluster, size, is_dir=False):
     ent[0:11] = norm83(name)
     ent[11] = attr
     ent[14:16] = pack16(0)       # create time
-    ent[16:18] = pack16(0x5021)  # create date 2025-01-01
-    ent[18:20] = pack16(0x5021)  # access date
+    ent[16:18] = pack16(0x5A21)  # create date 2025-01-01
+    ent[18:20] = pack16(0x5A21)  # access date
     ent[20:22] = pack16((cluster >> 16) & 0xFFFF)
     ent[22:24] = pack16(0)       # write time
-    ent[24:26] = pack16(0x5021)  # write date
+    ent[24:26] = pack16(0x5A21)  # write date
     ent[26:28] = pack16(cluster & 0xFFFF)
     ent[28:32] = pack32(size)
     return bytes(ent)
@@ -202,24 +199,49 @@ for c in DISK_CRATES_C:
     with open(path, 'rb') as f:
         tree['C'][cap_name(c)] = f.read()
 
-# Write directories and files recursively, tracking entries per directory cluster.
-dir_contents = {}  # cluster -> list of 32-byte entry records
+#  Write directories and files recursively.  Directories span as
+#  many clusters as their records need (the C: drawer with 15
+#  commands no longer fits one cluster).
+
+def entry_count(name):
+    """32-byte slots a name's dirent + LFN run occupies."""
+    if len(name) <= 12:
+        return 1
+    return len(make_lfn_entries(name, norm83(name))) + 1
+
+def write_records_into(start, records):
+    """Write records into an already-allocated contiguous chain."""
+    data = b''.join(records)
+    i = 0
+    while i * SECTOR < len(data):
+        chunk = data[i * SECTOR:(i + 1) * SECTOR]
+        write_sector_abs(cluster_sector_abs(start + i),
+                         chunk + b'\x00' * (SECTOR - len(chunk)))
+        i += 1
 
 def build_dir(name, subtree, parent_cluster):
-    my_cluster = alloc_chain(1)
-    # . and .. handled by writing to my_cluster sector
-    dot = make_short_entry('.', 0x10, my_cluster, 0)
-    dotdot = make_short_entry('..', 0x10, parent_cluster, 0)
-    write_sector_abs(cluster_sector_abs(my_cluster), dot + dotdot + b'\x00' * (SECTOR - 64))
-    records = []
+    #  Children first (they allocate their own chains), then size
+    #  and allocate this directory's chain.
+    pending = []
     for entry_name, value in subtree.items():
         if isinstance(value, dict):
-            child_cluster = build_dir(entry_name, value, my_cluster)
-            records.append(make_dir_entry(entry_name, child_cluster))
+            pending.append((entry_name,
+                            build_dir(entry_name, value, None)))
         else:
             file_cluster, file_size = write_file(value)
-            records.extend(make_file_entries(entry_name, file_cluster, file_size))
-    dir_contents[my_cluster] = records
+            pending.append((entry_name, file_cluster, file_size))
+    total = 2 + sum(entry_count(n) for n, *_ in pending)
+    my_cluster = alloc_chain((total * 32 + SECTOR - 1) // SECTOR)
+    records = [make_short_entry('.', 0x10, my_cluster, 0),
+               make_short_entry('..', 0x10,
+                                parent_cluster if parent_cluster else 0,
+                                0)]
+    for rec in pending:
+        if len(rec) == 2:
+            records.extend(make_dir_entry(rec[0], rec[1]))
+        else:
+            records.extend(make_file_entries(rec[0], rec[1], rec[2]))
+    write_records_into(my_cluster, records)
     return my_cluster
 
 def write_file(content):
@@ -250,15 +272,20 @@ def make_file_entries(name, cluster, size):
     short = make_short_entry(name, 0x20, cluster, size)
     return lfn + [short]
 
-# Root is cluster 2, parent cluster conventionally 0 for ..
-# Initialize root cluster (will be overwritten later by root entries)
-write_sector_abs(cluster_sector_abs(root_cluster), b'\x00' * SECTOR)
+#  The root chain must START at cluster 2 (BPB RootCluster), so it
+#  is the first allocation; size it from the top-level entry count
+#  (volume label + one run per entry).
+root_slots = 1 + sum(entry_count(n) for n in tree)
+root_cluster = alloc_chain((root_slots * 32 + SECTOR - 1) // SECTOR)
+assert root_cluster == 2, 'root chain must start at cluster 2'
 
-# Build subdirectories first to know their clusters.
+# Build subdirectories first to know their clusters.  FAT32 root
+# children carry '..' = 0 (host mkfs convention; fsck rejects the
+# root cluster number there).
 sub_clusters = {}
 for entry_name, value in tree.items():
     if isinstance(value, dict):
-        sub_clusters[entry_name] = build_dir(entry_name, value, root_cluster)
+        sub_clusters[entry_name] = build_dir(entry_name, value, None)
 
 # Now build root records.
 root_records = []
@@ -275,18 +302,7 @@ for entry_name, value in tree.items():
         c, s = write_file(value)
         root_records.extend(make_file_entries(entry_name, c, s))
 
-# Pad root records to sector boundary and write to root cluster
-root_data = b''.join(root_records)
-if len(root_data) > SECTOR:
-    raise RuntimeError('root directory too large for one cluster')
-write_sector_abs(cluster_sector_abs(root_cluster), root_data + b'\x00' * (SECTOR - len(root_data)))
-
-# Write subdirectory entry records into their clusters
-for cluster, records in dir_contents.items():
-    data = b''.join(records)
-    if len(data) > SECTOR:
-        raise RuntimeError('directory too large for one cluster')
-    write_sector_abs(cluster_sector_abs(cluster), data + b'\x00' * (SECTOR - len(data)))
+write_records_into(root_cluster, root_records)
 
 # Write FATs
 fat_bytes = b''.join(struct.pack('<I', e & 0x0FFFFFFF) for e in fat)
@@ -313,10 +329,10 @@ bpb[17:19] = pack16(0)  # RootEntryCount (FAT32: 0)
 bpb[19:21] = pack16(0)  # TotalSectors16 (0 for FAT32)
 bpb[21] = BPB['Media']
 bpb[22:24] = pack16(0)  # FAT16 sectors per FAT (0)
-bpb[24:25] = bytes([BPB['SectorsPerTrack']])
-bpb[25:26] = bytes([BPB['Heads']])
-bpb[26:30] = pack32(BPB['HiddenSectors'])
-bpb[30:34] = pack32(BPB['TotalSectors32'])
+bpb[24:26] = pack16(BPB['SectorsPerTrack'])
+bpb[26:28] = pack16(BPB['Heads'])
+bpb[28:32] = pack32(BPB['HiddenSectors'])
+bpb[32:36] = pack32(BPB['TotalSectors32'])
 # FAT32 extended BPB
 bpb[36:40] = pack32(FAT_SECTORS)        # SectorsPerFAT32
 bpb[40:42] = pack16(0)                  # ExtFlags
@@ -333,6 +349,8 @@ bpb[71:82] = BPB['VolumeLabel'].ljust(11).encode('ascii')
 bpb[82:90] = b'FAT32   '
 bpb[510:512] = b'\x55\xAA'
 write_sector_abs(rel_to_abs(0), bytes(bpb))
+#  Backup boot sector (BPB says sector 6) + backup FSInfo (7).
+write_sector_abs(rel_to_abs(6), bytes(bpb))
 
 # FSInfo sector
 fsinfo = bytearray(SECTOR)
@@ -343,6 +361,7 @@ fsinfo[488:492] = struct.pack('<I', free_count)
 fsinfo[492:496] = struct.pack('<I', next_cluster)
 fsinfo[508:512] = struct.pack('<I', 0xAA550000)
 write_sector_abs(rel_to_abs(1), bytes(fsinfo))
+write_sector_abs(rel_to_abs(7), bytes(fsinfo))
 
 # GPT
 # Protective MBR in sector 0
@@ -361,30 +380,33 @@ mbr[458:462] = struct.pack('<I', DISK_SECTORS - 1)
 write_sector_abs(0, bytes(mbr))
 
 # GPT header at sector 1
-gpt_header = bytearray(SECTOR)
-gpt_header[0:8] = b'EFI PART'
-gpt_header[8:12] = struct.pack('<I', 0x00010000)  # revision
-gpt_header[12:16] = struct.pack('<I', 92)          # header size
-gpt_header[16:20] = struct.pack('<I', 0)           # CRC32 placeholder
-gpt_header[24:28] = struct.pack('<I', 1)           # current LBA
-backup_lba = DISK_SECTORS - 1
-gpt_header[32:40] = struct.pack('<Q', backup_lba)
-gpt_header[40:48] = struct.pack('<Q', PART_START)  # first usable LBA
-gpt_header[48:56] = struct.pack('<Q', DISK_SECTORS - 34)  # last usable LBA
-gpt_header[56:72] = gpt_guid.bytes_le
-gpt_header[72:80] = struct.pack('<Q', 2)  # partition entry LBA
-gpt_header[80:84] = struct.pack('<I', 128) # entry size
-gpt_header[84:88] = struct.pack('<I', 128) # entry count
-# CRC of header bytes 0..91 (header size)
 def crc32(data):
     import binascii
     return binascii.crc32(data) & 0xFFFFFFFF
-header_for_crc = bytearray(gpt_header[:92])
-header_for_crc[16:20] = b'\x00\x00\x00\x00'
-gpt_header[16:20] = struct.pack('<I', crc32(bytes(header_for_crc)))
-write_sector_abs(1, bytes(gpt_header))
 
-# Partition entry array at sector 2..33 (128 entries * 128 bytes = 16384 bytes = 32 sectors)
+backup_lba = DISK_SECTORS - 1
+last_usable = DISK_SECTORS - 34
+
+def gpt_header(current_lba, backup, entries_lba, entries_crc):
+    h = bytearray(SECTOR)
+    h[0:8] = b'EFI PART'
+    h[8:12] = struct.pack('<I', 0x00010000)   # revision 1.0
+    h[12:16] = struct.pack('<I', 92)           # header size
+    h[24:32] = struct.pack('<Q', current_lba)
+    h[32:40] = struct.pack('<Q', backup)
+    h[40:48] = struct.pack('<Q', PART_START)   # first usable LBA
+    h[48:56] = struct.pack('<Q', last_usable)
+    h[56:72] = gpt_guid.bytes_le
+    h[72:80] = struct.pack('<Q', entries_lba)
+    h[80:84] = struct.pack('<I', 128)          # entry count
+    h[84:88] = struct.pack('<I', 128)          # entry size
+    h[88:92] = struct.pack('<I', entries_crc)  # entry array CRC32
+    for_crc = bytearray(h[:92])
+    for_crc[16:20] = b'\x00\x00\x00\x00'
+    h[16:20] = struct.pack('<I', crc32(bytes(for_crc)))
+    return h
+
+# Partition entry array: 128 entries * 128 bytes = 32 sectors
 entries_sector = bytearray(32 * SECTOR)
 ent = bytearray(128)
 ent[0:16] = part_type_guid.bytes_le
@@ -395,21 +417,15 @@ ent[48:56] = struct.pack('<Q', 0)  # attributes
 name = 'Sys'.encode('utf-16-le')
 ent[56:56 + len(name)] = name
 entries_sector[:128] = ent
-write_sector_abs(2, bytes(entries_sector))
+entries_crc = crc32(bytes(entries_sector))
 
-# Backup GPT header at last sector
-backup_header = bytearray(gpt_header)
-backup_header[24:28] = struct.pack('<I', 0)  # CRC placeholder
-backup_header[32:40] = struct.pack('<Q', 1)  # backup LBA = original
-backup_header[40:48] = struct.pack('<Q', backup_lba)  # original LBA? Actually header at backup, current=backup_lba
-backup_header[24:28] = struct.pack('<I', backup_lba)  # current LBA
-backup_header[72:80] = struct.pack('<Q', backup_lba - 32)  # partition entry array LBA (32 sectors before backup)
-header_for_crc2 = bytearray(backup_header[:92])
-header_for_crc2[16:20] = b'\x00\x00\x00\x00'
-backup_header[16:20] = struct.pack('<I', crc32(bytes(header_for_crc2)))
-write_sector_abs(backup_lba, bytes(backup_header))
-# Backup partition entries at backup_lba - 32 .. backup_lba -1
+write_sector_abs(1, bytes(gpt_header(1, backup_lba, 2, entries_crc)))
+write_sector_abs(2, bytes(entries_sector))
+# Backup: entry array at backup_lba - 32 .., header at backup_lba
 write_sector_abs(backup_lba - 32, bytes(entries_sector))
+write_sector_abs(backup_lba,
+                 bytes(gpt_header(backup_lba, 1, backup_lba - 32,
+                                  entries_crc)))
 
 with open(sys.argv[1] if len(sys.argv) > 1 else 'disk.img', 'wb') as f:
     f.write(img)
