@@ -129,6 +129,23 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_process_info";
 
+   function Raw_Cap_Info
+     (Admin     : U64;
+      Slot      : U64;
+      Cap_Index : U64;
+      Buffer    : U64;
+      Offset    : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_cap_info";
+
+   function Raw_Thread_Regs
+     (Admin  : U64;
+      Slot   : U64;
+      Buffer : U64;
+      Offset : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_regs";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -316,6 +333,25 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Process_Info (Resource, Slot, Buffer, Offset);
    end Process_Info;
+
+   function Cap_Info
+     (Admin     : U64;
+      Slot      : U64;
+      Cap_Index : U64;
+      Buffer    : U64;
+      Offset    : U64 := 0) return U64 is
+   begin
+      return Raw_Cap_Info (Admin, Slot, Cap_Index, Buffer, Offset);
+   end Cap_Info;
+
+   function Thread_Regs
+     (Admin  : U64;
+      Slot   : U64;
+      Buffer : U64;
+      Offset : U64 := 0) return U64 is
+   begin
+      return Raw_Thread_Regs (Admin, Slot, Buffer, Offset);
+   end Thread_Regs;
 
    function Mem_Map_File
      (Address_Space : U64;

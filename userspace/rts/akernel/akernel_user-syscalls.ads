@@ -183,6 +183,51 @@ package Akernel_User.Syscalls is
       Buffer   : U64;
       Offset   : U64 := 0) return U64;
 
+   --  Cap_Info (syscall 31): one cap-table slot of a process,
+   --  64-byte record into a caller-owned memory object. Authority:
+   --  Admin must be the admin Admin_Object cap with Manage
+   --  (bootinfo "admin", manifest token — capability possession is
+   --  the identity; the kernel has no user model). Slot names a
+   --  process-table slot 0..127 or Self_Slot; Cap_Index walks the
+   --  16384-handle space sparsely. Returns Info_Ok,
+   --  Info_Not_Found (no process slot / empty cap slot),
+   --  Syscall_Failed (authority/cap/offset rejected).
+   --  Record layout (words, U64): 0 handle; 1 object-kind position
+   --  (0 null, 1 frame, 2 address-space, 3 process, 4 thread,
+   --  5 endpoint, 6 reply, 7 irq, 8 mmio, 9 dma, 10 kernel-object,
+   --  11 boot-file, 12 memory-object, 13 notification, 14 admin);
+   --  2 rights mask (Right_* encoding); 3 object address;
+   --  4 badge; 5 valid (1); 6..7 zero.
+   Cap_Info_Word_Count : constant := 8;
+   type Cap_Info_Words is
+     array (0 .. Cap_Info_Word_Count - 1) of U64;
+   function Cap_Info
+     (Admin     : U64;
+      Slot      : U64;
+      Cap_Index : U64;
+      Buffer    : U64;
+      Offset    : U64 := 0) return U64;
+
+   --  Thread_Regs (syscall 32): saved trap-frame snapshot of a
+   --  process's thread, 320-byte record into a caller-owned memory
+   --  object. Same admin authority as Cap_Info. BLOCKED threads
+   --  only: a ready/running thread has no stable frame — returns
+   --  Info_Busy (no cross-hart stop-the-world by design). Returns
+   --  Info_Ok, Info_Not_Found (no such slot), Info_Busy, or
+   --  Syscall_Failed.
+   --  Record layout (words, U64): 0..30 = x1..x31 (word 1 = sp,
+   --  word 9 = a0); 31 sepc; 32 satp; 33 thread-state position
+   --  (Process_Info encoding); 34 process id; 35..39 zero.
+   Thread_Regs_Word_Count : constant := 40;
+   type Thread_Regs_Words is
+     array (0 .. Thread_Regs_Word_Count - 1) of U64;
+   Info_Busy : constant U64 := 2;
+   function Thread_Regs
+     (Admin  : U64;
+      Slot   : U64;
+      Buffer : U64;
+      Offset : U64 := 0) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

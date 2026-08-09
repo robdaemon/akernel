@@ -70,6 +70,8 @@ procedure Fuzz is
    Sys_Cap_Delete     : constant U64 := 26;
    Sys_CPU_Count      : constant U64 := 27;
    Sys_Process_Info   : constant U64 := 30;
+   Sys_Cap_Info       : constant U64 := 31;
+   Sys_Thread_Regs    : constant U64 := 32;
 
    Highest_Known      : constant U64 := 30;
 
@@ -1473,6 +1475,219 @@ begin
       Check (Unique_Ok, "process_info pids unique");
       Check (Found_Self, "process_info self appears in table walk");
       Check (Child_Count = 1, "process_info links child spawner");
+   end;
+
+   --  Milestone 39: admin-gated introspection dumps (cap_info =
+   --  syscall 31, thread_regs = 32). The admin Admin_Object cap is
+   --  manifest-granted at handle 8 (token order). Authority must be
+   --  Admin_Object + Manage; capability possession IS the
+   --  identity (no user model in the kernel).
+   declare
+      Admin_Cap : constant U64 := 8;  --  manifest grant order
+      Admin_VA  : constant U64 := 16#5040_0000#;
+      type Admin_Page is array (0 .. 511) of U64;
+      APage : Admin_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Admin_VA));
+      Admin_Buf   : U64;
+      NoMan_Cap   : U64;
+      Cap_Total   : Natural := 0;
+      Dumped      : Boolean := False;
+      Regs_Ok     : Boolean := True;
+      Admin_Slot  : U64 := U64'Last;
+      Echo_Slot   : U64 := U64'Last;
+      Echo_Pid    : U64 := 0;
+      Echo2_Proc  : U64;
+      My_EP       : U64;
+      Calls_Ok    : Boolean := True;
+      Reaped2     : Boolean := False;
+   begin
+      Admin_Buf := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
+      Check (Admin_Buf /= U64'Last, "admin buffer allocated");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A1 => Admin_Buf, A2 => Admin_VA,
+                A3 => 0, A4 => 4096, A5 => 3) = 0,
+             "admin buffer mapped");
+
+      --  Denials: bad authority, wrong-kind authority, minted
+      --  admin copy without Manage, wrong-kind buffer, unaligned
+      --  offset, out-of-range slot, out-of-range cap index.
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => 16#FEED_BEEF#,
+                        A1 => U64'Last, A2 => 1, A3 => Admin_Buf)
+             = U64'Last,
+             "cap_info bad authority rejected");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Console_EP,
+                        A1 => U64'Last, A2 => 1, A3 => Admin_Buf)
+             = U64'Last,
+             "cap_info wrong-kind authority rejected");
+      NoMan_Cap := Akernel_User.Syscalls.Cap_Mint
+        (Admin_Cap, Akernel_User.Syscalls.Right_Transfer, 0);
+      Check (NoMan_Cap /= U64'Last, "admin mint without Manage ok");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => NoMan_Cap,
+                        A1 => U64'Last, A2 => 1, A3 => Admin_Buf)
+             = U64'Last,
+             "cap_info no-Manage admin rejected");
+      Status := Akernel_User.Syscalls.Cap_Delete (NoMan_Cap);
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => U64'Last, A2 => 1, A3 => Console_EP)
+             = U64'Last,
+             "cap_info wrong-kind buffer rejected");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => U64'Last, A2 => 1, A3 => Admin_Buf,
+                        A4 => 4) = U64'Last,
+             "cap_info unaligned offset rejected");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => 128, A2 => 1, A3 => Admin_Buf) = 1,
+             "cap_info out-of-range slot ends enumeration");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => U64'Last, A2 => 16384, A3 => Admin_Buf) = 1,
+             "cap_info out-of-range index is a miss");
+
+      --  The admin cap itself: handle 8, Admin_Object (kind pos
+      --  14), Manage + Transfer rights, valid.
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => U64'Last, A2 => Admin_Cap,
+                        A3 => Admin_Buf) = 0,
+             "cap_info admin entry readable");
+      Check (APage (0) = Admin_Cap and then APage (1) = 14
+             and then (APage (2) and 16#300#) = 16#300#
+             and then APage (5) = 1,
+             "cap_info admin entry fields");
+
+      --  Self cap walk: count of valid caps must equal the
+      --  process_info cap count (two syscalls cross-checked).
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                        A1 => U64'Last, A2 => Admin_Buf) = 0,
+             "process_info self for cap count");
+      Cap_Total := 0;
+      for Index in U64'(1) .. U64'(1023) loop
+         if Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                       A1 => U64'Last, A2 => Index,
+                       A3 => Admin_Buf, A4 => 64) = 0
+         then
+            Cap_Total := Cap_Total + 1;
+         end if;
+      end loop;
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                        A1 => U64'Last, A2 => Admin_Buf) = 0
+             and then U64 (Cap_Total) = APage (4),
+             "cap walk count matches process_info count");
+
+      --  Spawn echo parked on its OWN endpoint (never called ->
+      --  it blocks in Receive): a fresh endpoint, NOT the shared
+      --  EP — a second receiver on EP would steal Echo_Process's
+      --  rounds, and a dying receiver fails the endpoint (M34).
+      My_EP := Raw_Ecall (Number => Sys_EP_Create);
+      Check (My_EP < 256, "admin test endpoint created");
+      Akernel_User.Syscalls.Set_Grant
+        (0, My_EP,
+         Akernel_User.Syscalls.Right_Send +
+           Akernel_User.Syscalls.Right_Receive,
+         0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image,
+                           A1 => 2);
+      Echo2_Proc := Last_A1;
+      Check (Status = 0 and then Echo2_Proc /= 0,
+             "admin test echo spawned");
+
+      --  Self pid via process_info, then the slot whose spawner
+      --  is us and which is not our own slot: the echo child
+      --  (only live child in this window).
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                        A1 => U64'Last, A2 => Admin_Buf) = 0,
+             "process_info self for slot scan");
+      Echo_Pid := 0;
+      declare
+         Self_P : constant U64 := APage (0);
+      begin
+         for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
+         loop
+            if Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                          A1 => U64 (Slot), A2 => Admin_Buf) = 0
+            then
+               if APage (0) = Self_P then
+                  Admin_Slot := U64 (Slot);
+               elsif APage (1) = Self_P then
+                  Echo_Slot := U64 (Slot);
+                  Echo_Pid  := APage (0);
+               end if;
+            end if;
+         end loop;
+      end;
+      Check (Admin_Slot /= U64'Last and then Echo_Slot /= U64'Last,
+             "admin test slots located");
+
+      --  Busy: our own thread is running while we ask -> 2.
+      Check (Raw_Ecall (Number => Sys_Thread_Regs, A0 => Admin_Cap,
+                        A1 => Admin_Slot, A2 => Admin_Buf) = 2,
+             "thread_regs running thread busy");
+
+      --  Echo parks in Receive within a few yields; retry the
+      --  dump until the frame is stable.
+      for Try in 1 .. 256 loop
+         Status := Raw_Ecall (Number => Sys_Thread_Regs,
+                              A0 => Admin_Cap, A1 => Echo_Slot,
+                              A2 => Admin_Buf);
+         exit when Status = 0;
+         Ignore := Raw_Ecall (Number => Sys_Yield);
+      end loop;
+      Check (Status = 0, "thread_regs blocked echo dumped");
+      if Status = 0 then
+         Dumped := True;
+         --  x2 = sp (word 1) in the 8-page user stack window;
+         --  sepc (word 31) in the text range; state (word 33)
+         --  blocked-receive; pid (word 34) matches the slot scan.
+         if APage (1) < 16#6FFF_8000#
+           or else APage (1) >= 16#7000_0000#
+           or else APage (31) < 16#4600_0000#
+           or else APage (31) >= 16#4800_0000#
+           or else APage (33) /= 3
+           or else APage (34) /= Echo_Pid
+           or else APage (32) = 0
+         then
+            Regs_Ok := False;
+         end if;
+      end if;
+      Check (Dumped and then Regs_Ok, "thread_regs frame fields sane");
+
+      --  Cap info on the echo process cap: Process_Object
+      --  (kind pos 3), valid.
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
+                        A1 => U64'Last, A2 => Echo2_Proc,
+                        A3 => Admin_Buf) = 0
+             and then APage (1) = 3 and then APage (5) = 1,
+             "cap_info child process cap fields");
+
+      --  Echo exits after three calls; drive them (clearing the
+      --  message registers: round 3 echoes the stale caps word
+      --  otherwise). The per-round checks double as pacing: bare
+      --  yield loops outrun a console-printing child under SMP4.
+      Calls_Ok := True;
+      for Round in 1 .. 3 loop
+         Akernel_User.Syscalls.Message.Label := 16#AD#;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps  := (others => 0);
+         Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => My_EP);
+         if Status /= 0 then
+            Calls_Ok := False;
+         end if;
+      end loop;
+      Check (Calls_Ok, "admin test echo rounds delivered");
+      for Try in 1 .. 1024 loop
+         Status := Raw_Ecall (Number => Sys_Reap, A0 => Echo2_Proc);
+         if Status = 0 then
+            Reaped2 := True;
+            exit;
+         end if;
+         Ignore := Raw_Ecall (Number => Sys_Yield);
+      end loop;
+      Check (Reaped2, "admin test echo reaped");
+      Status := Akernel_User.Syscalls.Cap_Delete (My_EP);
    end;
 
    --  38a/38b cap stress: the paged cap table allocates a page

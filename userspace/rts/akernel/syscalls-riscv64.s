@@ -251,3 +251,19 @@ akernel_sys_process_info:
     ecall
     ret
 .size akernel_sys_process_info, . - akernel_sys_process_info
+
+.global akernel_sys_cap_info
+.type akernel_sys_cap_info, @function
+akernel_sys_cap_info:
+    li a7, 31
+    ecall
+    ret
+.size akernel_sys_cap_info, . - akernel_sys_cap_info
+
+.global akernel_sys_thread_regs
+.type akernel_sys_thread_regs, @function
+akernel_sys_thread_regs:
+    li a7, 32
+    ecall
+    ret
+.size akernel_sys_thread_regs, . - akernel_sys_thread_regs
