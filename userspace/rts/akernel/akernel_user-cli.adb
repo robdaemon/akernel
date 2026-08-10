@@ -146,12 +146,20 @@ package body Akernel_User.CLI is
             end if;
          end loop;
       else
-         if Try (Name) then
-            return Name;
-         end if;
-         if Try ("C/" & Name) then
-            return "C/" & Name;
-         end if;
+         --  Built-in tail: the boot volume root, then the C:
+         --  assign. Both candidates are fully qualified — no
+         --  Files.Set_Default_Volume involved (milestone 44).
+         declare
+            Root_Try : constant String := Boot_Volume & Name;
+            C_Try    : constant String := "C:" & Name;
+         begin
+            if Try (Root_Try) then
+               return Root_Try;
+            end if;
+            if Try (C_Try) then
+               return C_Try;
+            end if;
+         end;
       end if;
 
       return "";
@@ -165,7 +173,7 @@ package body Akernel_User.CLI is
       V : constant String := Get_Env ("CWD");
    begin
       if V'Length = 0 then
-         return "BD0:";
+         return Boot_Volume;
       end if;
       return V;
    end Get_Cwd;

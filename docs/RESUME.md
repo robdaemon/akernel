@@ -6,24 +6,19 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 43 SHIPPED):
-- Sys:C/Path (Amiga syntax: bare / <dir> ADD / <dir> REMOVE /
-  RESET). List = ENV:Path, global (Amiga is per-process — needs
-  session identity we lack; same ruling as ENV:CWD). Entries
-  canonicalize at ADD (cwd-resolved, qualified, trailing
-  separator, case-insensitive dedup; repeats exit RC_Warn).
-  Resolve_Command: cwd FIRST ALWAYS, then Path entries (they
-  replace only the built-in root+C: tail), else root+C:. Which
-  reads the Path via Resolve_Command.
-- USER RULING: tools/mkdisk.py DELETED — host
-  sgdisk/mkfs.vfat/mtools are required, the disk recipe fails
-  cleanly without them. Single image source from now on.
-- Suite harness timeout raised to 420 s (666 PASS worth of
-  write-through mutations outgrew 300; a mid-staging stop with
-  no LCH/FAIL = budget, check wall-clock first).
-- 666 PASS SMP1+SMP4, failures=0, fsck clean pre/post suite.
+CURRENT SESSION STATE (milestone 44 SHIPPED):
+- No more Files.Set_Default_Volume in CLI programs (22
+  stripped): user paths are cwd-resolved + fully qualified by
+  CLI.Resolve_Path; CLI owns the boot-volume name
+  (Boot_Volume = "BD0:", Get_Cwd default, Resolve_Command
+  built-in tail "BD0:"&name then "C:"&name). The Files
+  default-volume bind stays as a low-level escape hatch only
+  (early boot, fuzz's intentional RD0 tests).
+- Dir rewritten on the CLI package: no-arg lists the CURRENT
+  DIRECTORY (Amiga semantic), missing dir exits RC_Error.
+- 666/665 PASS SMP1/SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41+42+43 COMPLETE. Next: the
+Open candidates — milestones 41-44 COMPLETE. Next: the
 deferred list (design notes in docs/NEXT.md):
 System/Elevated + Sys:C/Elevate (userspace-only sudo,
 design locked in the NEXT.md milestone 39 entry),
@@ -35,7 +30,12 @@ cache policy + VIRTIO_BLK_F_FLUSH, true scheduler
 priorities. Deferred shell groups left: pipes, job
 control, clock.
 
-Recently landed: MILESTONE 43 — Sys:C/Path
+Recently landed: MILESTONE 44 — cwd-centric
+resolution end to end: Set_Default_Volume
+stripped from all CLI programs, CLI owns the
+boot volume, Dir lists the cwd by default.
+666/665 PASS SMP1/SMP4, failures=0, fsck
+clean. Before that: MILESTONE 43 — Sys:C/Path
 (Amiga syntax, global ENV:Path, canonicalizing
 ADD, cwd-first Resolve_Command) and mkdisk.py
 DELETED (host tools required, single image

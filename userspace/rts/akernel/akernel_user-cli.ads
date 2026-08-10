@@ -47,8 +47,14 @@ package Akernel_User.CLI is
 
    --  Current working directory (milestone 42): the ENV:CWD
    --  variable, global by construction like every variable;
-   --  "BD0:" when unset. Commands qualify relative path
-   --  arguments through Resolve_Path.
+   --  the boot volume when unset. Commands qualify relative
+   --  path arguments through Resolve_Path — this package is the
+   --  ONLY owner of the boot-volume name; programs never call
+   --  Files.Set_Default_Volume (milestone 44: the default
+   --  volume is the pre-cwd mechanism, and every path a
+   --  command acts on is cwd-resolved and fully qualified
+   --  before it reaches the file server).
+   Boot_Volume : constant String := "BD0:";
    function Get_Cwd return String;
    function Set_Cwd (Path : String) return U64;
 

@@ -36,7 +36,6 @@ procedure Type_Cmd is
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
    Akernel_User.Files.Bind (FS_EP);
-   Akernel_User.Files.Set_Default_Volume ("BD0");
 
    Read_Args (Arg_Buf, Arg_Len);
    if Arg_Len = 0 then

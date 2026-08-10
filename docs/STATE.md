@@ -219,7 +219,12 @@ QEMU virt RAM base:     0x80000000
   with Resolve_Command searching cwd FIRST,
   then Path entries (they replace only the
   built-in root+C: tail), else root+C:;
-  Which shares the same resolver. Windows
+  Which shares the same resolver. Since 44 no
+  CLI program binds a default volume: paths
+  are cwd-resolved and fully qualified in
+  Akernel_User.CLI (the sole boot-volume
+  owner) before reaching the file server;
+  bare Dir lists the cwd. Windows
   close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and

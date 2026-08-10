@@ -84,7 +84,6 @@ procedure Path is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Files.Bind (2);
-   Files.Set_Default_Volume ("BD0");
 
    --  The list read must follow the fs bind (Get_Env is an fs
    --  call — the milestone-42 elaboration burn).

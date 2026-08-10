@@ -11,7 +11,6 @@ procedure Version is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Files.Bind (2);
-   Files.Set_Default_Volume ("BD0");
 
    if CLI.Arg_Count /= 0 then
       CLI.Fail_With ("usage: Version", CLI.RC_Warn);

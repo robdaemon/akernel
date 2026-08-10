@@ -12,7 +12,6 @@ procedure Unset is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Files.Bind (2);
-   Files.Set_Default_Volume ("BD0");
 
    if CLI.Arg_Count /= 1 then
       CLI.Fail_With ("usage: Unset NAME", CLI.RC_Error);

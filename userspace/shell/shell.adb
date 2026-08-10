@@ -373,7 +373,6 @@ procedure Shell is
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
    Akernel_User.Files.Bind (FS_EP);
-   Akernel_User.Files.Set_Default_Volume ("BD0");
    --  Allocate the files-package buffer up front: variable
    --  writes (Files.Write) need it even before any staging.
    declare

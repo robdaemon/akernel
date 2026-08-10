@@ -69,7 +69,6 @@ procedure Join is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Files.Bind (2);
-   Files.Set_Default_Volume ("BD0");
 
    for I in 1 .. CLI.Arg_Count loop
       if Is_To (CLI.Argument (I)) then

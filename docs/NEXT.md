@@ -1642,6 +1642,30 @@ Next candidates (order open):
     fsck clean pre/post suite. MILESTONE 43
     COMPLETE.
 
+    44 SHIPPED — cwd-centric path resolution,
+    no default volume. Every CLI program (22)
+    drops Files.Set_Default_Volume: user paths
+    are cwd-resolved and fully qualified by
+    CLI.Resolve_Path before they reach the file
+    server, so the default-volume bind was a
+    pre-cwd leftover. Akernel_User.CLI is now
+    the ONLY owner of the boot-volume name
+    (Boot_Volume = "BD0:"; Get_Cwd's default,
+    and Resolve_Command's built-in tail tries
+    "BD0:" & name then the C: assign — both
+    fully qualified). Files.Set_Default_Volume
+    stays as a low-level escape hatch (early
+    boot, the fuzzer's intentional RD0 default
+    tests) with a comment saying programs never
+    call it. Dir was still pre-CLI (raw
+    Read_Args, BD0:-prefixing): rewritten on
+    the CLI package — no-arg Dir now lists the
+    CURRENT DIRECTORY (the Amiga semantic), a
+    missing dir exits RC_Error like List.
+    666/665 PASS SMP1/SMP4, failures=0, fsck
+    clean pre/post suite. MILESTONE 44
+    COMPLETE.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

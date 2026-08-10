@@ -161,6 +161,10 @@ package Akernel_User.Files is
    function Endpoint return U64;
 
    --  Default volume for unqualified names (initially "RD0").
+   --  Low-level escape hatch ONLY (early boot code, tests):
+   --  since milestone 44 CLI programs never call this — user
+   --  paths are cwd-resolved and fully qualified by
+   --  Akernel_User.CLI before they reach the file server.
    procedure Set_Default_Volume (Name : String);
 
    --  Stat/Open return a protocol status; Open also allocates and

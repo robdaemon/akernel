@@ -63,7 +63,6 @@ procedure Sort is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Files.Bind (2);
-   Files.Set_Default_Volume ("BD0");
 
    if CLI.Arg_Count /= 2 then
       CLI.Fail_With ("usage: Sort <from> <to>", CLI.RC_Error);

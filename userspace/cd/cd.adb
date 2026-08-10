@@ -26,7 +26,6 @@ procedure CD is
 begin
    Akernel_User.Console.Set_Endpoint (1);
    Akernel_User.Files.Bind (2);
-   Akernel_User.Files.Set_Default_Volume ("BD0");
 
    if CLI.Arg_Count = 0 then
       Akernel_User.Console.Put_Line (CLI.Get_Cwd);
