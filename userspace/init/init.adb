@@ -537,6 +537,13 @@ procedure Init is
          elsif Token_Equals (Token, Length, "procfs_server") then
             Is_Procfs := True;
             Grant (PROCFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "elevated_svc") then
+            --  The elevation service (milestone 45): Send side of
+            --  the init-owned Elevated endpoint. Servers that run
+            --  elevated children (the fuzz harness) re-grant it at
+            --  the uniform ABI handle 5.
+            Grant (Device_Manager.Elevated_EP,
+                   Akernel_User.Syscalls.Right_Send, 0);
          elsif Length = 5
            and then Token (1 .. 4) = "part"
            and then Token (5) in '0' .. '7'
@@ -661,6 +668,7 @@ begin
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
    PROCFS_EP := Akernel_User.Syscalls.EP_Create;
+   Device_Manager.Elevated_EP := Akernel_User.Syscalls.EP_Create;
 
    --  Device-driven drivers before the static manifest programs:
    --  the console server (Drivers/Serial, class 0) must be serving
@@ -688,6 +696,7 @@ begin
    --  the FS chain is online (milestone 29): bind the fs client
    --  and let the devmgr run Sys:System/Startup.
    Akernel_User.Files.Bind (FS_EP);
+   Device_Manager.Start_Elevated;
    Device_Manager.Start_Display;
 
    Akernel_User.Syscalls.Yield;

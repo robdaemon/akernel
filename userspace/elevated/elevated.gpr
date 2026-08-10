@@ -1,0 +1,10 @@
+project Elevated extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/elevated";
+   for Main use ("elevated.adb");
+
+   package Builder is
+      for Executable ("elevated.adb") use "elevated.elf";
+   end Builder;
+end Elevated;

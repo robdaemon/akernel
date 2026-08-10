@@ -28,4 +28,13 @@ package Device_Manager is
    --  Akernel_User.Files is bound.
    procedure Start_Display;
    function Block_Service return Akernel_User.Syscalls.U64;
+   --  The elevation service (milestone 45): init creates the
+   --  endpoint and stores it here (Send side for the
+   --  "elevated_svc" manifest token); Start_Elevated stages and
+   --  spawns System/Elevated from the Sys volume with the
+   --  Receive side and the admin bootinfo cap. Tolerates a
+   --  missing image (logs and returns; Elevate then fails
+   --  cleanly on the unanswered Call).
+   Elevated_EP : Akernel_User.Syscalls.U64 := 0;
+   procedure Start_Elevated;
 end Device_Manager;

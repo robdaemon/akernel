@@ -42,8 +42,8 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
-DISK_CRATES_SYSTEM := bureau terminal demo shell
-DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path
+DISK_CRATES_SYSTEM := bureau terminal demo shell elevated
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
 .PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
@@ -148,7 +148,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	done
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
-	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest

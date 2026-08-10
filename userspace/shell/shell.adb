@@ -47,6 +47,7 @@ procedure Shell is
    Console_EP : constant U64 := 1;
    FS_EP      : constant U64 := 2;
    Win_EP     : constant U64 := 3;  --  Bureau svc (uniform ABI)
+   Svc_EP     : constant U64 := 5;  --  elevation svc (uniform)
 
    Stage_VA : constant U64 := 16#5400_0000#;
 
@@ -135,11 +136,13 @@ procedure Shell is
    end Stage;
 
    --  Run Word as a child on this shell's channel: same console
-   --  (Send, badge 0), fs and Bureau svc caps, plus — when Args
-   --  is non-empty — a one-page argument string memory object at
-   --  handle 4 (the Amiga command-line analog; milestone 33a).
-   --  Then reap-poll until it exits and return its RC (scripts
-   --  branch on it).
+   --  (Send, badge 0), fs and Bureau svc caps, a one-page
+   --  argument string memory object at handle 4 (the Amiga
+   --  command-line analog; milestone 33a — always granted, an
+   --  empty page when Args is empty, so the handle layout stays
+   --  uniform) and the elevation service (Send) at handle 5
+   --  (milestone 45). Then reap-poll until it exits and return
+   --  its RC (scripts branch on it).
    Args_Stage_VA : constant U64 := 16#5440_0000#;
 
    function Exec (Word : String; Args : String) return U64 is
@@ -150,7 +153,6 @@ procedure Shell is
       Result   : U64;
       Code     : U64 := 0;
       Reaped   : Boolean := False;
-      Grant_N  : U64 := 3;
       type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
       Args_Page : Byte_Array (0 .. 4095)
         with Address => To_Address (Integer_Address (Args_Stage_VA));
@@ -168,44 +170,39 @@ procedure Shell is
          return Akernel_User.CLI.RC_Error;
       end if;
 
-      --  Argument string page at handle 4 (optional).
-      if Args'Length > 0 then
-         Args_Cap := Mem_Alloc (1);
-         if Args_Cap = Syscall_Failed
-           or else Mem_Map (Address_Space_Cap, Args_Cap,
-                            Args_Stage_VA, 0, 4096, 3) /= 0
-         then
-            Akernel_User.Console.Put_Line ("args staging failed");
-            if Args_Cap /= Syscall_Failed then
-               Result := Cap_Delete (Args_Cap);
-            end if;
-            Result := Cap_Delete (Mem_Cap);
-            return Akernel_User.CLI.RC_Error;
+      --  Argument string page at handle 4 (always, possibly
+      --  empty — the handle layout is uniform).
+      Args_Cap := Mem_Alloc (1);
+      if Args_Cap = Syscall_Failed
+        or else Mem_Map (Address_Space_Cap, Args_Cap,
+                         Args_Stage_VA, 0, 4096, 3) /= 0
+      then
+         Akernel_User.Console.Put_Line ("args staging failed");
+         if Args_Cap /= Syscall_Failed then
+            Result := Cap_Delete (Args_Cap);
          end if;
-         for I in 0 .. U64 (Args'Length) - 1 loop
-            Args_Page (I) :=
-              Interfaces.Unsigned_8
-                (Character'Pos (Args (Args'First + Natural (I))));
-         end loop;
-         Args_Page (U64 (Args'Length)) := 0;
-         Grant_N := 4;
+         Result := Cap_Delete (Mem_Cap);
+         return Akernel_User.CLI.RC_Error;
       end if;
+      for I in 0 .. U64 (Args'Length) - 1 loop
+         Args_Page (I) :=
+           Interfaces.Unsigned_8
+             (Character'Pos (Args (Args'First + Natural (I))));
+      end loop;
+      Args_Page (U64 (Args'Length)) := 0;
 
       Set_Grant (0, Console_EP, Right_Send, 0);
       Set_Grant (1, FS_EP, Right_Send, 0);
       Set_Grant (2, Win_EP, Right_Send, 0);
-      if Grant_N = 4 then
-         Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
-      end if;
-      if Spawn (Mem_Cap, Grant_N, Proc_Cap) /= Spawn_Ok
+      Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
+      Set_Grant (4, Svc_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 5, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Akernel_User.Console.Put_Line ("spawn failed: " & Word);
          Result := Cap_Delete (Mem_Cap);
-         if Args_Cap /= 0 then
-            Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
-            Result := Cap_Delete (Args_Cap);
-         end if;
+         Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
+         Result := Cap_Delete (Args_Cap);
          return Akernel_User.CLI.RC_Error;
       end if;
       Result := Cap_Delete (Mem_Cap);

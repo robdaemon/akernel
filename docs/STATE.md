@@ -224,7 +224,16 @@ QEMU virt RAM base:     0x80000000
   are cwd-resolved and fully qualified in
   Akernel_User.CLI (the sole boot-volume
   owner) before reaching the file server;
-  bare Dir lists the cwd. Windows
+  bare Dir lists the cwd. Milestone 45 adds
+  elevation: System/Elevated holds the admin
+  cap and mints Manage-only copies into
+  children it stages+spawns for
+  Sys:C/Elevate (allow+log policy; the admin
+  cap never enters the client namespace —
+  protocol in IPC.md "Elevation"). The
+  uniform command ABI is now: 1 console,
+  2 fs, 3 bureau, 4 args page (always), 5
+  elevation svc. Windows
   close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and

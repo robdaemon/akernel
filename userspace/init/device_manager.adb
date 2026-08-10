@@ -805,6 +805,11 @@ package body Device_Manager is
       Grant_Count := Grant_Count + 1;
       Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
       Grant_Count := Grant_Count + 1;
+      --  Handle 4: the elevation service (Send) — the uniform
+      --  ABI for Sys: programs; terminals re-grant it to their
+      --  shells, shells to commands at handle 5.
+      Set_Grant (Grant_Count, Elevated_EP, Right_Send, 0);
+      Grant_Count := Grant_Count + 1;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
         and then Process_Cap /= 0
       then
@@ -814,6 +819,54 @@ package body Device_Manager is
          Log ("devmgr: spawn failed: " & Path);
       end if;
    end Spawn_Program;
+
+   --  The elevation service (milestone 45): System/Elevated
+   --  holds the admin bootinfo cap (Manage+Transfer — it mints
+   --  Manage-only child copies) and serves the init-owned
+   --  Elevated endpoint. Handles: 1 = console Send (badged),
+   --  2 = fs Send, 3 = Elevated EP Receive, 4 = admin.
+   procedure Start_Elevated is
+      Img         : U64;
+      Process_Cap : U64;
+      Admin_Cap   : U64;
+      Grant_Count : U64 := 0;
+      Result      : U64;
+   begin
+      if Elevated_EP = 0 then
+         Log ("devmgr: no elevated endpoint");
+         return;
+      end if;
+      Img := Stage_From_FS ("System/Elevated");
+      if Img = 0 then
+         Log ("devmgr: elevated image missing");
+         return;
+      end if;
+      Admin_Cap := Boot_Cap ("admin");
+      if Admin_Cap = 0 then
+         Log ("devmgr: admin bootinfo cap missing");
+         Result := Cap_Delete (Img);
+         return;
+      end if;
+      Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
+                 Right_Send, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Elevated_EP, Right_Receive, 0);
+      Grant_Count := Grant_Count + 1;
+      Set_Grant (Grant_Count, Admin_Cap,
+                 Right_Manage + Right_Transfer, 0);
+      Grant_Count := Grant_Count + 1;
+      if Spawn (Img, Grant_Count, Process_Cap) = Spawn_Ok
+        and then Process_Cap /= 0
+      then
+         Next_Id := Next_Id + 1;
+         Log ("devmgr: spawned System/Elevated");
+      else
+         Log ("devmgr: spawn failed: System/Elevated");
+      end if;
+      Result := Cap_Delete (Img);
+   end Start_Elevated;
 
    --  Called by init after the FS chain is online: read
    --  Sys:System/Startup (one volume-relative program path per

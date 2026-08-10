@@ -56,6 +56,7 @@ procedure Terminal is
    --  service Send.
    FS_EP      : constant U64 := 2;
    Win_EP     : constant U64 := 3;
+   Elevated_Svc : constant U64 := 4;  --  elevation svc (from devmgr)
    --  Runtime-created stream sink endpoint (full rights: mints
    --  the console-server sink attach AND the shell's console
    --  cap). Filled in before the service loop starts.
@@ -304,6 +305,7 @@ procedure Terminal is
       Count    : U64 := 0;
       St       : U64;
       Proc_Cap : U64 := 0;
+      Args_Cap : U64 := 0;
    begin
       Akernel_User.Files.Bind (FS_EP);
       St := Akernel_User.Files.Stat ("BD0:System/Shell", Size);
@@ -342,21 +344,32 @@ procedure Terminal is
          Result := Cap_Delete (Mem_Cap);
          return;
       end if;
-      --  Shell handles (uniform namespace): 1 = this sink
+      --  Shell handles (uniform command ABI): 1 = this sink
       --  endpoint (Send, badge 1) — its console channel — 2 =
       --  the fs endpoint (Send), 3 = the Bureau window service
       --  (Send; a shell child is GUI only once it calls
-      --  Surface_Create).
+      --  Surface_Create), 4 = an empty args page (the uniform
+      --  layout — commands take their argument string there),
+      --  5 = the elevation service (Send; milestone 45).
+      Args_Cap := Mem_Alloc (1);
+      if Args_Cap = Syscall_Failed then
+         Debug_Put_Line ("terminal shell args alloc failed");
+         Result := Cap_Delete (Mem_Cap);
+         return;
+      end if;
       Set_Grant (0, Sink_EP, Right_Send, 1);
       Set_Grant (1, FS_EP, Right_Send, 0);
       Set_Grant (2, Win_EP, Right_Send, 0);
-      if Spawn (Mem_Cap, 3, Proc_Cap) /= Spawn_Ok
+      Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
+      Set_Grant (4, Elevated_Svc, Right_Send, 0);
+      if Spawn (Mem_Cap, 5, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Debug_Put_Line ("terminal shell spawn failed");
       else
          Debug_Put_Line ("terminal spawned shell");
       end if;
+      Result := Cap_Delete (Args_Cap);
       Result := Cap_Delete (Mem_Cap);
    end Spawn_Shell;
 

@@ -385,6 +385,40 @@ namespace mechanism.
   minted by the session manager. Servers trust badges only from
   endpoints they minted (same rule as client multiplexing).
 
+## Elevation (implemented, milestone 45)
+
+`System/Elevated` holds the admin bootinfo cap (Manage+Transfer) and
+serves the init-owned elevation endpoint. `Sys:C/Elevate` is a dumb
+client; the admin cap never lands in the client's namespace.
+
+- Endpoint: created by init at boot (Send side granted via the
+  `elevated_svc` manifest token and down the spawner chain — devmgr
+  grants it to Sys: programs at handle 4, terminals re-grant to
+  shells, shells to commands at the uniform ABI handle 5).
+- Request: `call(svc, label=1)` with cap slot 0 = a one-page memory
+  object holding the NUL-terminated command line
+  (`"<command> [args...]"`, the shell args-page format). Request
+  words unused (0).
+- Server: resolves the command through the CLI resolver (the global
+  cwd/Path apply), stages and spawns it — child ABI 1 = console
+  Send (badged), 2 = fs Send, 3 = args page (filler duplicate;
+  grant indices are dense and Bureau is not Elevated's to give),
+  4 = args page, 5 = admin MINTED Manage-only (no Transfer —
+  children cannot re-delegate; Transfer stays on Elevated's copy).
+  Reaps the child, deletes the transferred page (per-request cap
+  leak rule), replies.
+- Reply: word 0 = the child's exit code. Any malformed request
+  (no page, unresolvable command, stage/spawn failure) replies an
+  RC_* code (10/20); the Call itself only fails when the service
+  is absent.
+- Policy today: allow + console log ("elevated: running X"). Later:
+  Prefs/Sudoers, console confirmation, session-badge checks. The
+  child's spawner pid shows the elevation in the Proc: tree;
+  revocation = kill Elevated / stop delegating.
+- Requests serialize (a Call blocks until its child exits).
+- Elevated children get no elevation-svc handle: an elevated
+  Elevate fails cleanly (no privilege recursion).
+
 ## Init state and crash recovery
 
 - Authority lives in kernel cap tables; init's name table is

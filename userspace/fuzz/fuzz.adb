@@ -282,7 +282,12 @@ procedure Fuzz is
         (3, Args_Cap,
          Akernel_User.Syscalls.Right_Map +
            Akernel_User.Syscalls.Right_Read, 0);
-      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 4, Proc);
+      --  Handle 5: the elevation service (milestone 45) — the
+      --  uniform command ABI; fuzz's own copy rides the
+      --  "elevated_svc" manifest token (handle 9).
+      Akernel_User.Syscalls.Set_Grant
+        (4, 9, Akernel_User.Syscalls.Right_Send, 0);
+      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 5, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
@@ -2704,7 +2709,11 @@ begin
                    0, "search command");
       Run_Command ("Sys:C/Search", "BD0:NOPE3.TXT x",
                    10, "search missing file fails");
-      Run_Command ("Sys:C/List", "BD0:C", 0, "list command");
+      --  List output is line-bound by the target: SUBDIR holds
+      --  a fixed two files (BD0:C grew with every shipped
+      --  command until a ~24-line listing outran the SMP4 reap
+      --  poll — the console-outrun burn class again).
+      Run_Command ("Sys:C/List", "BD0:SUBDIR", 0, "list command");
       Run_Command ("Sys:C/List", "BD0:NOSUCHDIR",
                    10, "list missing dir fails");
       end;
@@ -2903,6 +2912,21 @@ begin
          Run_Command ("Sys:C/Which", "Copy", 0,
                       "default search works after reset");
       end;
+
+      --  Elevation (milestone 45): Sys:C/Elevate Calls
+      --  System/Elevated (uniform ABI handle 5, granted by
+      --  Run_Command from fuzz's "elevated_svc" token), which
+      --  stages+spawns the child with a minted admin cap and
+      --  replies with the exit code. These tests prove the
+      --  Call/spawn/reap/reply chain; the mint's rights shape
+      --  is unit-tested in the 39 introspection block (no
+      --  shipped command consumes admin yet — procfs holds its
+      --  own boot copy).
+      Run_Command ("Sys:C/Elevate", "Sys:C/Version", 0,
+                   "elevate runs a command elevated");
+      Run_Command ("Sys:C/Elevate", "Sys:C/NoSuch", 10,
+                   "elevate reports an unknown command");
+      Run_Command ("Sys:C/Elevate", "", 10, "elevate usage");
 
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive

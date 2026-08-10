@@ -1,0 +1,10 @@
+project Elevate extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/elevate";
+   for Main use ("elevate.adb");
+
+   package Builder is
+      for Executable ("elevate.adb") use "elevate.elf";
+   end Builder;
+end Elevate;
