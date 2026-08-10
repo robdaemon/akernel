@@ -29,7 +29,7 @@ begin
 
    for I in 1 .. CLI.Arg_Count loop
       declare
-         Name : constant String := CLI.Argument (I);
+         Name : constant String := CLI.Resolve_Path (CLI.Argument (I));
          St   : constant CLI.U64 := Files.Delete (Name);
       begin
          if St /= Files.Status_Ok then

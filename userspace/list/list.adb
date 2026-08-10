@@ -45,7 +45,8 @@ begin
 
    declare
       Path : constant String :=
-        (if CLI.Arg_Count = 0 then "BD0:" else CLI.Argument (1));
+        (if CLI.Arg_Count = 0 then "BD0:"
+         else CLI.Resolve_Path (CLI.Argument (1)));
       Probe_Size : U64;
    begin
       --  Read_Dir answers Not_Found both for a missing path and

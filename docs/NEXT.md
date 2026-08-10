@@ -1558,6 +1558,55 @@ Next candidates (order open):
     fsck clean pre/post suite. MILESTONE 41
     COMPLETE.
 
+    42 SHIPPED — cwd + scripts. The cwd is the
+    ENV:CWD variable (global like every variable,
+    "BD0:" default): a child CD moves the
+    parent's session, Amiga-style. CLI gains
+    Get_Cwd/Set_Cwd/Join_Path/Normalize_Path/
+    Resolve_Path; every path-taking command
+    (Type/Copy/Delete/Rename/Makedir/Info/Join/
+    Search/Sort/List/CD) resolves its args
+    through Resolve_Path, and Resolve_Command
+    tries the cwd before root and C/. Amiga path
+    semantics: NO dot components — an EMPTY
+    component ascends ("/" = parent, "//" =
+    grandparent), ".." honoured as an alias,
+    "." is just a name. Sys:C/CD: bare prints
+    the cwd; the fat32 Stat tri-state is the
+    validation (Not_Found = missing, Ok = FILE,
+    Bad_Args = directory — Bad_Args is exactly
+    the is-dir signal). Shell: prompt shows the
+    cwd; new "execute <script>" builtin —
+    LF-separated lines, ';' comments, stop at
+    the first RC >= 10 (default failat), nesting
+    capped at 4, scripts slurp through the heap
+    (16 KiB cap); "Shell execute <script>" args
+    = batch mode (run + exit with last RC) —
+    the fuzz end-to-end path. Execute/Exec now
+    RETURN the child RC (Reap_Process_Code in
+    the shell too). Fuzz: CD/ENV:CWD checks,
+    cd-slash, 1-cluster cwd-relative Copy +
+    Delete with readback, failing dirs/files,
+    script side effects verified (set inside a
+    script lands in ENV:), failat stop verified
+    (the line after the failure never runs).
+    Burns: (1) Resolve_Path reads ENV:CWD
+    THROUGH THE FILE SERVER — resolve AFTER
+    Files.Bind, never in declaration-time
+    constants (elaboration runs pre-bind and
+    silently defaults to BD0:). (2) Test data
+    must be ONE cluster: copying an ELF under
+    test = ~129 write-through cluster ops x
+    ~0.4 s and the phase ate the whole 300 s
+    budget, presenting as a wedge at a random
+    later test (the "mutating FAT op" burn,
+    second strike — the log tail looks like a
+    hang, it is a budget). 580 PASS SMP1+SMP4
+    on both image sources, failures=0, fsck
+    clean pre/post suite. MILESTONE 42 COMPLETE.
+    Deferred shell groups left: pipes, job
+    control, clock.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

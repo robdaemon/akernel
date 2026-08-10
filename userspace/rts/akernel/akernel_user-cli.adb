@@ -133,6 +133,16 @@ package body Akernel_User.CLI is
             end if;
          end loop;
       else
+         --  Default search: cwd, then the volume root (the
+         --  default-volume bind makes a bare name root-relative),
+         --  then C/.
+         declare
+            Rel : constant String := Resolve_Path (Name);
+         begin
+            if Rel'Length > Name'Length and then Try (Rel) then
+               return Rel;
+            end if;
+         end;
          if Try (Name) then
             return Name;
          end if;
@@ -143,6 +153,120 @@ package body Akernel_User.CLI is
 
       return "";
    end Resolve_Command;
+
+   ---------------------------------------------------------------
+   --  cwd + path helpers (milestone 42)
+   ---------------------------------------------------------------
+
+   function Get_Cwd return String is
+      V : constant String := Get_Env ("CWD");
+   begin
+      if V'Length = 0 then
+         return "BD0:";
+      end if;
+      return V;
+   end Get_Cwd;
+
+   function Set_Cwd (Path : String) return U64 is
+   begin
+      return Set_Env ("CWD", Path);
+   end Set_Cwd;
+
+   function Join_Path (Dir, Leaf : String) return String is
+   begin
+      if Dir'Length > 0 and then Dir (Dir'Last) = ':' then
+         return Dir & Leaf;
+      end if;
+      return Dir & "/" & Leaf;
+   end Join_Path;
+
+   function Normalize_Path (Path : String) return String is
+      Max_Comps : constant := 16;
+      type Slice is record
+         First : Natural := 0;
+         Last  : Natural := 0;
+      end record;
+      Comps  : array (1 .. Max_Comps) of Slice;
+      NComp  : Natural := 0;
+      Colon  : Natural := 0;  --  index of ':' in Path, 0 = none
+      Result : String (1 .. 256);
+      RLen   : Natural := 0;
+
+      procedure Push (F, L : Natural) is
+      begin
+         if F > L or else NComp = Max_Comps then
+            return;
+         end if;
+         NComp := NComp + 1;
+         Comps (NComp) := (First => F, Last => L);
+      end Push;
+   begin
+      for I in Path'Range loop
+         if Path (I) = ':' then
+            Colon := I;
+            exit;
+         end if;
+      end loop;
+
+      --  Split the component part on '/': an empty component
+      --  ascends one level (the Amiga "/" parent idiom), ".."
+      --  is honoured as an alias, everything else pushes.
+      declare
+         F : Natural := (if Colon = 0 then Path'First else Colon + 1);
+
+         procedure Component (F, L : Natural) is
+         begin
+            if F > L
+              or else (L - F = 1
+                       and then Path (F) = '.'
+                       and then Path (L) = '.')
+            then
+               if NComp > 0 then
+                  NComp := NComp - 1;
+               end if;
+            else
+               Push (F, L);
+            end if;
+         end Component;
+      begin
+         for I in F .. Path'Last loop
+            if Path (I) = '/' then
+               Component (F, I - 1);
+               F := I + 1;
+            end if;
+         end loop;
+         Component (F, Path'Last);
+      end;
+
+      if Colon > 0 then
+         for I in Path'First .. Colon loop
+            RLen := RLen + 1;
+            Result (RLen) := Path (I);
+         end loop;
+      end if;
+      for C in 1 .. NComp loop
+         if RLen > 0 and then Result (RLen) /= ':' then
+            RLen := RLen + 1;
+            Result (RLen) := '/';
+         end if;
+         for I in Comps (C).First .. Comps (C).Last loop
+            RLen := RLen + 1;
+            exit when RLen > Result'Last;
+            Result (RLen) := Path (I);
+         end loop;
+      end loop;
+      return Result (1 .. RLen);
+   end Normalize_Path;
+
+   function Resolve_Path (Path : String) return String is
+   begin
+      for C of Path loop
+         if C = ':' then
+            return Normalize_Path (Path);
+         end if;
+      end loop;
+      return Normalize_Path (Join_Path (Get_Cwd, Path));
+   end Resolve_Path;
 
    procedure Fail_With (Message : String; Code : U64 := RC_Error) is
    begin

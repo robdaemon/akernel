@@ -1,0 +1,10 @@
+project Cd extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/cd";
+   for Main use ("cd.adb");
+
+   package Builder is
+      for Executable ("cd.adb") use "cd.elf";
+   end Builder;
+end Cd;

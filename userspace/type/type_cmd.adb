@@ -4,6 +4,7 @@ with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.Files;
+with Akernel_User.CLI;
 with Type_Buf;
 
 --  Type: print a file to the console (milestone 33a; the Amiga
@@ -43,21 +44,27 @@ begin
       Process_Exit;
    end if;
 
-   St := Akernel_User.Files.Open (Arg_Buf (1 .. Arg_Len), Size);
+   St := Akernel_User.Files.Open
+     (Akernel_User.CLI.Resolve_Path (Arg_Buf (1 .. Arg_Len)), Size);
    if St /= Akernel_User.Files.Status_Ok then
       Akernel_User.Console.Put_Line
         ("Type: can't open " & Arg_Buf (1 .. Arg_Len));
       Process_Exit;
    end if;
 
+   declare
+      Full : constant String :=
+        Akernel_User.CLI.Resolve_Path (Arg_Buf (1 .. Arg_Len));
+   begin
    while Off < Size loop
       St := Akernel_User.Files.Read
-        (Arg_Buf (1 .. Arg_Len), Off, Chunk'Address,
+        (Full, Off, Chunk'Address,
          U64'Min (U64 (Chunk'Length), Size - Off), Count);
       exit when St /= Akernel_User.Files.Status_Ok or else Count = 0;
       Akernel_User.Console.Put (Chunk (1 .. Natural (Count)));
       Off := Off + Count;
    end loop;
+   end;
 
    Process_Exit;
 end Type_Cmd;

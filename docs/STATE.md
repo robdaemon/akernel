@@ -204,7 +204,16 @@ QEMU virt RAM base:     0x80000000
   Set/Get/Unset/Assign plus Echo, Which, Version, Fault
   (41b — the shell thins to help/exit; CLI.Resolve_Command
   shares the Path search with Which), and the data commands
-  Join, Search, Sort, List (41c). Windows close via the
+  Join, Search, Sort, List (41c), and CD (42 — the
+  cwd is ENV:CWD, global so a child CD moves the
+  parent's session; relative args resolve through
+  CLI.Resolve_Path everywhere, "/" is the Amiga
+  parent idiom, no dot components). The shell
+  prompt shows the cwd and "execute <script>"
+  runs scripts (';' comments, failat stop at
+  RC >= 10, nesting cap 4; "Shell execute
+  <script>" args = batch mode exiting with the
+  last RC). Windows close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and
   exits). Every program spawned from

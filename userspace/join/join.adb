@@ -38,7 +38,7 @@ procedure Join is
       and then (S (S'First) = 'T' or else S (S'First) = 't')
       and then (S (S'Last) = 'O' or else S (S'Last) = 'o'));
 
-   procedure Append (From : String) is
+   procedure Append (From, Dest_Path : String) is
       Size  : U64;
       Count : U64;
       Wrote : U64;
@@ -57,8 +57,7 @@ procedure Join is
                            CLI.RC_Error);
          end if;
          St := Files.Write
-           (CLI.Argument (To_Idx + 1), Dest, Buf.all'Address,
-            Count, Wrote);
+           (Dest_Path, Dest, Buf.all'Address, Count, Wrote);
          if St /= Files.Status_Ok or else Wrote /= Count then
             CLI.Fail_With ("Join: write failed", CLI.RC_Error);
          end if;
@@ -85,28 +84,35 @@ begin
    end if;
    Inputs := To_Idx - 1;
 
+   --  Resolve after the fs bind: Resolve_Path reads ENV:CWD
+   --  through the file server (milestone 42).
+   declare
+      Out_Path : constant String :=
+        CLI.Resolve_Path (CLI.Argument (To_Idx + 1));
+   begin
    for I in 1 .. Inputs loop
-      if CLI.Argument (I) = CLI.Argument (To_Idx + 1) then
+      if CLI.Resolve_Path (CLI.Argument (I)) = Out_Path then
          CLI.Fail_With
            ("Join: input and output are the same", CLI.RC_Error);
       end if;
    end loop;
 
    --  Overwrite semantics: truncate an existing output first.
-   St := Files.Stat (CLI.Argument (To_Idx + 1), DSize);
+   St := Files.Stat (Out_Path, DSize);
    if St = Files.Status_Ok then
-      St := Files.Truncate (CLI.Argument (To_Idx + 1));
+      St := Files.Truncate (Out_Path);
       if St /= Files.Status_Ok then
          CLI.Fail_With
-           ("Join: can't truncate " & CLI.Argument (To_Idx + 1),
+           ("Join: can't truncate " & Out_Path,
             CLI.RC_Error);
       end if;
    end if;
 
    Buf := new Byte_Array (0 .. Chunk - 1);
    for I in 1 .. Inputs loop
-      Append (CLI.Argument (I));
+      Append (CLI.Resolve_Path (CLI.Argument (I)), Out_Path);
    end loop;
+   end;
 
    CLI.Exit_With (CLI.RC_Ok);
 end Join;

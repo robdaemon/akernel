@@ -2709,6 +2709,127 @@ begin
                    10, "list missing dir fails");
       end;
 
+      --  cwd + scripts (milestone 42): CD moves the ENV:CWD
+      --  variable, relative args resolve against it, "/" is the
+      --  Amiga parent idiom, and the shell's batch mode
+      --  ("Shell execute <script>") runs scripts end to end.
+      --  ENV reads happen through the same 64-byte buffer; the
+      --  cwd always ends back at BD0: (idempotent).
+      declare
+         Buf   : array (0 .. 63) of Interfaces.Unsigned_8;
+         Size  : U64;
+         Count : U64;
+         Match : Boolean;
+         use type Interfaces.Unsigned_8;
+
+         procedure Check_Env (Name, Want : String; Label_Text : String)
+         is
+            St : U64;
+         begin
+            for I in 0 .. 63 loop
+               Buf (I) := 0;
+            end loop;
+            St := Akernel_User.Files.Open ("ENV:" & Name, Size);
+            Match := St = Akernel_User.Files.Status_Ok
+              and then Size = U64 (Want'Length);
+            if Match then
+               St := Akernel_User.Files.Read
+                 ("ENV:" & Name, 0, Buf'Address, 64, Count);
+               Match := St = Akernel_User.Files.Status_Ok
+                 and then Count = U64 (Want'Length);
+               for I in Want'Range loop
+                  Match := Match
+                    and then Buf (I - 1) =
+                      Interfaces.Unsigned_8 (Character'Pos (Want (I)));
+               end loop;
+            end if;
+            Check (Match, Label_Text);
+         end Check_Env;
+
+         procedure Write_File (Path, Content : String;
+                               Label_Text : String)
+         is
+            St : U64;
+         begin
+            for I in Content'Range loop
+               Buf (I - 1) :=
+                 Interfaces.Unsigned_8 (Character'Pos (Content (I)));
+            end loop;
+            St := Akernel_User.Files.Write
+              (Path, 0, Buf'Address, U64 (Content'Length), Count);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Count = U64 (Content'Length),
+                   Label_Text);
+         end Write_File;
+
+         Script1 : constant String :=
+           "; a comment" & ASCII.LF
+           & "set FZSCR=alive" & ASCII.LF
+           & "info Sys:" & ASCII.LF;
+         Script2 : constant String :=
+           "cd BD0:NOSUCHDIR" & ASCII.LF
+           & "set FZSCR2=unreached" & ASCII.LF;
+      begin
+         --  A tiny source file first: a mutating FAT op costs
+         --  ~0.4 s write-through, so the copy under test must be
+         --  ONE cluster (copying an ELF = ~129 cluster allocs
+         --  blew the suite budget once).
+         Write_File ("BD0:FZSM.TXT", "small but valid!",
+                     "tiny copy source written");
+
+         Run_Command ("Sys:C/CD", "BD0:C", 0, "cd command");
+         Check_Env ("CWD", "BD0:C", "cd sets ENV:CWD");
+
+         --  The Amiga parent idiom: "/" from BD0:C is BD0:.
+         Run_Command ("Sys:C/CD", "/", 0, "cd slash is the parent");
+         Check_Env ("CWD", "BD0:", "cd slash lands at the root");
+
+         --  Relative args resolve against the cwd: copy by bare
+         --  name with the cwd at the root, verify, clean up.
+         Run_Command ("Sys:C/Copy", "FZSM.TXT FZSM2.TXT", 0,
+                      "copy with cwd-relative args");
+         declare
+            S1, S2 : U64 := 0;
+            St     : U64;
+         begin
+            St := Akernel_User.Files.Stat ("BD0:FZSM.TXT", S1);
+            Match := St = Akernel_User.Files.Status_Ok;
+            St := Akernel_User.Files.Stat ("BD0:FZSM2.TXT", S2);
+            Check (Match
+                   and then St = Akernel_User.Files.Status_Ok
+                   and then S1 = S2 and then S1 = 16,
+                   "cwd-relative copy landed in the cwd");
+         end;
+         Run_Command ("Sys:C/Delete", "FZSM2.TXT", 0,
+                      "delete with cwd-relative arg");
+
+         Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
+                      "cd missing dir fails");
+         Run_Command ("Sys:C/CD", "BD0:README.TXT", 10,
+                      "cd onto a file fails");
+
+         --  Scripts end to end through the shell's batch mode.
+         Write_File ("BD0:FZSCRIPT.TXT", Script1,
+                     "script 1 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZSCRIPT.TXT",
+                      0, "shell runs a script");
+         Check_Env ("FZSCR", "alive",
+                    "script command side effects landed");
+
+         Write_File ("BD0:FZSCRIPT2.TXT", Script2,
+                     "script 2 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZSCRIPT2.TXT",
+                      10, "script stops at the first RC 10");
+         declare
+            St   : U64;
+            Size : U64;
+         begin
+            St := Akernel_User.Files.Stat ("ENV:FZSCR2", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "failat stops the script before the next line");
+         end;
+      end;
+
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive
       --  takes its message (no reply cap is minted, so a Reply

@@ -25,8 +25,6 @@ procedure Copy is
 
    Chunk : constant U64 := 32 * 1024;
 
-   From   : constant String := CLI.Argument (1);
-   To     : constant String := CLI.Argument (2);
    St     : U64;
    Size   : U64;
    TSize  : U64;
@@ -42,7 +40,12 @@ begin
       CLI.Fail_With ("usage: Copy <from> <to>", CLI.RC_Error);
    end if;
 
-   if From = To then
+   --  Paths resolve AFTER the fs bind: Resolve_Path reads the
+   --  ENV:CWD variable through the file server (milestone 42).
+   declare
+      From : constant String := CLI.Resolve_Path (CLI.Argument (1));
+      To   : constant String := CLI.Resolve_Path (CLI.Argument (2));
+   begin   if From = To then
       CLI.Fail_With
         ("Copy: source and destination are the same", CLI.RC_Error);
    end if;
@@ -82,6 +85,7 @@ begin
 
       Off := Off + Count;
    end loop;
+   end;
 
    CLI.Exit_With (CLI.RC_Ok);
 end Copy;

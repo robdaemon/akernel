@@ -66,10 +66,13 @@ begin
       CLI.Fail_With ("usage: Search <file> <string>", CLI.RC_Error);
    end if;
 
-   St := Files.Open (CLI.Argument (1), Size);
+   declare
+      Src : constant String := CLI.Resolve_Path (CLI.Argument (1));
+   begin
+   St := Files.Open (Src, Size);
    if St /= Files.Status_Ok then
       CLI.Fail_With
-        ("Search: can't open " & CLI.Argument (1), CLI.RC_Error);
+        ("Search: can't open " & Src, CLI.RC_Error);
    end if;
 
    Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
@@ -79,13 +82,14 @@ begin
    begin
       while Off < Size loop
          St := Files.Read
-           (CLI.Argument (1), Off, Buf.all'Address,
+           (Src, Off, Buf.all'Address,
             U64'Min (Chunk, Size - Off), Count);
          if St /= Files.Status_Ok or else Count = 0 then
             CLI.Fail_With ("Search: read failed", CLI.RC_Error);
          end if;
          Off := Off + Count;
       end loop;
+   end;
    end;
 
    --  Walk LF-delimited lines; print the ones containing the

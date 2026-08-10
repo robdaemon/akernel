@@ -50,7 +50,7 @@ begin
       Report ("Sys:");
    else
       for I in 1 .. CLI.Arg_Count loop
-         Report (CLI.Argument (I));
+         Report (CLI.Resolve_Path (CLI.Argument (I)));
       end loop;
    end if;
 

@@ -42,6 +42,30 @@ package Akernel_User.CLI is
    --  (containing ':' or '/') are returned unchanged.
    function Resolve_Command (Name : String) return String;
 
+   --  Current working directory (milestone 42): the ENV:CWD
+   --  variable, global by construction like every variable;
+   --  "BD0:" when unset. Commands qualify relative path
+   --  arguments through Resolve_Path.
+   function Get_Cwd return String;
+   function Set_Cwd (Path : String) return U64;
+
+   --  Join a directory and a leaf: volume roots ("BD0:") take
+   --  no slash, everything else gets one.
+   function Join_Path (Dir, Leaf : String) return String;
+
+   --  Collapse path components Amiga-style: each EMPTY
+   --  component (an extra '/') ascends one directory — "/" is
+   --  the parent, "//" the grandparent. ".." is accepted as an
+   --  alias (fat32 dirs physically carry the entry); "." is NOT
+   --  special (AmigaDOS has no dot components). Ascending past a
+   --  volume root stays at the root.
+   function Normalize_Path (Path : String) return String;
+
+   --  Qualify a path argument against the cwd: paths containing
+   --  ':' are already qualified; anything else is joined under
+   --  the cwd. The result is normalized.
+   function Resolve_Path (Path : String) return String;
+
    --  Print Message to the console, then exit with Code.
    procedure Fail_With (Message : String; Code : U64 := RC_Error)
      with No_Return;

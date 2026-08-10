@@ -26,14 +26,19 @@ with Akernel_User.CLI;
 --  Op_Read cannot block (the terminal is a single-threaded
 --  receiver), so the shell polls with yields between drains.
 --
---  Builtins: "help", "exit".  Everything else is resolved as a
+--  Builtins: "help", "exit", "execute <script>" (milestone 42:
+--  the script runner — LF-separated command lines, ';' starts a
+--  comment, the run stops at the first RC >= 10 Amiga-failat
+--  style, nesting capped at 4). Everything else is resolved as a
 --  command via the Path variable and the C: search path
 --  (milestone 41b) — staged through the file server into a memory
 --  object (memstage pattern), spawned with this shell's own
 --  console + fs + Bureau svc caps (the uniform namespace — children
 --  may open windows), and awaited (reap-poll) before the next prompt.
 --  "System/Shell" gives a nested shell on the same channel,
---  Amiga-style.
+--  Amiga-style. Spawned with args "execute <script>" the shell
+--  runs the script and exits with its last RC (batch mode — the
+--  fuzz end-to-end path). The prompt shows the cwd (ENV:CWD).
 
 procedure Shell is
    use Akernel_User.Syscalls;
@@ -60,7 +65,7 @@ procedure Shell is
 
    procedure Prompt is
    begin
-      Akernel_User.Console.Put ("Sys:> ");
+      Akernel_User.Console.Put (Akernel_User.CLI.Get_Cwd & "> ");
    end Prompt;
 
    --  Split a command line into its first word and the trimmed
@@ -133,15 +138,17 @@ procedure Shell is
    --  (Send, badge 0), fs and Bureau svc caps, plus — when Args
    --  is non-empty — a one-page argument string memory object at
    --  handle 4 (the Amiga command-line analog; milestone 33a).
-   --  Then reap-poll until it exits.
+   --  Then reap-poll until it exits and return its RC (scripts
+   --  branch on it).
    Args_Stage_VA : constant U64 := 16#5440_0000#;
 
-   procedure Exec (Word : String; Args : String) is
+   function Exec (Word : String; Args : String) return U64 is
       use System.Storage_Elements;
       Mem_Cap  : U64 := 0;
       Proc_Cap : U64 := 0;
       Args_Cap : U64 := 0;
       Result   : U64;
+      Code     : U64 := 0;
       Reaped   : Boolean := False;
       Grant_N  : U64 := 3;
       type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
@@ -151,14 +158,14 @@ procedure Shell is
    begin
       if Resolved'Length = 0 then
          Akernel_User.Console.Put_Line ("unknown command: " & Word);
-         return;
+         return Akernel_User.CLI.RC_Error;
       end if;
 
       Mem_Cap := Stage (Resolved);
       if Mem_Cap = 0 then
          Akernel_User.Console.Put_Line
            ("command found but failed to stage: " & Word);
-         return;
+         return Akernel_User.CLI.RC_Error;
       end if;
 
       --  Argument string page at handle 4 (optional).
@@ -173,7 +180,7 @@ procedure Shell is
                Result := Cap_Delete (Args_Cap);
             end if;
             Result := Cap_Delete (Mem_Cap);
-            return;
+            return Akernel_User.CLI.RC_Error;
          end if;
          for I in 0 .. U64 (Args'Length) - 1 loop
             Args_Page (I) :=
@@ -199,7 +206,7 @@ procedure Shell is
             Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
             Result := Cap_Delete (Args_Cap);
          end if;
-         return;
+         return Akernel_User.CLI.RC_Error;
       end if;
       Result := Cap_Delete (Mem_Cap);
       if Args_Cap /= 0 then
@@ -207,19 +214,105 @@ procedure Shell is
          Result := Cap_Delete (Args_Cap);
       end if;
       while not Reaped loop
-         Reaped := Reap_Process (Proc_Cap) = 0;
-         if not Reaped then
+         if Reap_Process_Code (Proc_Cap, Code) = 0 then
+            Reaped := True;
+         else
             Yield;
          end if;
       end loop;
+      return Code;
    end Exec;
 
-   procedure Execute (Cmd : String) is
+   --  Script runner (milestone 42): LF-separated command lines,
+   --  ';' starts a comment, stop at the first RC >= RC_Error
+   --  (the Amiga default failat). Nesting (a script executing a
+   --  script) is capped. Returns the last RC. Scripts slurp
+   --  through the heap — the buffer never rides the user stack.
+   Max_Script : constant := 16 * 1024;
+   Max_Nest   : constant := 4;
+   Nesting    : Natural := 0;
+
+   function Execute (Cmd : String) return U64;
+
+   function Run_Script (Path : String) return U64 is
+      subtype Byte is Interfaces.Unsigned_8;
+      type Byte_Array is array (U64 range <>) of Byte;
+      type Buf_Access is access Byte_Array;
+
+      Full  : constant String := Akernel_User.CLI.Resolve_Path (Path);
+      Size  : U64 := 0;
+      Count : U64 := 0;
+      St    : U64;
+      Buf   : Buf_Access;
+      RC    : U64 := 0;
+   begin
+      if Nesting >= Max_Nest then
+         Akernel_User.Console.Put_Line ("scripts nested too deep");
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      St := Akernel_User.Files.Open (Full, Size);
+      if St /= Akernel_User.Files.Status_Ok then
+         Akernel_User.Console.Put_Line ("can't open script " & Full);
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      if Size > Max_Script then
+         Akernel_User.Console.Put_Line ("script too big " & Full);
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
+      St := Akernel_User.Files.Read
+        (Full, 0, Buf.all'Address, Size, Count);
+      if St /= Akernel_User.Files.Status_Ok or else Count /= Size then
+         Akernel_User.Console.Put_Line ("can't read script " & Full);
+         return Akernel_User.CLI.RC_Error;
+      end if;
+
+      Nesting := Nesting + 1;
+      declare
+         Lo : U64 := 0;
+         Hi : U64;
+         LF : constant Byte := Byte (Character'Pos (ASCII.LF));
+         CR : constant Byte := Byte (Character'Pos (ASCII.CR));
+         use type Interfaces.Unsigned_8;
+      begin
+         while Lo < Size loop
+            Hi := Lo;
+            while Hi < Size and then Buf (Hi) /= LF loop
+               Hi := Hi + 1;
+            end loop;
+            declare
+               Last : U64 := Hi;
+               Line : String (1 .. 256);
+               Len  : Natural;
+            begin
+               if Last > Lo and then Buf (Last - 1) = CR then
+                  Last := Last - 1;
+               end if;
+               Len := Natural (Last - Lo);
+               if Len > 0 and then Len <= Line'Length then
+                  for I in 0 .. Len - 1 loop
+                     Line (I + 1) :=
+                       Character'Val (Natural (Buf (Lo + U64 (I))));
+                  end loop;
+                  if Line (1) /= ';' then
+                     RC := Execute (Line (1 .. Len));
+                  end if;
+               end if;
+            end;
+            exit when RC >= Akernel_User.CLI.RC_Error;
+            Lo := Hi + 1;
+         end loop;
+      end;
+      Nesting := Nesting - 1;
+      return RC;
+   end Run_Script;
+
+   function Execute (Cmd : String) return U64 is
       W_Last   : Natural;
       R_First  : Natural;
    begin
       if Cmd'Length = 0 then
-         return;
+         return 0;
       end if;
       Split_Cmd (Cmd, W_Last, R_First);
       declare
@@ -229,13 +322,24 @@ procedure Shell is
       begin
          if Word = "help" then
             Akernel_User.Console.Put_Line ("akernel shell — builtins:");
-            Akernel_User.Console.Put_Line ("  help          this text");
-            Akernel_User.Console.Put_Line ("  exit          leave the shell");
-            Akernel_User.Console.Put_Line ("  <cmd> [args]  run a C: or Sys: command");
+            Akernel_User.Console.Put_Line ("  help            this text");
+            Akernel_User.Console.Put_Line ("  exit            leave the shell");
+            Akernel_User.Console.Put_Line
+              ("  execute <file>  run a script (';' comments, stop at RC 10)");
+            Akernel_User.Console.Put_Line
+              ("  <cmd> [args]    run a C: or Sys: command");
+            return 0;
          elsif Word = "exit" then
             Process_Exit;
+            return 0;  --  unreachable; Process_Exit does not return
+         elsif Word = "execute" then
+            if Rest'Length = 0 then
+               Akernel_User.Console.Put_Line ("usage: execute <script>");
+               return Akernel_User.CLI.RC_Error;
+            end if;
+            return Run_Script (Rest);
          else
-            Exec (Word, Rest);
+            return Exec (Word, Rest);
          end if;
       end;
    end Execute;
@@ -248,9 +352,10 @@ procedure Shell is
       if Code = 10 or else Code = 13 then
          declare
             Cmd : constant String := Line (1 .. Line_Len);
+            RC  : U64;
          begin
             Line_Len := 0;
-            Execute (Cmd);
+            RC := Execute (Cmd);
          end;
          Prompt;
       elsif Code = 8 or else Code = 127 then
@@ -277,6 +382,21 @@ begin
       Status := Akernel_User.Files.Open ("BD0:System/Startup",
                                          Boot_Size);
    end;
+
+   --  Batch mode (milestone 42): "Shell execute <script>" runs
+   --  the script and exits with its last RC — no prompt, no
+   --  console read loop. The fuzz end-to-end path for scripts.
+   if Akernel_User.CLI.Arg_Count >= 1
+     and then Akernel_User.CLI.Argument (1) = "execute"
+   then
+      if Akernel_User.CLI.Arg_Count < 2 then
+         Akernel_User.CLI.Fail_With ("usage: Shell execute <script>",
+                                     Akernel_User.CLI.RC_Error);
+      end if;
+      Akernel_User.CLI.Exit_With
+        (Run_Script (Akernel_User.CLI.Argument (2)));
+   end if;
+
    Debug_Put_Line ("shell online");
    Akernel_User.Console.Put_Line ("akernel shell — 'help' for commands");
    Prompt;

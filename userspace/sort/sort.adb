@@ -68,15 +68,22 @@ begin
    if CLI.Arg_Count /= 2 then
       CLI.Fail_With ("usage: Sort <from> <to>", CLI.RC_Error);
    end if;
-   if CLI.Argument (1) = CLI.Argument (2) then
+
+   --  Resolve after the fs bind: Resolve_Path reads ENV:CWD
+   --  through the file server (milestone 42).
+   declare
+      Src : constant String := CLI.Resolve_Path (CLI.Argument (1));
+      Dst : constant String := CLI.Resolve_Path (CLI.Argument (2));
+   begin
+   if Src = Dst then
       CLI.Fail_With
         ("Sort: source and destination are the same", CLI.RC_Error);
    end if;
 
-   St := Files.Open (CLI.Argument (1), Size);
+   St := Files.Open (Src, Size);
    if St /= Files.Status_Ok then
       CLI.Fail_With
-        ("Sort: can't open " & CLI.Argument (1), CLI.RC_Error);
+        ("Sort: can't open " & Src, CLI.RC_Error);
    end if;
 
    Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
@@ -87,7 +94,7 @@ begin
    begin
       while Off < Size loop
          St := Files.Read
-           (CLI.Argument (1), Off, Buf.all'Address,
+           (Src, Off, Buf.all'Address,
             U64'Min (Chunk, Size - Off), Count);
          if St /= Files.Status_Ok or else Count = 0 then
             CLI.Fail_With ("Sort: read failed", CLI.RC_Error);
@@ -142,12 +149,12 @@ begin
       Wrote   : U64;
       DSize   : U64;
    begin
-      St := Files.Stat (CLI.Argument (2), DSize);
+      St := Files.Stat (Dst, DSize);
       if St = Files.Status_Ok then
-         St := Files.Truncate (CLI.Argument (2));
+         St := Files.Truncate (Dst);
          if St /= Files.Status_Ok then
             CLI.Fail_With
-              ("Sort: can't truncate " & CLI.Argument (2),
+              ("Sort: can't truncate " & Dst,
                CLI.RC_Error);
          end if;
       end if;
@@ -160,7 +167,7 @@ begin
             while Off < L.Len loop
                Seg := U64'Min (Chunk, L.Len - Off);
                St := Files.Write
-                 (CLI.Argument (2), Dest,
+                 (Dst, Dest,
                   Out_Buf (L.Start + Off)'Address, Seg, Wrote);
                if St /= Files.Status_Ok or else Wrote /= Seg then
                   CLI.Fail_With ("Sort: write failed", CLI.RC_Error);
@@ -169,7 +176,7 @@ begin
                Off := Off + Seg;
             end loop;
             St := Files.Write
-              (CLI.Argument (2), Dest, NL (0)'Address, 1,
+              (Dst, Dest, NL (0)'Address, 1,
                Wrote);
             if St /= Files.Status_Ok or else Wrote /= 1 then
                CLI.Fail_With ("Sort: write failed", CLI.RC_Error);
@@ -177,6 +184,7 @@ begin
             Dest := Dest + 1;
          end;
       end loop;
+   end;
    end;
 
    CLI.Exit_With (CLI.RC_Ok);

@@ -6,21 +6,26 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 41 COMPLETE):
-- 41c SHIPPED: Sys:C/Join, Search, Sort, List + idempotent
-  fuzz end-to-end tests (Join/Sort verified by output
-  readback, Search/List by exit code). 500 PASS SMP1+SMP4
-  on both image sources (host tools + tools/mkdisk.py),
-  failures=0, fsck clean pre/post suite.
-- Burns logged in NEXT.md: Sort line table on the stack
-  (heap, always); Op_ReadDir Not_Found ambiguity (List
-  Stat-probes first); Run_Command reap poll 2048x32 for
-  ~21-line children; new-crate CRATES double-register
-  fixed; mkdisk.py now parses DISK_CRATES_* from the
-  Makefile.
+CURRENT SESSION STATE (milestone 42 SHIPPED):
+- cwd = ENV:CWD (global; child CD moves the parent's session).
+  CLI: Get_Cwd/Set_Cwd/Join_Path/Normalize_Path/Resolve_Path;
+  all path commands resolve args through Resolve_Path AFTER
+  Files.Bind (burn: declaration-time resolution silently
+  defaults — Get_Cwd is an fs call). Amiga semantics: empty
+  component ascends ("/" = parent), no dot components; ".."
+  alias honoured. Sys:C/CD validates via the Stat tri-state
+  (Ok = file, Bad_Args = dir, Not_Found = missing).
+- Shell: cwd prompt, "execute <script>" builtin (';' comments,
+  failat stop at RC >= 10, nesting cap 4, 16 KiB heap slurp),
+  batch mode "Shell execute <script>" exits with last RC;
+  Execute/Exec return child RC.
+- Burn: fuzz file-op test data must be ONE cluster (ELF copy =
+  ~129 write-through ops x 0.4 s ate the 300 s budget,
+  presenting as a wedge — budget, not deadlock).
+- 580 PASS SMP1+SMP4 on both image sources, failures=0, fsck
+  clean pre/post suite.
 
-Open candidates — milestone 41 COMPLETE (41a a328369,
-41b 17c6b7c+cddaf5b, 41c this commit). Next: the
+Open candidates — milestones 41+42 COMPLETE. Next: the
 deferred list (design notes in docs/NEXT.md):
 System/Elevated + Sys:C/Elevate (userspace-only sudo,
 design locked in the NEXT.md milestone 39 entry),
@@ -29,10 +34,16 @@ pid generation counters, register fast path, custom
 GNAT runtime for userspace, virtio-net, MSI-X for
 virtio-pci (INTx shared chains today), write-back
 cache policy + VIRTIO_BLK_F_FLUSH, true scheduler
-priorities. Also the 41-deferred shell groups:
-CD/cwd, scripts, pipes, job control, clock.
+priorities. Deferred shell groups left: pipes, job
+control, clock.
 
-Recently landed: MILESTONE 41 COMPLETE — 41c
+Recently landed: MILESTONE 42 — cwd (ENV:CWD,
+Amiga "/" parent idiom, Sys:C/CD, Resolve_Path
+wired through every path command) + scripts
+(shell execute builtin, failat, batch mode).
+580 PASS SMP1+SMP4 both image sources,
+failures=0, fsck clean. Before that:
+MILESTONE 41 COMPLETE — 41c
 data commands (Join/Search/Sort/List) with
 idempotent fuzz end-to-end tests. 500 PASS
 SMP1+SMP4 on both image sources, failures=0,

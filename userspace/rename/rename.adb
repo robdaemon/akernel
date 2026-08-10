@@ -15,8 +15,6 @@ procedure Rename is
    package Files renames Akernel_User.Files;
    use type CLI.U64;
 
-   From : constant String := CLI.Argument (1);
-   To   : constant String := CLI.Argument (2);
    St   : CLI.U64;
 begin
    Akernel_User.Console.Set_Endpoint (1);
@@ -27,11 +25,18 @@ begin
       CLI.Fail_With ("usage: Rename <from> <to>", CLI.RC_Error);
    end if;
 
+   --  Resolve after the fs bind: Resolve_Path reads ENV:CWD
+   --  through the file server (milestone 42).
+   declare
+      From : constant String := CLI.Resolve_Path (CLI.Argument (1));
+      To   : constant String := CLI.Resolve_Path (CLI.Argument (2));
+   begin
    St := Files.Rename (From, To);
    if St /= Files.Status_Ok then
       CLI.Fail_With
         ("Rename: can't rename " & From & " to " & To, CLI.RC_Error);
    end if;
+   end;
 
    CLI.Exit_With (CLI.RC_Ok);
 end Rename;
