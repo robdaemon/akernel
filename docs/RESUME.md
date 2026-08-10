@@ -6,26 +6,24 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 42 SHIPPED):
-- cwd = ENV:CWD (global; child CD moves the parent's session).
-  CLI: Get_Cwd/Set_Cwd/Join_Path/Normalize_Path/Resolve_Path;
-  all path commands resolve args through Resolve_Path AFTER
-  Files.Bind (burn: declaration-time resolution silently
-  defaults — Get_Cwd is an fs call). Amiga semantics: empty
-  component ascends ("/" = parent), no dot components; ".."
-  alias honoured. Sys:C/CD validates via the Stat tri-state
-  (Ok = file, Bad_Args = dir, Not_Found = missing).
-- Shell: cwd prompt, "execute <script>" builtin (';' comments,
-  failat stop at RC >= 10, nesting cap 4, 16 KiB heap slurp),
-  batch mode "Shell execute <script>" exits with last RC;
-  Execute/Exec return child RC.
-- Burn: fuzz file-op test data must be ONE cluster (ELF copy =
-  ~129 write-through ops x 0.4 s ate the 300 s budget,
-  presenting as a wedge — budget, not deadlock).
-- 580 PASS SMP1+SMP4 on both image sources, failures=0, fsck
-  clean pre/post suite.
+CURRENT SESSION STATE (milestone 43 SHIPPED):
+- Sys:C/Path (Amiga syntax: bare / <dir> ADD / <dir> REMOVE /
+  RESET). List = ENV:Path, global (Amiga is per-process — needs
+  session identity we lack; same ruling as ENV:CWD). Entries
+  canonicalize at ADD (cwd-resolved, qualified, trailing
+  separator, case-insensitive dedup; repeats exit RC_Warn).
+  Resolve_Command: cwd FIRST ALWAYS, then Path entries (they
+  replace only the built-in root+C: tail), else root+C:. Which
+  reads the Path via Resolve_Command.
+- USER RULING: tools/mkdisk.py DELETED — host
+  sgdisk/mkfs.vfat/mtools are required, the disk recipe fails
+  cleanly without them. Single image source from now on.
+- Suite harness timeout raised to 420 s (666 PASS worth of
+  write-through mutations outgrew 300; a mid-staging stop with
+  no LCH/FAIL = budget, check wall-clock first).
+- 666 PASS SMP1+SMP4, failures=0, fsck clean pre/post suite.
 
-Open candidates — milestones 41+42 COMPLETE. Next: the
+Open candidates — milestones 41+42+43 COMPLETE. Next: the
 deferred list (design notes in docs/NEXT.md):
 System/Elevated + Sys:C/Elevate (userspace-only sudo,
 design locked in the NEXT.md milestone 39 entry),
@@ -37,7 +35,13 @@ cache policy + VIRTIO_BLK_F_FLUSH, true scheduler
 priorities. Deferred shell groups left: pipes, job
 control, clock.
 
-Recently landed: MILESTONE 42 — cwd (ENV:CWD,
+Recently landed: MILESTONE 43 — Sys:C/Path
+(Amiga syntax, global ENV:Path, canonicalizing
+ADD, cwd-first Resolve_Command) and mkdisk.py
+DELETED (host tools required, single image
+source). Suite timeout 420 s. 666 PASS
+SMP1+SMP4, failures=0, fsck clean. Before
+that: MILESTONE 42 — cwd (ENV:CWD,
 Amiga "/" parent idiom, Sys:C/CD, Resolve_Path
 wired through every path command) + scripts
 (shell execute builtin, failat, batch mode).
@@ -375,7 +379,12 @@ Working rules burned in (details in NEXT.md):
   elaboration, before any debug print in the body.
 - A mutating FAT op costs ~0.4 s (write-through sync
   scaling with FAT size): keep FAT stress loops at
-  ~64 ops per phase inside the suite budget.
+  ~64 ops per phase inside the suite budget; fuzz file-op
+  test data stays ONE cluster (an ELF copy = ~129 ops
+  ate the whole budget, masquerading as a wedge). The
+  suite harness timeout is 420 s — a mid-staging stop
+  with no LCH and no FAIL is a budget, check wall-clock
+  before bisecting.
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
   form) in a command that does NOT also invoke qemu: the

@@ -2830,6 +2830,80 @@ begin
          end;
       end;
 
+      --  The Path search list (milestone 43): ADD canonicalizes
+      --  (cwd-resolved, qualified, trailing separator), the list
+      --  REPLACES the built-in root+C: tail while set (the cwd
+      --  stays first), Which reads the same Resolve_Command.
+      --  RESET at the end restores the default — idempotent.
+      declare
+         Buf   : array (0 .. 63) of Interfaces.Unsigned_8;
+         Size  : U64;
+         Count : U64;
+         Match : Boolean;
+         use type Interfaces.Unsigned_8;
+
+         procedure Check_Env (Name, Want : String; Label_Text : String)
+         is
+            St : U64;
+         begin
+            for I in 0 .. 63 loop
+               Buf (I) := 0;
+            end loop;
+            St := Akernel_User.Files.Open ("ENV:" & Name, Size);
+            Match := St = Akernel_User.Files.Status_Ok
+              and then Size = U64 (Want'Length);
+            if Match then
+               St := Akernel_User.Files.Read
+                 ("ENV:" & Name, 0, Buf'Address, 64, Count);
+               Match := St = Akernel_User.Files.Status_Ok
+                 and then Count = U64 (Want'Length);
+               for I in Want'Range loop
+                  Match := Match
+                    and then Buf (I - 1) =
+                      Interfaces.Unsigned_8 (Character'Pos (Want (I)));
+               end loop;
+            end if;
+            Check (Match, Label_Text);
+         end Check_Env;
+      begin
+         Run_Command ("Sys:C/Path", "SUBDIR ADD", 0,
+                      "path add (cwd-relative, canonicalized)");
+         Check_Env ("Path", "BD0:SUBDIR/", "path add wrote the list");
+
+         --  The list replaces the built-in tail: C: is gone
+         --  until added.
+         Run_Command ("Sys:C/Which", "Copy", 10,
+                      "which misses C: while path overrides");
+         Run_Command ("Sys:C/Path", "BD0:C ADD", 0, "path add C:");
+         Check_Env ("Path", "BD0:SUBDIR/;BD0:C/",
+                    "path appended the second entry");
+         Run_Command ("Sys:C/Which", "Copy", 0,
+                      "which finds C: once added");
+
+         Run_Command ("Sys:C/Path", "bd0:c add", 5,
+                      "path dedup is case-insensitive");
+         Check_Env ("Path", "BD0:SUBDIR/;BD0:C/",
+                    "dedup left the list unchanged");
+
+         Run_Command ("Sys:C/Path", "SUBDIR REMOVE", 0,
+                      "path remove");
+         Check_Env ("Path", "BD0:C/", "remove rebuilt the list");
+         Run_Command ("Sys:C/Path", "SUBDIR REMOVE", 5,
+                      "remove of a missing entry warns");
+
+         Run_Command ("Sys:C/Path", "RESET", 0, "path reset");
+         declare
+            St   : U64;
+            Size : U64;
+         begin
+            St := Akernel_User.Files.Stat ("ENV:Path", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "reset deleted ENV:Path");
+         end;
+         Run_Command ("Sys:C/Which", "Copy", 0,
+                      "default search works after reset");
+      end;
+
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive
       --  takes its message (no reply cap is minted, so a Reply

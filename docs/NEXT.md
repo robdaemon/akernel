@@ -1607,6 +1607,41 @@ Next candidates (order open):
     Deferred shell groups left: pipes, job
     control, clock.
 
+    43 SHIPPED — the Path search list +
+    mkdisk.py removal. Sys:C/Path with the Amiga
+    syntax: bare lists, "Path <dir> ADD",
+    "Path <dir> REMOVE", "Path RESET". The list
+    is ENV:Path (';'-separated prefixes) —
+    GLOBAL like every variable; the Amiga keeps
+    it per-process, which needs session identity
+    we do not have (same ruling as ENV:CWD).
+    Entries canonicalize at ADD: cwd-resolved,
+    fully qualified, trailing separator,
+    case-insensitive dedup (repeat ADD/REMOVE
+    exit RC_Warn). Resolve_Command order is now:
+    cwd FIRST ALWAYS (the Amiga current-dir
+    rule), then Path entries when set — the list
+    REPLACES only the built-in root+C: tail —
+    else root+C:. Which shares Resolve_Command,
+    so it reads the Path automatically. Burns /
+    ops: (1) the Path list read must follow
+    Files.Bind — the 42 elaboration burn nearly
+    repeated in the first Path draft (List read
+    in the declarative part). (2) The suite
+    outgrew the 300 s harness timeout (666 PASS
+    worth of spawns + write-through mutations):
+    run the suite with timeout 420 now — a
+    mid-staging stop with no LCH and no FAIL is
+    a BUDGET, check wall-clock before bisecting.
+    (3) USER RULING: tools/mkdisk.py is DELETED
+    — host sgdisk/mkfs.vfat/mtools are required,
+    the disk recipe fails cleanly without them;
+    two image sources doubled verification cost
+    and the generator kept accumulating layout
+    edge cases. 666 PASS SMP1+SMP4, failures=0,
+    fsck clean pre/post suite. MILESTONE 43
+    COMPLETE.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

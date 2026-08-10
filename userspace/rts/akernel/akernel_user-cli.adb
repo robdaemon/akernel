@@ -108,6 +108,19 @@ package body Akernel_User.CLI is
          end if;
       end loop;
 
+      --  The current directory comes first, always (the Amiga
+      --  current-dir rule; milestone 43). Then the Path variable
+      --  when set — it REPLACES the built-in list — else the
+      --  built-in default: the volume root (bare name against
+      --  the default-volume bind), then C/.
+      declare
+         Rel : constant String := Resolve_Path (Name);
+      begin
+         if Rel'Length > Name'Length and then Try (Rel) then
+            return Rel;
+         end if;
+      end;
+
       if Path'Length > 0 then
          P0 := Path'First;
          for I in Path'Range loop
@@ -133,16 +146,6 @@ package body Akernel_User.CLI is
             end if;
          end loop;
       else
-         --  Default search: cwd, then the volume root (the
-         --  default-volume bind makes a bare name root-relative),
-         --  then C/.
-         declare
-            Rel : constant String := Resolve_Path (Name);
-         begin
-            if Rel'Length > Name'Length and then Try (Rel) then
-               return Rel;
-            end if;
-         end;
          if Try (Name) then
             return Name;
          end if;

@@ -43,7 +43,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
 DISK_CRATES_SYSTEM := bureau terminal demo shell
-DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
 .PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
@@ -88,9 +88,10 @@ $(CRATES):
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) tools/mkdisk.py
+$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 	rm -f $@
-	@if command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null; then \
+	@command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null \
+	  || { echo "disk image needs host sgdisk + mkfs.vfat + mtools"; exit 1; }; \
 	mkdir -p $(INITRD_OUT); \
 	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt; \
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"; \
@@ -111,11 +112,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) tools/mkdisk.py
 	for c in $(DISK_CRATES_C); do \
 	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
 	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup; \
-	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup; \
-	else \
-	echo "host sgdisk/mkfs.vfat/mtools absent; generating $@ with tools/mkdisk.py"; \
-	python3 tools/mkdisk.py $@; \
-	fi
+	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
 initrd: $(INITRD_IMG)
 

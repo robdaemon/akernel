@@ -36,10 +36,13 @@ package Akernel_User.CLI is
    function Get_Env (Name : String) return String;
    function Set_Env (Name : String; Value : String) return U64;
 
-   --  Resolve a command name against the Path variable (or the
-   --  built-in default search list). Returns the fully-qualified
-   --  path to the executable, or "" if not found. Qualified names
-   --  (containing ':' or '/') are returned unchanged.
+   --  Resolve a command name against the current directory,
+   --  then the Path variable (or the built-in default search
+   --  list: volume root, then C/). Returns the fully-qualified
+   --  path to the executable, or "" if not found. Qualified
+   --  names (containing ':' or '/') are returned unchanged.
+   --  The current directory is always searched first (the
+   --  Amiga current-dir rule; Sys:C/Path manages the list).
    function Resolve_Command (Name : String) return String;
 
    --  Current working directory (milestone 42): the ENV:CWD

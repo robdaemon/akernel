@@ -213,7 +213,14 @@ QEMU virt RAM base:     0x80000000
   runs scripts (';' comments, failat stop at
   RC >= 10, nesting cap 4; "Shell execute
   <script>" args = batch mode exiting with the
-  last RC). Windows close via the
+  last RC). C:Path (43) manages the command
+  search list — ENV:Path, global (Amiga is
+  per-process; no session identity here) —
+  with Resolve_Command searching cwd FIRST,
+  then Path entries (they replace only the
+  built-in root+C: tail), else root+C:;
+  Which shares the same resolver. Windows
+  close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and
   exits). Every program spawned from
