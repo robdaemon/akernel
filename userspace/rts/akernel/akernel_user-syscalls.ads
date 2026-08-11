@@ -269,6 +269,25 @@ package Akernel_User.Syscalls is
    Args_Handle : constant U64 := 4;
    Args_VA     : constant U64 := 16#4800_0000#;
 
+   --  Redirection trailer (milestone 46b): a spawner that
+   --  redirects the child's output/input writes a 64-byte
+   --  trailer at Args_Trailer_Offset: magic u64, then the page
+   --  offsets of two NUL-terminated paths (0 = none) —
+   --  [magic][out_off][in_off][reserved]. Pages without the
+   --  magic mean "no redirection" (old spawners need no
+   --  change). The RTS wires out_path into Console (Put
+   --  appends via fs Writes; pipes ignore offsets) and
+   --  in_path into CLI.Get_Line.
+   Args_Trailer_Offset : constant U64 := 4032;
+   Args_Trailer_Magic  : constant U64 := 16#3152_4944_4552_4B41#;
+   --  "AKREDIR1" little-endian
+
+   --  Map the args page once (idempotent); Mapped is False
+   --  when no page was granted. Callers MUST gate any
+   --  Args_VA overlay on Mapped — reading an unmapped page
+   --  faults.
+   procedure Map_Args (Mapped : out Boolean);
+
    --  Copy the argument string into S (Len = its length, 0 when
    --  no args page was granted). The page stays mapped.
    procedure Read_Args (S : out String; Len : out Natural);

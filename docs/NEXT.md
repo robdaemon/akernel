@@ -1723,6 +1723,56 @@ Next candidates (order open):
     SMP1+SMP4, failures=0, fsck clean
     pre/post suite. MILESTONE 45 COMPLETE.
 
+    46 SHIPPED — Amiga pipes end to end:
+    PIPE: + NIL: virtual volumes (46a) and
+    shell `|`/`>`/`<` redirection (46b).
+    PIPE:name = 16 KiB FIFO ring in the fs
+    (Fileserver_Pipes; Open ATTACHES+creates,
+    Write appends all-or-nothing, Read pops,
+    new Op_Close=18 signals writer EOF,
+    Delete destroys, Truncate resets for
+    reuse; POLL-AND-RETRY semantics — the
+    kernel allows one outstanding reply per
+    server thread, true blocking waits on
+    kernel reply-cap duplication, deferred).
+    NIL: discards writes, reads answer
+    immediate EOF. Redirection rides the
+    args-page trailer (magic + out/in path
+    offsets at 4032): the RTS wires out_path
+    into Console (4 KiB buffer, flush on LF,
+    bounded Not_Ready retry, Close_Redirect
+    at CLI.Exit_With = flush + pipe EOF) and
+    in_path into CLI.Get_Line. The shell
+    splits pipelines (up to 4 stages,
+    concurrent spawns, last-stage RC,
+    PIPE:SH<n> pool create+reset+delete,
+    `>` truncates/creates) and Sort with no
+    args is the stdin filter. BURNS: (1) RTS
+    Open was Stat-based — pipes need a real
+    Op_Open to attach/create. (2) Files.Read
+    required Buf_Cap without Ensure_Buffer
+    (Write had it) — a reader that never
+    Opens (Get_Line on a pipe) ate Bad_Args.
+    (3) Type predated the CLI (raw Read_Args
+    + Process_Exit) — no trailer, no EOF;
+    tap CLI.Arg_Count once + exit via
+    CLI.Exit_With. (4) The shell args-copy
+    loop indexed a null String on bare
+    pipeline stages -> Constraint_Error (LCH).
+    (5) String(0..4095) — String's index is
+    Positive, CE at elaboration; the
+    compiler warned, heed it. (6) Sort's 2
+    MiB stdin buffer + 64 KiB line table
+    exceeded the 2 MiB RTS heap cap ->
+    Storage_Error; stdin cap is 1 MiB. (7) A
+    multi-edit tool call that fails ANY edit
+    rolls back ALL of them — a debug print
+    "applied" earlier in the same call never
+    landed; grep when instrumentation goes
+    missing. 742/743 PASS SMP1+SMP4,
+    failures=0, fsck clean pre/post suite.
+    MILESTONE 46 COMPLETE.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

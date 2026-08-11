@@ -1,6 +1,7 @@
 with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
+with System.Storage_Elements;
 
 package body Akernel_User.CLI is
 
@@ -18,6 +19,75 @@ package body Akernel_User.CLI is
    Tokens    : array (1 .. Max_Args) of Slice;
    Tok_Count : Natural := 0;
 
+   --  Input redirection state (milestone 46b): the args-page
+   --  trailer's in_path. Library level (stack rule).
+   In_Set    : Boolean := False;
+   In_Pipe   : Boolean := False;
+   In_Path   : String (1 .. 48) := (others => Character'Val (0));
+   In_PLen   : Natural := 0;
+   In_Offset : Syscalls.U64 := 0;  --  regular files only
+   In_Buf    : String (1 .. 4096) := (others => Character'Val (0));
+   In_Pos    : Natural := 1;
+   In_End    : Natural := 0;
+   In_EOF    : Boolean := False;
+
+   --  Read the redirection trailer and wire it up. Runs once
+   --  with Parse_Args (the page is mapped by Read_Args first).
+   procedure Parse_Trailer is
+      use System.Storage_Elements;
+      type Word_Array is array (0 .. 7) of Syscalls.U64;
+      Trailer : Word_Array
+        with Address => To_Address
+          (Integer_Address (Syscalls.Args_VA
+                            + Syscalls.Args_Trailer_Offset));
+      Mapped : Boolean;
+
+      function Path_At (Off : Syscalls.U64) return String is
+         Page : String (1 .. 4096)
+           with Address => To_Address
+             (Integer_Address (Syscalls.Args_VA));
+         Len : Natural := 0;
+      begin
+         if Off = 0 or else Off >= 4032 then
+            return "";
+         end if;
+         while Off + Syscalls.U64 (Len) < 4032
+           and then Page (Integer (Off) + Len + 1) /=
+             Character'Val (0)
+         loop
+            Len := Len + 1;
+         end loop;
+         return Page (Integer (Off) + 1 .. Integer (Off) + Len);
+      end Path_At;
+   begin
+      Syscalls.Map_Args (Mapped);
+      if not Mapped
+        or else Trailer (0) /= Syscalls.Args_Trailer_Magic
+      then
+         return;
+      end if;
+      declare
+         Out_P : constant String := Path_At (Trailer (1));
+         In_P  : constant String := Path_At (Trailer (2));
+      begin
+         if Out_P'Length > 0 then
+            Console.Set_Redirect_Out (Out_P);
+         end if;
+         if In_P'Length > 0 and then In_P'Length <= In_Path'Length
+         then
+            In_Path := (others => Character'Val (0));
+            In_Path (1 .. In_P'Length) := In_P;
+            In_PLen := In_P'Length;
+            In_Pipe := In_P'Length >= 5
+              and then (In_P (In_P'First .. In_P'First + 4) =
+                          "PIPE:"
+                        or else In_P (In_P'First .. In_P'First + 4)
+                          = "pipe:");
+            In_Set := True;
+         end if;
+      end;
+   end Parse_Trailer;
+
    procedure Parse_Args is
       I : Natural := 1;
       F : Natural;
@@ -27,6 +97,7 @@ package body Akernel_User.CLI is
       end if;
       Args_Read := True;
       Syscalls.Read_Args (Args_Buf, Args_Len);
+      Parse_Trailer;
       while I <= Args_Len loop
          while I <= Args_Len and then Args_Buf (I) = ' ' loop
             I := I + 1;
@@ -288,8 +359,112 @@ package body Akernel_User.CLI is
       end loop;
    end Fail_With;
 
+   procedure Get_Line
+     (S           : out String;
+      Len         : out Natural;
+      End_Of_Input : out Boolean)
+   is
+      Status : U64;
+      Count  : U64;
+      L      : Natural;
+   begin
+      Parse_Args;
+      Len := 0;
+      End_Of_Input := False;
+      if not In_Set then
+         End_Of_Input := True;  --  no stdin in the ABI yet
+         return;
+      end if;
+      loop
+         --  A buffered line?
+         for I in In_Pos .. In_End loop
+            if In_Buf (I) = Character'Val (10) then
+               L := Natural'Min (S'Length, I - In_Pos);
+               if L > 0 then
+                  S (S'First .. S'First + L - 1) :=
+                    In_Buf (In_Pos .. In_Pos + L - 1);
+               end if;
+               Len := L;
+               In_Pos := I + 1;
+               return;
+            end if;
+         end loop;
+
+         if In_EOF then
+            --  A trailing unterminated line, then EOF.
+            if In_Pos <= In_End then
+               L := Natural'Min (S'Length, In_End - In_Pos + 1);
+               S (S'First .. S'First + L - 1) :=
+                 In_Buf (In_Pos .. In_Pos + L - 1);
+               Len := L;
+               In_Pos := In_End + 1;
+               return;
+            end if;
+            End_Of_Input := True;
+            return;
+         end if;
+
+         --  Compact and refill.
+         if In_Pos > 1 then
+            if In_Pos <= In_End then
+               In_Buf (1 .. In_End - In_Pos + 1) :=
+                 In_Buf (In_Pos .. In_End);
+               In_End := In_End - In_Pos + 1;
+            else
+               In_End := 0;
+            end if;
+            In_Pos := 1;
+         end if;
+         if In_End = In_Buf'Length then
+            --  Line longer than the staging buffer: deliver the
+            --  buffer as a (split) line.
+            L := Natural'Min (S'Length, In_End);
+            S (S'First .. S'First + L - 1) := In_Buf (1 .. L);
+            Len := L;
+            if L = In_End then
+               In_Pos := 1;
+               In_End := 0;
+            else
+               In_Buf (1 .. In_End - L) := In_Buf (L + 1 .. In_End);
+               In_End := In_End - L;
+            end if;
+            return;
+         end if;
+
+         if In_Pipe then
+            Status := Files.Status_Not_Ready;
+            for Try in 1 .. 1_000_000 loop
+               Status := Files.Read
+                 (In_Path (1 .. In_PLen), 0,
+                  In_Buf (In_End + 1)'Address,
+                  U64 (In_Buf'Length - In_End), Count);
+               exit when Status /= Files.Status_Not_Ready;
+               Syscalls.Yield;
+            end loop;
+         else
+            Status := Files.Read
+              (In_Path (1 .. In_PLen), In_Offset,
+               In_Buf (In_End + 1)'Address,
+               U64 (In_Buf'Length - In_End), Count);
+         end if;
+
+         if Status = Files.Status_Ok and then Count > 0 then
+            In_End := In_End + Natural (Count);
+            if not In_Pipe then
+               In_Offset := In_Offset + Count;
+            end if;
+         else
+            --  Ok+0 / Out_Of_Range at end of file, a pipe poll
+            --  that outlived its bound, or an error: all of
+            --  them surface as EOF to the reader.
+            In_EOF := True;
+         end if;
+      end loop;
+   end Get_Line;
+
    procedure Exit_With (Code : U64 := RC_Ok) is
    begin
+      Console.Close_Redirect;  --  flush + pipe EOF (m46b)
       Syscalls.Process_Exit (Code);
       loop
          Syscalls.Yield;

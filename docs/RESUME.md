@@ -6,31 +6,48 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 44 SHIPPED):
-- No more Files.Set_Default_Volume in CLI programs (22
-  stripped): user paths are cwd-resolved + fully qualified by
-  CLI.Resolve_Path; CLI owns the boot-volume name
-  (Boot_Volume = "BD0:", Get_Cwd default, Resolve_Command
-  built-in tail "BD0:"&name then "C:"&name). The Files
-  default-volume bind stays as a low-level escape hatch only
-  (early boot, fuzz's intentional RD0 tests).
-- Dir rewritten on the CLI package: no-arg lists the CURRENT
-  DIRECTORY (Amiga semantic), missing dir exits RC_Error.
-- 666/665 PASS SMP1/SMP4, failures=0, fsck clean pre/post.
+CURRENT SESSION STATE (milestone 46 SHIPPED):
+- Amiga pipes end to end: PIPE:/NIL: virtual volumes in the
+  fs (46a: 16 KiB FIFO rings, poll-and-retry semantics — the
+  kernel allows one outstanding reply per server thread —
+  Op_Close=18 signals writer EOF) and shell `|`/`>`/`<`
+  redirection (46b) via the args-page trailer (magic +
+  out/in path offsets at 4032): the RTS wires out_path into
+  Console (flush on LF, Close_Redirect at CLI.Exit_With) and
+  in_path into CLI.Get_Line. Pipelines run concurrently from
+  a PIPE:SH<n> pool; Sort with no args is the stdin filter.
+- 45 shipped elevation (System/Elevated + Sys:C/Elevate;
+  uniform ABI: 4 = args page always, 5 = elevation svc).
+- BURNS logged in NEXT.md: initrd Manifest is REGENERATED
+  by the Makefile; Files.Read now Ensure_Buffers like
+  Write; pre-CLI commands need Arg_Count + Exit_With for
+  redirect; null-String arg copies CE; String index is
+  Positive; RTS heap is 2 MiB total; a failing multi-edit
+  call rolls back ALL edits (bit TWICE — RESUME's 45 state
+  never landed and a debug print vanished); make all -j
+  races the shared RTS lib (build one crate serially
+  first after RTS changes); harness timeout 600 s.
+- 742/743 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41-44 COMPLETE. Next: the
-deferred list (design notes in docs/NEXT.md):
-System/Elevated + Sys:C/Elevate (userspace-only sudo,
-design locked in the NEXT.md milestone 39 entry),
-Proc:self (needs client identity through the VFS),
-pid generation counters, register fast path, custom
-GNAT runtime for userspace, virtio-net, MSI-X for
-virtio-pci (INTx shared chains today), write-back
-cache policy + VIRTIO_BLK_F_FLUSH, true scheduler
-priorities. Deferred shell groups left: pipes, job
-control, clock.
+Open candidates — milestones 41-46 COMPLETE. Next: the
+deferred list (design notes in docs/NEXT.md): kernel
+reply-cap duplication (unlocks true blocking pipes AND
+deferred server replies), write-back cache +
+VIRTIO_BLK_F_FLUSH (suite-speed payoff — write-through is
+why the suite needs 600 s), Proc:self (needs client
+identity through the VFS), pid generation counters,
+register fast path, custom GNAT runtime, virtio-net,
+MSI-X, true scheduler priorities. Deferred shell groups
+left: job control, clock.
 
-Recently landed: MILESTONE 44 — cwd-centric
+Recently landed: MILESTONE 46 — Amiga pipes
+end to end (PIPE:/NIL: + shell redirection,
+Sort stdin filter). 742/743 PASS SMP1+SMP4,
+failures=0, fsck clean. Before that:
+MILESTONE 45 — System/Elevated +
+Sys:C/Elevate (userspace-only sudo,
+uniform ABI handle 5). Before that:
+MILESTONE 44 — cwd-centric
 resolution end to end: Set_Default_Volume
 stripped from all CLI programs, CLI owns the
 boot volume, Dir lists the cwd by default.
@@ -401,6 +418,18 @@ Working rules burned in (details in NEXT.md):
 - Unproven staging VAs can land inside the RTS heap
   (0x05C0_0000 burned): Mem_Map then fails — reuse the
   shell/devmgr-proven regions.
+- The RTS heap is 2 MiB TOTAL (8 x 256 KiB chunks): size
+  per-program heap buffers (Sort's stdin slurp) with
+  headroom for the line table + RTS slack, or Storage_Error.
+- Redirection-aware programs must (a) touch CLI.Arg_Count
+  (or any CLI arg API) so Parse_Args runs — it also parses
+  the args-page redirection trailer — and (b) exit via
+  CLI.Exit_With, which Close_Redirects (flush + pipe EOF).
+  Raw Read_Args/Process_Exit bypass both (the Type burn).
+- A failing multi-edit tool call rolls back EVERY edit in
+  the call — when instrumentation or a fix seems to have
+  "landed" but does nothing, grep the file before
+  suspecting the logic (bit twice in m45/46).
 - Kill stray qemu-system-riscv64 before rerunning — it holds the
   disk.img lock. Use pkill -f "[q]emu-system-riscv64" (bracket
   form) in a command that does NOT also invoke qemu: the

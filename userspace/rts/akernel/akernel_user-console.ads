@@ -17,6 +17,23 @@ package Akernel_User.Console is
    procedure Put (S : String);
    procedure Put_Line (S : String);
 
+   --  Output redirection (milestone 46b): CLI activates this
+   --  from the args-page trailer. While redirected, Put
+   --  appends to a 4 KiB buffer flushed to the fs path on
+   --  every newline (and on Flush); a PIPE: path ignores
+   --  offsets (FIFO), a regular file writes at a running
+   --  append offset. Poll semantics: Status_Not_Ready (full
+   --  pipe) retries with yields — bounded, then the chunk is
+   --  dropped so a dead consumer cannot hang the writer.
+   procedure Set_Redirect_Out (Path : String);
+   function Redirected return Boolean;
+   procedure Flush;
+
+   --  Flush + signal writer EOF when the target is a pipe +
+   --  detach. CLI.Exit_With calls this so a piped consumer
+   --  sees EOF exactly when the producer exits.
+   procedure Close_Redirect;
+
    --  The bound stream, for clients that want stream semantics.
    function Stream return access Akernel_User.Streams.Endpoint_Stream;
 end Akernel_User.Console;

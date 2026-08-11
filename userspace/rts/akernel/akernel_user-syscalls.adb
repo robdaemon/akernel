@@ -504,18 +504,29 @@ package body Akernel_User.Syscalls is
       Raw_Debug_Putchar (Character'Pos (Character'Val (10)));
    end Debug_Put_Line;
 
+   Args_Mapped : Boolean := False;
+
+   procedure Map_Args (Mapped : out Boolean) is
+   begin
+      if not Args_Mapped then
+         Args_Mapped := Mem_Map (Address_Space_Cap, Args_Handle,
+                                 Args_VA, 0, Page_Size, 1) = 0;
+      end if;
+      Mapped := Args_Mapped;
+   end Map_Args;
+
    procedure Read_Args (S : out String; Len : out Natural) is
       use System.Storage_Elements;
       type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
       Page : Byte_Array (0 .. Page_Size - 1)
         with Address => To_Address (Integer_Address (Args_VA));
       Ch   : Character;
+      Mapped : Boolean;
    begin
       Len := 0;
-      if Mem_Map (Address_Space_Cap, Args_Handle, Args_VA, 0,
-                  Page_Size, 1) /= 0
-      then
-         return;  --  no args page granted (or already mapped)
+      Map_Args (Mapped);
+      if not Mapped then
+         return;  --  no args page granted
       end if;
       for I in Page'Range loop
          exit when Natural (Page (I)) = 0 or else Len >= S'Length;

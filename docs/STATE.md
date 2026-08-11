@@ -233,7 +233,16 @@ QEMU virt RAM base:     0x80000000
   protocol in IPC.md "Elevation"). The
   uniform command ABI is now: 1 console,
   2 fs, 3 bureau, 4 args page (always), 5
-  elevation svc. Windows
+  elevation svc. Milestone 46 adds Amiga
+  pipes: PIPE: and NIL: are fileserver-
+  internal virtual volumes (FIFO rings,
+  poll semantics, Op_Close EOF), and the
+  shell runs `A | B` pipelines + `>`/`<`
+  redirection through an args-page
+  trailer the RTS reads (Console output
+  and CLI.Get_Line input route through fs
+  paths; Sort is the stdin filter).
+  Windows
   close via the
   title-bar close gadget (Bureau posts CLOSEWINDOW into the
   window's input queue; the client destroys its surface and

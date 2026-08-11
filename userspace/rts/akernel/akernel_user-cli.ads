@@ -82,4 +82,17 @@ package Akernel_User.CLI is
    --  Exit with an explicit code (RC_Ok default).
    procedure Exit_With (Code : U64 := RC_Ok)
      with No_Return;
+
+   --  Standard input (milestone 46b): reads LF-terminated
+   --  lines from the args-page trailer's in_path (a PIPE:
+   --  name or a regular file). With no in_path there is no
+   --  stdin in the ABI yet — End_Of_Input answers True
+   --  immediately. Lines longer than S truncate; a line
+   --  longer than the 4 KiB staging buffer is split. Pipe
+   --  reads poll with yields (bounded: a producer dying
+   --  without Close surfaces as EOF, never a hang).
+   procedure Get_Line
+     (S           : out String;
+      Len         : out Natural;
+      End_Of_Input : out Boolean);
 end Akernel_User.CLI;

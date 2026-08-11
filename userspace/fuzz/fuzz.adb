@@ -2837,6 +2837,66 @@ begin
             Check (St /= Akernel_User.Files.Status_Ok,
                    "failat stops the script before the next line");
          end;
+
+         --  Pipelines + redirection end to end (milestone 46b):
+         --  the shell splits `A | B`, wires a PIPE: name
+         --  between the stages via the args-page trailer and
+         --  runs both CONCURRENTLY; `> file` truncates/creates.
+         --  Sort with no args is the stdin filter. The sorted
+         --  output is verified by reading the redirect target
+         --  straight from the fs. NIL: takes a command-level
+         --  discard.
+         declare
+            Expected : constant String :=
+              "alpha" & ASCII.LF & "bravo" & ASCII.LF
+              & "charlie" & ASCII.LF & "delta" & ASCII.LF;
+            In_File  : constant String :=
+              "delta" & ASCII.LF & "alpha" & ASCII.LF
+              & "charlie" & ASCII.LF & "bravo" & ASCII.LF;
+            Out_Buf  : String (1 .. 64) := (others => ' ');
+            St       : U64;
+            Size     : U64;
+            Cnt      : U64;
+         begin
+            Write_File ("BD0:FZPIN.TXT", In_File,
+                        "pipeline test input written");
+            Write_File ("BD0:FZPIPE1.TXT",
+                        "Type BD0:FZPIN.TXT | Sort > BD0:FZPOUT.TXT"
+                        & ASCII.LF,
+                        "pipeline script written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZPIPE1.TXT",
+                         0, "shell runs a pipeline");
+            St := Akernel_User.Files.Open ("BD0:FZPOUT.TXT", Size);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Size = U64 (Expected'Length),
+                   "pipeline redirect target has the sorted size");
+            St := Akernel_User.Files.Read
+              ("BD0:FZPOUT.TXT", 0, Out_Buf'Address,
+               U64 (Expected'Length), Cnt);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Cnt = U64 (Expected'Length)
+                   and then Out_Buf (1 .. Expected'Length) = Expected,
+                   "piped sort output landed sorted via > file");
+
+            Write_File ("BD0:FZPIPE2.TXT",
+                        "Sort < BD0:FZPIN.TXT > BD0:FZS2.TXT"
+                        & ASCII.LF,
+                        "file-redirect script written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZPIPE2.TXT",
+                         0, "shell runs < and > redirects");
+            St := Akernel_User.Files.Read
+              ("BD0:FZS2.TXT", 0, Out_Buf'Address,
+               U64 (Expected'Length), Cnt);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Cnt = U64 (Expected'Length)
+                   and then Out_Buf (1 .. Expected'Length) = Expected,
+                   "sort < in > out matches the pipeline");
+
+            Run_Command ("Sys:C/Copy", "BD0:FZPIN.TXT NIL:", 0,
+                         "copy to NIL: discards");
+         end;
       end;
 
       --  The Path search list (milestone 43): ADD canonicalizes

@@ -141,33 +141,56 @@ procedure Shell is
    --  command-line analog; milestone 33a — always granted, an
    --  empty page when Args is empty, so the handle layout stays
    --  uniform) and the elevation service (Send) at handle 5
-   --  (milestone 45). Then reap-poll until it exits and return
-   --  its RC (scripts branch on it).
+   --  (milestone 45). When Out_Path/In_Path is nonempty the
+   --  args page gains the milestone-46b redirection trailer so
+   --  the child's RTS routes console output / stdin through
+   --  those fs paths. Returns the child process cap (0 on
+   --  failure); the CALLER reaps (pipelines run stages
+   --  concurrently).
    Args_Stage_VA : constant U64 := 16#5440_0000#;
 
-   function Exec (Word : String; Args : String) return U64 is
+   function Spawn_Cmd
+     (Word     : String;
+      Args     : String;
+      Out_Path : String;
+      In_Path  : String) return U64
+   is
       use System.Storage_Elements;
       Mem_Cap  : U64 := 0;
       Proc_Cap : U64 := 0;
       Args_Cap : U64 := 0;
       Result   : U64;
-      Code     : U64 := 0;
-      Reaped   : Boolean := False;
       type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
       Args_Page : Byte_Array (0 .. 4095)
         with Address => To_Address (Integer_Address (Args_Stage_VA));
+      type Word_Array is array (0 .. 7) of U64;
+      Trailer : Word_Array
+        with Address => To_Address
+          (Integer_Address
+             (Args_Stage_VA
+              + Akernel_User.Syscalls.Args_Trailer_Offset));
       Resolved : constant String := Akernel_User.CLI.Resolve_Command (Word);
+
+      procedure Put_Path (Offset : U64; Path : String) is
+      begin
+         for I in 0 .. U64 (Path'Length) - 1 loop
+            Args_Page (Offset + I) :=
+              Interfaces.Unsigned_8
+                (Character'Pos (Path (Path'First + Natural (I))));
+         end loop;
+         Args_Page (Offset + U64 (Path'Length)) := 0;
+      end Put_Path;
    begin
       if Resolved'Length = 0 then
          Akernel_User.Console.Put_Line ("unknown command: " & Word);
-         return Akernel_User.CLI.RC_Error;
+         return 0;
       end if;
 
       Mem_Cap := Stage (Resolved);
       if Mem_Cap = 0 then
          Akernel_User.Console.Put_Line
            ("command found but failed to stage: " & Word);
-         return Akernel_User.CLI.RC_Error;
+         return 0;
       end if;
 
       --  Argument string page at handle 4 (always, possibly
@@ -182,14 +205,34 @@ procedure Shell is
             Result := Cap_Delete (Args_Cap);
          end if;
          Result := Cap_Delete (Mem_Cap);
-         return Akernel_User.CLI.RC_Error;
+         return 0;
       end if;
-      for I in 0 .. U64 (Args'Length) - 1 loop
-         Args_Page (I) :=
-           Interfaces.Unsigned_8
-             (Character'Pos (Args (Args'First + Natural (I))));
-      end loop;
+      if Args'Length > 0 then
+         --  Guard: a bare command ("Sort" as a pipeline stage)
+         --  passes an EMPTY arg string — indexing a null
+         --  String raises Constraint_Error (m46b burn).
+         for I in 0 .. U64 (Args'Length) - 1 loop
+            Args_Page (I) :=
+              Interfaces.Unsigned_8
+                (Character'Pos (Args (Args'First + Natural (I))));
+         end loop;
+      end if;
       Args_Page (U64 (Args'Length)) := 0;
+
+      --  Redirection trailer (page contents are NOT guaranteed
+      --  zeroed by Mem_Alloc — clear the trailer first).
+      Trailer := (others => 0);
+      if Out_Path'Length > 0 or else In_Path'Length > 0 then
+         Trailer (0) := Akernel_User.Syscalls.Args_Trailer_Magic;
+         if Out_Path'Length > 0 then
+            Put_Path (3800, Out_Path);
+            Trailer (1) := 3800;
+         end if;
+         if In_Path'Length > 0 then
+            Put_Path (3900, In_Path);
+            Trailer (2) := 3900;
+         end if;
+      end if;
 
       Set_Grant (0, Console_EP, Right_Send, 0);
       Set_Grant (1, FS_EP, Right_Send, 0);
@@ -203,13 +246,19 @@ procedure Shell is
          Result := Cap_Delete (Mem_Cap);
          Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
          Result := Cap_Delete (Args_Cap);
-         return Akernel_User.CLI.RC_Error;
+         return 0;
       end if;
       Result := Cap_Delete (Mem_Cap);
-      if Args_Cap /= 0 then
-         Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
-         Result := Cap_Delete (Args_Cap);
-      end if;
+      Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
+      Result := Cap_Delete (Args_Cap);
+      return Proc_Cap;
+   end Spawn_Cmd;
+
+   function Reap (Proc_Cap : U64) return U64 is
+      Result : U64;
+      Code   : U64 := 0;
+      Reaped : Boolean := False;
+   begin
       while not Reaped loop
          if Reap_Process_Code (Proc_Cap, Code) = 0 then
             Reaped := True;
@@ -218,7 +267,283 @@ procedure Shell is
          end if;
       end loop;
       return Code;
+   end Reap;
+
+   function Exec (Word : String; Args : String) return U64 is
+      Proc_Cap : constant U64 := Spawn_Cmd (Word, Args, "", "");
+   begin
+      if Proc_Cap = 0 then
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      return Reap (Proc_Cap);
    end Exec;
+
+   --  Pipelines + redirection (milestone 46b), Amiga-style:
+   --  `A | B` connects A's output to B's input through a PIPE:
+   --  name; `> file` (final stage only) and `< file` (first
+   --  stage only) redirect through regular files. Operators
+   --  are standalone tokens (spaces around them); no quoting
+   --  yet. Stages run CONCURRENTLY, the pipeline RC is the
+   --  last stage's RC. Shell pipes come from a small
+   --  PIPE:SH<n> pool, created + reset up front (Truncate
+   --  clears stale data/EOF) and deleted after the reap.
+   Max_Stages : constant := 4;
+   Pipe_Seq   : Natural := 0;
+
+   function Has_Metachar (Cmd : String) return Boolean is
+   begin
+      for C of Cmd loop
+         if C = '|' or else C = '>' or else C = '<' then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Has_Metachar;
+
+   function Run_Pipeline (Cmd : String) return U64 is
+      package Files renames Akernel_User.Files;
+      Max_Tok : constant := 32;
+      type Tok is record
+         F : Natural := 0;
+         L : Natural := 0;
+      end record;
+      Toks : array (1 .. Max_Tok) of Tok;
+      NTok : Natural := 0;
+
+      Stage_Cmd : array (1 .. Max_Stages) of String (1 .. 256) :=
+        (others => (others => ' '));
+      Stage_Len : array (1 .. Max_Stages) of Natural :=
+        (others => 0);
+      Stage_In  : array (1 .. Max_Stages) of String (1 .. 48) :=
+        (others => (others => Character'Val (0)));
+      Stage_Il  : array (1 .. Max_Stages) of Natural :=
+        (others => 0);
+      Stage_Out : array (1 .. Max_Stages) of String (1 .. 48) :=
+        (others => (others => Character'Val (0)));
+      Stage_Ol  : array (1 .. Max_Stages) of Natural :=
+        (others => 0);
+      Procs     : array (1 .. Max_Stages) of U64 := (others => 0);
+      Pipe_Name : array (1 .. Max_Stages - 1) of String (1 .. 16) :=
+        (others => (others => Character'Val (0)));
+      Pipe_Len  : array (1 .. Max_Stages - 1) of Natural :=
+        (others => 0);
+      NStage : Natural := 1;
+      I      : Natural;
+      T      : Natural;
+      RC     : U64 := 0;
+      St     : U64;
+      Size   : U64;
+      Bad    : Boolean := False;
+
+      procedure Set_Path
+        (Buf : out String; Len : in out Natural; Value : String)
+      is
+      begin
+         if Value'Length = 0 or else Value'Length > Buf'Length then
+            Bad := True;
+            return;
+         end if;
+         Buf := (others => Character'Val (0));
+         Buf (1 .. Value'Length) := Value;
+         Len := Value'Length;
+      end Set_Path;
+
+      procedure Append_Word (Text : String) is
+         S : Natural renames Stage_Len (NStage);
+      begin
+         if S + Text'Length + 1 > 256 then
+            Bad := True;
+            return;
+         end if;
+         if S > 0 then
+            S := S + 1;
+            Stage_Cmd (NStage)(S) := ' ';
+         end if;
+         Stage_Cmd (NStage)(S + 1 .. S + Text'Length) := Text;
+         S := S + Text'Length;
+      end Append_Word;
+   begin
+      --  Tokenize.
+      I := Cmd'First;
+      while I <= Cmd'Last loop
+         while I <= Cmd'Last and then Cmd (I) = ' ' loop
+            I := I + 1;
+         end loop;
+         exit when I > Cmd'Last;
+         if NTok = Max_Tok then
+            Bad := True;
+            exit;
+         end if;
+         NTok := NTok + 1;
+         Toks (NTok).F := I;
+         while I <= Cmd'Last and then Cmd (I) /= ' ' loop
+            I := I + 1;
+         end loop;
+         Toks (NTok).L := I - 1;
+      end loop;
+
+      --  Split into stages; lift redirection operators out.
+      T := 1;
+      while T <= NTok and then not Bad loop
+         declare
+            Text : constant String :=
+              Cmd (Toks (T).F .. Toks (T).L);
+         begin
+            if Text = "|" then
+               if NStage = Max_Stages
+                 or else Stage_Len (NStage) = 0
+               then
+                  Bad := True;
+               else
+                  NStage := NStage + 1;
+               end if;
+            elsif Text = ">" or else Text = "<" then
+               if T = NTok then
+                  Bad := True;
+               else
+                  T := T + 1;
+                  declare
+                     Target : constant String :=
+                       Akernel_User.CLI.Resolve_Path
+                         (Cmd (Toks (T).F .. Toks (T).L));
+                  begin
+                     if Text = ">" then
+                        Set_Path (Stage_Out (NStage),
+                                  Stage_Ol (NStage), Target);
+                     else
+                        Set_Path (Stage_In (NStage),
+                                  Stage_Il (NStage), Target);
+                     end if;
+                  end;
+               end if;
+            else
+               Append_Word (Text);
+            end if;
+         end;
+         T := T + 1;
+      end loop;
+
+      --  Validate: every stage has a command; `>` is final-
+      --  stage-only and `<` first-stage-only (pipes fill the
+      --  rest).
+      if not Bad then
+         for S in 1 .. NStage loop
+            if Stage_Len (S) = 0 then
+               Bad := True;
+            end if;
+            if (S < NStage and then Stage_Ol (S) > 0)
+              or else (S > 1 and then Stage_Il (S) > 0)
+            then
+               Bad := True;
+            end if;
+         end loop;
+      end if;
+
+      if Bad then
+         Akernel_User.Console.Put_Line
+           ("bad pipeline (usage: A | B, > file, < file)");
+         return Akernel_User.CLI.RC_Error;
+      end if;
+
+      --  Wire the pipes between stages.
+      for S in 1 .. NStage - 1 loop
+         declare
+            Img  : constant String := Natural'Image (Pipe_Seq);
+            Name : constant String :=
+              "PIPE:SH" & Img (Img'First + 1 .. Img'Last);
+         begin
+            Pipe_Seq := (Pipe_Seq + 1) mod 100;
+            Set_Path (Pipe_Name (S), Pipe_Len (S), Name);
+            Set_Path (Stage_Out (S), Stage_Ol (S), Name);
+            Set_Path (Stage_In (S + 1), Stage_Il (S + 1), Name);
+            --  Create-or-reset: a recycled name can hold stale
+            --  data and a stale EOF flag.
+            St := Files.Open (Name, Size);
+            if St = Files.Status_Ok then
+               St := Files.Truncate (Name);
+            end if;
+            if St /= Files.Status_Ok then
+               Akernel_User.Console.Put_Line
+                 ("cannot create " & Name);
+               return Akernel_User.CLI.RC_Error;
+            end if;
+         end;
+      end loop;
+
+      --  A `>` target that exists gets truncated (Amiga `>`
+      --  semantics); a missing one is created by the first
+      --  Write.
+      if Stage_Ol (NStage) > 0 then
+         St := Files.Stat (Stage_Out (NStage)(1 .. Stage_Ol (NStage)),
+                     Size);
+         if St = Files.Status_Ok then
+            St := Files.Truncate (Stage_Out (NStage)
+                            (1 .. Stage_Ol (NStage)));
+            if St /= Files.Status_Ok then
+               Akernel_User.Console.Put_Line
+                 ("cannot truncate redirect target");
+               return Akernel_User.CLI.RC_Error;
+            end if;
+         end if;
+      end if;
+
+      --  Spawn every stage concurrently.
+      for S in 1 .. NStage loop
+         declare
+            W_Last  : Natural;
+            R_First : Natural;
+         begin
+            Split_Cmd (Stage_Cmd (S)(1 .. Stage_Len (S)),
+                       W_Last, R_First);
+            Procs (S) := Spawn_Cmd
+              (Stage_Cmd (S)(1 .. W_Last),
+               (if R_First > Stage_Len (S) then ""
+                else Stage_Cmd (S)(R_First .. Stage_Len (S))),
+               (if Stage_Ol (S) > 0
+                then Stage_Out (S)(1 .. Stage_Ol (S)) else ""),
+               (if Stage_Il (S) > 0
+                then Stage_In (S)(1 .. Stage_Il (S)) else ""));
+         end;
+         if Procs (S) = 0 then
+            --  Unblock any stage already waiting on a pipe,
+            --  then reap what got spawned.
+            for P in 1 .. NStage - 1 loop
+               if Pipe_Len (P) > 0 then
+                  St := Files.Close (Pipe_Name (P)(1 .. Pipe_Len (P)));
+               end if;
+            end loop;
+            for Q in 1 .. S - 1 loop
+               if Procs (Q) /= 0 then
+                  RC := Reap (Procs (Q));
+               end if;
+            end loop;
+            for P in 1 .. NStage - 1 loop
+               if Pipe_Len (P) > 0 then
+                  St := Files.Delete (Pipe_Name (P)(1 .. Pipe_Len (P)));
+               end if;
+            end loop;
+            return Akernel_User.CLI.RC_Error;
+         end if;
+      end loop;
+
+      --  Reap all; the pipeline RC is the last stage's RC.
+      for S in 1 .. NStage loop
+         declare
+            Code : constant U64 := Reap (Procs (S));
+         begin
+            if S = NStage then
+               RC := Code;
+            end if;
+         end;
+      end loop;
+
+      for P in 1 .. NStage - 1 loop
+         if Pipe_Len (P) > 0 then
+            St := Files.Delete (Pipe_Name (P)(1 .. Pipe_Len (P)));
+         end if;
+      end loop;
+      return RC;
+   end Run_Pipeline;
 
    --  Script runner (milestone 42): LF-separated command lines,
    --  ';' starts a comment, stop at the first RC >= RC_Error
@@ -325,6 +650,10 @@ procedure Shell is
               ("  execute <file>  run a script (';' comments, stop at RC 10)");
             Akernel_User.Console.Put_Line
               ("  <cmd> [args]    run a C: or Sys: command");
+            Akernel_User.Console.Put_Line
+              ("  A | B           pipe A's output into B");
+            Akernel_User.Console.Put_Line
+              ("  A > file        redirect output ('<' reads stdin)");
             return 0;
          elsif Word = "exit" then
             Process_Exit;
@@ -336,6 +665,9 @@ procedure Shell is
             end if;
             return Run_Script (Rest);
          else
+            if Has_Metachar (Cmd) then
+               return Run_Pipeline (Cmd);
+            end if;
             return Exec (Word, Rest);
          end if;
       end;

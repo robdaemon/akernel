@@ -232,12 +232,19 @@ package body Akernel_User.Files is
    begin
       Count := 0;
       Qualified (Name, Q, Len);
-      if Buf_Cap = 0
-        or else FS_Cap = 0
+      if FS_Cap = 0
         or else Len = 0
         or else Length = 0
       then
          return Status_Bad_Args;
+      end if;
+
+      --  Allocate the shared client buffer on first use (the
+      --  Write side already does; a reader that never Opens —
+      --  e.g. CLI.Get_Line on a pipe, m46b — burned Bad_Args
+      --  here).
+      if not Ensure_Buffer then
+         return Status_Not_Found;
       end if;
 
       Syscalls.Message.Label := Op_Read;
