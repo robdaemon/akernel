@@ -2928,6 +2928,69 @@ begin
                    "elevate reports an unknown command");
       Run_Command ("Sys:C/Elevate", "", 10, "elevate usage");
 
+      --  Pipes + NIL (milestone 46a): PIPE: is a server-internal
+      --  virtual volume of bounded FIFO rings (Open creates,
+      --  Write appends all-or-nothing, Read pops, Op_Close
+      --  signals writer EOF, Delete destroys, Truncate resets
+      --  for reuse); empty+no-EOF and full answers are
+      --  Status_Not_Ready (poll semantics — the kernel allows
+      --  one outstanding reply per server thread, so true
+      --  blocking waits on kernel reply-cap duplication).
+      --  NIL: discards writes and answers immediate EOF.
+      declare
+         use Akernel_User.Files;
+         Status : U64;
+         Size   : U64;
+         Count  : U64;
+         WBuf : String (1 .. 16) := "hello pipe world";
+         RBuf : String (1 .. 16) := (others => ' ');
+      begin
+         Status := Open ("PIPE:FZT1", Size);
+         Check (Status = Status_Ok, "pipe open creates");
+         Status := Stat ("PIPE:FZT1", Size);
+         Check (Status = Status_Ok and then Size = 0,
+                "pipe stats empty");
+         Status := Write ("PIPE:FZT1", 0, WBuf'Address, 10, Count);
+         Check (Status = Status_Ok and then Count = 10,
+                "pipe write appends");
+         Status := Stat ("PIPE:FZT1", Size);
+         Check (Status = Status_Ok and then Size = 10,
+                "pipe stat reports buffered bytes");
+         Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
+         Check (Status = Status_Ok and then Count = 10
+                and then RBuf (1 .. 10) = "hello pipe",
+                "pipe read pops in fifo order");
+         Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
+         Check (Status = Status_Not_Ready,
+                "empty pipe without EOF says retry");
+         Status := Close ("PIPE:FZT1");
+         Check (Status = Status_Ok, "pipe close ok");
+         Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
+         Check (Status = Status_Ok and then Count = 0,
+                "closed empty pipe reads EOF");
+         Status := Truncate ("PIPE:FZT1");
+         Check (Status = Status_Ok, "pipe truncate resets");
+         Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
+         Check (Status = Status_Not_Ready,
+                "truncate clears EOF for reuse");
+         Status := Delete ("PIPE:FZT1");
+         Check (Status = Status_Ok, "pipe delete destroys");
+         Status := Stat ("PIPE:FZT1", Size);
+         Check (Status = Status_Not_Found,
+                "deleted pipe is gone");
+         Status := Open ("NIL:", Size);
+         Check (Status = Status_Ok and then Size = 0,
+                "nil opens as zero-byte sink");
+         Status := Write ("NIL:", 0, WBuf'Address, 10, Count);
+         Check (Status = Status_Ok and then Count = 10,
+                "nil write discarded");
+         Status := Read ("NIL:", 0, RBuf'Address, 16, Count);
+         Check (Status = Status_Ok and then Count = 0,
+                "nil read is immediate EOF");
+         Status := Delete ("NIL:");
+         Check (Status = Status_Ok, "nil delete no-ops");
+      end;
+
       --  Plain send (milestone 35): the rendezvous ends at
       --  delivery. The sender wakes with Ok as soon as a Receive
       --  takes its message (no reply cap is minted, so a Reply

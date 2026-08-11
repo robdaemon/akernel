@@ -55,6 +55,14 @@ package Fileserver_Tables is
       --  independent driver processes).
       Is_FS    : Boolean := False;
       FS_EP    : U64 := 0;
+      --  Server-internal virtual volumes (milestone 46a):
+      --  seeded by the fileserver itself, never mounted by
+      --  init. Is_Pipe: Amiga-style named pipes backed by
+      --  Fileserver_Pipes rings (poll semantics — see that
+      --  package). Is_Nil: the NIL: sink — writes discarded,
+      --  reads answer immediate EOF.
+      Is_Pipe  : Boolean := False;
+      Is_Nil   : Boolean := False;
    end record;
 
    Volumes : array (1 .. Max_Volumes) of Volume_Entry;

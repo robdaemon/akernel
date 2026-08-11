@@ -98,6 +98,26 @@ package Akernel_User.Files is
    Op_Assign_List : constant U64 := 15;
    Op_Rename   : constant U64 := 16;
    Op_Volume_Info : constant U64 := 17;
+   Op_Close    : constant U64 := 18;
+   --    Op_Close = 18   words 0..5 = name[48] -> (status, 0). On
+   --                      a PIPE: name: writer EOF — no more
+   --                      data is coming; reads keep draining
+   --                      the ring and an empty EOF pipe
+   --                      answers Ok+0. On every other volume
+   --                      (incl. NIL:) a harmless no-op Ok:
+   --                      regular files are write-through, so
+   --                      close = flush = nothing.
+   --    PIPE:/NIL: (milestone 46a) are server-internal virtual
+   --                      volumes. PIPE:name is a bounded FIFO
+   --                      (16 KiB ring): Open creates, Write
+   --                      appends all-or-nothing, Read pops;
+   --                      empty+no-EOF or insufficient space
+   --                      -> Status_Not_Ready (poll + retry);
+   --                      Delete destroys, Truncate resets
+   --                      (empties + clears EOF for reuse).
+   --                      NIL: discards writes (Ok+length),
+   --                      reads answer immediate EOF (Ok+0),
+   --                      Delete no-ops Ok.
    --    Op_Rename = 16  words 0..5 = FROM path[48]; cap slot 0 =
    --                      an 8-page buffer memobj whose first
    --                      bytes hold the NUL-terminated TO path
@@ -212,6 +232,11 @@ package Akernel_User.Files is
    --  directory, Rmdir removes an empty one. Boot-file and raw
    --  block volumes answer Status_Bad_Args.
    function Delete (Name : String) return U64;
+
+   --  Close (milestone 46a): on PIPE: names signals writer EOF;
+   --  a no-op Ok on every other volume. The protocol stays
+   --  fid-less: Close names the path, not a handle.
+   function Close (Name : String) return U64;
 
    --  Rename/move within one volume (milestone 41): TO must not
    --  exist; both names resolve to the same volume. Directories

@@ -267,8 +267,42 @@ Op_Volume_Info = 17 words 0..5 = any volume-qualified path ->
                  (status, total bytes, free bytes, bytes per
                  cluster). Free = U64'Last when the FSInfo count
                  is unavailable. Boot-file volumes: Bad_Args.
+Op_Close    = 18 words 0..5 = name[48] -> (status, 0). On a
+                 PIPE: name: writer EOF (no more data is
+                 coming; reads keep draining and an empty EOF
+                 pipe answers Ok+0). No-op Ok elsewhere:
+                 regular files are write-through, and the
+                 protocol stays fid-less — Close names the
+                 path, not a handle.
 statuses: 0 ok, 1 not found, 2 not ready, 3 bad args, 4 out of range
 ```
+
+### PIPE: and NIL: (virtual volumes, milestone 46a)
+
+The file server seeds two internal volumes at startup (never
+mounted by init; names resolve like any device/label prefix,
+case-insensitive):
+
+- `PIPE:name` — an Amiga-style named pipe: a 16 KiB FIFO ring
+  in a fileserver-side table (8 pipes max, names ci). `Open`
+  ATTACHES, creating the pipe on first use (the RTS sends
+  Op_Open for Open — Stat stays a pure existence probe and
+  reports buffered bytes). `Write` appends ALL-OR-NOTHING
+  (offset ignored; insufficient ring space -> Not_Ready).
+  `Read` POPS (offset ignored); empty + no EOF -> Not_Ready,
+  empty + EOF -> Ok+0. `Op_Close` signals writer EOF,
+  `Op_Delete` destroys, `Op_Truncate` resets (empties + clears
+  EOF) so a small name pool can be reused. Semantics are
+  POLL-AND-RETRY, not blocking: the kernel allows only one
+  outstanding reply per server thread (recv overwrites the
+  reply cap at 254 and wakes the deferred caller reply-gone),
+  so a single-threaded server cannot defer replies. True
+  blocking waits on kernel reply-cap duplication (deferred
+  list); the Amiga-visible behaviour (names, FIFO order,
+  explicit EOF) is preserved.
+- `NIL:` — the sink: writes discarded (Ok+length), reads
+  immediate EOF (Ok+0), Stat/Open a zero-byte file, Delete
+  no-ops Ok.
 
 Block layer (virtio-blk driver and System/Partmgr speak the same
 protocol on their service endpoints; partmgr adds op 3):

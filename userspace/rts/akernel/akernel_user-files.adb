@@ -181,10 +181,31 @@ package body Akernel_User.Files is
    end Ensure_Buffer;
 
    function Open (Name : String; Size : out U64) return U64 is
-      Status : constant U64 := Stat (Name, Size);
+      Q   : String (1 .. 48);
+      Len : Natural;
    begin
-      if Status /= Status_Ok then
-         return Status;
+      Size := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      --  Op_Open (not Op_Stat): identical on ordinary volumes,
+      --  but on PIPE: Open ATTACHES, creating the pipe on first
+      --  use (Amiga semantics), while Stat stays a pure
+      --  existence probe.
+      Syscalls.Message.Label := Op_Open;
+      Pack_Name (Q (1 .. Len), 0, 5);
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Size := Syscalls.Message.Words (1);
+      else
+         return Syscalls.Message.Words (0);
       end if;
 
       if not Ensure_Buffer then
@@ -235,9 +256,13 @@ package body Akernel_User.Files is
       end if;
 
       Count := Syscalls.Message.Words (1);
-      for I in 0 .. Count - 1 loop
-         Dst (I) := Src (I);
-      end loop;
+      if Count > 0 then
+         --  Guard: pipes and NIL: answer Ok+0 at EOF (m46a) —
+         --  0 .. Count - 1 on a U64 wraps (LCH burn).
+         for I in 0 .. Count - 1 loop
+            Dst (I) := Src (I);
+         end loop;
+      end if;
       return Status_Ok;
    end Read;
 
@@ -319,6 +344,9 @@ package body Akernel_User.Files is
 
    function Delete (Name : String) return U64 is
      (Path_Op (Op_Delete, Name));
+
+   function Close (Name : String) return U64 is
+     (Path_Op (Op_Close, Name));
 
    function Rename (From, To : String) return U64 is
       QF : String (1 .. 48);

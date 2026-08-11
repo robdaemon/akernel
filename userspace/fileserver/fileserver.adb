@@ -5,6 +5,7 @@ with Akernel_User.Syscalls;
 with Akernel_User.Files;
 with Akernel_User.Console;
 with Fileserver_Tables;
+with Fileserver_Pipes;
 
 --  File server (docs/IPC.md "file protocol"): holds every boot-file
 --  cap (granted via the boot_files manifest token at handles 3..N)
@@ -792,6 +793,47 @@ procedure Fileserver is
          return;
       end if;
 
+      if Volumes (V).Is_Nil then
+         --  NIL: everything stats/opens as a zero-byte sink.
+         Reply2 (Files.Status_Ok, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_Pipe then
+         --  PIPE:name: Open attaches (creating the pipe on
+         --  first use, Amiga-style); Stat never creates.
+         declare
+            P : Natural := 0;
+         begin
+            if E_Len < Pos then
+               Reply2 (Files.Status_Bad_Args, 0);  --  bare PIPE:
+               return;
+            end if;
+            P := Fileserver_Pipes.Find (Exp (Pos .. E_Len));
+            if Syscalls.Message.Label = Files.Op_Open then
+               if P = 0 then
+                  P := Fileserver_Pipes.Find_Or_Create
+                    (Exp (Pos .. E_Len));
+                  if P = 0 then
+                     --  Table full: poll-and-retry like every
+                     --  pipe backpressure answer.
+                     Reply2 (Files.Status_Not_Ready, 0);
+                     return;
+                  end if;
+               end if;
+               Reply2 (Files.Status_Ok, 0);
+            else
+               if P = 0 then
+                  Reply2 (Files.Status_Not_Found, 0);
+               else
+                  Reply2 (Files.Status_Ok,
+                          Fileserver_Pipes.Buffered (P));
+               end if;
+            end if;
+         end;
+         return;
+      end if;
+
       if Volumes (V).Is_FS then
          --  VFS forwarding: the fs driver speaks the same client
          --  protocol; the path portion rides words 0..5.
@@ -1102,6 +1144,56 @@ procedure Fileserver is
             return;
          end if;
 
+         if Volumes (V).Is_Nil then
+            --  NIL: writes are discarded and always succeed.
+            Status := Files.Status_Ok;
+            Count := Length;
+            return;
+         end if;
+
+         if Volumes (V).Is_Pipe then
+            --  PIPE: writes append all-or-nothing (creating the
+            --  pipe on first use like Open); a full ring
+            --  answers Not_Ready for the client to retry.
+            declare
+               P : Natural := 0;
+            begin
+               if E_Len < Pos
+                 or else Length > Fileserver_Pipes.Pipe_Bytes
+               then
+                  Status := Files.Status_Bad_Args;
+                  return;
+               end if;
+               P := Fileserver_Pipes.Find_Or_Create
+                 (Exp (Pos .. E_Len));
+               if P = 0 then
+                  Status := Files.Status_Not_Ready;
+                  return;
+               end if;
+               if Fileserver_Pipes.Space_Left (P) < Length then
+                  Status := Files.Status_Not_Ready;
+                  return;
+               end if;
+               if not Map_Buf (Buf) then
+                  Status := Files.Status_Not_Found;
+                  return;
+               end if;
+               Mapped := True;
+               declare
+                  Win : Byte_Array (0 .. Length - 1)
+                    with Address => To_Address
+                      (Integer_Address (Buf_Win_VA));
+               begin
+                  for J in Win'Range loop
+                     Fileserver_Pipes.Push (P, Win (J));
+                  end loop;
+               end;
+               Status := Files.Status_Ok;
+               Count := Length;
+            end;
+            return;
+         end if;
+
          Status := Files.Status_Bad_Args;  --  boot files read-only
       end Process;
    begin
@@ -1192,6 +1284,61 @@ procedure Fileserver is
 
             Handle_Block_Read (V, Buf, Offset, Length,
                                Status, Count, Mapped);
+            return;
+         end if;
+
+         if Volumes (V).Is_Nil then
+            --  NIL: reads answer immediate EOF.
+            Status := Files.Status_Ok;
+            Count := 0;
+            return;
+         end if;
+
+         if Volumes (V).Is_Pipe then
+            --  PIPE: reads pop from the ring; empty answers
+            --  Not_Ready (poll) or Ok+0 once the writer closed.
+            declare
+               P : constant Natural :=
+                 Fileserver_Pipes.Find (Exp (Pos .. E_Len));
+               B : Byte;
+            begin
+               if P = 0 then
+                  Status := Files.Status_Not_Found;
+                  return;
+               end if;
+               if Fileserver_Pipes.Buffered (P) = 0 then
+                  if Fileserver_Pipes.Is_EOF (P) then
+                     Status := Files.Status_Ok;
+                     Count := 0;
+                  else
+                     Status := Files.Status_Not_Ready;
+                  end if;
+                  return;
+               end if;
+               Count := U64'Min (Length,
+                                 Fileserver_Pipes.Buffered (P));
+               Count := U64'Min (Count, Buf_Bytes);
+               if not Map_Buf (Buf) then
+                  Status := Files.Status_Not_Found;
+                  Count := 0;
+                  return;
+               end if;
+               Mapped := True;
+               declare
+                  Win : Byte_Array (0 .. Count - 1)
+                    with Address => To_Address
+                      (Integer_Address (Buf_Win_VA));
+               begin
+                  for J in Win'Range loop
+                     if not Fileserver_Pipes.Pop (P, B) then
+                        Count := J;  --  cannot happen (bounded)
+                        exit;
+                     end if;
+                     Win (J) := B;
+                  end loop;
+               end;
+               Status := Files.Status_Ok;
+            end;
             return;
          end if;
 
@@ -1347,6 +1494,45 @@ procedure Fileserver is
       Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_Nil then
+         --  NIL: swallows deletes/truncates; it has no
+         --  directories to make or remove.
+         if Op = Files.Op_Delete or else Op = Files.Op_Truncate then
+            Reply2 (Files.Status_Ok, 0);
+         else
+            Reply2 (Files.Status_Bad_Args, 0);
+         end if;
+         return;
+      end if;
+
+      if Volumes (V).Is_Pipe then
+         declare
+            P : constant Natural :=
+              Fileserver_Pipes.Find (Exp (Pos .. E_Len));
+         begin
+            if Op = Files.Op_Delete then
+               if P = 0 then
+                  Reply2 (Files.Status_Not_Found, 0);
+               else
+                  Fileserver_Pipes.Destroy (P);
+                  Reply2 (Files.Status_Ok, 0);
+               end if;
+            elsif Op = Files.Op_Truncate then
+               --  Truncate = reset for reuse (empties the ring
+               --  and clears a stale EOF).
+               if P = 0 then
+                  Reply2 (Files.Status_Not_Found, 0);
+               else
+                  Fileserver_Pipes.Reset (P);
+                  Reply2 (Files.Status_Ok, 0);
+               end if;
+            else
+               Reply2 (Files.Status_Bad_Args, 0);
+            end if;
+         end;
          return;
       end if;
 
@@ -1537,9 +1723,83 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Volume_Info;
 
+   --  Seed the server-internal virtual volumes (milestone
+   --  46a): PIPE: (named FIFO rings, Fileserver_Pipes) and
+   --  NIL: (sink). They are never mounted by init; the file
+   --  server owns them outright. Names resolve like any
+   --  device/label prefix, always case-insensitively.
+   procedure Seed_Virtual_Volumes is
+   begin
+      for V in Volumes'Range loop
+         if not Volumes (V).Valid then
+            Volumes (V).Valid := True;
+            Volumes (V).Device := (others => Character'Val (0));
+            Volumes (V).Device (1 .. 4) := "PIPE";
+            Volumes (V).Dev_Len := 4;
+            Volumes (V).Label := Volumes (V).Device;
+            Volumes (V).Lab_Len := 4;
+            Volumes (V).Case_Insensitive := True;
+            Volumes (V).Is_Pipe := True;
+            exit;
+         end if;
+      end loop;
+      for V in Volumes'Range loop
+         if not Volumes (V).Valid then
+            Volumes (V).Valid := True;
+            Volumes (V).Device := (others => Character'Val (0));
+            Volumes (V).Device (1 .. 3) := "NIL";
+            Volumes (V).Dev_Len := 3;
+            Volumes (V).Label := Volumes (V).Device;
+            Volumes (V).Lab_Len := 3;
+            Volumes (V).Case_Insensitive := True;
+            Volumes (V).Is_Nil := True;
+            exit;
+         end if;
+      end loop;
+   end Seed_Virtual_Volumes;
+
+   --  Op_Close (milestone 46a): PIPE: name -> writer EOF; any
+   --  other volume -> no-op Ok (regular files are write-
+   --  through, close = flush = nothing; keeps the wire
+   --  fid-less: Close names the path, not a handle).
+   procedure Handle_Close is
+      Name : String (1 .. 48);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+      P    : Natural;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
+   begin
+      if not Name_Of (0, 5, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+      if V = 0 then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      if Volumes (V).Is_Pipe then
+         P := Fileserver_Pipes.Find (Exp (Pos .. E_Len));
+         if P = 0 then
+            Reply2 (Files.Status_Not_Found, 0);
+         else
+            Fileserver_Pipes.Set_EOF (P);
+            Reply2 (Files.Status_Ok, 0);
+         end if;
+         return;
+      end if;
+
+      Reply2 (Files.Status_Ok, 0);
+   end Handle_Close;
+
 begin
    Akernel_User.Console.Set_Endpoint (2);  --  console grant
    Akernel_User.Console.Put_Line ("fileserver online");
+   Seed_Virtual_Volumes;
 
    loop
       if Syscalls.IPC_Recv (EP) /= Syscalls.IPC_Ok then
@@ -1580,6 +1840,8 @@ begin
          Handle_Rename;
       elsif Syscalls.Message.Label = Files.Op_Volume_Info then
          Handle_Volume_Info;
+      elsif Syscalls.Message.Label = Files.Op_Close then
+         Handle_Close;
       elsif Syscalls.Message.Label = Files.Op_Stat
         or else Syscalls.Message.Label = Files.Op_Open
       then
