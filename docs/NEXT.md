@@ -1855,12 +1855,40 @@ Next candidates (order open):
     dirty-read-back/Sync chain checks.
     758 PASS SMP1+SMP4, failures=0,
     fsck clean pre/post suite.
-    MILESTONE 48 COMPLETE. Next: the
-    deferred list — m48-followup queue
-    depth + batched write-back, Proc:
-    self (needs client identity through
-    the VFS), blocking pipes (m47
-    primitive ready), pid generations.
+    MILESTONE 48 COMPLETE. Followup
+    (same cycle): the m48b sizing probe
+    (request counters, Debug_Put_Line —
+    a console RPC from inside the block
+    server re-created the m31 cascade
+    wedge; servers never make blocking
+    sink RPCs mid-request) measured:
+    reads 9156 vs writes 1084 (9:1),
+    absorbed=written 1:1 (NO same-sector
+    coalescing in the suite), evictions
+    0 — batched write-back submission
+    REJECTED by data, not esthetics.
+    Real waste found: Flush_Dirty issued
+    a VIRTIO_BLK_T_FLUSH on EVERY idle
+    write-behind (one per absorbed
+    sector, 2x write cost) — device
+    flush now explicit-sync only, which
+    is hardware-honest layering
+    (writeback = latency, durability =
+    sync points, same as Linux); fuzz
+    now ends with an explicit Files.Sync
+    so the post-suite fsck validates
+    the real durability chain instead of
+    QEMU write-back coincidence. 425 s
+    -> 373 s SMP1. Hardware gap logged:
+    no shutdown path exists — power-off
+    loses everything since the last
+    Op_Sync; deferred milestone: clean
+    shutdown (Op_Sync fan-out + SBI SRST
+    + shell shutdown builtin). Next: the
+    deferred list — blocking pipes (m47
+    primitive ready), Proc:self (needs
+    client identity through the VFS),
+    clean shutdown, pid generations.
 
 Commit between each milestone.
 

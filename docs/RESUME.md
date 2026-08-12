@@ -24,16 +24,20 @@ CURRENT SESSION STATE (milestone 48 SHIPPED):
   lib; woken threads HEAD-INSERT the ready queue (never assert
   arrival order); grep syscall NAMES when migrating; harness
   timeout 600 s.
-- 758 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
+- 759 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41-48 COMPLETE. Next: the
-deferred list (docs/NEXT.md): write-back followup (bigger
-virtqueue + batched write-back submission), blocking pipes
-(the m47 reply-cap primitive is ready — defer pipe replies in
-the fileserver), Proc:self (needs client identity through the
-VFS), pid generation counters, register fast path, custom
-GNAT runtime, virtio-net, MSI-X, true scheduler priorities.
-Deferred shell groups left: job control, clock.
+Open candidates — milestones 41-48 COMPLETE. The probe
+killed batched write-back by data (reads 9:1, no same-sector
+coalescing, evictions 0). Next: the deferred list
+(docs/NEXT.md): blocking pipes (the m47 reply-cap primitive
+is ready — defer pipe replies in the fileserver), CLEAN
+SHUTDOWN (no power-off path exists: Op_Sync fan-out + SBI
+SRST + shell shutdown builtin — real hardware loses
+everything since last sync without it), Proc:self (needs
+client identity through the VFS), pid generation counters,
+register fast path, custom GNAT runtime, virtio-net, MSI-X,
+true scheduler priorities. Deferred shell groups left: job
+control, clock.
 
 Recently landed: MILESTONE 48 — virtio-blk
 write-back cache + flush chain
@@ -442,9 +446,17 @@ Working rules burned in (details in NEXT.md):
   log line are undebuggable — every failure exit gets a
   Debug_Put_Line (the Flags-2 read-window burn).
 - Block-layer performance: measure time-to-fuzz-complete
-  before/after (poll the log, not the 600 s kill); the
-  virtio-blk write-back cache bought ~9% and the next chunk
-  is virtqueue depth + batched write-back submission.
+  before/after (poll the log, not the 600 s kill). The
+  write-back cache + explicit-only device flush took it
+  465 s -> 369 s SMP1. Probe counters (Debug_Put_Line, NOT
+  console RPC — a server's blocking sink RPC mid-request is
+  the m31 cascade wedge) decide batching questions by data:
+  reads dominated 9:1 so batched write-back was rejected.
+- Durability layering (hardware-honest): write-behind =
+  latency, never durability; VIRTIO_BLK_T_FLUSH only at
+  explicit sync (Op_Sync chain); the suite ends with an
+  explicit Files.Sync so host fsck validates the real path.
+  Real hardware still needs a clean-shutdown milestone.
 - Woken threads head-insert the ready queue (rendezvous
   boost): last-woken runs first, so report ARRIVAL order
   across processes is scheduler-defined — assert

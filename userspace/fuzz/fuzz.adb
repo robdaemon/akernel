@@ -3504,6 +3504,14 @@ begin
    Status := Raw_Ecall (Number => Sys_Boot_File_Size, A0 => Echo_Image);
    Check (Status /= Failed, "kernel alive after random phase");
 
+   --  Durability is explicit, never implicit: the post-suite
+   --  host fsck must validate the REAL sync path (Op_Sync ->
+   --  Blk_Flush -> write-back + VIRTIO_BLK_T_FLUSH), not idle
+   --  write-behind + QEMU's host page cache. On real hardware
+   --  only this chain means durable.
+   Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
+          "final sync before completion");
+
    Put ("fuzz complete: calls=");
    Put_Hex (Total_Calls);
    Put (" unknowns=");

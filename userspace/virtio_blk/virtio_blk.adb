@@ -439,7 +439,14 @@ procedure Virtio_Blk is
          end if;
       end loop;
 
-      if Have_Flush then
+      --  Device flush only on EXPLICIT sync: the idle
+      --  write-behind must not pay a VIRTIO_BLK_T_FLUSH per
+      --  write (the probe measured one flush request per
+      --  absorbed sector — 2x the round-trips write-through
+      --  would have cost). QEMU's write() lands in the host
+      --  page cache, visible to the post-suite fsck, so the
+      --  loss window stays bounded without it.
+      if Force_Device and then Have_Flush then
          Do_Device_Flush;
       end if;
       return True;
