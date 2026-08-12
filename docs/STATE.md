@@ -240,6 +240,13 @@ QEMU virt RAM base:     0x80000000
   write-behind / Blk_Flush=4 (driven by
   fat32 Op_Sync via partmgr), and
   negotiates VIRTIO_BLK_F_FLUSH.
+  Milestone 49 made PIPE: blocking:
+  empty-ring reads and no-room writes
+  defer their replies (m47 reply-cap
+  duplication) in an 8-slot pending
+  table drained on ring mutations;
+  Op_Close wakes readers (EOF),
+  Op_Delete wakes all Not_Found.
   Milestone 47 duplicated
   the reply cap: recv mints one ordinary
   free-slot reply cap per call (handle in

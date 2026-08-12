@@ -126,4 +126,58 @@ package body Fileserver_Pipes is
       Pipes (I).Count := Pipes (I).Count + 1;
    end Push;
 
+   --  Pending table (milestone 49): deferred pipe requests.
+   type Pending_Entry is record
+      Kind    : Pending_Kind := P_None;
+      Pipe    : Natural := 0;
+      Reply_H : U64 := 0;
+      Buf     : U64 := 0;
+      Length  : U64 := 0;
+   end record;
+
+   Pendings : array (1 .. Max_Pending) of Pending_Entry;
+
+   function Stash
+     (P : Natural; Kind : Pending_Kind;
+      Reply_H, Buf, Length : U64) return Boolean
+   is
+   begin
+      for S in Pendings'Range loop
+         if Pendings (S).Kind = P_None then
+            Pendings (S) :=
+              (Kind    => Kind,
+               Pipe    => P,
+               Reply_H => Reply_H,
+               Buf     => Buf,
+               Length  => Length);
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Stash;
+
+   function Pend_Pipe (S : Natural) return Natural is
+     (Pendings (S).Pipe);
+
+   function Pend_Kind (S : Natural) return Pending_Kind is
+     (Pendings (S).Kind);
+
+   function Pend_Reply (S : Natural) return U64 is
+     (Pendings (S).Reply_H);
+
+   function Pend_Buf (S : Natural) return U64 is
+     (Pendings (S).Buf);
+
+   function Pend_Length (S : Natural) return U64 is
+     (Pendings (S).Length);
+
+   procedure Pend_Clear (S : Natural) is
+   begin
+      Pendings (S).Kind := P_None;
+      Pendings (S).Pipe := 0;
+      Pendings (S).Reply_H := 0;
+      Pendings (S).Buf := 0;
+      Pendings (S).Length := 0;
+   end Pend_Clear;
+
 end Fileserver_Pipes;

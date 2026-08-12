@@ -302,11 +302,20 @@ case-insensitive):
   empty + EOF -> Ok+0. `Op_Close` signals writer EOF,
   `Op_Delete` destroys, `Op_Truncate` resets (empties + clears
   EOF) so a small name pool can be reused. Semantics are
-  POLL-AND-RETRY (Not_Ready), not blocking — milestone 47
-  shipped kernel reply-cap duplication, so the file server
-  CAN now defer a pipe read/write reply until the opposite
-  side arrives; the swap to true blocking (m48) is a pure
-  server-side change, no protocol impact.
+  BLOCKING (milestone 49, on milestone-47 reply-cap
+  duplication): a read on an empty non-EOF ring or a write
+  that does not fit defers its reply — the server stashes the
+  request's reply cap AND client buffer cap in an 8-slot
+  pending table and answers when the opposite side arrives
+  (a ring mutation drains the table in passes until no
+  progress; a completing read can unblock a write and vice
+  versa). `Op_Close` drains deferred readers (remaining data
+  or Ok+0 EOF), `Op_Truncate` drains deferred writers (fresh
+  space), `Op_Delete` wakes everything on the pipe with
+  Not_Found — also the escape hatch for a writer whose
+  reader died. Pending-table-full falls back to the old
+  Not_Ready poll answer, so client retry loops degrade
+  gracefully instead of hanging.
 - `NIL:` — the sink: writes discarded (Ok+length), reads
   immediate EOF (Ok+0), Stat/Open a zero-byte file, Delete
   no-ops Ok.

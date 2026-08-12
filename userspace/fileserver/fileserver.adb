@@ -884,6 +884,155 @@ procedure Fileserver is
          Flags         => 3) = 0;
    end Map_Buf;
 
+   procedure Unmap_Buf is
+   begin
+      if Syscalls.Mem_Unmap
+        (Address_Space => Syscalls.Address_Space_Cap,
+         VA            => Buf_Win_VA,
+         Length        => Buf_Bytes) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: buffer unmap failed");
+      end if;
+   end Unmap_Buf;
+
+   --  Blocking pipes (milestone 49): complete deferred requests
+   --  for pipe P after the ring changed. Passes run until no
+   --  progress — a completing read frees space for a pending
+   --  write and a completing write feeds a pending read. Each
+   --  completion maps the STASHED client buffer, copies, replies
+   --  through the stashed reply cap and drops both caps. The
+   --  caller must hold NO Buf_Win_VA mapping (drain remaps it).
+   --  Message.Words(0..1) are scratch here: every op extracts
+   --  its parameters before mutating the ring, and the current
+   --  request's own reply words are written after this returns.
+   procedure Drain_Pipe (P : Natural) is
+      use Fileserver_Pipes;
+      Progress : Boolean;
+      B        : Byte;
+   begin
+      loop
+         Progress := False;
+         for S in 1 .. Max_Pending loop
+            if Pend_Kind (S) /= P_None
+              and then Pend_Pipe (S) = P
+            then
+               if Pend_Kind (S) = P_Read
+                 and then (Buffered (P) > 0 or else Is_EOF (P))
+               then
+                  declare
+                     Count : U64 :=
+                       U64'Min (Pend_Length (S), Buffered (P));
+                     St    : U64 := Files.Status_Ok;
+                  begin
+                     Count := U64'Min (Count, Buf_Bytes);
+                     if Count > 0 then
+                        if not Map_Buf (Pend_Buf (S)) then
+                           St := Files.Status_Not_Found;
+                           Count := 0;
+                        else
+                           declare
+                              Win : Byte_Array (0 .. Count - 1)
+                                with Address => To_Address
+                                  (Integer_Address (Buf_Win_VA));
+                           begin
+                              for J in Win'Range loop
+                                 if not Pop (P, B) then
+                                    Count := J;
+                                    exit;
+                                 end if;
+                                 Win (J) := B;
+                              end loop;
+                           end;
+                           Unmap_Buf;
+                        end if;
+                     end if;
+                     Syscalls.Message.Words (0) := St;
+                     Syscalls.Message.Words (1) := Count;
+                     if Syscalls.IPC_Reply (Pend_Reply (S))
+                       /= Syscalls.IPC_Ok
+                     then
+                        Akernel_User.Console.Put_Line
+                          ("fileserver: pipe drain reply failed");
+                     end if;
+                  end;
+                  if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
+                     Akernel_User.Console.Put_Line
+                       ("fileserver: pipe drain buf drop failed");
+                  end if;
+                  Pend_Clear (S);
+                  Progress := True;
+               elsif Pend_Kind (S) = P_Write
+                 and then Space_Left (P) >= Pend_Length (S)
+               then
+                  declare
+                     St : U64 := Files.Status_Ok;
+                  begin
+                     if not Map_Buf (Pend_Buf (S)) then
+                        St := Files.Status_Not_Found;
+                     else
+                        declare
+                           Win : Byte_Array
+                             (0 .. Pend_Length (S) - 1)
+                             with Address => To_Address
+                               (Integer_Address (Buf_Win_VA));
+                        begin
+                           for J in Win'Range loop
+                              Push (P, Win (J));
+                           end loop;
+                        end;
+                        Unmap_Buf;
+                     end if;
+                     Syscalls.Message.Words (0) := St;
+                     Syscalls.Message.Words (1) := Pend_Length (S);
+                     if Syscalls.IPC_Reply (Pend_Reply (S))
+                       /= Syscalls.IPC_Ok
+                     then
+                        Akernel_User.Console.Put_Line
+                          ("fileserver: pipe drain reply failed");
+                     end if;
+                  end;
+                  if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
+                     Akernel_User.Console.Put_Line
+                       ("fileserver: pipe drain buf drop failed");
+                  end if;
+                  Pend_Clear (S);
+                  Progress := True;
+               end if;
+            end if;
+         end loop;
+         exit when not Progress;
+      end loop;
+   end Drain_Pipe;
+
+   --  Op_Delete on a pipe with deferred requests: wake them with
+   --  Not_Found so their clients do not block forever (this is
+   --  also the escape hatch for a writer whose reader died — the
+   --  shell deletes its pool pipes after every pipeline).
+   procedure Fail_Pipe_Pendings (P : Natural) is
+      use Fileserver_Pipes;
+   begin
+      for S in 1 .. Max_Pending loop
+         if Pend_Kind (S) /= P_None
+           and then Pend_Pipe (S) = P
+         then
+            Syscalls.Message.Words (0) := Files.Status_Not_Found;
+            Syscalls.Message.Words (1) := 0;
+            if Syscalls.IPC_Reply (Pend_Reply (S))
+              /= Syscalls.IPC_Ok
+            then
+               Akernel_User.Console.Put_Line
+                 ("fileserver: pipe fail reply failed");
+            end if;
+            if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
+               Akernel_User.Console.Put_Line
+                 ("fileserver: pipe fail buf drop failed");
+            end if;
+            Pend_Clear (S);
+         end if;
+      end loop;
+   end Fail_Pipe_Pendings;
+
    --  Bounce buffer for block-driver calls, allocated lazily.
    function Ensure_Blk_Buf return Boolean is
    begin
@@ -1093,6 +1242,7 @@ procedure Fileserver is
       Count  : U64 := 0;
       Status : U64 := Files.Status_Ok;
       Mapped : Boolean := False;
+      Deferred : Boolean := False;  --  stashed pipe write (m49)
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
 
@@ -1154,8 +1304,10 @@ procedure Fileserver is
 
          if Volumes (V).Is_Pipe then
             --  PIPE: writes append all-or-nothing (creating the
-            --  pipe on first use like Open); a full ring
-            --  answers Not_Ready for the client to retry.
+            --  pipe on first use like Open). A ring without room
+            --  BLOCKS (milestone 49): reply + buffer caps stashed
+            --  until a reader pops. Table full falls back to
+            --  Not_Ready (client poll loop degrades gracefully).
             declare
                P : Natural := 0;
             begin
@@ -1172,7 +1324,14 @@ procedure Fileserver is
                   return;
                end if;
                if Fileserver_Pipes.Space_Left (P) < Length then
-                  Status := Files.Status_Not_Ready;
+                  if Fileserver_Pipes.Stash
+                    (P, Fileserver_Pipes.P_Write,
+                     Reply_H, Buf, Length)
+                  then
+                     Deferred := True;
+                  else
+                     Status := Files.Status_Not_Ready;
+                  end if;
                   return;
                end if;
                if not Map_Buf (Buf) then
@@ -1189,8 +1348,13 @@ procedure Fileserver is
                      Fileserver_Pipes.Push (P, Win (J));
                   end loop;
                end;
+               --  Drain AFTER releasing the window (drain maps
+               --  stashed buffers through the same VA).
+               Mapped := False;
+               Unmap_Buf;
                Status := Files.Status_Ok;
                Count := Length;
+               Drain_Pipe (P);
             end;
             return;
          end if;
@@ -1199,6 +1363,13 @@ procedure Fileserver is
       end Process;
    begin
       Process;
+
+      --  A deferred pipe request owns its reply cap and buffer
+      --  cap in the pending table: no unmap, no delete, no reply
+      --  from this handler.
+      if Deferred then
+         return;
+      end if;
 
       if Buf /= 0 then
          if Mapped
@@ -1231,6 +1402,7 @@ procedure Fileserver is
       Count  : U64 := 0;
       Status : U64 := Files.Status_Ok;
       Mapped : Boolean := False;
+      Deferred : Boolean := False;  --  stashed pipe read (m49)
       Ok     : Boolean;
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
@@ -1296,8 +1468,12 @@ procedure Fileserver is
          end if;
 
          if Volumes (V).Is_Pipe then
-            --  PIPE: reads pop from the ring; empty answers
-            --  Not_Ready (poll) or Ok+0 once the writer closed.
+            --  PIPE: reads pop from the ring. An empty non-EOF
+            --  ring BLOCKS (milestone 49): the request's reply
+            --  cap and buffer cap are stashed and the reply is
+            --  deferred until a writer pushes or closes. Table
+            --  full falls back to Not_Ready (the client's poll
+            --  loop degrades gracefully). Ok+0 once EOF.
             declare
                P : constant Natural :=
                  Fileserver_Pipes.Find (Exp (Pos .. E_Len));
@@ -1311,6 +1487,11 @@ procedure Fileserver is
                   if Fileserver_Pipes.Is_EOF (P) then
                      Status := Files.Status_Ok;
                      Count := 0;
+                  elsif Fileserver_Pipes.Stash
+                    (P, Fileserver_Pipes.P_Read,
+                     Reply_H, Buf, Length)
+                  then
+                     Deferred := True;
                   else
                      Status := Files.Status_Not_Ready;
                   end if;
@@ -1338,7 +1519,12 @@ procedure Fileserver is
                      Win (J) := B;
                   end loop;
                end;
+               --  Drain AFTER releasing the window (drain maps
+               --  stashed buffers through the same VA).
+               Mapped := False;
+               Unmap_Buf;
                Status := Files.Status_Ok;
+               Drain_Pipe (P);
             end;
             return;
          end if;
@@ -1448,6 +1634,13 @@ procedure Fileserver is
    begin
       Process;
 
+      --  A deferred pipe request owns its reply cap and buffer
+      --  cap in the pending table: no unmap, no delete, no reply
+      --  from this handler.
+      if Deferred then
+         return;
+      end if;
+
       --  Every Op_Read transfers the client's buffer cap into this
       --  table; drop the mapping and the cap or leak a slot per op.
       if Buf /= 0 then
@@ -1518,6 +1711,9 @@ procedure Fileserver is
                if P = 0 then
                   Reply2 (Files.Status_Not_Found, 0);
                else
+                  --  Deferred requests on the dying pipe wake
+                  --  Not_Found (the dead-reader escape hatch).
+                  Fail_Pipe_Pendings (P);
                   Fileserver_Pipes.Destroy (P);
                   Reply2 (Files.Status_Ok, 0);
                end if;
@@ -1528,6 +1724,9 @@ procedure Fileserver is
                   Reply2 (Files.Status_Not_Found, 0);
                else
                   Fileserver_Pipes.Reset (P);
+                  --  A reset ring has full space: deferred
+                  --  writers can complete (milestone 49).
+                  Drain_Pipe (P);
                   Reply2 (Files.Status_Ok, 0);
                end if;
             else
@@ -1789,6 +1988,9 @@ procedure Fileserver is
             Reply2 (Files.Status_Not_Found, 0);
          else
             Fileserver_Pipes.Set_EOF (P);
+            --  Wake deferred readers: they drain the ring or
+            --  see Ok+0 (milestone 49).
+            Drain_Pipe (P);
             Reply2 (Files.Status_Ok, 0);
          end if;
          return;

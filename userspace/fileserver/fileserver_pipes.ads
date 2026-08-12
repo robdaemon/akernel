@@ -3,13 +3,14 @@ with Interfaces;
 
 --  PIPE: volume backing store (milestone 46a): Amiga-style named
 --  pipes as a fileserver-INTERNAL virtual volume. A pipe is a
---  bounded FIFO ring; readers poll (Status_Not_Ready on an empty
---  non-EOF pipe, writers on a full one) because the kernel allows
---  only ONE outstanding reply per server thread — a deferred
---  reply would be destroyed by the next recv (reply-gone wakes
---  the deferred client). True blocking needs kernel reply-cap
---  duplication; poll semantics preserve the Amiga-visible
---  behaviour (names, FIFO order, explicit EOF).
+--  bounded FIFO ring. Milestone 49 made reads/writes BLOCKING:
+--  an empty non-EOF read or a write that does not fit defers its
+--  reply (kernel reply-cap duplication, milestone 47) until the
+--  opposite side arrives; the request's reply cap and buffer cap
+--  sit in the pending table below. The table is small on
+--  purpose — when full the server falls back to the old
+--  Status_Not_Ready poll answer, so clients keep their retry
+--  loops as degradation, never as the hot path.
 --
 --  EOF is EXPLICIT (Op_Close from the writer): the fs protocol
 --  is stateless — no fids, no close-counting — so a pipe cannot
@@ -54,5 +55,30 @@ package Fileserver_Pipes is
    function Pop (I : Natural; B : out Interfaces.Unsigned_8)
                  return Boolean;
    procedure Push (I : Natural; B : Interfaces.Unsigned_8);
+
+   --  Blocking pipes (milestone 49): deferred-request table. A
+   --  stashed entry owns the request's reply cap and client
+   --  buffer cap until the fileserver completes or fails it;
+   --  completion scans the whole table (drain passes run until
+   --  no progress — a completing read can unblock a write and
+   --  vice versa).
+   Max_Pending : constant := 8;
+   type Pending_Kind is (P_None, P_Read, P_Write);
+
+   --  Reserve a slot for pipe P; False = table full (the caller
+   --  answers Status_Not_Ready so the client polls).
+   function Stash
+     (P : Natural; Kind : Pending_Kind;
+      Reply_H, Buf, Length : U64) return Boolean;
+
+   --  Scan access for the drain (slots 1 .. Max_Pending).
+   function Pend_Pipe (S : Natural) return Natural;
+   function Pend_Kind (S : Natural) return Pending_Kind;
+   function Pend_Reply (S : Natural) return U64;
+   function Pend_Buf (S : Natural) return U64;
+   function Pend_Length (S : Natural) return U64;
+
+   --  Free a slot (after completion or failure).
+   procedure Pend_Clear (S : Natural);
 
 end Fileserver_Pipes;

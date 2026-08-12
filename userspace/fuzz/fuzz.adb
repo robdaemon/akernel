@@ -3012,11 +3012,13 @@ begin
       --  virtual volume of bounded FIFO rings (Open creates,
       --  Write appends all-or-nothing, Read pops, Op_Close
       --  signals writer EOF, Delete destroys, Truncate resets
-      --  for reuse); empty+no-EOF and full answers are
-      --  Status_Not_Ready (poll semantics — the kernel allows
-      --  one outstanding reply per server thread, so true
-      --  blocking waits on kernel reply-cap duplication).
-      --  NIL: discards writes and answers immediate EOF.
+      --  for reuse). Milestone 49 made reads/writes BLOCKING: an
+      --  empty non-EOF read or a too-big write defers its reply
+      --  server-side until the opposite side arrives (the
+      --  directed P/W peer test below); the Not_Ready poll
+      --  answer survives only as the pending-table-full
+      --  fallback. NIL: discards writes and answers immediate
+      --  EOF.
       declare
          use Akernel_User.Files;
          Status : U64;
@@ -3040,9 +3042,9 @@ begin
          Check (Status = Status_Ok and then Count = 10
                 and then RBuf (1 .. 10) = "hello pipe",
                 "pipe read pops in fifo order");
-         Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
-         Check (Status = Status_Not_Ready,
-                "empty pipe without EOF says retry");
+         --  Milestone 49: an empty non-EOF read BLOCKS
+         --  server-side now — the old poll checks moved to the
+         --  blocking P/W peer test below.
          Status := Close ("PIPE:FZT1");
          Check (Status = Status_Ok, "pipe close ok");
          Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
@@ -3050,9 +3052,15 @@ begin
                 "closed empty pipe reads EOF");
          Status := Truncate ("PIPE:FZT1");
          Check (Status = Status_Ok, "pipe truncate resets");
+         --  A reset ring is reusable immediately (EOF cleared).
+         Status := Write ("PIPE:FZT1", 0, WBuf'Address, 6, Count);
+         Check (Status = Status_Ok and then Count = 6,
+                "reset pipe takes writes");
          Status := Read ("PIPE:FZT1", 0, RBuf'Address, 16, Count);
-         Check (Status = Status_Not_Ready,
-                "truncate clears EOF for reuse");
+         Check (Status = Status_Ok and then Count = 6
+                and then RBuf (1 .. 6) = "hello ",
+                "reset pipe reads back");
+         Status := Close ("PIPE:FZT1");
          Status := Delete ("PIPE:FZT1");
          Check (Status = Status_Ok, "pipe delete destroys");
          Status := Stat ("PIPE:FZT1", Size);
@@ -3069,6 +3077,163 @@ begin
                 "nil read is immediate EOF");
          Status := Delete ("NIL:");
          Check (Status = Status_Ok, "nil delete no-ops");
+      end;
+
+      --  Blocking pipes (milestone 49): a read on an empty
+      --  non-EOF ring and a write that does not fit defer their
+      --  replies server-side (m47 reply-cap duplication) until
+      --  the opposite side arrives. Teardown peers P (reader)
+      --  and W (writer) block inside the fileserver; the fuzzer
+      --  supplies the opposite side and collects the reports.
+      --  Race-free by construction: whichever order the peers
+      --  actually run, the operations complete identically.
+      declare
+         use Akernel_User.Files;
+         Status : U64;
+         Count  : U64;
+         Size   : U64;
+         Code   : U64 := 0;
+         Done   : Boolean := False;
+         Discard : U64;
+         Fill   : String (1 .. 1024) := (others => 'x');
+         Blk    : String (1 .. 10) := "blocked ok";
+         Drain  : String (1 .. 512) := (others => ' ');
+         Args_P : String (1 .. 16)
+           with Volatile, Address => System'To_Address
+             (Integer_Address (TD_Args_VA + 4096));
+      begin
+         --  Reader blocks: pipe created empty, peer P reads 16
+         --  (deferred), the fuzzer's write completes it.
+         Status := Open ("PIPE:FZB1", Size);
+         Check (Status = Status_Ok, "blocking test pipe created");
+         Args_P := ('P', ' ', 'P', 'I', 'P', 'E', ':', 'F', 'Z',
+                    'B', '1', others => Character'Val (0));
+         Akernel_User.Syscalls.Set_Grant
+           (0, Res_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, Res_EP, Akernel_User.Syscalls.Right_Send, 20);
+         Akernel_User.Syscalls.Set_Grant
+           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (4, 4, Akernel_User.Syscalls.Right_Send, 0);  --  fs cap
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 5, Proc);
+         Check (Status = 0 and then Proc /= 0,
+                "pipe reader peer spawned");
+         for I in 1 .. 256 loop
+            Discard := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+         Status := Write ("PIPE:FZB1", 0, Blk'Address, 10, Count);
+         Check (Status = Status_Ok and then Count = 10,
+                "write lands while reader blocked");
+         Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+         declare
+            R_W0 : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (0);
+            R_W1 : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (1);
+            R_W2 : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (2);
+            R_B  : constant U64 :=
+              Akernel_User.Syscalls.Message.Badge;
+         begin
+            Akernel_User.Syscalls.Message.Words := (others => 0);
+            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Discard := Raw_Ecall (Number => Sys_IPC_Reply,
+                                  A0 => Last_A1);
+            Check (Status = 0 and then R_B = 20,
+                   "pipe reader peer reported");
+            Check (R_W0 = Status_Ok and then R_W1 = 10,
+                   "blocked pipe read completed on write");
+            Check (R_W2 = 16#626C_6F63_6B65_6420#,
+                   "blocked pipe read delivered the bytes");
+         end;
+         Done := False;
+         for Try in 1 .. 2048 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (Proc, Code);
+            if Status = 0 then
+               Done := True;
+               exit;
+            end if;
+            for Y in 1 .. 32 loop
+               Discard := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+         end loop;
+         Check (Done, "pipe reader peer reaped");
+         Status := Close ("PIPE:FZB1");
+         Status := Delete ("PIPE:FZB1");
+         Check (Status = Status_Ok, "blocking test pipe deleted");
+
+         --  Writer blocks: ring filled to capacity, peer W's
+         --  16-byte write defers until the fuzzer drains 512.
+         Status := Open ("PIPE:FZB2", Size);
+         Check (Status = Status_Ok, "writer test pipe created");
+         for I in 1 .. 16 loop
+            Status := Write ("PIPE:FZB2", 0, Fill'Address, 1024,
+                             Count);
+         end loop;
+         Check (Status = Status_Ok, "writer test ring filled");
+         Args_P := ('W', ' ', 'P', 'I', 'P', 'E', ':', 'F', 'Z',
+                    'B', '2', others => Character'Val (0));
+         Akernel_User.Syscalls.Set_Grant
+           (0, Res_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, Res_EP, Akernel_User.Syscalls.Right_Send, 21);
+         Akernel_User.Syscalls.Set_Grant
+           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (4, 4, Akernel_User.Syscalls.Right_Send, 0);  --  fs cap
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 5, Proc);
+         Check (Status = 0 and then Proc /= 0,
+                "pipe writer peer spawned");
+         for I in 1 .. 256 loop
+            Discard := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+         Status := Read ("PIPE:FZB2", 0, Drain'Address, 512,
+                         Count);
+         Check (Status = Status_Ok and then Count = 512,
+                "drain frees ring space");
+         Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+         declare
+            R_W0 : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (0);
+            R_W1 : constant U64 :=
+              Akernel_User.Syscalls.Message.Words (1);
+            R_B  : constant U64 :=
+              Akernel_User.Syscalls.Message.Badge;
+         begin
+            Akernel_User.Syscalls.Message.Words := (others => 0);
+            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Discard := Raw_Ecall (Number => Sys_IPC_Reply,
+                                  A0 => Last_A1);
+            Check (Status = 0 and then R_B = 21,
+                   "pipe writer peer reported");
+            Check (R_W0 = Status_Ok and then R_W1 = 16,
+                   "blocked pipe write completed on drain");
+         end;
+         Done := False;
+         for Try in 1 .. 2048 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (Proc, Code);
+            if Status = 0 then
+               Done := True;
+               exit;
+            end if;
+            for Y in 1 .. 32 loop
+               Discard := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+         end loop;
+         Check (Done, "pipe writer peer reaped");
+         Status := Close ("PIPE:FZB2");
+         Status := Delete ("PIPE:FZB2");
       end;
 
       --  Plain send (milestone 35): the rendezvous ends at

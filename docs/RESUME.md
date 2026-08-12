@@ -6,15 +6,19 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 48 SHIPPED):
-- virtio-blk write-back cache: 64x512 B slots; writes absorb
-  into slots (per-op client-buffer window) and reply with no
-  device op; reads DMA misses + CPU-copy dirty hits. Dirty
-  reaches device on eviction, loop-top write-behind (quiet =
-  flushed; harness kill loses nothing), or Blk_Flush=4 driven
-  by fat32 Op_Sync through partmgr; VIRTIO_BLK_F_FLUSH
-  negotiated + VIRTIO_BLK_T_FLUSH on explicit flush.
-  Time-to-fuzz-complete 465 s -> 425 s SMP1 (~9%).
+CURRENT SESSION STATE (milestone 49 SHIPPED):
+- Blocking pipes: PIPE: read on empty non-EOF ring / write
+  that does not fit DEFERS its reply (m47 reply-cap
+  duplication) — fileserver stashes reply cap + client buffer
+  cap in an 8-slot pending table, drains in passes on ring
+  mutations; Op_Close drains readers (pipeline exit path),
+  Op_Truncate writers, Op_Delete wakes all Not_Found
+  (dead-reader escape hatch). Table full -> old Not_Ready
+  poll fallback; protocol unchanged. Teardown roles P/W give
+  directed cross-process coverage.
+- 48 shipped the virtio-blk write-back cache + flush chain
+  (explicit-sync-only VIRTIO_BLK_T_FLUSH; write-behind is
+  latency, never durability); 47 reply-cap duplication.
 - 47 shipped reply-cap duplication; 46 Amiga pipes; 45
   elevation.
 - BURNS logged in NEXT.md: kernel REJECTS write-only Mem_Map
@@ -22,33 +26,37 @@ CURRENT SESSION STATE (milestone 48 SHIPPED):
   failure paths need a Debug_Put_Line; a failing multi-edit
   call rolls back ALL edits; make all -j races the shared RTS
   lib; woken threads HEAD-INSERT the ready queue (never assert
-  arrival order); grep syscall NAMES when migrating; harness
-  timeout 600 s.
-- 759 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
+  arrival order); grep syscall NAMES when migrating; audit
+  every poll/Not_Ready expectation when a primitive goes
+  blocking (old checks HANG); String(1..16) := 10-char literal
+  is the m37b CE again; fuzz helper names live in SIBLING
+  declare blocks — new blocks declare their own; drain AFTER
+  the current op's window unmap; harness timeout 600 s.
+- 774 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41-48 COMPLETE. The probe
-killed batched write-back by data (reads 9:1, no same-sector
-coalescing, evictions 0). Next: the deferred list
-(docs/NEXT.md): blocking pipes (the m47 reply-cap primitive
-is ready — defer pipe replies in the fileserver), CLEAN
-SHUTDOWN (no power-off path exists: Op_Sync fan-out + SBI
-SRST + shell shutdown builtin — real hardware loses
-everything since last sync without it), Proc:self (needs
-client identity through the VFS), pid generation counters,
-register fast path, custom GNAT runtime, virtio-net, MSI-X,
-true scheduler priorities. Deferred shell groups left: job
-control, clock.
+Open candidates — milestones 41-49 COMPLETE. Next: the
+deferred list (docs/NEXT.md): CLEAN SHUTDOWN (no power-off
+path exists: Op_Sync fan-out + SBI SRST + shell shutdown
+builtin — real hardware loses everything since last sync
+without it), Proc:self (needs client identity through the
+VFS), pid generation counters, register fast path, custom
+GNAT runtime, virtio-net, MSI-X, true scheduler priorities.
+Deferred shell groups left: job control, clock.
 
-Recently landed: MILESTONE 48 — virtio-blk
+Recently landed: MILESTONE 49 — true
+blocking pipes (deferred replies on
+empty/full rings, drain passes, Op_Close
+EOF wake, Op_Delete escape hatch). 774
+PASS SMP1+SMP4, failures=0, fsck clean.
+Before that: MILESTONE 48 — virtio-blk
 write-back cache + flush chain
 (VIRTIO_BLK_F_FLUSH, Op_Flush, loop-top
 write-behind). 758 PASS SMP1+SMP4,
-failures=0, fsck clean. Before that:
-MILESTONE 47 — kernel reply-cap
-duplication (free-slot reply caps,
-handle in a1, out-of-order replies).
-754 PASS SMP1+SMP4, failures=0.
-Before that: MILESTONE 46 — Amiga pipes
+failures=0. Before that: MILESTONE 47 —
+kernel reply-cap duplication (free-slot
+reply caps, handle in a1, out-of-order
+replies). 754 PASS. Before that:
+MILESTONE 46 — Amiga pipes
 end to end (PIPE:/NIL: + shell redirection,
 Sort stdin filter). 742/743 PASS SMP1+SMP4,
 failures=0, fsck clean. Before that:

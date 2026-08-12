@@ -1890,6 +1890,66 @@ Next candidates (order open):
     client identity through the VFS),
     clean shutdown, pid generations.
 
+    49 SHIPPED — true blocking pipes:
+    the m47 reply-cap primitive wired
+    into PIPE:. A read on an empty
+    non-EOF ring or a write that does
+    not fit DEFERS: the fileserver
+    stashes the request's reply cap AND
+    client buffer cap in an 8-slot
+    pending table (Fileserver_Pipes,
+    BSS) and answers when the opposite
+    side arrives. Ring mutations drain
+    the table in passes until no
+    progress (a completing read frees
+    space for a pending write, a
+    completing write feeds a pending
+    read). Op_Close drains readers
+    (data or Ok+0 EOF — the pipeline
+    exit path), Op_Truncate drains
+    writers, Op_Delete wakes everything
+    Not_Found (the dead-reader escape
+    hatch: the shell deletes pool pipes
+    after every pipeline). Table full
+    -> old Not_Ready poll answer, so
+    client retry loops degrade, never
+    hang. Protocol unchanged (m46
+    promised exactly this swap).
+    BURNS: (1) the two old single-
+    process Not_Ready checks would HANG
+    under blocking — audit every poll
+    expectation when a primitive goes
+    blocking; (2) Blk : String(1..16)
+    := "blocked ok" (10 chars) — the
+    m37b string-length CE again, LCH
+    at the declare line, suite silently
+    short; (3) fuzz's helper names
+    (Discard/Done/Code) live in a
+    SIBLING declare block, not outer
+    scope — new blocks declare their
+    own; (4) drain must run AFTER the
+    current op's window unmap (it
+    remaps the same Buf_Win_VA with
+    stashed buffers). Directed tests:
+    teardown roles P (blocked reader
+    completes on write, bytes verified)
+    and W (blocked writer completes on
+    drain) spawned by fuzz, badge-
+    distinguished reports, race-free
+    by construction. 774 PASS SMP1+
+    SMP4 (one SMP4 run 773 with two
+    non-pipe lines lost to serial
+    output noise, rerun full — the
+    established m39/m46 pattern),
+    failures=0, fsck clean.
+    MILESTONE 49 COMPLETE. Next: the
+    deferred list — clean shutdown
+    (Op_Sync fan-out + SBI SRST +
+    shell builtin), Proc:self (needs
+    client identity through the VFS),
+    pid generations, register fast
+    path.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

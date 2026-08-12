@@ -1,4 +1,5 @@
 with Akernel_User.Syscalls;
+with Akernel_User.Files;
 
 --  Endpoint-teardown test peer for the fuzzer (milestone 34):
 --  receiver death must fail the callers parked on its endpoint
@@ -32,6 +33,15 @@ with Akernel_User.Syscalls;
 --    "X <n>" — exit immediately with status <n> (decimal):
 --          milestone-40b exit-code channel; the fuzzer's
 --          Reap_Process_Code must read <n> back.
+--    "P <path>" — blocking-pipe READER (milestone 49): bind the
+--          fs cap (handle 5), read 16 bytes from the pipe; the
+--          fileserver defers the reply until a writer pushes or
+--          closes. Report status (word 0), count (word 1) and
+--          the first 8 bytes packed big-endian (word 2) on
+--          handle 2.
+--    "W <path>" — blocking-pipe WRITER (milestone 49): write 16
+--          bytes; deferred until a reader frees ring space.
+--          Report status (word 0) + count (word 1) on handle 2.
 --
 --  Grant layout (handles): 1 = service endpoint, 2 = result
 --  endpoint (C only), 3 = filler (duplicated cap; the args page
@@ -44,7 +54,7 @@ procedure Teardown is
    Service_EP : constant U64 := 1;
    Result_EP  : constant U64 := 2;
 
-   Arg    : String (1 .. 8);
+   Arg    : String (1 .. 24);
    Arg_Ln : Natural;
    Result : U64;
    R_H    : U64;
@@ -118,6 +128,47 @@ begin
       Result := IPC_Call (Result_EP);
 
       Process_Exit;
+   end if;
+
+   if Arg_Ln > 2 and then Arg (1) = 'P' and then Arg (2) = ' ' then
+      --  Blocking-pipe reader (milestone 49): the read blocks
+      --  server-side until data or EOF arrives.
+      declare
+         Buf : String (1 .. 16) := (others => ' ');
+         Cnt : U64;
+         W2  : U64 := 0;
+      begin
+         Akernel_User.Files.Bind (5);
+         Result := Akernel_User.Files.Read
+           (Arg (3 .. Arg_Ln), 0, Buf'Address, 16, Cnt);
+         for I in 1 .. 8 loop
+            W2 := W2 * 256 + U64 (Character'Pos (Buf (I)));
+         end loop;
+         Message.Label := 16#7D3#;
+         Message.Words := (0 => Result, 1 => Cnt, 2 => W2,
+                           others => 0);
+         Message.Caps  := (others => 0);
+         Result := IPC_Call (Result_EP);
+         Process_Exit;
+      end;
+   end if;
+
+   if Arg_Ln > 2 and then Arg (1) = 'W' and then Arg (2) = ' ' then
+      --  Blocking-pipe writer (milestone 49): the write blocks
+      --  server-side until the ring has room.
+      declare
+         Buf : constant String := "blocked-write-16";
+         Cnt : U64;
+      begin
+         Akernel_User.Files.Bind (5);
+         Result := Akernel_User.Files.Write
+           (Arg (3 .. Arg_Ln), 0, Buf'Address, 16, Cnt);
+         Message.Label := 16#7D3#;
+         Message.Words := (0 => Result, 1 => Cnt, others => 0);
+         Message.Caps  := (others => 0);
+         Result := IPC_Call (Result_EP);
+         Process_Exit;
+      end;
    end if;
 
    --  Caller role: park on the service endpoint until it fails,
