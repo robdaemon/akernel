@@ -1813,11 +1813,54 @@ Next candidates (order open):
     messages) — grep the syscall NAMES,
     not one spelling. 754 PASS SMP1+SMP4,
     failures=0, fsck clean pre/post suite.
-    MILESTONE 47 COMPLETE. Next: m48 turns
-    PIPE: reads/writes into true blocking
-    ops (defer the reply until the other
-    side arrives) — a pure fileserver-side
-    change, no protocol impact.
+    MILESTONE 47 COMPLETE.
+
+    48 SHIPPED — virtio-blk write-back
+    cache + the flush chain: 64 slots x
+    512 B in a DMA object; WRITES copy
+    client data into slots (client buffer
+    mapped per-op through a one-page
+    window — the transfer's full-rights
+    copy carries Map) and reply with NO
+    device op, so same-sector FAT
+    metadata bursts coalesce; READS DMA
+    miss runs straight to the client and
+    CPU-copy only hit sectors (dirty
+    wins), streaming stays uncached.
+    Dirty reaches the device on LRU
+    eviction, on loop-top WRITE-BEHIND
+    whenever any is pending (a quiet
+    system is a flushed system — a
+    harness kill of qemu loses nothing),
+    or on the new Blk_Flush = 4, which
+    fat32's Op_Sync now drives through
+    partmgr (m22's hook wired at last);
+    VIRTIO_BLK_F_FLUSH (bit 9)
+    negotiated, VIRTIO_BLK_T_FLUSH
+    issued on explicit flush. BURNS: (1)
+    the kernel REJECTS write-only
+    Mem_Map ((Flags and 3) = 2) — the
+    read-hit window must ask RW (Flags
+    3); first attempt used 2 and every
+    dirty-sector read-back failed io
+    with no log line (silent-reply-1
+    paths need a Debug_Put_Line). (2)
+    measure before/after: time-to-
+    fuzz-complete 465 s -> 425 s SMP1
+    (~9%); the remaining per-sector
+    write-back round-trips want a
+    bigger virtqueue + batched
+    submission (deferred). Fuzz: flush
+    feature self-test line + write/
+    dirty-read-back/Sync chain checks.
+    758 PASS SMP1+SMP4, failures=0,
+    fsck clean pre/post suite.
+    MILESTONE 48 COMPLETE. Next: the
+    deferred list — m48-followup queue
+    depth + batched write-back, Proc:
+    self (needs client identity through
+    the VFS), blocking pipes (m47
+    primitive ready), pid generations.
 
 Commit between each milestone.
 

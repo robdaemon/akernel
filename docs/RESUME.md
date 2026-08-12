@@ -6,43 +6,44 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 47 SHIPPED):
-- Kernel reply-cap duplication: recv mints the reply cap in an
-  ordinary free slot (handle delivered in a1), reply(a0 = handle);
-  a server thread holds MANY outstanding reply caps and replies
-  in any order. All servers + RTS migrated; teardown peer role
-  "D" proves deferred out-of-order replies E2E. Unlocks m48
-  true blocking pipes (fileserver-side only now).
-- 46 shipped Amiga pipes (PIPE:/NIL: virtual volumes +
-  shell `|`/`>`/`<` via the args-page trailer; Sort stdin
-  filter). 45 shipped elevation (System/Elevated + Elevate).
-- BURNS logged in NEXT.md: initrd Manifest is REGENERATED
-  by the Makefile; Files.Read now Ensure_Buffers like
-  Write; pre-CLI commands need Arg_Count + Exit_With for
-  redirect; a failing multi-edit call rolls back ALL edits
-  (grep before suspecting logic); make all -j races the
-  shared RTS lib; woken threads HEAD-INSERT the ready
-  queue — never assert inter-process arrival order; grep
-  syscall NAMES when migrating (demo.adb slipped a sweep);
-  harness timeout 600 s.
-- 754 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
+CURRENT SESSION STATE (milestone 48 SHIPPED):
+- virtio-blk write-back cache: 64x512 B slots; writes absorb
+  into slots (per-op client-buffer window) and reply with no
+  device op; reads DMA misses + CPU-copy dirty hits. Dirty
+  reaches device on eviction, loop-top write-behind (quiet =
+  flushed; harness kill loses nothing), or Blk_Flush=4 driven
+  by fat32 Op_Sync through partmgr; VIRTIO_BLK_F_FLUSH
+  negotiated + VIRTIO_BLK_T_FLUSH on explicit flush.
+  Time-to-fuzz-complete 465 s -> 425 s SMP1 (~9%).
+- 47 shipped reply-cap duplication; 46 Amiga pipes; 45
+  elevation.
+- BURNS logged in NEXT.md: kernel REJECTS write-only Mem_Map
+  ((Flags and 3) = 2) — RW windows ask Flags 3; silent-reply-1
+  failure paths need a Debug_Put_Line; a failing multi-edit
+  call rolls back ALL edits; make all -j races the shared RTS
+  lib; woken threads HEAD-INSERT the ready queue (never assert
+  arrival order); grep syscall NAMES when migrating; harness
+  timeout 600 s.
+- 758 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41-47 COMPLETE. Next: m48
-blocking pipes (defer pipe read/write replies in the
-fileserver until the other side arrives). Then the deferred
-list (design notes in docs/NEXT.md): write-back cache +
-VIRTIO_BLK_F_FLUSH (suite-speed payoff — write-through is
-why the suite needs 600 s), Proc:self (needs client identity
-through the VFS), pid generation counters, register fast
-path, custom GNAT runtime, virtio-net, MSI-X, true
-scheduler priorities. Deferred shell groups left: job
-control, clock.
+Open candidates — milestones 41-48 COMPLETE. Next: the
+deferred list (docs/NEXT.md): write-back followup (bigger
+virtqueue + batched write-back submission), blocking pipes
+(the m47 reply-cap primitive is ready — defer pipe replies in
+the fileserver), Proc:self (needs client identity through the
+VFS), pid generation counters, register fast path, custom
+GNAT runtime, virtio-net, MSI-X, true scheduler priorities.
+Deferred shell groups left: job control, clock.
 
-Recently landed: MILESTONE 47 — kernel
-reply-cap duplication (free-slot reply
-caps, handle in a1, out-of-order replies;
-the m48 blocking-pipe primitive). 754
-PASS SMP1+SMP4, failures=0, fsck clean.
+Recently landed: MILESTONE 48 — virtio-blk
+write-back cache + flush chain
+(VIRTIO_BLK_F_FLUSH, Op_Flush, loop-top
+write-behind). 758 PASS SMP1+SMP4,
+failures=0, fsck clean. Before that:
+MILESTONE 47 — kernel reply-cap
+duplication (free-slot reply caps,
+handle in a1, out-of-order replies).
+754 PASS SMP1+SMP4, failures=0.
 Before that: MILESTONE 46 — Amiga pipes
 end to end (PIPE:/NIL: + shell redirection,
 Sort stdin filter). 742/743 PASS SMP1+SMP4,
@@ -435,6 +436,15 @@ Working rules burned in (details in NEXT.md):
   will cross-answer callers. When migrating, grep the
   syscall NAMES (IPC_Recv/IPC_Reply), not one spelling —
   demo.adb's bare calls slipped a sweep of ".Receive (".
+- The kernel rejects write-ONLY Mem_Map ((Flags and 3) = 2);
+  a window you only CPU-copy INTO still asks RW (Flags 3).
+  Device-server op failures that reply status 1 without a
+  log line are undebuggable — every failure exit gets a
+  Debug_Put_Line (the Flags-2 read-window burn).
+- Block-layer performance: measure time-to-fuzz-complete
+  before/after (poll the log, not the 600 s kill); the
+  virtio-blk write-back cache bought ~9% and the next chunk
+  is virtqueue depth + batched write-back submission.
 - Woken threads head-insert the ready queue (rendezvous
   boost): last-woken runs first, so report ARRIVAL order
   across processes is scheduler-defined — assert

@@ -233,7 +233,14 @@ QEMU virt RAM base:     0x80000000
   protocol in IPC.md "Elevation"). The
   uniform command ABI is now: 1 console,
   2 fs, 3 bureau, 4 args page (always), 5
-  elevation svc. Milestone 47 duplicated
+  elevation svc. Milestone 48 made the
+  block layer write-back: virtio-blk
+  absorbs writes into a 64-slot cache,
+  flushes on eviction / idle
+  write-behind / Blk_Flush=4 (driven by
+  fat32 Op_Sync via partmgr), and
+  negotiates VIRTIO_BLK_F_FLUSH.
+  Milestone 47 duplicated
   the reply cap: recv mints one ordinary
   free-slot reply cap per call (handle in
   a1) and reply(handle) consumes it —

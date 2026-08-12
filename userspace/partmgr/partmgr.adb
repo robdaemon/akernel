@@ -44,6 +44,7 @@ procedure Partmgr is
    Blk_Read  : constant U64 := 1;
    Blk_Write : constant U64 := 2;
    Blk_Part_Query : constant U64 := 3;
+   Blk_Flush : constant U64 := 4;
 
    Max_Parts   : constant := 8;
    Badge_Base  : constant U64 := 16#1000#;
@@ -263,6 +264,26 @@ begin
             Reply2 (1, 0);
          elsif Op = Blk_Info then
             Reply2 (0, Part_Size (Natural (P)));
+         elsif Op = Blk_Flush then
+            --  Write-back cache sync (milestone 48): no sector
+            --  translation — the label rides through; a stray
+            --  buffer cap is deleted, never forwarded.
+            if Buf /= 0 then
+               if Syscalls.Cap_Delete (Buf) /= 0 then
+                  Akernel_User.Console.Put_Line
+                    ("partmgr buffer cap delete failed");
+               end if;
+            end if;
+            Syscalls.Message.Caps := (others => 0);
+            if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok then
+               Reply2 (1, 0);
+            else
+               declare
+                  Status : constant U64 := Syscalls.Message.Words (0);
+               begin
+                  Reply2 (Status, 0);
+               end;
+            end if;
          elsif Op = Blk_Read or else Op = Blk_Write then
             if Buf = 0
               or else Count = 0

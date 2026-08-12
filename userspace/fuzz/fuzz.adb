@@ -2896,6 +2896,26 @@ begin
 
             Run_Command ("Sys:C/Copy", "BD0:FZPIN.TXT NIL:", 0,
                          "copy to NIL: discards");
+
+            --  Write-back block cache (milestone 48): freshly
+            --  written sectors sit DIRTY in the virtio-blk
+            --  cache; a read before any sync must still return
+            --  the new bytes (the block server CPU-copies dirty
+            --  slots over the miss-run DMA). Sync then pushes
+            --  the flush chain fat32 -> partmgr -> virtio-blk
+            --  -> device (Op_Flush + VIRTIO_BLK_T_FLUSH).
+            Write_File ("BD0:FZWB.TXT", In_File,
+                        "write-back test input written");
+            St := Akernel_User.Files.Read
+              ("BD0:FZWB.TXT", 0, Out_Buf'Address,
+               U64 (In_File'Length), Cnt);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Cnt = U64 (In_File'Length)
+                   and then Out_Buf (1 .. In_File'Length) = In_File,
+                   "dirty write-back sectors read back coherent");
+            Check (Akernel_User.Files.Sync =
+                     Akernel_User.Files.Status_Ok,
+                   "sync drives the block flush chain");
          end;
       end;
 

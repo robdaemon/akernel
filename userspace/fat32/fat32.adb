@@ -39,6 +39,7 @@ procedure Fat32 is
    Blk_Info  : constant U64 := 0;
    Blk_Read  : constant U64 := 1;
    Blk_Write : constant U64 := 2;
+   Blk_Flush : constant U64 := 4;  --  3 = partmgr's Part_Query
 
    Op_Stat     : constant U64 := 1;
    Op_Open     : constant U64 := 2;
@@ -2407,9 +2408,18 @@ begin
       elsif Syscalls.Message.Label = Op_Volume_Info then
          Handle_Volume_Info;
       elsif Syscalls.Message.Label = Op_Sync then
-         --  Write-through cache: nothing dirty to flush (the hook
-         --  exists for future write-back or device flush).
-         Reply2 (Status_Ok, 0);
+         --  Milestone 48: the driver itself is write-through,
+         --  but the block layer below is write-BACK now — push
+         --  its dirty sectors (and the device flush) down.
+         Syscalls.Message.Label := Blk_Flush;
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Call (Blk_EP) = Syscalls.IPC_Ok
+           and then Syscalls.Message.Words (0) = 0
+         then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Bad_Args, 0);  --  flush io error
+         end if;
       else
          Reply2 (Status_Bad_Args, 0);
       end if;

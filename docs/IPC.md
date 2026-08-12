@@ -323,7 +323,27 @@ part_query = 3 (slot) -> (status, first LBA, size in sectors,
                populated slot count); partmgr only. Clients select
                the partition by cap badge 16#1000#+N (manifest
                partN tokens, or cap_mint'd caps)
+Blk_Flush = 4  no words -> (status, 0); write-back cache ->
+               device, then VIRTIO_BLK_T_FLUSH when negotiated;
+               partmgr forwards it untranslated
 ```
+
+The virtio-blk server runs a 64-slot x 512 B write-back sector
+cache (milestone 48): writes copy client data into slots (client
+buffer mapped per-op through a one-page window — count <= 8 is
+one page — with the Map right the transfer's full-rights copy
+carries) and reply without a device op, so same-sector metadata
+bursts coalesce; reads DMA miss runs straight into the client
+buffer and CPU-copy only cache-hit sectors (dirty data wins), so
+streaming reads stay uncached. Dirty slots reach the device on
+LRU eviction, on loop-top write-behind whenever any are pending
+(a quiet system is a flushed system — a harness kill of qemu
+loses nothing), or on Blk_Flush, which fat32's Op_Sync now
+drives (the milestone-22 hook): fs Op_Sync -> fat32 Blk_Flush
+-> partmgr forward -> virtio-blk write-back + device flush
+(VIRTIO_BLK_F_FLUSH bit 9 negotiated at feature time).
+Coherence is trivial: the server is the sole accessor of its
+device.
 
 The FAT32 driver keeps an 8-slot write-through metadata sector
 cache (FAT/directory/FSInfo) refreshed from the bounce on every
