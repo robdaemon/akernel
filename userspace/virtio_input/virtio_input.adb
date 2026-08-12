@@ -279,6 +279,7 @@ procedure Virtio_Input is
    ------------------------------------------------------------------
 
    Result    : U64;
+   Reply_H   : U64;  --  reply cap of the request being served (m47)
    DMA_Cap   : U64;
    Ntfn_Cap  : U64;
    Bits      : U64;
@@ -479,14 +480,14 @@ begin
 
    --  Devmgr driver config message (notify multiplier, IRQ
    --  source, requester id); answered with status 0.
-   Result := IPC_Recv (Svc_EP);
+   Result := IPC_Recv (Svc_EP, Reply_H);
    if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
       Debug_Put_Line ("virtio-input config message missing");
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
    Message.Words := (others => 0);
-   if IPC_Reply /= IPC_Ok then
+   if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-input config reply failed");
       Process_Exit;
    end if;
@@ -620,7 +621,7 @@ begin
    ------------------------------------------------------------------
 
    loop
-      Result := IPC_Recv (Svc_EP);
+      Result := IPC_Recv (Svc_EP, Reply_H);
       if Result /= IPC_Ok then
          Debug_Put_Line ("virtio-input recv failed");
          Process_Exit;
@@ -654,7 +655,7 @@ begin
          --  Devmgr pushes Bureau's window-service endpoint.
          Seat_EP := Message.Caps (0);
          Message.Words := (others => 0);
-         if IPC_Reply /= IPC_Ok then
+         if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-input seat reply failed");
             Process_Exit;
          end if;
@@ -663,7 +664,7 @@ begin
       else
          Message.Words := (others => 0);
          Message.Words (0) := 3;
-         if IPC_Reply /= IPC_Ok then
+         if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-input reply failed");
             Process_Exit;
          end if;

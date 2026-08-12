@@ -1773,6 +1773,52 @@ Next candidates (order open):
     failures=0, fsck clean pre/post suite.
     MILESTONE 46 COMPLETE.
 
+    47 SHIPPED — kernel reply-cap
+    duplication: recv now mints the reply
+    cap in an ordinary FREE SLOT (one per
+    received call, handle returned in a1)
+    instead of clobbering fixed handle 254,
+    so a server thread holds MANY
+    outstanding reply caps and replies in
+    any order; reply(a0 = the handle). The
+    m34 lifecycle rides the existing
+    cap-close hook unchanged (server death
+    fails every pending target Reply_Gone;
+    cap_delete = "drop this request").
+    recv/Call/Send handoffs zero-or-set the
+    woken receiver's saved a1; plain send
+    and the synthetic notification message
+    deliver a1 = 0. Every server migrated
+    (reply handle is a per-request local);
+    RTS IPC_Recv/IPC_Reply + the typed
+    generic gained the handle. The latent
+    handle-254 collision (ordinary Insert
+    never skipped 254/255 — the m38 300-cap
+    test's 254th cap would have been
+    closed by the next recv mint) died by
+    construction. Fuzz E2E: teardown peer
+    role "D" receives two calls, holds
+    both reply caps, replies second-first;
+    both callers complete Ok with their
+    order tokens (old kernel: caller one
+    woke Reply_Gone at the re-receive).
+    BURNS: (1) report ARRIVAL order is not
+    reply order — woken threads
+    head-insert into the ready queue (the
+    rendezvous boost), so last-woken runs
+    first; assert completion + payload,
+    never inter-process arrival order.
+    (2) demo.adb was missed in the server
+    sweep (it Replys on Op_Read-like
+    messages) — grep the syscall NAMES,
+    not one spelling. 754 PASS SMP1+SMP4,
+    failures=0, fsck clean pre/post suite.
+    MILESTONE 47 COMPLETE. Next: m48 turns
+    PIPE: reads/writes into true blocking
+    ops (defer the reply until the other
+    side arrives) — a pure fileserver-side
+    change, no protocol impact.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

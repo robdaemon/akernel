@@ -249,14 +249,19 @@ package Akernel_User.Syscalls is
    Mem_Max_Pages : constant U64 := 64;
    Page_Size     : constant U64 := 4096;
    function IPC_Call (Cap : U64) return U64;
-   function IPC_Recv (Cap : U64) return U64;
+   --  Milestone 47: a received call mints its reply cap in an
+   --  ordinary free slot and the handle surfaces in a1 ->
+   --  Reply_Handle (0 = none: plain send or the synthetic
+   --  notification message). A server may hold many outstanding
+   --  reply caps and reply in any order.
+   function IPC_Recv (Cap : U64; Reply_Handle : out U64) return U64;
    --  Plain send (milestone 35): rendezvous ends at delivery — the
    --  sender blocks only until a Receive takes the message; no
    --  reply cap is minted, so the receiver cannot reply.
    function IPC_Send (Cap : U64) return U64;
-   function IPC_Reply return U64;
+   --  Cap = the Reply_Handle an earlier IPC_Recv returned.
+   function IPC_Reply (Cap : U64) return U64;
 
-   Reply_Cap_Handle : constant U64 := 254;
    IPC_Buffer_VA    : constant U64 := 16#6FFF_0000#;
 
    --  Argument passing (milestone 33a): a spawner MAY hand the

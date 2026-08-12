@@ -33,6 +33,10 @@ package Arch.Context is
    --  is restored into its kernel-stack trap frame.
    procedure Set_Saved_Result (Context : in out Thread_Context; Value : U64);
 
+   --  Same for saved a1 (x11): the reply-cap handle a woken
+   --  receiver surfaces alongside its Ok a0 (milestone 47).
+   procedure Set_Saved_A1 (Context : in out Thread_Context; Value : U64);
+
    procedure Save_From_Trap_Frame
      (Context : in out Thread_Context;
       Frame   : System.Address);
@@ -49,6 +53,7 @@ private
    Trap_Frame_Satp_Index : constant := 32;
    Trap_Frame_Last_Index : constant := Trap_Frame_Word_Count - 1;
    Trap_Frame_A0_Index   : constant := 9;  --  x10
+   Trap_Frame_A1_Index   : constant := 10; --  x11
 
    type Trap_Frame_Word_Array is array
      (Natural range 0 .. Trap_Frame_Last_Index) of U64;

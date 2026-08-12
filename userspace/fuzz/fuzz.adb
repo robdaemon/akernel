@@ -2412,7 +2412,7 @@ begin
             Akernel_User.Syscalls.Message.Label := 16#7D1#;
             Akernel_User.Syscalls.Message.Words := (others => 0);
             Akernel_User.Syscalls.Message.Caps := (others => 0);
-            Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+            Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
             Check (Status = 0, "teardown wake report delivered");
             Put ("  report badge "); Put_Hex (R_Badge);
             Put (" code "); Put_Hex (R_Code); Put_Line ("");
@@ -3090,7 +3090,8 @@ begin
          Check (Status = 0 and then S_Words = 16#5EAD_5EAD#
                 and then S_Badge = 0,
                 "plain send delivered words and badge");
-         Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Check (Last_A1 = 0, "plain send mints no reply cap");
+         Status := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
          Check (Status = 1, "reply after plain send rejected");
       end;
 
@@ -3104,7 +3105,7 @@ begin
          Akernel_User.Syscalls.Message.Label := 16#7D1#;
          Akernel_User.Syscalls.Message.Words := (others => 0);
          Akernel_User.Syscalls.Message.Caps := (others => 0);
-         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
          Check (Status = 0 and then R_Badge = 4 and then R_Code = 0,
                 "plain send woke with Ok on delivery");
       end;
@@ -3135,7 +3136,7 @@ begin
          Akernel_User.Syscalls.Message.Label := 16#7D1#;
          Akernel_User.Syscalls.Message.Words := (others => 0);
          Akernel_User.Syscalls.Message.Caps := (others => 0);
-         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => 254);
+         Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
          Check (Status = 0 and then R_Badge = 5 and then R_Code = 3,
                 "plain send on failed endpoint rejected");
       end;
@@ -3161,6 +3162,138 @@ begin
          end if;
       end loop;
       Check (Reaped, "send peers reaped");
+
+      --  Deferred replies (milestone 47): the "D" peer receives
+      --  TWO calls on a fresh endpoint before replying — to the
+      --  SECOND caller first. On the old fixed-slot reply cap
+      --  the second receive failed caller one with Reply_Gone;
+      --  duplication lets both complete, out of order. Callers
+      --  report on the result endpoint in REPLY order: word 0 =
+      --  wake code, word 1 = the D peer's receive-order token
+      --  (2 must arrive before 1).
+      declare
+         D_Svc_EP : constant U64 := Raw_Ecall (Number => Sys_EP_Create);
+         R1_Badge : U64 := 0;
+         R2_Badge : U64 := 0;
+         R1_Code  : U64 := 99;
+         R2_Code  : U64 := 99;
+         R1_Order : U64 := 99;
+         R2_Order : U64 := 99;
+      begin
+         Check (D_Svc_EP < 256 and then D_Svc_EP /= Res_EP
+                and then D_Svc_EP /= Svc_EP
+                and then D_Svc_EP /= Send_EP,
+                "deferred-reply endpoint created");
+
+         --  Two callers queue on the endpoint (no receiver yet).
+         Args_C := ('C', Character'Val (0));
+         for I in 1 .. 2 loop
+            Akernel_User.Syscalls.Set_Grant
+              (0, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Akernel_User.Syscalls.Set_Grant
+              (1, Res_EP, Akernel_User.Syscalls.Right_Send,
+               U64 (10 + I));
+            Akernel_User.Syscalls.Set_Grant
+              (2, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Akernel_User.Syscalls.Set_Grant
+              (3, Args_C_Mem,
+               Akernel_User.Syscalls.Right_Map +
+                 Akernel_User.Syscalls.Right_Read, 0);
+            Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+            Procs (I) := Proc;
+            Check (Status = 0 and then Proc /= 0,
+                   "deferred-reply caller spawned");
+         end loop;
+
+         --  Let both queue before the server runs.
+         for I in 1 .. 256 loop
+            Ignore := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+
+         --  D peer: receive both, reply second-first.
+         Args_R := ('D', Character'Val (0));
+         Akernel_User.Syscalls.Set_Grant
+           (0, D_Svc_EP,
+            Akernel_User.Syscalls.Right_Send +
+              Akernel_User.Syscalls.Right_Receive, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (2, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_R_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Procs (3) := Proc;
+         Check (Status = 0 and then Proc /= 0,
+                "deferred-reply server spawned");
+
+         --  The kernel-side proof: D held TWO reply caps at once
+         --  and completed both callers (the old fixed-slot cap
+         --  failed caller one with Reply_Gone the moment D
+         --  re-received). Report ARRIVAL order is not asserted:
+         --  woken threads head-insert into the ready queue (the
+         --  rendezvous boost), so last-woken runs first.
+         for I in 1 .. 2 loop
+            Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
+            declare
+               R_Badge : constant U64 :=
+                 Akernel_User.Syscalls.Message.Badge;
+               R_Code  : constant U64 :=
+                 Akernel_User.Syscalls.Message.Words (0);
+               R_Order : constant U64 :=
+                 Akernel_User.Syscalls.Message.Words (1);
+            begin
+               Akernel_User.Syscalls.Message.Label := 16#7D1#;
+               Akernel_User.Syscalls.Message.Words := (others => 0);
+               Akernel_User.Syscalls.Message.Caps := (others => 0);
+               Ignore := Raw_Ecall
+                 (Number => Sys_IPC_Reply, A0 => Last_A1);
+               Check (Status = 0,
+                      "deferred-reply report delivered");
+               if I = 1 then
+                  R1_Badge := R_Badge;
+                  R1_Code := R_Code;
+                  R1_Order := R_Order;
+               else
+                  R2_Badge := R_Badge;
+                  R2_Code := R_Code;
+                  R2_Order := R_Order;
+               end if;
+            end;
+         end loop;
+         Check (R1_Code = 0 and then R2_Code = 0,
+                "both deferred callers completed Ok");
+         Check ((R1_Order = 1 and then R2_Order = 2)
+                or else (R1_Order = 2 and then R2_Order = 1),
+                "deferred replies carried their order tokens");
+         Check ((R1_Badge = 11 and then R2_Badge = 12)
+                or else (R1_Badge = 12 and then R2_Badge = 11),
+                "both deferred callers reported");
+
+         --  Reap the three children.
+         Reaped := True;
+         for I in 1 .. 3 loop
+            if Procs (I) /= 0 then
+               declare
+                  One_Reaped : Boolean := False;
+               begin
+                  for Try in 1 .. 128 loop
+                     Status := Raw_Ecall
+                       (Number => Sys_Reap, A0 => Procs (I));
+                     if Status = 0 then
+                        One_Reaped := True;
+                        exit;
+                     end if;
+                     Ignore := Raw_Ecall (Number => Sys_Yield);
+                  end loop;
+                  Reaped := Reaped and then One_Reaped;
+               end;
+            end if;
+         end loop;
+         Check (Reaped, "deferred-reply children reaped");
+      end;
    end;
 
    --  Assigns (milestone 36): session path aliases resolved by

@@ -30,6 +30,7 @@ procedure Procfs is
 
    Console_Cap  : constant U64 := 1;
    Svc_EP       : constant U64 := 2;
+   Reply_H      : U64;  --  reply cap of the request being served (m47)
    Resource_Cap : constant U64 := 3;
    Admin_Cap    : constant U64 := 4;
 
@@ -447,7 +448,7 @@ procedure Procfs is
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("procfs reply failed");
          Syscalls.Process_Exit;
       end if;
@@ -768,7 +769,7 @@ procedure Procfs is
                      ((P - 1) mod 8) * 8);
       end loop;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line
            ("procfs readdir reply failed");
          Syscalls.Process_Exit;
@@ -804,7 +805,7 @@ begin
    Akernel_User.Console.Put_Line ("procfs online");
 
    loop
-      if Syscalls.IPC_Recv (Svc_EP) /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("procfs recv failed");
          Syscalls.Process_Exit;
       end if;

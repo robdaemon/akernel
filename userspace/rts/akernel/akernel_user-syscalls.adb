@@ -165,7 +165,8 @@ package body Akernel_User.Syscalls is
    function Raw_IPC_Call (Cap : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_call";
 
-   function Raw_IPC_Recv (Cap : U64) return U64
+   function Raw_IPC_Recv
+     (Cap : U64; Reply_Handle_Ptr : System.Address) return U64
      with Import, Convention => C, External_Name => "akernel_sys_ipc_recv";
 
    function Raw_IPC_Send (Cap : U64) return U64
@@ -386,9 +387,9 @@ package body Akernel_User.Syscalls is
       return Raw_IPC_Call (Cap);
    end IPC_Call;
 
-   function IPC_Recv (Cap : U64) return U64 is
+   function IPC_Recv (Cap : U64; Reply_Handle : out U64) return U64 is
    begin
-      return Raw_IPC_Recv (Cap);
+      return Raw_IPC_Recv (Cap, Reply_Handle'Address);
    end IPC_Recv;
 
    function IPC_Send (Cap : U64) return U64 is
@@ -396,9 +397,9 @@ package body Akernel_User.Syscalls is
       return Raw_IPC_Send (Cap);
    end IPC_Send;
 
-   function IPC_Reply return U64 is
+   function IPC_Reply (Cap : U64) return U64 is
    begin
-      return Raw_IPC_Reply (Reply_Cap_Handle);
+      return Raw_IPC_Reply (Cap);
    end IPC_Reply;
 
    procedure Set_Grant

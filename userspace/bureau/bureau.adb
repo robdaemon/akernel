@@ -155,7 +155,8 @@ procedure Bureau is
      (Wins (S).Y + Frame + Title_H);
 
    --  Raw word reply (same pattern as the display driver).
-   procedure Win_Reply (Req_Label : U64; W0, W1, W2, W3, W4 : U64) is
+   procedure Win_Reply
+     (Reply_H : U64; Req_Label : U64; W0, W1, W2, W3, W4 : U64) is
    begin
       Message.Label := Req_Label;
       Message.Words (0) := W0;
@@ -164,7 +165,7 @@ procedure Bureau is
       Message.Words (3) := W3;
       Message.Words (4) := W4;
       Message.Words (5) := 0;
-      if IPC_Reply /= IPC_Ok then
+      if IPC_Reply (Reply_H) /= IPC_Ok then
          Debug_Put_Line ("bureau reply failed");
          Process_Exit;
       end if;
@@ -741,6 +742,7 @@ procedure Bureau is
    Count      : Natural;
    Minted     : U64;
    Label      : U64;
+   Reply_H    : U64;
 
 begin
    --  1. Mode geometry from the display service.
@@ -845,7 +847,7 @@ begin
 
    --  Window-protocol service loop (v2: up to Max_Win slots).
    loop
-      if IPC_Recv (Win_Svc) /= IPC_Ok then
+      if IPC_Recv (Win_Svc, Reply_H) /= IPC_Ok then
          Debug_Put_Line ("bureau recv failed");
          Process_Exit;
       end if;
@@ -864,10 +866,10 @@ begin
                end if;
             end loop;
             if Slot = 0 then
-               Win_Reply (Label, Win.Status_No_Slot, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_No_Slot, 0, 0, 0, 0);
             elsif Message.Words (0) = 0 or else Message.Words (1) = 0
             then
-               Win_Reply (Label, Win.Status_Bad_Index, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Index, 0, 0, 0, 0);
             else
                PW := U64'Min (Message.Words (0), Width - 2 * Frame);
                PH := U64'Min (Message.Words (1),
@@ -875,7 +877,7 @@ begin
                if (PW * PH * 4 + 4095) / 4096 >
                  U64 (Surf_Max_Objects) * 64
                then
-                  Win_Reply (Label, Win.Status_No_Slot, 0, 0, 0, 0);
+                  Win_Reply (Reply_H, Label, Win.Status_No_Slot, 0, 0, 0, 0);
                else
                   Next_Id := Next_Id + 1;
                   Wins (Slot).Used     := True;
@@ -924,7 +926,7 @@ begin
                   Z (Z_N) := Slot;
                   Focus_Slot (Slot);
                   Repaint_Window (Slot);
-                  Win_Reply (Label, Win.Status_Ok,
+                  Win_Reply (Reply_H, Label, Win.Status_Ok,
                              Wins (Slot).Id, Wins (Slot).Pages,
                              PW, PH);
                end if;
@@ -936,7 +938,7 @@ begin
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
             if S = 0 or else Wins (S).Mapped then
-               Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id, 0, 0, 0, 0);
             else
                declare
                   Base : constant U64 := Message.Words (1);
@@ -957,7 +959,7 @@ begin
                         Wins (S).Got := Wins (S).Got + 1;
                      end if;
                   end loop;
-                  Win_Reply (Label, St, 0, 0, 0, 0);
+                  Win_Reply (Reply_H, Label, St, 0, 0, 0, 0);
                end;
             end if;
          end;
@@ -967,9 +969,9 @@ begin
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
             if S = 0 or else Wins (S).Mapped then
-               Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id, 0, 0, 0, 0);
             elsif U64 (Wins (S).Got) /= (Wins (S).Pages + 63) / 64 then
-               Win_Reply (Label, Win.Status_Bad_Index, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Index, 0, 0, 0, 0);
             else
                declare
                   St : U64 := Win.Status_Ok;
@@ -993,7 +995,7 @@ begin
                      Wins (S).Mapped := True;
                      Repaint_Window (S);
                   end if;
-                  Win_Reply (Label, St, 0, 0, 0, 0);
+                  Win_Reply (Reply_H, Label, St, 0, 0, 0, 0);
                end;
             end if;
          end;
@@ -1019,9 +1021,9 @@ begin
                                      Pane_Y (S) + CY + CH);
                   end if;
                end;
-               Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
             else
-               Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id, 0, 0, 0, 0);
             end if;
          end;
 
@@ -1030,7 +1032,7 @@ begin
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
             if S = 0 then
-               Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id, 0, 0, 0, 0);
             else
                declare
                   FX : constant U64 := Wins (S).X;
@@ -1082,7 +1084,7 @@ begin
                      end if;
                   end if;
                   Composite_Band (FX, FY, FX + FW, FY + FH);
-                  Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+                  Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
                end;
             end if;
          end;
@@ -1092,7 +1094,7 @@ begin
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
             if S = 0 then
-               Win_Reply (Label, Win.Status_Bad_Id, 0, 0, 0, 0);
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id, 0, 0, 0, 0);
             else
                declare
                   W    : U64;
@@ -1114,7 +1116,7 @@ begin
                      end if;
                   end loop;
                   Repaint_Title (S);
-                  Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+                  Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
                end;
             end if;
          end;
@@ -1125,11 +1127,11 @@ begin
          if Message.Caps (0) /= 0 then
             Result := Cap_Delete (Message.Caps (0));
          end if;
-         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+         Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Key then
          Forward_Key (Message.Words (0));
-         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+         Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Pointer then
          declare
@@ -1159,10 +1161,10 @@ begin
             --  signal only — never a rendezvous.
             Forward_Pointer (NX, NY, Buttons);
          end;
-         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+         Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       else
-         Win_Reply (Label, Win.Status_Ok, 0, 0, 0, 0);
+         Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
       end if;
    end loop;
 end Bureau;

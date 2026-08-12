@@ -38,6 +38,7 @@ procedure Partmgr is
    Console_Cap : constant U64 := 1;
    Blk_EP      : constant U64 := 2;
    Svc_EP      : constant U64 := 3;
+   Reply_H     : U64;  --  reply cap of the request being served (m47)
 
    Blk_Info  : constant U64 := 0;
    Blk_Read  : constant U64 := 1;
@@ -184,7 +185,7 @@ procedure Partmgr is
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Fail ("partmgr reply failed");
       end if;
    end Reply2;
@@ -218,7 +219,7 @@ begin
    Probe;
 
    loop
-      if Syscalls.IPC_Recv (Svc_EP) /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          Fail ("partmgr recv failed");
       end if;
 
@@ -255,7 +256,7 @@ begin
             end if;
             Syscalls.Message.Words (3) := Populated;
             Syscalls.Message.Caps := (others => 0);
-            if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+            if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                Fail ("partmgr reply failed");
             end if;
          elsif Part_Size (Natural (P)) = 0 then

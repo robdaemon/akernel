@@ -1176,6 +1176,7 @@ package body Arch.Traps is
       Scheduler_Result : Kernel.Scheduler.Status;
       Bound       : System.Address;
       Bits        : U64;
+      Reply_Hdl   : Kernel.Capabilities.Handle;
    begin
       if Current = null then
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
@@ -1192,6 +1193,8 @@ package body Arch.Traps is
          if Bits /= 0 then
             Kernel.IPC.Write_Notification_Message (Current, Bits);
             Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
+            --  Synthetic message: no reply cap (milestone 47).
+            Trap_Frame_Set_A1 (Frame, 0);
             Advance_SEPC (Frame);
             return;
          end if;
@@ -1204,7 +1207,7 @@ package body Arch.Traps is
          return;
       end if;
 
-      Kernel.IPC.Receive (Current, Cap_Handle, IPC_Result);
+      Kernel.IPC.Receive (Current, Cap_Handle, IPC_Result, Reply_Hdl);
 
       if IPC_Result = Kernel.IPC.Would_Block then
          Advance_SEPC (Frame);
@@ -1216,6 +1219,12 @@ package body Arch.Traps is
          return;
       end if;
 
+      --  Immediate completion: a0 = status, a1 = reply-cap handle
+      --  (0 = none: plain send; milestone 47).
+      Trap_Frame_Set_A1
+        (Frame,
+         (if IPC_Result = Kernel.IPC.Ok
+          then U64 (Reply_Hdl) else 0));
       Set_IPC_Result (Frame, IPC_Result);
       Advance_SEPC (Frame);
    end Handle_IPC_Recv;
@@ -1224,16 +1233,24 @@ package body Arch.Traps is
       Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
       IPC_Result  : Kernel.IPC.Status;
+      Cap_Handle  : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
    begin
-      if Current = null
-        or else Trap_Frame_Get_A0 (Frame) /=
-          U64 (Kernel.IPC.Reply_Cap_Handle)
-      then
+      if Current = null then
          Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
          return;
       end if;
 
-      Kernel.IPC.Reply (Current, IPC_Result);
+      --  a0 = the reply-cap handle a1 of an earlier recv delivered
+      --  (milestone 47; any other cap kind fails Reply_Missing).
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         return;
+      end if;
+
+      Kernel.IPC.Reply (Current, Cap_Handle, IPC_Result);
       Set_IPC_Result (Frame, IPC_Result);
    end Handle_IPC_Reply;
 

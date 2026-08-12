@@ -63,6 +63,7 @@ procedure Serial is
    Request  : Akernel_User.Streams.Stream_Request;
    Response : Akernel_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
+   Reply_H  : U64;
 
    procedure UART_Put (S : String) is
    begin
@@ -260,7 +261,8 @@ begin
    end if;
 
    loop
-      Status := RPC.Receive (Console_EP, Label, Request, Badge, Caps);
+      Status := RPC.Receive
+        (Console_EP, Label, Request, Badge, Caps, Reply_H);
       exit when Status /= IPC_Ok;
 
       if Label = Notification_Label then
@@ -339,7 +341,7 @@ begin
             Response := (Count => 0, Data => (others => 0));
          end if;
 
-         Status := RPC.Reply (Label, Response);
+         Status := RPC.Reply (Reply_H, Label, Response);
          exit when Status /= IPC_Ok;
       end if;
    end loop;

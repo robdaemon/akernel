@@ -74,22 +74,24 @@ package body Akernel_User.IPC is
    end Call;
 
    function Receive
-     (Endpoint : U64;
-      Label    : out U64;
-      Request  : out Request_Payload;
-      Badge    : out U64;
-      Caps     : out Cap_Array) return U64
+     (Endpoint     : U64;
+      Label        : out U64;
+      Request      : out Request_Payload;
+      Badge        : out U64;
+      Caps         : out Cap_Array;
+      Reply_Handle : out U64) return U64
    is
       Status : U64;
    begin
       Label := 0;
       Badge := 0;
       Caps := (others => 0);
+      Reply_Handle := 0;
       if Request_Payload'Size > Max_Payload_Bits then
          return IPC_Invalid;
       end if;
 
-      Status := IPC_Recv (Endpoint);
+      Status := IPC_Recv (Endpoint, Reply_Handle);
       if Status /= IPC_Ok then
          return Status;
       end if;
@@ -102,8 +104,9 @@ package body Akernel_User.IPC is
    end Receive;
 
    function Reply
-     (Label    : U64;
-      Response : Response_Payload) return U64
+     (Reply_Handle : U64;
+      Label        : U64;
+      Response     : Response_Payload) return U64
    is
    begin
       if Response_Payload'Size > Max_Payload_Bits then
@@ -113,7 +116,7 @@ package body Akernel_User.IPC is
       Message.Label := Label;
       Write_Response (Response);
       Message.Caps := (others => 0);
-      return IPC_Reply;
+      return IPC_Reply (Reply_Handle);
    end Reply;
 
 end Akernel_User.IPC;

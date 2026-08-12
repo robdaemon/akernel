@@ -30,18 +30,23 @@ package Akernel_User.IPC is
    --  Server side: block until a caller arrives. Request holds the
    --  caller's words, Badge the endpoint badge, Caps the transferred
    --  caps (handles already rewritten into this table, 0 = none).
-   --  Success also mints the one-shot reply cap at handle 254.
+   --  Reply_Handle is the minted reply cap (milestone 47: an
+   --  ordinary free-slot cap delivered in a1 — 0 for a plain send
+   --  or the synthetic notification message). A server may hold
+   --  many outstanding reply caps and reply in any order.
    function Receive
-     (Endpoint : U64;
-      Label    : out U64;
-      Request  : out Request_Payload;
-      Badge    : out U64;
-      Caps     : out Cap_Array) return U64;
+     (Endpoint     : U64;
+      Label        : out U64;
+      Request      : out Request_Payload;
+      Badge        : out U64;
+      Caps         : out Cap_Array;
+      Reply_Handle : out U64) return U64;
 
-   --  Server side: one-shot reply to the current caller (reply cap
-   --  at handle 254, consumed by the reply).
+   --  Server side: one-shot reply to a caller (Reply_Handle from
+   --  its Receive, consumed by the reply).
    function Reply
-     (Label    : U64;
-      Response : Response_Payload) return U64;
+     (Reply_Handle : U64;
+      Label        : U64;
+      Response     : Response_Payload) return U64;
 
 end Akernel_User.IPC;

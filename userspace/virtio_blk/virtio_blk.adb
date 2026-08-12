@@ -166,6 +166,7 @@ procedure Virtio_Blk is
    ------------------------------------------------------------------
 
    Result   : U64;
+   Reply_H  : U64;  --  reply cap of the request being served (m47)
    DMA_Cap  : U64;
    Ntfn_Cap : U64;
    Bits     : U64;
@@ -279,14 +280,14 @@ begin
 
    --  Devmgr driver config message (notify multiplier, IRQ source,
    --  PCI device id); answered with status 0.
-   Result := IPC_Recv (Svc_EP);
+   Result := IPC_Recv (Svc_EP, Reply_H);
    if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
       Debug_Put_Line ("virtio-blk config message missing");
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
    Message.Words := (others => 0);
-   if IPC_Reply /= IPC_Ok then
+   if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-blk config reply failed");
       Process_Exit;
    end if;
@@ -496,7 +497,7 @@ begin
       Dev_St  : U8;
    begin
       loop
-         Result := IPC_Recv (Svc_EP);
+         Result := IPC_Recv (Svc_EP, Reply_H);
          if Result /= IPC_Ok then
             Debug_Put_Line ("virtio-blk recv failed");
             Process_Exit;
@@ -515,7 +516,7 @@ begin
          elsif Message.Label = Op_Info then
             Message.Words (0) := 0;
             Message.Words (1) := Capacity;
-            if IPC_Reply /= IPC_Ok then
+            if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-blk reply failed");
             end if;
 
@@ -529,7 +530,7 @@ begin
             then
                Message.Words (0) := 3;  --  bad arguments
                Message.Words (1) := 0;
-               if IPC_Reply /= IPC_Ok then
+               if IPC_Reply (Reply_H) /= IPC_Ok then
                   Debug_Put_Line ("virtio-blk reply failed");
                end if;
             else
@@ -537,7 +538,7 @@ begin
                if Buf_PA = 0 then
                   Message.Words (0) := 3;
                   Message.Words (1) := 0;
-                  if IPC_Reply /= IPC_Ok then
+                  if IPC_Reply (Reply_H) /= IPC_Ok then
                      Debug_Put_Line ("virtio-blk reply failed");
                   end if;
                else
@@ -549,7 +550,7 @@ begin
                      Len    => Virtio.U32 (Count) * Sector_Size);
                   Message.Words (0) := (if Dev_St = 0 then 0 else 1);
                   Message.Words (1) := 0;
-                  if IPC_Reply /= IPC_Ok then
+                  if IPC_Reply (Reply_H) /= IPC_Ok then
                      Debug_Put_Line ("virtio-blk reply failed");
                   end if;
                end if;
@@ -564,7 +565,7 @@ begin
          else
             Message.Words (0) := 3;
             Message.Words (1) := 0;
-            if IPC_Reply /= IPC_Ok then
+            if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-blk reply failed");
             end if;
          end if;

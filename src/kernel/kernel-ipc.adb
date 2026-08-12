@@ -470,37 +470,29 @@ package body Kernel.IPC is
       Wake_With_Result (Caller, Result_Reply_Gone);
    end Fail_Reply_Target;
 
-   --  Mint a one-shot reply cap at Reply_Cap_Handle in the receiver's
-   --  table, pointing at the caller. A previous unsatisfied reply cap
-   --  is failed first (server re-received without replying).
+   --  Mint a one-shot reply cap in the receiver's table, pointing
+   --  at the caller. Milestone 47: an ordinary free-slot cap (was
+   --  a fixed handle-254 slot a re-receive overwrote, failing the
+   --  previous caller); a server thread may now hold many
+   --  outstanding reply caps and reply in any order.
    procedure Mint_Reply_Cap
      (Receiver : Kernel.Tasks.Thread_Access;
       Caller   : Kernel.Tasks.Thread_Access;
-      Result   : out Status)
+      Result   : out Status;
+      Cap      : out Kernel.Capabilities.Handle)
    is
       Cap_Result : Kernel.Capabilities.Status;
-      Cap_Info   : Kernel.Capabilities.Cap_Entry;
    begin
-      Kernel.Tasks.Lookup_Cap
-        (TCB       => Receiver.all,
-         Cap       => Reply_Cap_Handle,
-         Result    => Cap_Result,
-         Out_Entry => Cap_Info);
+      Cap := Kernel.Capabilities.Invalid_Handle;
 
-      if Cap_Result = Kernel.Capabilities.Ok then
-         --  Close_Cap runs the dispatcher, which fails the previous
-         --  reply target.
-         Kernel.Tasks.Close_Cap (Receiver, Reply_Cap_Handle, Cap_Result);
-      end if;
-
-      Kernel.Tasks.Insert_Cap_At
+      Kernel.Tasks.Insert_Cap
         (TCB    => Receiver.all,
-         Cap    => Reply_Cap_Handle,
          Kind   => Kernel.Capabilities.Reply_Object,
          Object => Caller.all'Address,
          Rights => Kernel.Capabilities.No_Rights,
          Badge  => 0,
-         Result => Cap_Result);
+         Result => Cap_Result,
+         Cap    => Cap);
 
       if Cap_Result /= Kernel.Capabilities.Ok then
          Result := Transfer_Failed;
@@ -525,6 +517,7 @@ package body Kernel.IPC is
       Receiver     : Kernel.Tasks.Thread_Access;
       Transfer_St  : Status;
       Mint_St      : Status;
+      Reply_Cap    : Kernel.Capabilities.Handle;
    begin
       if Buffer_Of (Caller) = null then
          Result := Invalid_Task;
@@ -565,7 +558,7 @@ package body Kernel.IPC is
             return;
          end if;
 
-         Mint_Reply_Cap (Receiver, Caller, Mint_St);
+         Mint_Reply_Cap (Receiver, Caller, Mint_St, Reply_Cap);
          if Mint_St /= Ok then
             Wake_With_Result (Receiver, Result_Transfer_Failed);
             Result := Mint_St;
@@ -573,6 +566,10 @@ package body Kernel.IPC is
          end if;
 
          Kernel.Tasks.Set_IPC_Badge (Caller.all, Badge);
+         --  The receiver surfaces Ok in a0 and its reply-cap handle
+         --  in a1 (milestone 47).
+         Kernel.Tasks.Set_Saved_A1
+           (Receiver.all, Kernel.Capabilities.U64 (Reply_Cap));
          Wake_With_Result (Receiver, Result_Ok);
          Result := Would_Block;
          return;
@@ -635,6 +632,8 @@ package body Kernel.IPC is
             return;
          end if;
 
+         --  No reply cap minted: the woken receiver surfaces a1 = 0.
+         Kernel.Tasks.Set_Saved_A1 (Receiver.all, 0);
          Wake_With_Result (Receiver, Result_Ok);
          Result := Ok;
          return;
@@ -650,7 +649,8 @@ package body Kernel.IPC is
    procedure Receive
      (Receiver     : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
-      Result       : out Status)
+      Result       : out Status;
+      Reply_Handle : out Kernel.Capabilities.Handle)
    is
       Object      : Endpoint_Access;
       Badge       : U64;
@@ -658,6 +658,8 @@ package body Kernel.IPC is
       Transfer_St : Status;
       Mint_St     : Status;
    begin
+      Reply_Handle := Kernel.Capabilities.Invalid_Handle;
+
       if Buffer_Of (Receiver) = null then
          Result := Invalid_Task;
          return;
@@ -714,8 +716,9 @@ package body Kernel.IPC is
          return;
       end if;
 
-      Mint_Reply_Cap (Receiver, Caller, Mint_St);
+      Mint_Reply_Cap (Receiver, Caller, Mint_St, Reply_Handle);
       if Mint_St /= Ok then
+         Reply_Handle := Kernel.Capabilities.Invalid_Handle;
          Wake_With_Result (Caller, Result_Transfer_Failed);
          Result := Mint_St;
          return;
@@ -728,6 +731,7 @@ package body Kernel.IPC is
 
    procedure Reply
      (Replier : Kernel.Tasks.Thread_Access;
+      Cap     : Kernel.Capabilities.Handle;
       Result  : out Status)
    is
       Replier_Buf : constant Buffer_Message_Access := Buffer_Of (Replier);
@@ -744,7 +748,7 @@ package body Kernel.IPC is
 
       Kernel.Tasks.Lookup_Cap
         (TCB       => Replier.all,
-         Cap       => Reply_Cap_Handle,
+         Cap       => Cap,
          Result    => Cap_Result,
          Out_Entry => Cap_Info);
 
@@ -760,21 +764,21 @@ package body Kernel.IPC is
       if Is_Dead (Caller)
         or else not Kernel.Tasks.Is_Awaiting_Reply (Caller.all)
       then
-         Kernel.Tasks.Forget_Cap (Replier, Reply_Cap_Handle, Cap_Result);
+         Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
          Result := Reply_Missing;
          return;
       end if;
 
       Caller_Buf := Buffer_Of (Caller);
       if Caller_Buf = null then
-         Kernel.Tasks.Forget_Cap (Replier, Reply_Cap_Handle, Cap_Result);
+         Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
          Wake_With_Result (Caller, Result_Reply_Gone);
          Result := Reply_Missing;
          return;
       end if;
 
       --  One-shot: consume the cap, deliver label+words, wake caller.
-      Kernel.Tasks.Forget_Cap (Replier, Reply_Cap_Handle, Cap_Result);
+      Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
 
       Caller_Buf.Label := Replier_Buf.Label;
       Caller_Buf.Words := Replier_Buf.Words;

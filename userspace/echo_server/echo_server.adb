@@ -37,6 +37,7 @@ procedure Echo_Server is
    Response          : Echo_Response;
    Badge             : U64;
    Caps              : RPC.Cap_Array;
+   Reply_H           : U64;
    Prev_Double_Reply : U64 := 0;
    Rounds            : Natural := 0;
 begin
@@ -44,7 +45,7 @@ begin
    Akernel_User.Console.Put_Line ("echo online");
 
    loop
-      Status := RPC.Receive (1, Label, Request, Badge, Caps);
+      Status := RPC.Receive (1, Label, Request, Badge, Caps, Reply_H);
       exit when Status /= IPC_Ok;
 
       if Rounds = 2 then
@@ -58,14 +59,13 @@ begin
                       Prev_Status => Prev_Double_Reply);
       end if;
 
-      Status := RPC.Reply (Label, Response);
+      Status := RPC.Reply (Reply_H, Label, Response);
       exit when Status /= IPC_Ok;
 
-      --  One-shot check: replying again with no pending caller must
-      --  fail; surfaced to the fuzzer in the next round's word 5.
-      --  Raw reply is fine here: the kernel rejects it before
-      --  touching the buffer.
-      Prev_Double_Reply := IPC_Reply;
+      --  One-shot check: replying again with the consumed handle
+      --  must fail (the reply cap is forgotten at reply); surfaced
+      --  to the fuzzer in the next round's word 5.
+      Prev_Double_Reply := IPC_Reply (Reply_H);
 
       Rounds := Rounds + 1;
       exit when Rounds = 3;

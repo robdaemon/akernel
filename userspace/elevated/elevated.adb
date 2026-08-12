@@ -110,6 +110,7 @@ procedure Elevated is
    Req      : U64;
    Badge    : U64;
    Caps     : Proto.Cap_Array;
+   Reply_H  : U64;
    St       : U64;
    Result   : U64;
 begin
@@ -118,7 +119,7 @@ begin
    Akernel_User.Console.Put_Line ("elevated: serving");
 
    loop
-      St := Proto.Receive (Svc_EP, Label, Req, Badge, Caps);
+      St := Proto.Receive (Svc_EP, Label, Req, Badge, Caps, Reply_H);
       if St /= 0 then
          exit;  --  endpoint gone (teardown) — exit quietly
       end if;
@@ -275,7 +276,7 @@ begin
          if Caps (0) /= 0 then
             Result := Cap_Delete (Caps (0));
          end if;
-         Result := Proto.Reply (Label, Reply_Code);
+         Result := Proto.Reply (Reply_H, Label, Reply_Code);
       end;
    end loop;
 

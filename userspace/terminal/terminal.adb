@@ -386,6 +386,7 @@ procedure Terminal is
    Request  : Akernel_User.Streams.Stream_Request;
    Response : Akernel_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
+   Reply_H  : U64;
 
    Pages_Left : U64;
    This       : U64;
@@ -554,7 +555,8 @@ begin
    --  never call your caller while serving it).
    loop
       Flush_Dirty;
-      Status := RPC.Receive (Sink_EP, Label, Request, Badge, Caps);
+      Status := RPC.Receive
+        (Sink_EP, Label, Request, Badge, Caps, Reply_H);
       if Status /= IPC_Ok then
          Debug_Put_Line ("terminal recv failed");
          Process_Exit;
@@ -572,7 +574,7 @@ begin
             Put_Char (Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
@@ -594,7 +596,7 @@ begin
             end;
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
@@ -619,14 +621,14 @@ begin
                  Ada.Streams.Stream_Element (Character'Pos (Ch));
             end loop;
          end;
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
       else
          --  Op_Read/Op_Input/unknown: no data.
          Response := (Count => 0, Data => (others => 0));
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;

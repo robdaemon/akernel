@@ -126,6 +126,7 @@ procedure Virtio_RNG is
    Hex : constant String := "0123456789abcdef";
 
    Result   : U64;
+   Reply_H  : U64;  --  reply cap of the request being served (m47)
    DMA_Cap  : U64;
    Desc_PA  : U64;
    Avail_PA : U64;
@@ -166,14 +167,14 @@ begin
 
    --  Devmgr driver config message (notify multiplier, IRQ source,
    --  PCI device id); answered with status 0.
-   Result := IPC_Recv (Svc_EP);
+   Result := IPC_Recv (Svc_EP, Reply_H);
    if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
       Debug_Put_Line ("virtio-rng config message missing");
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
    Message.Words := (others => 0);
-   if IPC_Reply /= IPC_Ok then
+   if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-rng config reply failed");
       Process_Exit;
    end if;
@@ -317,7 +318,7 @@ begin
    --  line partner (GPU) raises interrupts. No reply cap rides a
    --  synthetic notification message.
    loop
-      Result := IPC_Recv (Svc_EP);
+      Result := IPC_Recv (Svc_EP, Reply_H);
       if Result /= IPC_Ok then
          Debug_Put_Line ("virtio-rng recv failed");
          Process_Exit;
@@ -334,7 +335,7 @@ begin
          --  No service yet: unknown op status, like blk's 3.
          Message.Words (0) := 3;
          Message.Words (1) := 0;
-         if IPC_Reply /= IPC_Ok then
+         if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-rng reply failed");
             Process_Exit;
          end if;

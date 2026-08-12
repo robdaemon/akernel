@@ -233,7 +233,14 @@ QEMU virt RAM base:     0x80000000
   protocol in IPC.md "Elevation"). The
   uniform command ABI is now: 1 console,
   2 fs, 3 bureau, 4 args page (always), 5
-  elevation svc. Milestone 46 adds Amiga
+  elevation svc. Milestone 47 duplicated
+  the reply cap: recv mints one ordinary
+  free-slot reply cap per call (handle in
+  a1) and reply(handle) consumes it —
+  servers hold many outstanding replies
+  and may defer/reorder them (the
+  blocking-pipe primitive). Milestone 46
+  adds Amiga
   pipes: PIPE: and NIL: are fileserver-
   internal virtual volumes (FIFO rings,
   poll semantics, Op_Close EOF), and the

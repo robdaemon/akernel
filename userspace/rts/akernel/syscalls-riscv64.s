@@ -104,8 +104,10 @@ akernel_sys_ipc_call:
 .global akernel_sys_ipc_recv
 .type akernel_sys_ipc_recv, @function
 akernel_sys_ipc_recv:
+    mv t0, a1
     li a7, 13
     ecall
+    sd a1, 0(t0)
     ret
 .size akernel_sys_ipc_recv, . - akernel_sys_ipc_recv
 

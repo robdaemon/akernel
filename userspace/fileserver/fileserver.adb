@@ -52,6 +52,7 @@ procedure Fileserver is
    type Byte_Array is array (U64 range <>) of Byte;
 
    EP : constant U64 := 1;  --  fs_server grant: Receive side
+   Reply_H : U64;  --  reply cap of the request being served (m47)
 
    Names_Done : Boolean := False;
 
@@ -351,7 +352,7 @@ procedure Fileserver is
       Syscalls.Message.Label := 0;
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("fileserver: reply failed");
       end if;
    end Reply2;
@@ -696,7 +697,7 @@ procedure Fileserver is
                end loop;
                Syscalls.Message.Words (0) := Files.Status_Ok;
                Syscalls.Message.Caps := (others => 0);
-               if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                   Akernel_User.Console.Put_Line
                     ("fileserver: reply failed");
                end if;
@@ -764,7 +765,7 @@ procedure Fileserver is
       if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
          --  Relay the fs driver's reply words untouched.
          Syscalls.Message.Caps := (others => 0);
-         if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+         if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
             Syscalls.Debug_Put_Line ("fileserver readdir reply failed");
             Syscalls.Process_Exit;
          end if;
@@ -1710,7 +1711,7 @@ procedure Fileserver is
            and then Syscalls.Message.Words (0) = Files.Status_Ok
          then
             Syscalls.Message.Caps := (others => 0);
-            if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+            if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                Akernel_User.Console.Put_Line
                  ("fileserver: reply failed");
             end if;
@@ -1802,7 +1803,7 @@ begin
    Seed_Virtual_Volumes;
 
    loop
-      if Syscalls.IPC_Recv (EP) /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Recv (EP, Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("fileserver: recv failed");
          exit;
       end if;

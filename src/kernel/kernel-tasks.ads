@@ -243,6 +243,12 @@ package Kernel.Tasks is
      (TCB   : in out Thread_Control_Block;
       Value : Kernel.Capabilities.U64);
 
+   --  Overwrite the saved a1 of a blocked thread (milestone 47:
+   --  the reply-cap handle delivered to a woken receiver).
+   procedure Set_Saved_A1
+     (TCB   : in out Thread_Control_Block;
+      Value : Kernel.Capabilities.U64);
+
    procedure Insert_Cap
      (TCB    : in out Thread_Control_Block;
       Kind   : Kernel.Capabilities.Object_Kind;

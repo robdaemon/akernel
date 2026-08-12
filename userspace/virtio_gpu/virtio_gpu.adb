@@ -504,7 +504,7 @@ procedure Virtio_Gpu is
 
    --  Reply with raw words (the RPC generic marshals stream
    --  payloads; display replies are plain words).
-   procedure Display_Reply (Req_Label : U64; W0 : U64) is
+   procedure Display_Reply (Reply_H : U64; Req_Label : U64; W0 : U64) is
    begin
       Message.Label := Req_Label;
       Message.Words (0) := W0;
@@ -513,7 +513,7 @@ procedure Virtio_Gpu is
       Message.Words (3) := U64 (Width * 4);
       Message.Words (4) := FB_Pages;
       Message.Words (5) := 64;
-      if IPC_Reply /= IPC_Ok then
+      if IPC_Reply (Reply_H) /= IPC_Ok then
          Debug_Put_Line ("virtio-gpu display reply failed");
          Process_Exit;
       end if;
@@ -611,6 +611,7 @@ procedure Virtio_Gpu is
    Request  : Akernel_User.Streams.Stream_Request;
    Response : Akernel_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
+   Reply_H  : U64;
 
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
@@ -621,14 +622,14 @@ begin
    Map_Region (Cfg_Cap,    Cfg_VA,    "cfg");
 
    --  Devmgr driver config message.
-   Result := IPC_Recv (Svc_EP);
+   Result := IPC_Recv (Svc_EP, Reply_H);
    if Result /= IPC_Ok or else Message.Label /= Driver_Config_Label then
       Debug_Put_Line ("virtio-gpu config message missing");
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
    Message.Words := (others => 0);
-   if IPC_Reply /= IPC_Ok then
+   if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-gpu config reply failed");
       Process_Exit;
    end if;
@@ -839,7 +840,8 @@ begin
    Debug_Put_Line ("virtio-gpu console online");
 
    loop
-      Status := RPC.Receive (Svc_EP, Label, Request, Badge, Caps);
+      Status := RPC.Receive
+        (Svc_EP, Label, Request, Badge, Caps, Reply_H);
       if Status /= IPC_Ok then
          Debug_Put_Line ("virtio-gpu recv failed");
          Process_Exit;
@@ -861,13 +863,13 @@ begin
          end loop;
          Flush_Dirty;
          Response := (Count => Request.Count, Data => (others => 0));
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("virtio-gpu reply failed");
             Process_Exit;
          end if;
 
       elsif Label = DSP.Op_Get_Info then
-         Display_Reply (Label, DSP.Status_Ok);
+         Display_Reply (Reply_H, Label, DSP.Status_Ok);
 
       elsif Label = DSP.Op_Set_Buffer then
          declare
@@ -888,11 +890,11 @@ begin
                   New_Chunks := New_Chunks + 1;
                end if;
             end loop;
-            Display_Reply (Label, St);
+            Display_Reply (Reply_H, Label, St);
          end;
 
       elsif Label = DSP.Op_Commit_Buffer then
-         Display_Reply (Label, Commit_Buffer);
+         Display_Reply (Reply_H, Label, Commit_Buffer);
 
       elsif Label = DSP.Op_Present then
          declare
@@ -906,13 +908,13 @@ begin
               Natural'Min (Natural (Message.Words (3)), Height - Y);
          begin
             Present_Band (X, Y, W, H);
-            Display_Reply (Label, DSP.Status_Ok);
+            Display_Reply (Reply_H, Label, DSP.Status_Ok);
          end;
 
       else
          --  Op_Read/Op_Input/unknown: no data.
          Response := (Count => 0, Data => (others => 0));
-         if RPC.Reply (Label, Response) /= IPC_Ok then
+         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("virtio-gpu reply failed");
             Process_Exit;
          end if;

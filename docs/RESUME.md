@@ -6,41 +6,44 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 46 SHIPPED):
-- Amiga pipes end to end: PIPE:/NIL: virtual volumes in the
-  fs (46a: 16 KiB FIFO rings, poll-and-retry semantics — the
-  kernel allows one outstanding reply per server thread —
-  Op_Close=18 signals writer EOF) and shell `|`/`>`/`<`
-  redirection (46b) via the args-page trailer (magic +
-  out/in path offsets at 4032): the RTS wires out_path into
-  Console (flush on LF, Close_Redirect at CLI.Exit_With) and
-  in_path into CLI.Get_Line. Pipelines run concurrently from
-  a PIPE:SH<n> pool; Sort with no args is the stdin filter.
-- 45 shipped elevation (System/Elevated + Sys:C/Elevate;
-  uniform ABI: 4 = args page always, 5 = elevation svc).
+CURRENT SESSION STATE (milestone 47 SHIPPED):
+- Kernel reply-cap duplication: recv mints the reply cap in an
+  ordinary free slot (handle delivered in a1), reply(a0 = handle);
+  a server thread holds MANY outstanding reply caps and replies
+  in any order. All servers + RTS migrated; teardown peer role
+  "D" proves deferred out-of-order replies E2E. Unlocks m48
+  true blocking pipes (fileserver-side only now).
+- 46 shipped Amiga pipes (PIPE:/NIL: virtual volumes +
+  shell `|`/`>`/`<` via the args-page trailer; Sort stdin
+  filter). 45 shipped elevation (System/Elevated + Elevate).
 - BURNS logged in NEXT.md: initrd Manifest is REGENERATED
   by the Makefile; Files.Read now Ensure_Buffers like
   Write; pre-CLI commands need Arg_Count + Exit_With for
-  redirect; null-String arg copies CE; String index is
-  Positive; RTS heap is 2 MiB total; a failing multi-edit
-  call rolls back ALL edits (bit TWICE — RESUME's 45 state
-  never landed and a debug print vanished); make all -j
-  races the shared RTS lib (build one crate serially
-  first after RTS changes); harness timeout 600 s.
-- 742/743 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
+  redirect; a failing multi-edit call rolls back ALL edits
+  (grep before suspecting logic); make all -j races the
+  shared RTS lib; woken threads HEAD-INSERT the ready
+  queue — never assert inter-process arrival order; grep
+  syscall NAMES when migrating (demo.adb slipped a sweep);
+  harness timeout 600 s.
+- 754 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
 
-Open candidates — milestones 41-46 COMPLETE. Next: the
-deferred list (design notes in docs/NEXT.md): kernel
-reply-cap duplication (unlocks true blocking pipes AND
-deferred server replies), write-back cache +
+Open candidates — milestones 41-47 COMPLETE. Next: m48
+blocking pipes (defer pipe read/write replies in the
+fileserver until the other side arrives). Then the deferred
+list (design notes in docs/NEXT.md): write-back cache +
 VIRTIO_BLK_F_FLUSH (suite-speed payoff — write-through is
-why the suite needs 600 s), Proc:self (needs client
-identity through the VFS), pid generation counters,
-register fast path, custom GNAT runtime, virtio-net,
-MSI-X, true scheduler priorities. Deferred shell groups
-left: job control, clock.
+why the suite needs 600 s), Proc:self (needs client identity
+through the VFS), pid generation counters, register fast
+path, custom GNAT runtime, virtio-net, MSI-X, true
+scheduler priorities. Deferred shell groups left: job
+control, clock.
 
-Recently landed: MILESTONE 46 — Amiga pipes
+Recently landed: MILESTONE 47 — kernel
+reply-cap duplication (free-slot reply
+caps, handle in a1, out-of-order replies;
+the m48 blocking-pipe primitive). 754
+PASS SMP1+SMP4, failures=0, fsck clean.
+Before that: MILESTONE 46 — Amiga pipes
 end to end (PIPE:/NIL: + shell redirection,
 Sort stdin filter). 742/743 PASS SMP1+SMP4,
 failures=0, fsck clean. Before that:
@@ -426,6 +429,16 @@ Working rules burned in (details in NEXT.md):
   the args-page redirection trailer — and (b) exit via
   CLI.Exit_With, which Close_Redirects (flush + pipe EOF).
   Raw Read_Args/Process_Exit bypass both (the Type burn).
+- Servers must thread the reply-cap HANDLE from Receive to
+  Reply (milestone 47: free-slot caps, a1 of recv) — a
+  per-request local, not a global, or deferred replies
+  will cross-answer callers. When migrating, grep the
+  syscall NAMES (IPC_Recv/IPC_Reply), not one spelling —
+  demo.adb's bare calls slipped a sweep of ".Receive (".
+- Woken threads head-insert the ready queue (rendezvous
+  boost): last-woken runs first, so report ARRIVAL order
+  across processes is scheduler-defined — assert
+  completion + payload, never arrival order.
 - A failing multi-edit tool call rolls back EVERY edit in
   the call — when instrumentation or a fix seems to have
   "landed" but does nothing, grep the file before

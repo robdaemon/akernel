@@ -438,6 +438,14 @@ package body Kernel.Tasks is
       Arch.Context.Set_Saved_Result (TCB.Context, Value);
    end Set_Saved_Result;
 
+   procedure Set_Saved_A1
+     (TCB   : in out Thread_Control_Block;
+      Value : Kernel.Capabilities.U64)
+   is
+   begin
+      Arch.Context.Set_Saved_A1 (TCB.Context, Value);
+   end Set_Saved_A1;
+
    procedure Insert_Process_Cap
      (PCB    : in out Process_Control_Block;
       Kind   : Kernel.Capabilities.Object_Kind;

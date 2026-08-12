@@ -30,10 +30,15 @@ package Kernel.IPC is
    Result_Endpoint_Gone   : constant U64 := 3;
    Result_Reply_Gone      : constant U64 := 4;
 
-   --  Reserved cap-table handle of the one-shot reply cap (255 is the
+   --  Reply caps (milestone 47): each received call mints an
+   --  ordinary free-slot cap of Reply_Object kind in the receiver's
+   --  table; the handle is delivered to the receiver in a1. A
+   --  server thread may hold MANY outstanding reply caps at once
+   --  (recv no longer clobbers a fixed slot) and reply in any
+   --  order. Server death closes every reply cap and each target
+   --  wakes with Reply_Gone (the cap-close hook).
+   --  Handle 254 keeps no special meaning any more (255 stays the
    --  process self address-space cap).
-   Reply_Cap_Handle : constant Kernel.Capabilities.Handle :=
-     Kernel.Capabilities.Handle'Pred (Kernel.Tasks.Address_Space_Cap_Handle);
 
    type Status is
      (Ok,
@@ -113,17 +118,22 @@ package Kernel.IPC is
       Result       : out Status);
 
    --  Receive: takes the head queued caller's message (transfer +
-   --  reply cap mint), or blocks the receiver when the queue is empty.
+   --  reply cap mint), or blocks the receiver when the queue is
+   --  empty. On Ok with a call (Reply_Wanted) Reply_Handle is the
+   --  freshly minted reply cap; a plain send completes at delivery
+   --  and Reply_Handle is Invalid_Handle.
    procedure Receive
      (Receiver     : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
-      Result       : out Status);
+      Result       : out Status;
+      Reply_Handle : out Kernel.Capabilities.Handle);
 
-   --  Reply: consumes the one-shot reply cap at Reply_Cap_Handle,
-   --  copies label+words into the caller's buffer, wakes it with
-   --  Result_Ok.
+   --  Reply: consumes the reply cap at Cap (Reply_Object kind,
+   --  minted by an earlier Receive), copies label+words into the
+   --  caller's buffer, wakes it with Result_Ok.
    procedure Reply
      (Replier : Kernel.Tasks.Thread_Access;
+      Cap     : Kernel.Capabilities.Handle;
       Result  : out Status);
 
    --  Notification delivery (thread-bound notifications): write the
@@ -145,8 +155,8 @@ package Kernel.IPC is
       Object : System.Address);
 
    --  Reply-cap-close hook: fails the caller a reply cap points at
-   --  (server exited, was reaped, or re-received without replying).
-   --  Caller wakes with Result_Reply_Gone.
+   --  (server exited, was reaped, or dropped the request with
+   --  cap_delete). Caller wakes with Result_Reply_Gone.
    procedure Fail_Reply_Target (Caller_Object : System.Address);
 
    --  Receiver-teardown hook: permanently fail an endpoint whose

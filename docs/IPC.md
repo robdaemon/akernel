@@ -92,8 +92,10 @@ Userspace result codes (a0): 0 ok, 1 invalid, 2 transfer failed,
 ```text
 11 ep_create()        -> a0 handle, U64'Last on failure
 12 call(a0 = ep_cap)  -> a0 status; blocks until reply
-13 recv(a0 = ep_cap)  -> a0 status; blocks until a caller arrives
-14 reply(a0 = 254)    -> a0 status; one-shot reply to current caller
+13 recv(a0 = ep_cap)  -> a0 status, a1 = reply-cap handle (0 = none:
+                        plain send / notification); blocks until a
+                        caller arrives
+14 reply(a0 = reply_cap) -> a0 status; one-shot reply to that caller
 29 send(a0 = ep_cap)  -> a0 status; blocks only until received
 ```
 
@@ -124,29 +126,36 @@ cap at handle 254 (see below).
 - If any transfer fails (receiver table full), the call fails before
   rendezvous completes; no partial delivery.
 
-## Reply cap
+## Reply cap (duplicated, milestone 47)
 
-Reserved handle 254 (alongside self address-space cap at 255). Userspace
-cannot install anything at 254.
-
-Implementation: no allocation. `recv` mints a cap entry at 254 with
-a new `Reply_Object` kind whose object pointer is the caller TCB.
-Caller thread is flagged waiting-for-reply.
+Each received call mints an ordinary free-slot cap of
+`Reply_Object` kind in the receiver's table (object pointer = the
+caller TCB); the handle is delivered to the receiver in a1 of the
+`recv` result (0 = none: plain send or the synthetic notification
+message). A server thread may hold MANY outstanding reply caps at
+once and reply in any order — recv no longer clobbers a fixed
+slot. Handle 254 carries no special meaning any more (255 stays
+the process self address-space cap); the old fixed-slot mint also
+collided with ordinary handle-254 allocations once cap tables
+grew past it (m38 300-cap test territory), a latent bug the
+free-slot mint removes by construction.
 
 | Event | Result |
 |---|---|
-| `reply(254)` | Reply words copied to caller buffer; caller wakes with 0; cap consumed. Second `reply` -> invalid (1). |
-| Server exits/is reaped with pending reply cap | Cleanup hook wakes caller with `reply gone` (4). |
+| `reply(handle)` | Reply words copied to caller buffer; caller wakes with 0; cap consumed (forgotten). A second `reply` on the same handle -> invalid (1). |
+| Server exits/is reaped with pending reply caps | Each cap's close hook wakes its caller with `reply gone` (4). |
+| Server `cap_delete`s a reply cap | The caller wakes with `reply gone` (4) — the "drop this request" semantic. |
 | Caller exits while blocked in `call` | Unlinked from endpoint queue; server's later `reply` -> invalid. |
-| Server `recv`s again without replying | Cap at 254 overwritten; previous caller wakes with `reply gone` (4). Servers must reply before re-receiving (one outstanding reply per server thread). |
+| Server `recv`s again without replying | Nothing special: another reply cap mints alongside the first (pre-47: overwrote slot 254 and woke the previous caller reply-gone). |
 | Endpoint destroyed with queued callers | Each queued caller wakes with `endpoint gone` (3); waiting receiver likewise. |
 
-Properties: server can reply once, to the actual caller only; cannot
-stockpile a channel back to the client; no per-client reply endpoints;
-no leaks on any death path.
-
-Plain `send` (block-until-received, no reply expected) is deferred;
-`call`/`recv`/`reply` covers the RPC pattern.
+Properties: the server can reply once per cap, to the actual
+caller only; no channel back to a client can be stockpiled (caps
+are consumed or failed on every path); no leaks on any death
+path. Deferred handling is now expressible in userspace: a
+single-threaded server can stash (reply handle, request state)
+and keep serving, completing the stashed request when its
+condition becomes true — the blocking-pipe primitive (m48).
 
 Deadlock note: A calling B while B calls A blocks forever, undetected
 (kernel does no deadlock detection, same as seL4). Protocol rule:
@@ -293,13 +302,11 @@ case-insensitive):
   empty + EOF -> Ok+0. `Op_Close` signals writer EOF,
   `Op_Delete` destroys, `Op_Truncate` resets (empties + clears
   EOF) so a small name pool can be reused. Semantics are
-  POLL-AND-RETRY, not blocking: the kernel allows only one
-  outstanding reply per server thread (recv overwrites the
-  reply cap at 254 and wakes the deferred caller reply-gone),
-  so a single-threaded server cannot defer replies. True
-  blocking waits on kernel reply-cap duplication (deferred
-  list); the Amiga-visible behaviour (names, FIFO order,
-  explicit EOF) is preserved.
+  POLL-AND-RETRY (Not_Ready), not blocking — milestone 47
+  shipped kernel reply-cap duplication, so the file server
+  CAN now defer a pipe read/write reply until the opposite
+  side arrives; the swap to true blocking (m48) is a pure
+  server-side change, no protocol impact.
 - `NIL:` — the sink: writes discarded (Ok+length), reads
   immediate EOF (Ok+0), Stat/Open a zero-byte file, Delete
   no-ops Ok.

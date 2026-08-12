@@ -34,6 +34,7 @@ procedure Fat32 is
    Console_Cap : constant U64 := 1;
    Blk_EP      : constant U64 := 2;
    Svc_EP      : constant U64 := 3;
+   Reply_H     : U64;  --  reply cap of the request being served (m47)
 
    Blk_Info  : constant U64 := 0;
    Blk_Read  : constant U64 := 1;
@@ -1405,7 +1406,7 @@ procedure Fat32 is
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Fail ("fat32 reply failed");
       end if;
    end Reply2;
@@ -1548,7 +1549,7 @@ procedure Fat32 is
                      ((P - 1) mod 8) * 8);
       end loop;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Fail ("fat32 readdir reply failed");
       end if;
    end Handle_Read_Dir;
@@ -2312,7 +2313,7 @@ procedure Fat32 is
          else Free_Clus * Clus_Bytes);
       Syscalls.Message.Words (3) := Clus_Bytes;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Reply /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Fail ("fat32 reply failed");
       end if;
    end Handle_Volume_Info;
@@ -2379,7 +2380,7 @@ begin
    Akernel_User.Console.Put_Line ("fat32 online");
 
    loop
-      if Syscalls.IPC_Recv (Svc_EP) /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          Fail ("fat32 recv failed");
       end if;
 

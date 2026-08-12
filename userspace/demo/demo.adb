@@ -60,6 +60,7 @@ procedure Demo is
    Surf_W  : U64;
    Surf_H  : U64;
    Result  : U64;
+   Reply_H : U64;
    Label   : U64;
 
    Obj_Cap : U64;
@@ -288,7 +289,7 @@ begin
             Debug_Put_Line ("demo update failed");
          end if;
       end if;
-      if IPC_Recv (Sink_EP) /= IPC_Ok then
+      if IPC_Recv (Sink_EP, Reply_H) /= IPC_Ok then
          Debug_Put_Line ("demo recv failed");
          Process_Exit;
       end if;
@@ -325,7 +326,7 @@ begin
          Message.Words := (others => 0);
          Message.Words (0) := 0;
          Message.Caps := (others => 0);
-         if IPC_Reply /= IPC_Ok then
+         if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("demo reply failed");
             Process_Exit;
          end if;
