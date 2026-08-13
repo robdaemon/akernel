@@ -343,6 +343,31 @@ package body System.Memory is
                end if;
                Set_Header
                  (ScanH, Size_Of (ScanH) + Merged, Allocated => False);
+               --  Our block is absorbed into Scan; remove IT from
+               --  the list as well before re-inserting the merged
+               --  block.  Milestone 53a bug: the original code
+               --  re-inserted Scan while our block (pushed at
+               --  entry) stayed listed, leaving two overlapping
+               --  free nodes — a later allocation spanning the
+               --  phantom node let client writes smash its link
+               --  and the next free-list walk faulted.
+               declare
+                  P2 : Address := Null_Address;
+                  S2 : Address := Free_Head;
+               begin
+                  while S2 /= Null_Address loop
+                     if S2 = Addr then
+                        if P2 = Null_Address then
+                           Free_Head := Free_Next (S2);
+                        else
+                           Set_Free_Next (P2, Free_Next (S2));
+                        end if;
+                        exit;
+                     end if;
+                     P2 := S2;
+                     S2 := Free_Next (S2);
+                  end loop;
+               end;
                Set_Free_Next (Scan, Free_Head);
                Free_Head := Scan;
                exit;
@@ -351,6 +376,37 @@ package body System.Memory is
             Scan := Free_Next (Scan);
          end loop;
       end;
+
    end Free;
+
+   --------------
+   -- Realloc --
+   --------------
+
+   function Realloc
+     (Ptr  : System.Address;
+      Size : size_t) return System.Address
+   is
+      package Byte_Conv is new Address_To_Access_Conversions
+        (Interfaces.Unsigned_8);
+      Addr    : Address;
+      New_Ptr : System.Address;
+      Copy    : U64;
+   begin
+      if Ptr = Null_Address then
+         return Alloc (Size);
+      end if;
+      Addr := Ptr - Storage_Offset (Header_Bytes);
+      Copy := U64'Min
+        (Size_Of (Header_At (Addr)) - Header_Bytes, U64 (Size));
+      New_Ptr := Alloc (Size);
+      --  Byte copy: no memcpy in -nolibc land, and realloc is rare.
+      for I in 0 .. Copy - 1 loop
+         Byte_Conv.To_Pointer (New_Ptr + Storage_Offset (I)).all :=
+           Byte_Conv.To_Pointer (Ptr + Storage_Offset (I)).all;
+      end loop;
+      Free (Ptr);
+      return New_Ptr;
+   end Realloc;
 
 end System.Memory;

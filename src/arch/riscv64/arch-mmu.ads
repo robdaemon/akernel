@@ -41,6 +41,16 @@ package Arch.MMU is
      (Read => True, Write => False, Execute => False, User => True,
       Global => False);
 
+   --  Milestone 53a: GNAT lowers Finalize_Address of nested
+   --  finalization procedures to GCC nested-function TRAMPOLINES
+   --  emitted on the user stack (static chain in t2). Executing
+   --  the trampoline requires the stack pages to be executable,
+   --  or the first Controlled scope exit faults on instruction
+   --  fetch (sepc = a stack address).
+   User_RWX : constant Page_Flags :=
+     (Read => True, Write => True, Execute => True, User => True,
+      Global => False);
+
    procedure New_Address_Space
      (Result : out Status;
       Root   : out U64);

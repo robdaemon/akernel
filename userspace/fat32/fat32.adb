@@ -209,8 +209,11 @@ procedure Fat32 is
    end Meta_Read;
 
    --  Cluster-granularity metadata reads cache the single-sector
-   --  case (our images use 1-sector clusters); wider reads pass
-   --  through uncached.
+   --  case (FAT entry walks); wider reads pass through uncached.
+   --  Milestone 53a: the image now uses 8-sector clusters so file
+   --  data reads batch 8 sectors per virtio-blk request (the full
+   --  runtime's 6x bigger ELFs made 1-sector staging reads the
+   --  suite-time bottleneck).
    function Meta_Read_Sectors (Sector : U64; Count : U64) return Boolean is
    begin
       if Count = 1 then

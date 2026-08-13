@@ -2423,6 +2423,7 @@ package body Arch.Traps is
       Board.UART.Put_Line (" online");
       Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
       Arch.SBI.Enable_Timer_And_Software_SIE;
+      Arch.SBI.Enable_User_Counters;
       Idle_Loop;
    end Secondary_Main;
 
@@ -2432,5 +2433,6 @@ package body Arch.Traps is
       Arch.SBI.Enable_Timer_Interrupts;
       Arch.SBI.Enable_External_Interrupts;
       Arch.SBI.Enable_Software_Interrupts;
+      Arch.SBI.Enable_User_Counters;
    end Initialize;
 end Arch.Traps;

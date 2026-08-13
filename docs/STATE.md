@@ -141,8 +141,12 @@ QEMU virt RAM base:     0x80000000
   to 32 bytes by rep/size clause. Kernel boot-file
   table holds 256 initrd files; the init bootinfo
   region grows to 8 contiguously-mapped pages on
-  demand (511 entries); spawned user threads get 8
-  stack pages (32 KiB). Boot-file caps reach the file
+  demand (511 entries); spawned user threads get 12
+  stack pages (48 KiB, milestone 53a: the ZCX unwinder
+  needs ~8 KiB on the first raise) mapped User_RWX —
+  executable because GNAT finalization lowers
+  Finalize_Address of nested FD procedures to GCC
+  stack trampolines (static chain in t2). Boot-file caps reach the file
   server TRANSFERRED with their Op_Set_Name messages
   (spawn grant lists cap at 32); the file server maps
   boot files on demand into one shared 256 KiB window

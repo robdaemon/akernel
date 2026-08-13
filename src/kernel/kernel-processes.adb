@@ -74,8 +74,13 @@ package body Kernel.Processes is
    --  proved tight once test blocks accumulated ~10 KiB of
    --  sibling declare-block locals plus deep RPC call chains —
    --  38b bumped to 8 pages; the VA below stays clear of the IPC
-   --  buffer at 0x6FFF_0000).
-   Stack_Pages : constant := 8;
+   --  buffer at 0x6FFF_0000). Milestone 53a bumped to 16 pages:
+   --  the ZCX unwinder's _Unwind_FrameState + per-frame walk adds
+   --  ~8 KiB on the first raise (fuzz overflowed 8 pages by
+   --  0x50 bytes inside uw_frame_state_for). 12 pages (48 KiB),
+   --  NOT 16: the stack descends from 0x7000_0000 and the IPC
+   --  buffer page owns 0x6FFF_0000, so 16 pages would collide.
+   Stack_Pages : constant := 12;
 
    --  ELF image handed to the loader: a byte source (physmap range
    --  or memory-object frames) + size.
@@ -308,11 +313,13 @@ package body Kernel.Processes is
          return;
       end if;
 
+      --  User stacks are executable (User_RWX): GNAT finalization
+      --  trampolines for nested FD procedures live on the stack.
       Arch.MMU.Map_Page
         (Root     => Root,
          Virtual  => Stack_Top - Arch.MMU.Page_Size,
          Physical => Stack_Frame,
-         Flags    => Arch.MMU.User_RW,
+         Flags    => Arch.MMU.User_RWX,
          Result   => MMU_Result);
 
       if MMU_Result /= Arch.MMU.Ok then
@@ -334,7 +341,7 @@ package body Kernel.Processes is
            (Root     => Root,
             Virtual  => Stack_Top - U64 (I) * Arch.MMU.Page_Size,
             Physical => Stack_Frame,
-            Flags    => Arch.MMU.User_RW,
+            Flags    => Arch.MMU.User_RWX,
             Result   => MMU_Result);
 
          if MMU_Result /= Arch.MMU.Ok then

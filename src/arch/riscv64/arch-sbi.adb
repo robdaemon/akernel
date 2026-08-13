@@ -5,6 +5,11 @@ package body Arch.SBI is
    function Raw_Time return U64
      with Import, Convention => C, External_Name => "riscv_read_time";
 
+   procedure Raw_Enable_User_Counters
+     with Import,
+          Convention => C,
+          External_Name => "riscv_enable_user_counters";
+
    procedure Raw_Enable_Timer_Interrupts
      with Import,
           Convention => C,
@@ -74,6 +79,11 @@ package body Arch.SBI is
    begin
       Raw_Enable_Timer_Interrupts;
    end Enable_Timer_Interrupts;
+
+   procedure Enable_User_Counters is
+   begin
+      Raw_Enable_User_Counters;
+   end Enable_User_Counters;
 
    procedure Enable_External_Interrupts is
    begin

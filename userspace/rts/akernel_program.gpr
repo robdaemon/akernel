@@ -15,7 +15,7 @@ with "akernel_rts.gpr";
 abstract project Akernel_Program is
    for Languages use ("Ada", "Asm");
    for Target use "riscv64-elf";
-   for Runtime ("Ada") use "light-rv64imafdc";
+   for Runtime ("Ada") use "../gnat-rts";
    for Exec_Dir use "../../bin/userspace";
    for Create_Missing_Dirs use "True";
 

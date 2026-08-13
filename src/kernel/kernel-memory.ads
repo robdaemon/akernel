@@ -18,7 +18,10 @@ package Kernel.Memory is
    --  Pages per memory object (fixed upper bound; one object holds
    --  up to Max_Pages * 4096 bytes, bigger buffers use several
    --  objects).
-   Max_Pages : constant := 64;
+   Max_Pages : constant := 256;
+   --  Milestone 53a: full-runtime ELFs stage at 300+ KiB (the ZCX
+   --  machinery), so 64 pages stopped fitting a one-object staging
+   --  buffer; 256 pages = 1 MiB.
 
    --  DMA authorization backlink: how many distinct PCI device ids
    --  one object's frames may be IOMMU-mapped into at once

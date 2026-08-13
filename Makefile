@@ -99,7 +99,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt; \
 	truncate -s 67108864 $@; \
 	sgdisk -n 1:2048:+60M -t 1:0700 -c 1:Sys $@ >/dev/null; \
-	mkfs.vfat -F 32 -S 512 -s 1 -n Sys --offset 2048 $@ 61440 >/dev/null; \
+	mkfs.vfat -F 32 -S 512 -s 8 -n Sys --offset 2048 $@ 61440 >/dev/null; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/readme.txt ::README.TXT; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/big.bin ::BIG.BIN; \
 	mmd -i $@@@1048576 ::SUBDIR; \
@@ -108,9 +108,11 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 	mmd -i $@@@1048576 ::System; \
 	mmd -i $@@@1048576 ::C; \
 	for c in $(DISK_CRATES_SYSTEM); do \
-	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
+	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \
+	  mcopy -i $@@@1048576 /tmp/ak-$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
 	for c in $(DISK_CRATES_C); do \
-	  mcopy -i $@@@1048576 bin/userspace/$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
+	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \
+	  mcopy -i $@@@1048576 /tmp/ak-$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
 	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
@@ -119,29 +121,32 @@ initrd: $(INITRD_IMG)
 #  Bureau/Terminal deliberately NOT in the initrd (milestone 29):
 #  they live on the Sys filesystem (disk.img :System/) and the
 #  devmgr spawns them from there via Sys:System/Startup.
+#  Milestone 53a: images install STRIPPED ELFs (the full runtime's
+#  debug info + unwind tables tripled file sizes; staging buffers
+#  are sized from the file). Symbols stay in bin/userspace/*.elf.
 $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
-	cp $(INIT_ELF) $(INITRD_ROOT)/System/Init
-	cp $(FILESERVER_ELF) $(INITRD_ROOT)/System/Fileserver
-	cp $(FAT32_ELF) $(INITRD_ROOT)/System/Fat32
-	cp $(PARTMGR_ELF) $(INITRD_ROOT)/System/Partmgr
-	cp $(PROCFS_ELF) $(INITRD_ROOT)/System/Procfs
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Init $(INIT_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Fileserver $(FILESERVER_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Fat32 $(FAT32_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Partmgr $(PARTMGR_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Procfs $(PROCFS_ELF)
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioInput pci 18' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioGpu pci 16' >> $(INITRD_ROOT)/System/Drivers
-	cp $(VIRTIO_RNG_ELF) $(INITRD_ROOT)/Drivers/VirtioRng
-	cp $(VIRTIO_BLK_ELF) $(INITRD_ROOT)/Drivers/VirtioBlk
-	cp $(VIRTIO_INPUT_ELF) $(INITRD_ROOT)/Drivers/VirtioInput
-	cp $(VIRTIO_GPU_ELF) $(INITRD_ROOT)/Drivers/VirtioGpu
-	cp $(SERIAL_ELF) $(INITRD_ROOT)/Drivers/Serial
-	cp $(FUZZ_ELF) $(INITRD_ROOT)/Tests/Fuzz
-	cp $(SPIN_ELF) $(INITRD_ROOT)/Tests/Spin
-	cp $(MEMSTAGE_ELF) $(INITRD_ROOT)/Tests/Memstage
-	cp $(ECHO_SERVER_ELF) $(INITRD_ROOT)/Tests/Echo_Server
-	cp $(TEARDOWN_ELF) $(INITRD_ROOT)/Tests/Teardown
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioRng $(VIRTIO_RNG_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioBlk $(VIRTIO_BLK_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioInput $(VIRTIO_INPUT_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioGpu $(VIRTIO_GPU_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/Serial $(SERIAL_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Fuzz $(FUZZ_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Spin $(SPIN_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Memstage $(MEMSTAGE_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Echo_Server $(ECHO_SERVER_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Teardown $(TEARDOWN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
 		printf 'GENFILE f%s\n' $$i > $(INITRD_ROOT)/Tests/Gen/f$$i; \

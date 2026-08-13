@@ -361,3 +361,12 @@ sbi_system_reset:
     ecall
     ret
 .size sbi_system_reset, . - sbi_system_reset
+
+.global riscv_enable_user_counters
+.type riscv_enable_user_counters, @function
+riscv_enable_user_counters:
+    /* scounteren: let U-mode read cycle/time/instret directly. */
+    li t0, 0x7
+    csrs scounteren, t0
+    ret
+.size riscv_enable_user_counters, . - riscv_enable_user_counters

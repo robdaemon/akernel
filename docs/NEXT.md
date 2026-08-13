@@ -2135,6 +2135,130 @@ Next candidates (order open):
     runtime, virtio-net, MSI-X, true
     scheduler priorities, clock.
 
+    53a SHIPPED — full GNAT RTS for
+    userspace (ZCX exceptions +
+    finalization + secondary stack +
+    binder init/final; Text_IO waits
+    for 53b/newlib). User rulings:
+    no more userspace programs until
+    the RTS is done (existing ones
+    migrate later); newlib YES (53b);
+    vendoring runtime sources FINE;
+    kernel STAYS on light-rv64imafdc;
+    dynamic linking deferred-not-
+    rejected (medany/medpic question
+    lives there). userspace/gnat-rts/
+    = embedded-polarfiresoc libgnat
+    of Alire gnat_riscv64_elf 15.3.1
+    (~959 files, board/calendar
+    pruned) + gnat_user/ shadow dir:
+    system.ads (Jorvik->No_Tasking,
+    ZCX_By_Default), s-memory (our
+    memobj free-list heap + Realloc),
+    s-soflin (non-tasking soft
+    links), s-init (no-op binder
+    hooks), s-parame (sec stack
+    64 KiB — pool's 512 KiB is a
+    static .bss array PER PROCESS),
+    s-sssita (only exists in the
+    light pool), a-reatim (rdtime CSR
+    x100ns), s-textio (debug
+    putchar), a-elchha (prints LCH
+    banner), akernel_glue.c
+    (__gnat_exit, malloc/free shim),
+    akernel_rtclock.c. ZCX via
+    __register_frame: bare-metal ld
+    2.46.1 has NO --eh-frame-hdr and
+    gcc rejects -fsjlj-exceptions on
+    this target, so crt0 registers
+    .eh_frame (linker script exports
+    __EH_FRAME_BEGIN__ + QUAD(0)
+    terminator + KEEPs
+    .gcc_except_table); pool's
+    unwind-dw2-fde-bb.c deleted.
+    Kernel: scounteren CY|TM|IR per
+    hart (userspace rdtime);
+    Max_Pages 64->256 (runtime ELFs
+    stage at 300+ KiB); Stack_Pages
+    8->12 (unwinder needs ~8 KiB on
+    first raise; 16 would collide
+    with the IPC buffer VA); USER
+    STACKS NOW EXECUTABLE (User_RWX)
+    — GNAT lowers Finalize_Address of
+    nested FD procedures to GCC
+    nested-function trampolines on
+    the stack (static chain in t2);
+    a non-X stack faulted on the
+    first Controlled scope exit
+    (sepc = a stack address).
+    Makefile: strip on image install
+    via `alr exec -- riscv64-elf-
+    strip` (make run has no toolchain
+    PATH); bin/userspace/*.elf keep
+    symbols. FAT image now -s 8
+    (4 KiB clusters): full-runtime
+    ELFs are ~6x bigger and 1-sector
+    staging reads blew the suite past
+    900 s; batched 8-sector reads
+    (the blk max and the fat32 bounce
+    page exactly fit) brought SMP1
+    back to 430 s. THREE bug sagas:
+    (1) "first ZCX raise corrupts the
+    heap" was NEVER the raise path —
+    an m1-LATENT s-memory down-merge
+    bug: the absorbed block stayed on
+    the free list (two overlapping
+    free nodes) until libgcc's FDE
+    array fill spanned the phantom
+    node; fixed by unlinking our
+    block in the down-merge; found
+    via alloc/free tracing + an O(n^2)
+    overlap detector naming the
+    creating op. (2) Controlled-type
+    trap = the trampoline X-stack
+    fix above. (3) "hangs" were pure
+    slowness — blk was serving at
+    timeout kill; marker chars F/3/B
+    are hex digits and lie in
+    positional analysis. Suite: +9
+    checks (cross-frame raise +
+    message/name, controlled
+    init/fin scope-exit 11 and
+    unwind 22, secondary-stack
+    unconstrained return, Real_Time
+    advance, LCH child via teardown
+    role E). Echo m35 check relaxed
+    to handle >= 3: crt0's frame
+    registration malloc takes a
+    memobj cap first. 857/856 PASS
+    SMP1/SMP4, failures=0, fsck
+    clean (72 files), qemu exits 0,
+    430 s SMP1 / 75 s SMP4.
+    MILESTONE 53a COMPLETE. Burns
+    for the ages: gprbuild does NOT
+    track libgnat.a — rm -rf
+    obj/userspace/<crate> after
+    every runtime rebuild or the
+    crate links the STALE runtime;
+    a failed runtime build + a
+    successful crate build = testing
+    the stale adalib (grep the build
+    output BEFORE running); "digits"
+    is an Ada reserved word; pragma
+    Import(Intrinsic) in a private
+    part satisfies the spec but
+    breaks client operator
+    visibility; Boot_Cap's bootinfo
+    page is INIT-ONLY (0x6FFE_0000)
+    — calling it elsewhere faults.
+    Next: 53b newlib (~18 syscall
+    stubs over Files/Console, own
+    _sbrk arena, FULL Text_IO et al
+    from the gcc tarball), 53c env/
+    args/directories + program
+    migration; later tasking, RTC,
+    virtio-net, dynamic linking.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

@@ -42,6 +42,10 @@ with Akernel_User.Files;
 --    "W <path>" — blocking-pipe WRITER (milestone 49): write 16
 --          bytes; deferred until a reader frees ring space.
 --          Report status (word 0) + count (word 1) on handle 2.
+--    "E" — raise an unhandled exception (milestone 53a): the full
+--          runtime must unwind, hit the last-chance handler
+--          (LCH dump on the kernel debug console) and exit via
+--          __gnat_exit. The fuzzer only asserts the death.
 --
 --  Grant layout (handles): 1 = service endpoint, 2 = result
 --  endpoint (C only), 3 = filler (duplicated cap; the args page
@@ -112,6 +116,20 @@ begin
             end if;
          end loop;
          Process_Exit (Code);
+      end;
+   end if;
+
+   if Arg_Ln > 0 and then Arg (1) = 'E' then
+      --  Unhandled exception: propagate out of the main, into the
+      --  last-chance handler. Local helper so the raise happens
+      --  one frame down (exercises the unwinder).
+      declare
+         procedure Boom is
+         begin
+            raise Program_Error with "teardown E role boom";
+         end Boom;
+      begin
+         Boom;
       end;
    end if;
 

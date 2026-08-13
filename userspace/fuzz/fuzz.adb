@@ -2,6 +2,9 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Deallocation;
+with Ada.Exceptions;
+with Ada.Finalization;
+with Ada.Real_Time;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.Files;
@@ -408,7 +411,7 @@ begin
       Check (Mem_Cap /= U64'Last, "mem_alloc returns handle");
       Check (Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 0) = U64'Last,
              "mem_alloc zero pages rejected");
-      Check (Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 65) = U64'Last,
+      Check (Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 257) = U64'Last,
              "mem_alloc over max pages rejected");
       Check (Raw_Ecall
                (Number => Sys_Mem_Map, A0 => AS, A1 => 200,
@@ -2217,7 +2220,11 @@ begin
    begin
       Check (Status = 0, "echo call round 3 returned ok");
       Check (R_Words (0) = 16#EC40#, "echo round 3 badge delivered");
-      Check (R_Words (1) = 3,
+      --  Milestone 53a: the full runtime's crt0 registers
+      --  .eh_frame with libgcc before main, and that malloc takes
+      --  a memobj cap at echo's handle 3 — the transferred cap
+      --  lands at 4 there, 3 when nothing heap-allocates first.
+      Check (R_Words (1) >= 3,
              "cap transferred and rewritten to echo handle 3");
    end;
 
@@ -2625,6 +2632,163 @@ begin
             Ignore := Raw_Ecall (Number => Sys_Yield);
          end loop;
          Check (G_Done, "generation second peer reaped");
+      end;
+
+      --  Full runtime end to end (milestone 53a): ZCX exception
+      --  propagation across frames with message + name intact,
+      --  controlled types finalized on scope exit AND during
+      --  unwinding, unconstrained returns on the secondary
+      --  stack, Ada.Real_Time over rdtime, and the last-chance
+      --  chain (teardown role E raises unhandled).
+      declare
+         Part_Raise : constant Boolean := True;
+         Part_Ctrl  : constant Boolean := True;
+         Part_SS    : constant Boolean := True;
+         Part_RT    : constant Boolean := True;
+         Part_LCH   : constant Boolean := True;
+         use Ada.Exceptions;
+         Propagated : Boolean := False;
+         Msg_Ok     : Boolean := False;
+         Name_Ok    : Boolean := False;
+
+         procedure Raiser is
+         begin
+            raise Program_Error with "fuzz zcx marker";
+         end Raiser;
+
+         procedure Middle is
+         begin
+            Raiser;
+         end Middle;
+      begin
+         begin
+            Middle;
+         exception
+            when E : Program_Error =>
+               Propagated := True;
+               Msg_Ok := Exception_Message (E) = "fuzz zcx marker";
+               Name_Ok := Exception_Name (E)'Length >= 13;
+         end;
+         Check (Propagated, "exception propagates across frames");
+         Check (Msg_Ok, "exception message survives the raise");
+         Check (Name_Ok, "exception name survives the raise");
+
+         if Part_Ctrl then
+         declare
+            Fin_Count : Natural := 0;
+
+            package AF renames Ada.Finalization;
+
+            type Ctrl is new AF.Controlled with null record;
+            overriding procedure Initialize (X : in out Ctrl);
+            overriding procedure Finalize (X : in out Ctrl);
+
+            overriding procedure Initialize (X : in out Ctrl) is
+               pragma Unreferenced (X);
+            begin
+               Fin_Count := Fin_Count + 1;
+            end Initialize;
+
+            overriding procedure Finalize (X : in out Ctrl) is
+               pragma Unreferenced (X);
+            begin
+               Fin_Count := Fin_Count + 10;
+            end Finalize;
+         begin
+            declare
+               A : Ctrl;
+               pragma Unreferenced (A);
+            begin
+               null;
+            end;
+            Check (Fin_Count = 11,
+                   "controlled object init+finalize on scope exit");
+
+            declare
+               procedure Inner_Raise is
+                  B : Ctrl;
+               begin
+                  raise Constraint_Error;
+               end Inner_Raise;
+            begin
+               Inner_Raise;
+            exception
+               when Constraint_Error =>
+                  null;
+            end;
+            Check (Fin_Count = 22,
+                   "controlled finalize runs during unwind");
+         end;
+         end if;
+
+         if Part_SS then
+         declare
+            function Make (N : Natural) return String is
+            begin
+               return (1 .. N => 's');
+            end Make;
+            S : constant String := Make (17);
+         begin
+            Check (S'Length = 17 and then S (17) = 's',
+                   "unconstrained return rides the secondary stack");
+         end;
+         end if;
+
+         if Part_RT then
+         declare
+            use type Ada.Real_Time.Time;
+            use type Ada.Real_Time.Time_Span;
+            T0 : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+            D  : Ada.Real_Time.Time_Span;
+         begin
+            for I in 1 .. 50 loop
+               Ignore := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+            D := Ada.Real_Time.Clock - T0;
+            Check (D > Ada.Real_Time.Time_Span_Zero
+                   and then D < Ada.Real_Time.Seconds (5),
+                   "Ada.Real_Time advances over rdtime");
+         end;
+         end if;
+
+         --  The last-chance chain: role E raises unhandled; the
+         --  runtime unwinds, a-elchha dumps "LCH: ... Unhandled
+         --  Ada Exception" on the kernel debug console and
+         --  Machine_Reset exits the process. Death is what we
+         --  assert here; the dump text is verified on the log.
+         if Part_LCH then
+         Args_C := ('E', Character'Val (0));
+         Akernel_User.Syscalls.Set_Grant
+           (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (1, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         declare
+            L_Proc : U64;
+            L_Code : U64 := 0;
+            L_Done : Boolean := False;
+         begin
+            Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, L_Proc);
+            Check (Status = 0 and then L_Proc /= 0,
+                   "last-chance peer spawned");
+            for Try in 1 .. 1024 loop
+               Status := Akernel_User.Syscalls.Reap_Process_Code
+                 (L_Proc, L_Code);
+               if Status = 0 then
+                  L_Done := True;
+                  exit;
+               end if;
+               Ignore := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+            Check (L_Done,
+                   "unhandled exception kills the process (last chance)");
+         end;
+         end if;
       end;
 
       --  C: commands end-to-end (milestone 41a): Sys:C/Info is

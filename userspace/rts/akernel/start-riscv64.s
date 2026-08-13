@@ -6,6 +6,7 @@ _start:
     .option norelax
     lla gp, __global_pointer$
     .option pop
+    call akernel_register_frames
     call main
 1:
     li a7, 0               /* yield */

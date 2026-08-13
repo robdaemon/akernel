@@ -7,6 +7,11 @@ package Arch.SBI is
    function Time return U64;
 
    procedure Enable_Timer_Interrupts;
+
+   procedure Enable_User_Counters;
+   --  scounteren CY|TM|IR: userspace reads cycle/time/instret directly
+   --  (milestone 53a — Ada.Real_Time over rdtime). Per-hart state, so
+   --  every hart calls this from its own init.
    procedure Enable_External_Interrupts;
    --  sie-only enables (no sstatus.SIE): kernel-mode wfi wakes on a
    --  pending interrupt without trapping, so idle paths must not
