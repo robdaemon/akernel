@@ -1,0 +1,10 @@
+project Shutdown extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/shutdown";
+   for Main use ("shutdown.adb");
+
+   package Builder is
+      for Executable ("shutdown.adb") use "shutdown.elf";
+   end Builder;
+end Shutdown;

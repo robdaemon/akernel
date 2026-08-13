@@ -39,6 +39,12 @@ package body Arch.SBI is
       Opaque      : U64) return U64
      with Import, Convention => C, External_Name => "sbi_hart_start";
 
+   function Raw_System_Reset
+     (Reset_Type   : U64;
+      Reset_Reason : U64) return U64
+     with Import, Convention => C,
+          External_Name => "sbi_system_reset";
+
    procedure Raw_Disable_Interrupts
      with Import, Convention => C, External_Name => "riscv_disable_interrupts";
 
@@ -96,6 +102,11 @@ package body Arch.SBI is
       Entry_PA    : U64;
       Opaque      : U64) return U64 is
      (Raw_Hart_Start (Raw_Hart_Id, Entry_PA, Opaque));
+
+   function System_Reset
+     (Reset_Type   : U64;
+      Reset_Reason : U64) return U64 is
+     (Raw_System_Reset (Reset_Type, Reset_Reason));
 
    procedure Disable_Interrupts is
    begin

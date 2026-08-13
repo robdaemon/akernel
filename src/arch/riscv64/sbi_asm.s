@@ -348,3 +348,16 @@ riscv_jump_to_idle:
     csrw sscratch, a1
     jr a2
 .size riscv_jump_to_idle, . - riscv_jump_to_idle
+
+.global sbi_system_reset
+.type sbi_system_reset, @function
+sbi_system_reset:
+    /* SBI SRST extension (0x53525354) system_reset(type, reason);
+       a0 = reset type, a1 = reset reason. On success the machine
+       goes down and the call never returns; otherwise a0 carries
+       the SBI error code. */
+    li a7, 0x53525354
+    li a6, 0
+    ecall
+    ret
+.size sbi_system_reset, . - sbi_system_reset

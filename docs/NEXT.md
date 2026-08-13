@@ -1950,6 +1950,75 @@ Next candidates (order open):
     pid generations, register fast
     path.
 
+    50 SHIPPED — clean shutdown:
+    Sys_System_Reset=33 (admin cap,
+    reset type) drives SBI SRST
+    system_reset (sbi_asm stub,
+    Arch.SBI.System_Reset); admin-
+    gated with the Cap_Info authority.
+    New crates Sys:System/Shutdown +
+    Sys:System/Reboot run ONLY under
+    Elevate (admin mint at handle 5):
+    sync fan-out (fileserver -> fat32
+    -> partmgr -> virtio-blk ->
+    VIRTIO_BLK_T_FLUSH), then reset.
+    Shell builtins shutdown/reboot
+    sync + Elevate. DESIGN ANSWER
+    (user asked): no signals needed —
+    the filesystem is the ONLY cross-
+    process durable state; every other
+    process holds transient state and
+    dies with the machine losing
+    nothing. AmigaOS agrees (no
+    signals, no shutdown handshake).
+    Cooperative shutdown broadcast
+    consciously deferred until a
+    server holds in-memory state
+    worth saving. E2E: the suite's
+    last act IS the real chain —
+    Run_Command Sys:C/Elevate
+    Sys:System/Shutdown — so every
+    make run now ends with qemu
+    exiting 0 BY ITSELF after
+    "kernel: system reset requested"
+    (timeout 600 stays as backstop);
+    the post-suite fsck validates
+    durability across a TRUE power
+    transition, not a SIGKILL race.
+    Reboot shares the path (type 1);
+    a full cycle is a manual test
+    (automated would loop the suite).
+    BURNS: (1) Elevated resolves the
+    target through ITS OWN cwd —
+    relative "System/Shutdown" failed
+    silently (RC_Error, no log line
+    before the resolution succeeds);
+    pass full Sys:System/... paths
+    like the existing Sys:C/Version
+    elevate test does; (2) the old
+    fuzz-exit test gave way to the
+    shutdown (Process_Exit coverage
+    lives in teardown roles); (3)
+    interactive make run is GONE by
+    default — the machine powers off
+    right after fuzz complete; drop
+    the Tests/Fuzz manifest program
+    for an interactive boot. Gate
+    tests: bogus admin cap and a
+    non-admin cap both rejected.
+    783 PASS SMP1+SMP4, failures=0,
+    fsck clean (66 files), qemu
+    exits 0 on both.
+    MILESTONE 50 COMPLETE. Elevation
+    has its first shipped consumer.
+    Next: the deferred list —
+    Proc:self (needs client identity
+    through the VFS), pid generations,
+    register fast path, custom GNAT
+    runtime, virtio-net, MSI-X, true
+    scheduler priorities; shell
+    groups: job control, clock.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

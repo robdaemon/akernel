@@ -28,6 +28,20 @@ package Arch.SBI is
       Entry_PA    : U64;
       Opaque      : U64) return U64;
 
+   --  SBI SRST system_reset(reset_type, reset_reason): shuts down
+   --  or reboots the MACHINE (all harts) through the firmware —
+   --  the clean-shutdown path (milestone 50). On success this
+   --  never returns; the return value is the SBI error code
+   --  (nonzero) otherwise.
+   Reset_Shutdown    : constant U64 := 0;
+   Reset_Cold_Reboot : constant U64 := 1;
+   Reset_Warm_Reboot : constant U64 := 2;
+   Reset_No_Reason   : constant U64 := 0;
+   Reset_Failure     : constant U64 := 1;
+   function System_Reset
+     (Reset_Type   : U64;
+      Reset_Reason : U64) return U64;
+
    function Scause return U64;
    function Sepc return U64;
    function Stval return U64;

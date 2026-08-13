@@ -489,6 +489,33 @@ client; the admin cap never lands in the client's namespace.
 - Elevated children get no elevation-svc handle: an elevated
   Elevate fails cleanly (no privilege recursion).
 
+## Clean shutdown (implemented, milestone 50)
+
+No signals exist and none are needed: the filesystem is the only
+cross-process durable state, so sync + machine reset IS the clean
+shutdown. `Sys:System/Shutdown` + `Sys:System/Reboot` run ONLY
+under Elevate (admin mint at handle 5, fs at handle 2), sync
+every mounted volume through the fileserver fan-out
+(`Op_Sync -> fat32 Blk_Flush -> partmgr -> virtio-blk
+write-back + VIRTIO_BLK_T_FLUSH`), then call:
+
+- `Sys_System_Reset = 33 (admin cap, reset type)` — admin-gated
+  (Admin_Object + Manage, the Cap_Info authority); type 0 =
+  shutdown, 1 = cold reboot, 2 = warm reboot. Executes SBI SRST
+  system_reset(type, no-reason); on success the machine goes
+  down and the call never returns. A nonzero return is the SBI
+  error code; U64'Last = rejected (authority or type).
+
+Shell builtins `shutdown` / `reboot` sync first and then run
+`Elevate Sys:System/Shutdown|Reboot` — the admin cap never
+lands in the shell. The fuzz suite's last act is the real
+chain (`Run_Command Sys:C/Elevate Sys:System/Shutdown`), so
+every `make run` ends with qemu exiting 0 by itself; the
+post-suite fsck validates durability across a TRUE power
+transition. Reboot shares the path (type 1) and is covered by
+the gate tests; a full reboot cycle is a manual test (an
+automated one would re-run the suite forever).
+
 ## Init state and crash recovery
 
 - Authority lives in kernel cap tables; init's name table is

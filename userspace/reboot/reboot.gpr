@@ -1,0 +1,10 @@
+project Reboot extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/reboot";
+   for Main use ("reboot.adb");
+
+   package Builder is
+      for Executable ("reboot.adb") use "reboot.elf";
+   end Builder;
+end Reboot;

@@ -234,6 +234,20 @@ package Akernel_User.Syscalls is
       Buffer : U64;
       Offset : U64 := 0) return U64;
 
+   --  System_Reset (syscall 33): SBI SRST machine shutdown or
+   --  reboot — the clean-shutdown path (milestone 50). Same
+   --  admin authority as Cap_Info; the only callers are
+   --  System/Shutdown + System/Reboot through the Elevated
+   --  mint. On success the machine goes down and the call never
+   --  returns; a nonzero return is the SBI error code,
+   --  Syscall_Failed on rejection (authority or reset type).
+   Reset_Shutdown    : constant U64 := 0;
+   Reset_Cold_Reboot : constant U64 := 1;
+   Reset_Warm_Reboot : constant U64 := 2;
+   function System_Reset
+     (Admin      : U64;
+      Reset_Type : U64) return U64;
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

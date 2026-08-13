@@ -3674,6 +3674,17 @@ begin
    --  Blk_Flush -> write-back + VIRTIO_BLK_T_FLUSH), not idle
    --  write-behind + QEMU's host page cache. On real hardware
    --  only this chain means durable.
+   --  System reset gate (milestone 50): Sys_System_Reset needs
+   --  the admin cap — a bogus handle and a plain non-admin cap
+   --  (handle 4, the fs endpoint) are both rejected, and the
+   --  machine is still here afterwards.
+   Check (Akernel_User.Syscalls.System_Reset (0, 0) =
+            Akernel_User.Syscalls.Syscall_Failed,
+          "system reset rejects a bogus admin cap");
+   Check (Akernel_User.Syscalls.System_Reset (4, 0) =
+            Akernel_User.Syscalls.Syscall_Failed,
+          "system reset rejects a non-admin cap");
+
    Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
           "final sync before completion");
 
@@ -3685,11 +3696,13 @@ begin
    Put_Hex (Failures);
    Put_Line ("");
 
-   --  Exit path is the final test: this thread must die cleanly and the
-   --  system (init, serial driver, timer) must keep running.
-   Put_Line ("fuzz exit test");
-   Status := Raw_Ecall (Number => Sys_Exit);
-
-   --  Reaching here means exit returned, which it never should.
-   Put_Line ("FAIL exit returned");
+   --  Clean shutdown (milestone 50): the suite's last act is the
+   --  REAL chain — Elevate System/Shutdown -> Elevated mints
+   --  admin -> Shutdown syncs every volume -> Sys_System_Reset
+   --  -> SBI SRST. On success the machine powers off mid
+   --  reap-poll and qemu exits; Run_Command returning at all
+   --  means the chain broke (its RC check fails first).
+   Run_Command ("Sys:C/Elevate", "Sys:System/Shutdown", 0,
+                "elevated shutdown");
+   Put_Line ("FAIL shutdown returned");
 end Fuzz;

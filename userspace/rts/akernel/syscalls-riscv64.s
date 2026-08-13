@@ -281,3 +281,11 @@ akernel_sys_thread_regs:
     ecall
     ret
 .size akernel_sys_thread_regs, . - akernel_sys_thread_regs
+
+.global akernel_sys_system_reset
+.type akernel_sys_system_reset, @function
+akernel_sys_system_reset:
+    li a7, 33
+    ecall
+    ret
+.size akernel_sys_system_reset, . - akernel_sys_system_reset

@@ -76,6 +76,7 @@ package body Arch.Traps is
    Sys_Process_Info      : constant U64 := 30;
    Sys_Cap_Info          : constant U64 := 31;
    Sys_Thread_Regs       : constant U64 := 32;
+   Sys_System_Reset      : constant U64 := 33;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1942,6 +1943,34 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, 0);
    end Handle_Process_Info;
 
+   --  Sys_System_Reset (a0 = admin cap, a1 = reset type: 0
+   --  shutdown, 1 cold reboot, 2 warm reboot): SBI SRST machine
+   --  reset — the clean-shutdown path (milestone 50). Admin-gated
+   --  (Admin_Object + Manage), the same authority as Cap_Info;
+   --  the only callers are System/Shutdown + System/Reboot
+   --  through the Elevated mint. On success the machine goes
+   --  down and the call never returns; a nonzero return is the
+   --  SBI error code, U64'Last on rejection.
+   procedure Handle_System_Reset (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      R_Type  : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Result  : U64;
+   begin
+      if not Has_Admin_Authority (Current, Trap_Frame_Get_A0 (Frame))
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+      if R_Type > Arch.SBI.Reset_Warm_Reboot then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+      Board.UART.Put_Line ("kernel: system reset requested");
+      Result := Arch.SBI.System_Reset (R_Type, Arch.SBI.Reset_No_Reason);
+      Trap_Frame_Set_A0 (Frame, Result);
+   end Handle_System_Reset;
+
    --  Sys_Cap_Info (a0 = admin cap, a1 = slot 0..127 or U64'Last
    --  for self, a2 = cap-table index, a3 = buffer memory-object
    --  cap, a4 = byte offset): one cap-table slot snapshot into the
@@ -2273,6 +2302,8 @@ package body Arch.Traps is
          Handle_Cap_Info (Frame);
       elsif Number = Sys_Thread_Regs then
          Handle_Thread_Regs (Frame);
+      elsif Number = Sys_System_Reset then
+         Handle_System_Reset (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

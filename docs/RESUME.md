@@ -6,19 +6,22 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 49 SHIPPED):
-- Blocking pipes: PIPE: read on empty non-EOF ring / write
-  that does not fit DEFERS its reply (m47 reply-cap
-  duplication) — fileserver stashes reply cap + client buffer
-  cap in an 8-slot pending table, drains in passes on ring
-  mutations; Op_Close drains readers (pipeline exit path),
-  Op_Truncate writers, Op_Delete wakes all Not_Found
-  (dead-reader escape hatch). Table full -> old Not_Ready
-  poll fallback; protocol unchanged. Teardown roles P/W give
-  directed cross-process coverage.
-- 48 shipped the virtio-blk write-back cache + flush chain
-  (explicit-sync-only VIRTIO_BLK_T_FLUSH; write-behind is
-  latency, never durability); 47 reply-cap duplication.
+CURRENT SESSION STATE (milestone 50 SHIPPED):
+- Clean shutdown: Sys_System_Reset=33 (admin-gated) drives
+  SBI SRST; Sys:System/Shutdown + Sys:System/Reboot run only
+  under Elevate (admin mint at handle 5), sync every volume
+  via the fileserver fan-out, then reset. Shell builtins
+  shutdown/reboot. NO SIGNALS — the filesystem is the only
+  cross-process durable state; sync + reset IS the clean
+  shutdown. The suite's last act is the real chain: every
+  make run ends with qemu exiting 0 BY ITSELF (timeout 600 =
+  backstop); post-suite fsck now validates durability across
+  a true power transition. Elevation's first shipped
+  consumer. INTERACTIVE make run is gone by default (drop
+  the Tests/Fuzz manifest line for an interactive boot).
+- 49 shipped blocking pipes (deferred replies, drain passes);
+  48 the virtio-blk write-back cache + flush chain; 47
+  reply-cap duplication.
 - 47 shipped reply-cap duplication; 46 Amiga pipes; 45
   elevation.
 - BURNS logged in NEXT.md: kernel REJECTS write-only Mem_Map
@@ -31,24 +34,30 @@ CURRENT SESSION STATE (milestone 49 SHIPPED):
   blocking (old checks HANG); String(1..16) := 10-char literal
   is the m37b CE again; fuzz helper names live in SIBLING
   declare blocks — new blocks declare their own; drain AFTER
-  the current op's window unmap; harness timeout 600 s.
-- 774 PASS SMP1+SMP4, failures=0, fsck clean pre/post.
+  the current op's window unmap; Elevated resolves targets
+  through ITS OWN cwd — pass full Sys:... paths; harness
+  timeout 600 s (now backstop only — qemu self-exits 0).
+- 783 PASS SMP1+SMP4, failures=0, fsck clean pre/post,
+  qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-49 COMPLETE. Next: the
-deferred list (docs/NEXT.md): CLEAN SHUTDOWN (no power-off
-path exists: Op_Sync fan-out + SBI SRST + shell shutdown
-builtin — real hardware loses everything since last sync
-without it), Proc:self (needs client identity through the
-VFS), pid generation counters, register fast path, custom
-GNAT runtime, virtio-net, MSI-X, true scheduler priorities.
-Deferred shell groups left: job control, clock.
+Open candidates — milestones 41-50 COMPLETE. Next: the
+deferred list (docs/NEXT.md): Proc:self (needs client
+identity through the VFS), pid generation counters, register
+fast path, custom GNAT runtime, virtio-net, MSI-X, true
+scheduler priorities. Deferred shell groups left: job
+control, clock. Consciously deferred in m50: cooperative
+shutdown broadcast (no server holds in-memory state worth
+saving today); automated reboot-cycle test (would loop).
 
-Recently landed: MILESTONE 49 — true
-blocking pipes (deferred replies on
-empty/full rings, drain passes, Op_Close
-EOF wake, Op_Delete escape hatch). 774
-PASS SMP1+SMP4, failures=0, fsck clean.
-Before that: MILESTONE 48 — virtio-blk
+Recently landed: MILESTONE 50 — clean
+shutdown (SBI SRST + System/Shutdown +
+System/Reboot via Elevate, shell
+builtins; no signals — fs is the only
+durable state). 783 PASS SMP1+SMP4,
+failures=0, qemu self-exits 0, fsck
+clean. Before that: MILESTONE 49 — true
+blocking pipes. 774 PASS. Before that:
+MILESTONE 48 — virtio-blk
 write-back cache + flush chain
 (VIRTIO_BLK_F_FLUSH, Op_Flush, loop-top
 write-behind). 758 PASS SMP1+SMP4,

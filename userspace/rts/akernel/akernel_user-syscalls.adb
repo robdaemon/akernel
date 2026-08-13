@@ -152,6 +152,12 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_thread_regs";
 
+   function Raw_System_Reset
+     (Admin      : U64;
+      Reset_Type : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_system_reset";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -368,6 +374,13 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Thread_Regs (Admin, Slot, Buffer, Offset);
    end Thread_Regs;
+
+   function System_Reset
+     (Admin      : U64;
+      Reset_Type : U64) return U64 is
+   begin
+      return Raw_System_Reset (Admin, Reset_Type);
+   end System_Reset;
 
    function Mem_Map_File
      (Address_Space : U64;

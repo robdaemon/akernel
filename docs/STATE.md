@@ -240,6 +240,12 @@ QEMU virt RAM base:     0x80000000
   write-behind / Blk_Flush=4 (driven by
   fat32 Op_Sync via partmgr), and
   negotiates VIRTIO_BLK_F_FLUSH.
+  Milestone 50 shipped clean shutdown:
+  Sys_System_Reset (admin-gated) ->
+  SBI SRST; System/Shutdown +
+  System/Reboot under Elevate sync all
+  volumes then reset; the suite powers
+  qemu off itself (exit 0) every run.
   Milestone 49 made PIPE: blocking:
   empty-ring reads and no-room writes
   defer their replies (m47 reply-cap

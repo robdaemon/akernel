@@ -649,6 +649,10 @@ procedure Shell is
             Akernel_User.Console.Put_Line
               ("  execute <file>  run a script (';' comments, stop at RC 10)");
             Akernel_User.Console.Put_Line
+              ("  shutdown        sync and power off (via Elevate)");
+            Akernel_User.Console.Put_Line
+              ("  reboot          sync and cold-reboot (via Elevate)");
+            Akernel_User.Console.Put_Line
               ("  <cmd> [args]    run a C: or Sys: command");
             Akernel_User.Console.Put_Line
               ("  A | B           pipe A's output into B");
@@ -664,6 +668,22 @@ procedure Shell is
                return Akernel_User.CLI.RC_Error;
             end if;
             return Run_Script (Rest);
+         elsif Word = "shutdown" or else Word = "reboot" then
+            --  Milestone 50: flush every mounted volume, then
+            --  hand the machine reset to the elevation service
+            --  (System/Shutdown / System/Reboot sync again
+            --  themselves — a direct Elevate is just as safe).
+            --  On success the machine goes down while the
+            --  command line below is still in flight.
+            if Akernel_User.Files.Sync /= Akernel_User.Files.Status_Ok
+            then
+               Akernel_User.Console.Put_Line (Word & ": sync failed");
+               return Akernel_User.CLI.RC_Fail;
+            end if;
+            return Exec
+              ("Elevate",
+               (if Word = "shutdown" then "Sys:System/Shutdown"
+                else "Sys:System/Reboot"));
          else
             if Has_Metachar (Cmd) then
                return Run_Pipeline (Cmd);
