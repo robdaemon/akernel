@@ -10,8 +10,9 @@ CURRENT SESSION STATE (milestone 50 SHIPPED):
 - Clean shutdown: Sys_System_Reset=33 (admin-gated) drives
   SBI SRST; Sys:System/Shutdown + Sys:System/Reboot run only
   under Elevate (admin mint at handle 5), sync every volume
-  via the fileserver fan-out, then reset. Shell builtins
-  shutdown/reboot. NO SIGNALS — the filesystem is the only
+  via the fileserver fan-out, then reset. Invocation is plain
+  `Elevate Sys:System/Shutdown` (no shell builtins — the
+  programs self-sync). NO SIGNALS — the filesystem is the only
   cross-process durable state; sync + reset IS the clean
   shutdown. The suite's last act is the real chain: every
   make run ends with qemu exiting 0 BY ITSELF (timeout 600 =

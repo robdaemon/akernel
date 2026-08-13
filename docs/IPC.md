@@ -506,9 +506,10 @@ write-back + VIRTIO_BLK_T_FLUSH`), then call:
   down and the call never returns. A nonzero return is the SBI
   error code; U64'Last = rejected (authority or type).
 
-Shell builtins `shutdown` / `reboot` sync first and then run
-`Elevate Sys:System/Shutdown|Reboot` — the admin cap never
-lands in the shell. The fuzz suite's last act is the real
+Invocation is simply `Elevate Sys:System/Shutdown` (or
+`.../Reboot`) — no shell special-casing: the programs sync
+themselves, Elevate is the admin carrier, and the admin cap
+never lands in the invoking shell. The fuzz suite's last act is the real
 chain (`Run_Command Sys:C/Elevate Sys:System/Shutdown`), so
 every `make run` ends with qemu exiting 0 by itself; the
 post-suite fsck validates durability across a TRUE power

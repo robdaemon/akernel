@@ -1962,8 +1962,14 @@ Next candidates (order open):
     sync fan-out (fileserver -> fat32
     -> partmgr -> virtio-blk ->
     VIRTIO_BLK_T_FLUSH), then reset.
-    Shell builtins shutdown/reboot
-    sync + Elevate. DESIGN ANSWER
+    Invocation is plain Elevate
+    Sys:System/Shutdown — NO shell
+    builtins (review caught my
+    convenience wrappers: the
+    programs self-sync, so special
+    shell handling duplicated logic
+    for zero capability). DESIGN
+    ANSWER
     (user asked): no signals needed —
     the filesystem is the ONLY cross-
     process durable state; every other
