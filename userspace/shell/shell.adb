@@ -629,6 +629,186 @@ procedure Shell is
       return RC;
    end Run_Script;
 
+   --  Job control (milestone 52), Amiga RUN lineage: `run`
+   --  backgrounds a single command (no pipelines/redirection
+   --  yet — Spawn_Cmd's single-command path only); the shell
+   --  owns the process caps, so only the shell can reap them.
+   --  Job numbers are shell-local slot indices (the pid is not
+   --  readable from a proc cap without admin introspection —
+   --  Proc:self would fix display). A COMPLETED job keeps its
+   --  exit code in the Done state until `wait` claims it —
+   --  `jobs` reporting done must not destroy a code a later
+   --  wait wants (the Script4 burn). `run` allocates a Free
+   --  slot, then steals the oldest Done slot, then fails.
+   --  `wait [n]` blocks on one (or all) and yields the exit
+   --  code as the command RC so scripts compose with failat.
+   --  Exiting the shell with live jobs warns once; the second
+   --  exit abandons them (children are independent processes —
+   --  Amiga RUN'd tasks survive the shell).
+   Max_Jobs : constant := 8;
+   type Job_State is (Job_Free, Job_Active, Job_Done);
+   type Job_Rec is record
+      State : Job_State := Job_Free;
+      Proc  : U64 := 0;
+      Code  : U64 := 0;
+      Cmd   : String (1 .. 64) := (others => ' ');
+      Len   : Natural := 0;
+   end record;
+   Jobs        : array (1 .. Max_Jobs) of Job_Rec;
+   Exit_Warned : Boolean := False;
+
+   procedure Harvest (Loud : Boolean) is
+      Code : U64 := 0;
+      Dead : U64;
+   begin
+      for J in Jobs'Range loop
+         if Jobs (J).State = Job_Active
+           and then Reap_Process_Code (Jobs (J).Proc, Code) = 0
+         then
+            Jobs (J).State := Job_Done;
+            Jobs (J).Code  := Code;
+            Dead := Cap_Delete (Jobs (J).Proc);
+            Jobs (J).Proc  := 0;
+         end if;
+         if Loud then
+            if Jobs (J).State = Job_Active then
+               Akernel_User.Console.Put_Line
+                 ("  job" & Natural'Image (J) & " running     " &
+                  Jobs (J).Cmd (1 .. Jobs (J).Len));
+            elsif Jobs (J).State = Job_Done then
+               Akernel_User.Console.Put_Line
+                 ("  job" & Natural'Image (J) & " done (rc" &
+                  U64'Image (Jobs (J).Code) & " )  " &
+                  Jobs (J).Cmd (1 .. Jobs (J).Len));
+            end if;
+         end if;
+      end loop;
+   end Harvest;
+
+   function Jobs_Active return Natural is
+      N : Natural := 0;
+   begin
+      for J of Jobs loop
+         if J.State = Job_Active then
+            N := N + 1;
+         end if;
+      end loop;
+      return N;
+   end Jobs_Active;
+
+   function Parse_Nat (S : String) return Natural is
+      N : Natural := 0;
+   begin
+      for C of S loop
+         if C not in '0' .. '9' or else N > 1000 then
+            return 0;
+         end if;
+         N := N * 10 + (Character'Pos (C) - Character'Pos ('0'));
+      end loop;
+      return N;
+   end Parse_Nat;
+
+   function Run_Background (Word : String; Args : String) return U64
+   is
+      Proc : U64;
+   begin
+      if Word'Length = 0 then
+         Akernel_User.Console.Put_Line ("usage: run <cmd> [args]");
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      if Has_Metachar (Word) or else Has_Metachar (Args) then
+         Akernel_User.Console.Put_Line
+           ("run: pipelines and redirection are foreground-only");
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      Harvest (Loud => False);
+      declare
+         Slot : Natural := 0;
+      begin
+         for J in Jobs'Range loop
+            if Jobs (J).State = Job_Free then
+               Slot := J;
+               exit;
+            end if;
+         end loop;
+         if Slot = 0 then
+            --  No Free slot: steal the oldest Done one (its
+            --  unclaimed exit code is discarded — documented).
+            for J in Jobs'Range loop
+               if Jobs (J).State = Job_Done then
+                  Slot := J;
+                  exit;
+               end if;
+            end loop;
+         end if;
+         if Slot = 0 then
+            Akernel_User.Console.Put_Line ("run: job table full (8)");
+            return Akernel_User.CLI.RC_Error;
+         end if;
+         Proc := Spawn_Cmd (Word, Args, "", "");
+         if Proc = 0 then
+            return Akernel_User.CLI.RC_Error;
+         end if;
+         Jobs (Slot).State := Job_Active;
+         Jobs (Slot).Proc  := Proc;
+         Jobs (Slot).Len := Natural'Min (64, Word'Length + 1 +
+                                         Args'Length);
+         Jobs (Slot).Cmd (1 .. Jobs (Slot).Len) := (others => ' ');
+         declare
+            Full : constant String := Word & " " & Args;
+         begin
+            Jobs (Slot).Cmd (1 .. Jobs (Slot).Len) :=
+              Full (Full'First .. Full'First + Jobs (Slot).Len - 1);
+         end;
+         Akernel_User.Console.Put_Line
+           ("started job" & Natural'Image (Slot) & ": " &
+            Jobs (Slot).Cmd (1 .. Jobs (Slot).Len));
+         return 0;
+      end;
+   end Run_Background;
+
+   function Wait_Job (Args : String) return U64 is
+      N    : Natural;
+      RC   : U64 := 0;
+      Dead : U64;
+   begin
+      --  NO pre-harvest here: a completed-but-unreaped job
+      --  still holds its slot (and its exit code) until
+      --  somebody waits on it — reaping it silently first
+      --  would make `wait 1` lose the code to "no such job".
+      if Args'Length = 0 then
+         --  Bare wait: every known job, slot order; RC = the
+         --  last job's exit code. Done jobs hand their code
+         --  over without blocking.
+         for J in Jobs'Range loop
+            if Jobs (J).State = Job_Active then
+               RC := Reap (Jobs (J).Proc);
+               Dead := Cap_Delete (Jobs (J).Proc);
+               Jobs (J).Proc := 0;
+               Jobs (J).State := Job_Free;
+            elsif Jobs (J).State = Job_Done then
+               RC := Jobs (J).Code;
+               Jobs (J).State := Job_Free;
+            end if;
+         end loop;
+         return RC;
+      end if;
+      N := Parse_Nat (Args);
+      if N not in Jobs'Range or else Jobs (N).State = Job_Free then
+         Akernel_User.Console.Put_Line ("wait: no such job: " & Args);
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      if Jobs (N).State = Job_Active then
+         RC := Reap (Jobs (N).Proc);
+         Dead := Cap_Delete (Jobs (N).Proc);
+         Jobs (N).Proc := 0;
+      else
+         RC := Jobs (N).Code;
+      end if;
+      Jobs (N).State := Job_Free;
+      return RC;
+   end Wait_Job;
+
    function Execute (Cmd : String) return U64 is
       W_Last   : Natural;
       R_First  : Natural;
@@ -642,6 +822,9 @@ procedure Shell is
          Rest : constant String :=
            (if R_First > Cmd'Last then "" else Cmd (R_First .. Cmd'Last));
       begin
+         if Word /= "exit" then
+            Exit_Warned := False;
+         end if;
          if Word = "help" then
             Akernel_User.Console.Put_Line ("akernel shell — builtins:");
             Akernel_User.Console.Put_Line ("  help            this text");
@@ -654,10 +837,42 @@ procedure Shell is
               ("  A | B           pipe A's output into B");
             Akernel_User.Console.Put_Line
               ("  A > file        redirect output ('<' reads stdin)");
+            Akernel_User.Console.Put_Line
+              ("  run <cmd> ...   background a command (job)");
+            Akernel_User.Console.Put_Line
+              ("  jobs            list/harvest background jobs");
+            Akernel_User.Console.Put_Line
+              ("  wait [n]        RC = job n's (or last) exit code");
             return 0;
          elsif Word = "exit" then
+            if Jobs_Active > 0 and then not Exit_Warned then
+               Exit_Warned := True;
+               Akernel_User.Console.Put_Line
+                 ("there are running jobs (exit again to abandon)");
+               return Akernel_User.CLI.RC_Warn;
+            end if;
             Process_Exit;
             return 0;  --  unreachable; Process_Exit does not return
+         elsif Word = "run" then
+            if Rest'Length = 0 then
+               Akernel_User.Console.Put_Line ("usage: run <cmd> [args]");
+               return Akernel_User.CLI.RC_Error;
+            end if;
+            declare
+               RW_Last  : Natural;
+               RA_First : Natural;
+            begin
+               Split_Cmd (Rest, RW_Last, RA_First);
+               return Run_Background
+                 (Rest (Rest'First .. RW_Last),
+                  (if RA_First > Rest'Last then ""
+                   else Rest (RA_First .. Rest'Last)));
+            end;
+         elsif Word = "jobs" then
+            Harvest (Loud => True);
+            return 0;
+         elsif Word = "wait" then
+            return Wait_Job (Rest);
          elsif Word = "execute" then
             if Rest'Length = 0 then
                Akernel_User.Console.Put_Line ("usage: execute <script>");

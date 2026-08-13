@@ -6,7 +6,15 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 51 SHIPPED):
+CURRENT SESSION STATE (milestone 52 SHIPPED):
+- Shell job control (Amiga RUN lineage): `run` backgrounds
+  one command (no pipes/redirect yet), `jobs` lists,
+  `wait [n]` yields the exit code as RC (failat composes).
+  Job states Free/Active/Done — completed jobs keep their
+  code until wait claims it (jobs must never reap-and-free
+  a wait-able status; wait must not pre-harvest). `exit`
+  with live jobs warns once, then abandons (Amiga orphan
+  semantics). Shell group DONE except clock.
 - Pid generations: pid = generation * 256 + slot base
   (slot + 4); generation 0 keeps boot pids historical, each
   slot reuse bumps it, generation array lives outside the
@@ -43,24 +51,28 @@ CURRENT SESSION STATE (milestone 51 SHIPPED):
   the current op's window unmap; Elevated resolves targets
   through ITS OWN cwd — pass full Sys:... paths; harness
   timeout 600 s (now backstop only — qemu self-exits 0).
-- 795 PASS SMP1+SMP4, failures=0, fsck clean pre/post,
+- 848/847 PASS SMP1/SMP4 (one old fat-lfn line lost
+  to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-51 COMPLETE. Next: the
+Open candidates — milestones 41-52 COMPLETE. Next: the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime, virtio-net, MSI-X, true
-scheduler priorities. Deferred shell groups left: job
-control, clock. Consciously deferred: cooperative shutdown
-broadcast (m50: no server holds in-memory state worth
-saving today); automated reboot-cycle test (would loop);
-thread-id generations (m51: no identity consumer today).
+scheduler priorities, clock. Consciously deferred:
+cooperative shutdown broadcast (m50: no server holds
+in-memory state worth saving today); automated reboot-cycle
+test (would loop); thread-id generations (m51: no identity
+consumer today); background pipelines/redirection (m52:
+run takes one command).
 
-Recently landed: MILESTONE 51 — pid
-generation counters (pid = gen*256 +
-slot base; boot pids unchanged, slot
-reuse bumps). 795 PASS SMP1+SMP4,
+Recently landed: MILESTONE 52 — shell
+job control (run/jobs/wait; Done jobs
+keep exit codes until wait claims;
+Amiga orphan semantics). 848/847 PASS,
 failures=0, fsck clean. Before that:
+MILESTONE 51 — pid generation
+counters. 795 PASS. Before that:
 MILESTONE 50 — clean shutdown
 (SBI SRST + System/Shutdown +
 System/Reboot via Elevate; no

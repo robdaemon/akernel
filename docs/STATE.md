@@ -240,6 +240,9 @@ QEMU virt RAM base:     0x80000000
   write-behind / Blk_Flush=4 (driven by
   fat32 Op_Sync via partmgr), and
   negotiates VIRTIO_BLK_F_FLUSH.
+  Milestone 52 added shell job
+  control (run/jobs/wait, Done-state
+  exit codes, orphan abandonment).
   Milestone 51 added pid generations
   (pid = gen*256 + slot base; slot
   reuse never reissues a pid).

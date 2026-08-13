@@ -2074,6 +2074,67 @@ Next candidates (order open):
     MSI-X, true scheduler priorities;
     shell groups: job control, clock.
 
+    52 SHIPPED — shell job control,
+    Amiga RUN lineage. Builtins: `run
+    <cmd> [args]` backgrounds ONE
+    command (pipelines/redirection
+    rejected — Spawn_Cmd's single-
+    command path only), `jobs` lists
+    running/done, `wait [n]` blocks
+    on one job (bare: all, slot
+    order) and yields its exit code
+    as the command RC — scripts
+    compose with failat (a job RC 20
+    stops the script). Job numbers
+    are shell-local slot indices (the
+    pid is unreadable from a proc cap
+    without admin introspection —
+    Proc:self would fix display). Job
+    states: Free/Active/Done — a
+    COMPLETED job keeps its exit code
+    in Done until wait claims it;
+    `run` allocates Free, then steals
+    the oldest Done (code discarded,
+    documented). `exit` with live
+    jobs warns once (RC 5), second
+    exit abandons (orphans are
+    independent processes — Amiga
+    RUN'd tasks survive the shell;
+    the kernel collects them). BURN
+    (caught by the suite, not
+    shipped): my first Harvest had
+    `jobs` REAP+FREE completed jobs —
+    Script4's `jobs` then `wait 1`
+    lost the exit code to "no such
+    job". POSIX-honest rule: listing
+    must never destroy a wait-able
+    status. Also: wait must NOT
+    pre-harvest — a completed job
+    still holds its slot+code until
+    somebody waits (Reap returns
+    immediately on a dead child
+    anyway). E2E: five batch-mode
+    scripts through Sys:System/Shell
+    — wait RC 20 stops at failat
+    (ENV marker absent), RC 7
+    continues (marker set), bare wait
+    RC = last job (4 either harvest
+    ordering), unknown job = RC 10,
+    shell exits with a live job.
+    848/847 PASS SMP1/SMP4 (one old
+    fat-lfn line lost to serial noise
+    twice, failures=0 — established
+    noise class), fsck clean (72
+    files), qemu exits 0 on both.
+    MILESTONE 52 COMPLETE. The shell
+    group is DONE (only clock left).
+    Next: the deferred list —
+    Proc:self (needs client identity
+    through the VFS), register fast
+    path (probe first), custom GNAT
+    runtime, virtio-net, MSI-X, true
+    scheduler priorities, clock.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

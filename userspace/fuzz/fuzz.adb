@@ -2916,6 +2916,27 @@ begin
          Script2 : constant String :=
            "cd BD0:NOSUCHDIR" & ASCII.LF
            & "set FZSCR2=unreached" & ASCII.LF;
+         --  Job control scripts (milestone 52). Job 1 in a
+         --  fresh shell is slot 1 deterministically; a script
+         --  stops at RC >= 10 (failat), so wait's RC composes.
+         Script3 : constant String :=
+           "run Tests/Teardown X 20" & ASCII.LF
+           & "wait 1" & ASCII.LF
+           & "set FZJOBS1=unreached" & ASCII.LF;
+         Script4 : constant String :=
+           "run Tests/Teardown X 7" & ASCII.LF
+           & "jobs" & ASCII.LF
+           & "wait 1" & ASCII.LF
+           & "set FZJOBS2=alive" & ASCII.LF;
+         Script5 : constant String :=
+           "run Tests/Teardown X 3" & ASCII.LF
+           & "run Tests/Teardown X 4" & ASCII.LF
+           & "wait" & ASCII.LF;
+         Script6 : constant String :=
+           "wait 7" & ASCII.LF
+           & "set FZJ4=unreached" & ASCII.LF;
+         Script7 : constant String :=
+           "run Tests/Teardown X 9" & ASCII.LF;
       begin
          --  A tiny source file first: a mutating FAT op costs
          --  ~0.4 s write-through, so the copy under test must be
@@ -2975,6 +2996,56 @@ begin
             Check (St /= Akernel_User.Files.Status_Ok,
                    "failat stops the script before the next line");
          end;
+
+         --  Job control end to end (milestone 52): run/jobs/wait
+         --  through batch-mode scripts. wait yields the job's
+         --  exit code as the command RC, so failat composes;
+         --  wait on a completed job still reads its code (no
+         --  silent pre-harvest), an unknown job is RC 10, and a
+         --  shell exiting with a live job abandons it (orphan
+         --  semantics — the kernel collects the child on exit).
+         Write_File ("BD0:FZJOBS1.TXT", Script3,
+                     "jobs script 1 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS1.TXT",
+                      20, "wait returns the job exit code");
+         declare
+            St   : U64;
+            Size : U64;
+         begin
+            St := Akernel_User.Files.Stat ("ENV:FZJOBS1", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "job RC 20 stops the script at failat");
+         end;
+
+         Write_File ("BD0:FZJOBS2.TXT", Script4,
+                     "jobs script 2 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS2.TXT",
+                      0, "background job completes under wait");
+         Check_Env ("FZJOBS2", "alive",
+                    "script continues after a warned job");
+
+         Write_File ("BD0:FZJOBS3.TXT", Script5,
+                     "jobs script 3 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS3.TXT",
+                      4, "bare wait reaps all, RC is the last job");
+
+         Write_File ("BD0:FZJOBS4.TXT", Script6,
+                     "jobs script 4 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS4.TXT",
+                      10, "wait on an unknown job is RC 10");
+         declare
+            St   : U64;
+            Size : U64;
+         begin
+            St := Akernel_User.Files.Stat ("ENV:FZJ4", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "unknown-job RC stops the script");
+         end;
+
+         Write_File ("BD0:FZJOBS5.TXT", Script7,
+                     "jobs script 5 written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS5.TXT",
+                      0, "shell exits with a live job (orphan)");
 
          --  Pipelines + redirection end to end (milestone 46b):
          --  the shell splits `A | B`, wires a PIPE: name
