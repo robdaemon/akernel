@@ -2489,6 +2489,144 @@ begin
          Check (X_Code = 42, "exit code rides reap a1");
       end;
 
+      --  Pid generations (milestone 51): pid = generation * 256
+      --  + slot base; boot pids are unchanged (first use =
+      --  generation 0) but a REUSED slot must never reissue a
+      --  pid. The free list is LIFO, so spawn -> reap -> spawn
+      --  lands both peers in the SAME slot deterministically
+      --  (nothing else spawns in this window): the second pid
+      --  must be exactly one generation (256) above the first,
+      --  and both must encode the slot base in the low byte.
+      declare
+         Gen_VA   : constant U64 := 16#5880_0000#;
+         type Gen_Page is array (0 .. 511) of U64;
+         GPage : Gen_Page
+           with Volatile, Address => System'To_Address
+             (Integer_Address (Gen_VA));
+         Gen_Args : String (1 .. 4)
+           with Volatile, Address => System'To_Address
+             (Integer_Address (TD_Args_VA + 4096));
+         Gen_Info : U64;
+         Pre      : array (0 .. 127) of U64 := (others => 0);
+         G_Proc   : U64;
+         G_Code   : U64 := 0;
+         G_Done   : Boolean;
+         Slot1    : Natural := 0;
+         Slot2    : Natural := 0;
+         Pid1     : U64 := 0;
+         Pid2     : U64 := 0;
+         New1     : Natural := 0;
+         New2     : Natural := 0;
+      begin
+         Gen_Info := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
+         Check (Gen_Info /= U64'Last,
+                "generation info buffer allocated");
+         Check (Raw_Ecall
+                  (Number => Sys_Mem_Map,
+                   A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                   A1 => Gen_Info, A2 => Gen_VA,
+                   A3 => 0, A4 => 4096, A5 => 3) = 0,
+                "generation info buffer mapped");
+
+         --  Snapshot live pids by slot (0 = unused; handle 7 =
+         --  the manifest device_resource cap).
+         for Slot in 0 ..
+           Akernel_User.Syscalls.Process_Table_Slots - 1
+         loop
+            if Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                          A1 => U64 (Slot), A2 => Gen_Info) = 0
+            then
+               Pre (Slot) := GPage (0);
+            end if;
+         end loop;
+
+         Gen_Args := ('X', ' ', '0', Character'Val (0));
+         for G in 0 .. 2 loop
+            Akernel_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         end loop;
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
+         Check (Status = 0 and then G_Proc /= 0,
+                "generation first peer spawned");
+         for Slot in 0 ..
+           Akernel_User.Syscalls.Process_Table_Slots - 1
+         loop
+            if Pre (Slot) = 0
+              and then Raw_Ecall (Number => Sys_Process_Info,
+                                  A0 => 7, A1 => U64 (Slot),
+                                  A2 => Gen_Info) = 0
+            then
+               New1 := New1 + 1;
+               Slot1 := Slot;
+               Pid1 := GPage (0);
+            end if;
+         end loop;
+         Check (New1 = 1, "generation first peer took one slot");
+         Check (Pid1 /= 0 and then Pid1 mod 256 = U64 (Slot1) + 4,
+                "generation pid encodes the slot base");
+
+         G_Done := False;
+         for Try in 1 .. 1024 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (G_Proc, G_Code);
+            if Status = 0 then
+               G_Done := True;
+               exit;
+            end if;
+            Ignore := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+         Check (G_Done, "generation first peer reaped");
+         Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+                           A1 => U64 (Slot1), A2 => Gen_Info) = 1,
+                "generation slot freed on reap");
+
+         for G in 0 .. 2 loop
+            Akernel_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+         end loop;
+         Akernel_User.Syscalls.Set_Grant
+           (3, Args_C_Mem,
+            Akernel_User.Syscalls.Right_Map +
+              Akernel_User.Syscalls.Right_Read, 0);
+         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
+         Check (Status = 0 and then G_Proc /= 0,
+                "generation second peer spawned");
+         for Slot in 0 ..
+           Akernel_User.Syscalls.Process_Table_Slots - 1
+         loop
+            if Pre (Slot) = 0
+              and then Raw_Ecall (Number => Sys_Process_Info,
+                                  A0 => 7, A1 => U64 (Slot),
+                                  A2 => Gen_Info) = 0
+            then
+               New2 := New2 + 1;
+               Slot2 := Slot;
+               Pid2 := GPage (0);
+            end if;
+         end loop;
+         Check (New2 = 1, "generation second peer took one slot");
+         Check (Slot2 = Slot1,
+                "generation reuse lands in the same slot (LIFO)");
+         Check (Pid2 = Pid1 + 256,
+                "generation reuse bumps the pid generation");
+
+         G_Done := False;
+         for Try in 1 .. 1024 loop
+            Status := Akernel_User.Syscalls.Reap_Process_Code
+              (G_Proc, G_Code);
+            if Status = 0 then
+               G_Done := True;
+               exit;
+            end if;
+            Ignore := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+         Check (G_Done, "generation second peer reaped");
+      end;
+
       --  C: commands end-to-end (milestone 41a): Sys:C/Info is
       --  staged off the disk volume and spawned under the
       --  uniform program ABI (console/fs/args grants) exactly as

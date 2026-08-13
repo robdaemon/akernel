@@ -50,6 +50,23 @@ package body Kernel.Processes is
      (others => Free_None);
    Free_Head : Free_Index := Free_None;
 
+   --  Pid generations (milestone 51): pid = Generation * 256 +
+   --  slot base, where the base (slot + 4 — pids 1..3 are the
+   --  kernel-started processes outside this table) is unchanged
+   --  for the slot's first use, so boot pids keep their
+   --  historical values. Each REUSE of a slot bumps its
+   --  generation, so a pid printed by Proc:, recorded as a
+   --  spawner, or badged onto a process cap can never name a
+   --  later occupant of the same slot. The generation wraps at
+   --  2**23 (pid stays inside 31-bit Natural; ABA needs 8
+   --  million reuses of one slot — accepted, same class as Unix
+   --  pid wrap). The array lives OUTSIDE the PCB:
+   --  Initialize_Process overwrites the whole record.
+   Generation_Wrap : constant U64 := 2**23;
+   Pid_Slot_Range  : constant U64 := 256;
+   Slot_Generation : array (Process_Index) of U64 :=
+     (others => 0);
+
    Stack_Top : constant U64 := 16#7000_0000#;
 
    --  User stack pages per spawned process (fuzz overflowed the
@@ -408,7 +425,11 @@ package body Kernel.Processes is
          return;
       end if;
 
-      New_Process_Id := Kernel.Tasks.Process_Id (Natural (Slot) + 4);
+      New_Process_Id := Kernel.Tasks.Process_Id
+        (Slot_Generation (Slot) * Pid_Slot_Range +
+         U64 (Natural (Slot) + 4));
+      Slot_Generation (Slot) :=
+        (Slot_Generation (Slot) + 1) mod Generation_Wrap;
       New_Thread_Id := Kernel.Tasks.Thread_Id (Natural (Slot) + 4);
       Kernel.Tasks.Initialize_Process (Processes (Slot), New_Process_Id);
       Kernel.Tasks.Set_Spawner_Id

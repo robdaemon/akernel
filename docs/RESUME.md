@@ -6,7 +6,12 @@ Read docs/NEXT.md first — it holds the full milestone log
 docs/STATE.md has the current system shape, docs/IPC.md the
 kernel/userspace protocol designs.
 
-CURRENT SESSION STATE (milestone 50 SHIPPED):
+CURRENT SESSION STATE (milestone 51 SHIPPED):
+- Pid generations: pid = generation * 256 + slot base
+  (slot + 4); generation 0 keeps boot pids historical, each
+  slot reuse bumps it, generation array lives outside the
+  PCB, wraps at 2**23. A pid from Proc:/spawner/process-cap
+  badge can never name a later occupant of the same slot.
 - Clean shutdown: Sys_System_Reset=33 (admin-gated) drives
   SBI SRST; Sys:System/Shutdown + Sys:System/Reboot run only
   under Elevate (admin mint at handle 5), sync every volume
@@ -38,25 +43,30 @@ CURRENT SESSION STATE (milestone 50 SHIPPED):
   the current op's window unmap; Elevated resolves targets
   through ITS OWN cwd — pass full Sys:... paths; harness
   timeout 600 s (now backstop only — qemu self-exits 0).
-- 783 PASS SMP1+SMP4, failures=0, fsck clean pre/post,
+- 795 PASS SMP1+SMP4, failures=0, fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-50 COMPLETE. Next: the
+Open candidates — milestones 41-51 COMPLETE. Next: the
 deferred list (docs/NEXT.md): Proc:self (needs client
-identity through the VFS), pid generation counters, register
-fast path, custom GNAT runtime, virtio-net, MSI-X, true
+identity through the VFS), register fast path (probe IPC
+cost first), custom GNAT runtime, virtio-net, MSI-X, true
 scheduler priorities. Deferred shell groups left: job
-control, clock. Consciously deferred in m50: cooperative
-shutdown broadcast (no server holds in-memory state worth
-saving today); automated reboot-cycle test (would loop).
+control, clock. Consciously deferred: cooperative shutdown
+broadcast (m50: no server holds in-memory state worth
+saving today); automated reboot-cycle test (would loop);
+thread-id generations (m51: no identity consumer today).
 
-Recently landed: MILESTONE 50 — clean
-shutdown (SBI SRST + System/Shutdown +
-System/Reboot via Elevate, shell
-builtins; no signals — fs is the only
-durable state). 783 PASS SMP1+SMP4,
-failures=0, qemu self-exits 0, fsck
-clean. Before that: MILESTONE 49 — true
+Recently landed: MILESTONE 51 — pid
+generation counters (pid = gen*256 +
+slot base; boot pids unchanged, slot
+reuse bumps). 795 PASS SMP1+SMP4,
+failures=0, fsck clean. Before that:
+MILESTONE 50 — clean shutdown
+(SBI SRST + System/Shutdown +
+System/Reboot via Elevate; no
+signals — fs is the only durable
+state). 783 PASS, qemu self-exits 0.
+Before that: MILESTONE 49 — true
 blocking pipes. 774 PASS. Before that:
 MILESTONE 48 — virtio-blk
 write-back cache + flush chain

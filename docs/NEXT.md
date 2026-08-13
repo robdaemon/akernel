@@ -2025,6 +2025,55 @@ Next candidates (order open):
     scheduler priorities; shell
     groups: job control, clock.
 
+    51 SHIPPED — pid generation
+    counters. pid = generation * 256 +
+    slot base (slot + 4; pids 1..3 are
+    the kernel-started processes
+    outside the spawn table). First
+    use of a slot = generation 0, so
+    boot pids keep their historical
+    values; every REUSE bumps the
+    slot's generation, so a pid
+    printed by Proc:, recorded as a
+    spawner, or badged onto a process
+    cap can never name a later
+    occupant of the same slot. The
+    generation array lives OUTSIDE the
+    PCB (Initialize_Process overwrites
+    the whole record) and wraps at
+    2**23 (pid stays in 31-bit
+    Natural; ABA needs 8M reuses of
+    one slot — same class as Unix pid
+    wrap). Thread ids left slot-
+    derived (no identity consumer
+    today). The m37a "pid aliases
+    across reuse" acceptance is
+    CLOSED. Fuzz: spawn -> reap ->
+    spawn lands both teardown "X 0"
+    peers in the same slot (the free
+    list is LIFO and nothing else
+    spawns in the window), checks the
+    low byte encodes the slot base
+    and pid2 = pid1 + 256 exactly.
+    Latent nit logged, not fixed: the
+    m37a "out-of-range slot" probe
+    uses slot 32, which is a VALID
+    index since the 128-slot bump —
+    it passes only because slot 32 is
+    empty at that point (status 1 =
+    empty AND end-of-enumeration);
+    a real out-of-range probe wants
+    slot >= 128. 795 PASS SMP1+SMP4,
+    failures=0, fsck clean, qemu
+    exits 0 on both.
+    MILESTONE 51 COMPLETE. Next: the
+    deferred list — Proc:self (needs
+    client identity through the VFS),
+    register fast path (probe first),
+    custom GNAT runtime, virtio-net,
+    MSI-X, true scheduler priorities;
+    shell groups: job control, clock.
+
 Commit between each milestone.
 
 ## Deferred (do not build yet)

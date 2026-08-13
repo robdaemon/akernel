@@ -240,6 +240,9 @@ QEMU virt RAM base:     0x80000000
   write-behind / Blk_Flush=4 (driven by
   fat32 Op_Sync via partmgr), and
   negotiates VIRTIO_BLK_F_FLUSH.
+  Milestone 51 added pid generations
+  (pid = gen*256 + slot base; slot
+  reuse never reissues a pid).
   Milestone 50 shipped clean shutdown:
   Sys_System_Reset (admin-gated) ->
   SBI SRST; System/Shutdown +
