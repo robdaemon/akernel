@@ -1,30 +1,26 @@
 # Resume prompt (next session)
 
 ```text
-MILESTONE 53a SHIPPED (full GNAT RTS for userspace: ZCX
-exceptions + finalization + secondary stack + binder
-init/final over the vendored embedded-polarfiresoc libgnat).
-Read docs/NEXT.md (milestone log + burns — the 53a entry has
-the full saga: m1-latent heap down-merge fix, executable
-user stacks for GNAT trampolines, 8-sector FAT clusters for
-staging speed), docs/STATE.md, docs/IPC.md.
+MILESTONE 53b SHIPPED (newlib for userspace + FULL
+Ada.Text_IO/Stream_IO/Sequential_IO/Direct_IO: Gloss syscall
+layer in Ada over Files/Console, GROUP(-lc -lm) in the
+linker script + -Wl,-u,_sbrk, gnat_full/ vendored from
+gcc-15.3.0 + C support layer, _sbrk arena 0x5200_0000).
+859/859 PASS SMP1/SMP4, 350/100 s. Read docs/NEXT.md (53b
+entry has the link-order burns: Linker_Options dropped by
+gprbuild, no _r spellings — libc has them, adaint STANDALONE
++ minimal runtime.h, ada_source_path must list gnat_full),
+docs/STATE.md, docs/IPC.md.
 
-NEXT MILESTONE: 53b — newlib for userspace (~18 syscall
-stubs: _open/_read/_write/_close/_sbrk/_fstat... over
-Akernel_User.Files/Console; link -lc -lm; FULL Text_IO/
-Stream_IO/Sequential_IO/Direct_IO + libm numerics UNMODIFIED
-— those units are NOT in the embedded pool, fetch the
-gcc-15.3.1 tarball and vendor them). newlib _sbrk gets its
-OWN VA arena (not the 0x4000_0000 heap). User ruling: newlib
-is needed for FreeType/libpng later. THEN 53c:
-Ada.Environment_Variables->ENV:, Ada.Command_Line->args
-page, Ada.Directories->fs; migrate existing programs off the
-raw syscall RTS. Deferred-not-rejected: dynamic linking
-(medany vs medpic question lives there), tasking (kernel
-thread-spawn + futex + TLS + s-taprop), Calendar (RTC),
-Sockets (virtio-net).
+NEXT MILESTONE: 53c — Ada.Environment_Variables->ENV:,
+Ada.Command_Line->args page, Ada.Directories->fs Op_ReadDir
+(replace AKERNEL_NO_DIRENT stubs), gloss getcwd/chdir->
+ENV:CWD; migrate existing programs off raw syscall RTS onto
+Text_IO/CLI. Deferred-not-rejected: dynamic linking (medany
+vs medpic), tasking (thread-spawn + futex + TLS + s-taprop),
+Calendar (RTC), Sockets (virtio-net).
 
-CURRENT SESSION STATE (53a SHIPPED):
+CURRENT SESSION STATE (53b SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).

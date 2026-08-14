@@ -20,7 +20,17 @@ abstract project Akernel_Program is
    for Create_Missing_Dirs use "True";
 
    package Linker is
+      --  Milestone 53b: newlib comes in via GROUP(-lc -lm) in
+      --  the linker script (gprbuild drops Linker'Linker_Options
+      --  silently and plain Switches land before the runtime libs
+      --  on the single-pass link line — the 53b link burn). The
+      --  -u forces ld to treat _sbrk as undefined from the start
+      --  so Akernel_User.Gloss (the syscall layer libc calls) is
+      --  pulled from libakernel_user.a even though no program
+      --  source names it; pulling it through the script GROUP
+      --  stranded its libgnat references.
       for Switches ("Ada") use
-        ("-T", Akernel_RTS'Project_Dir & "/akernel/linker-riscv64.ld");
+        ("-T", Akernel_RTS'Project_Dir & "/akernel/linker-riscv64.ld",
+         "-Wl,-u,_sbrk");
    end Linker;
 end Akernel_Program;

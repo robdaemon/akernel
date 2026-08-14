@@ -2234,6 +2234,112 @@ Next candidates (order open):
     SMP1/SMP4, failures=0, fsck
     clean (72 files), qemu exits 0,
     430 s SMP1 / 75 s SMP4.
+    53b SHIPPED — newlib for userspace
+    + full Ada file I/O. The Alire
+    toolchain already ships prebuilt
+    newlib (libc.a/libm.a + headers,
+    no libgloss), so: (1) the syscall
+    layer is Akernel_User.Gloss, in
+    ADA inside libakernel_user.a —
+    _open/_read/_write/_close/_lseek/
+    _fstat/_isatty/_sbrk/_exit/_stat/
+    _unlink/_mkdir/_rename/getpid/
+    gettimeofday/times real over
+    Files/Console/Process_Exit, fork/
+    exec/wait/kill/link/dup/symlink/
+    chdir ENOSYS stubs, rmdir/access/
+    getcwd/getppid/chmod/ttyname/
+    sysconf/utimensat partial. fds
+    0-2 = console (stdin EOF), 3-18
+    = path+offset table over the
+    stateless fs protocol; O_CREAT =
+    1-byte write + truncate (fs
+    creates on Op_Write, zero-length
+    writes rejected client-side);
+    stdout rides Console.Put so
+    shell redirection composes.
+    Lazy binding: first op binds
+    uniform-ABI handles 1/2 ONLY if
+    the program bound nothing itself
+    — gloss.o is ld-u-pulled, never
+    elaborated (not in the compile
+    closure), and must not clobber
+    custom grant layouts (fuzz keeps
+    fs on 4). _sbrk arena at
+    0x5200_0000 (16 x 256 KiB memobj
+    chunks) — libgcc frame-reg
+    malloc now lands there via
+    newlib malloc; the GNAT heap
+    stays untouched. (2) gnat_full/
+    vendors the full I/O stack from
+    the gcc-15.3.0 tarball (the
+    toolchain is FSF 15.3.0 — Alire
+    labels it 15.3.1): Text_IO +
+    Integer/Float/Modular/
+    Enumeration/Decimal_IO children
+    (+aux/get_line subunit),
+    Stream_IO, Sequential_IO,
+    Direct_IO, s-fileio/s-crtl/
+    s-ficobl/i-cstrea/s-os_lib/
+    s-casutil/s-commun/s-direio/
+    s-sequio/s-image[bdiurw]/
+    s-img[biu/llb/llw/lls/uns], plus
+    the C support layer adaint.c/
+    cstreams.c/sysdep.c/targext.c/
+    errno.c/env.c (STANDALONE build,
+    minimal runtime.h, dir ops
+    stubbed under AKERNEL_NO_DIRENT
+    — newlib has no <dirent.h>;
+    Ada.Directories gets fs
+    Op_ReadDir in 53c; utime/
+    clearenv no-oped; adaint-xi.c
+    duplicate guarded). (3) Link
+    wiring: GROUP(-lc -lm) in the
+    linker script (gprbuild DROPS
+    Linker'Linker_Options silently;
+    Switches land before the
+    runtime libs and single-pass ld
+    then misses libgnat/libgcc's
+    malloc/strcmp refs) +
+    -Wl,-u,_sbrk to force gloss.o
+    in (pulling it through the
+    script GROUP stranded its
+    libgnat refs). glue.c/runtime_
+    stubs shed every libc shim
+    (malloc/free/strlen/mem*/
+    strcmp) — libc.a provides them;
+    __gnat_getenv moved to env.c.
+    crt0 now calls
+    __libc_init_array and EXITS
+    with main's status instead of
+    yield-parking; init_array
+    sections KEEPed. pool stub
+    a-textio deleted; ada_source_
+    path gained gnat_full (the
+    "not a predefined library unit"
+    burn). fuzz: +2 checks (Text_IO
+    create/Put_Line/open/Get_Line
+    round trip on BD0:FZTIO.TXT +
+    delete; stdout Put_Line rides
+    the console). 859/859 PASS
+    SMP1/SMP4, failures=0, fsck
+    clean, 350 s / 100 s. Latent
+    nit: an unhandled-exception
+    LCH traceback print wedged
+    after "Call stack traceback
+    locations:" once — unprobed,
+    no test crashes remain to
+    chase it with. MILESTONE 53b
+    COMPLETE. Next: 53c —
+    Ada.Environment_Variables->
+    ENV:, Ada.Command_Line->args
+    page, Ada.Directories->fs
+    Op_ReadDir, getcwd/chdir->
+    ENV:CWD; migrate programs off
+    raw syscalls. Later: tasking,
+    RTC/Calendar, virtio-net,
+    dynamic linking.
+
     MILESTONE 53a COMPLETE. Burns
     for the ages: gprbuild does NOT
     track libgnat.a — rm -rf

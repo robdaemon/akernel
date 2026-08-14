@@ -1,34 +1,8 @@
 .section .text, "ax"
 
-.global memcpy
-.type memcpy, @function
-memcpy:
-    mv t0, a0
-    beqz a2, 2f
-1:
-    lb t1, 0(a1)
-    sb t1, 0(t0)
-    addi t0, t0, 1
-    addi a1, a1, 1
-    addi a2, a2, -1
-    bnez a2, 1b
-2:
-    ret
-.size memcpy, . - memcpy
-
-.global memset
-.type memset, @function
-memset:
-    mv t0, a0
-    beqz a2, 2f
-1:
-    sb a1, 0(t0)
-    addi t0, t0, 1
-    addi a2, a2, -1
-    bnez a2, 1b
-2:
-    ret
-.size memset, . - memset
+/*  memcpy/memset shims deleted in milestone 53b: newlib (-lc)
+ *  provides them and libc.a is processed before this archive on
+ *  the link line — duplicates. */
 
 .global akernel_mmio_read8
 .type akernel_mmio_read8, @function

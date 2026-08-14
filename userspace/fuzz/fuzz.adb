@@ -5,6 +5,7 @@ with Ada.Unchecked_Deallocation;
 with Ada.Exceptions;
 with Ada.Finalization;
 with Ada.Real_Time;
+with Ada.Text_IO;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.Files;
@@ -2789,6 +2790,40 @@ begin
                    "unhandled exception kills the process (last chance)");
          end;
          end if;
+      end;
+
+      --  Milestone 53b proof: full Ada.Text_IO over newlib stdio
+      --  over the Gloss syscall layer (_open/_read/_write -> fs
+      --  endpoint, stdout -> console endpoint). Create + Put_Line,
+      --  reopen, Get_Line, compare; stdout Put_Line rides Console
+      --  (visible in the log, unasserted).
+      declare
+         TIO_Ok   : Boolean := False;
+         TIO_Line : String (1 .. 64) := (others => ' ');
+         TIO_Last : Natural := 0;
+         Marker   : constant String := "text io round trip marker";
+      begin
+         declare
+            F : Ada.Text_IO.File_Type;
+         begin
+            Ada.Text_IO.Create (F, Ada.Text_IO.Out_File,
+                                "BD0:FZTIO.TXT");
+            Ada.Text_IO.Put_Line (F, Marker);
+            Ada.Text_IO.Put_Line (F, "second line");
+            Ada.Text_IO.Close (F);
+            Ada.Text_IO.Open (F, Ada.Text_IO.In_File,
+                              "BD0:FZTIO.TXT");
+            Ada.Text_IO.Get_Line (F, TIO_Line, TIO_Last);
+            TIO_Ok := TIO_Last = Marker'Length
+              and then TIO_Line (1 .. TIO_Last) = Marker;
+            Ada.Text_IO.Close (F);
+            Ada.Text_IO.Put_Line
+              ("fuzz: text_io stdout rides the console");
+         end;
+         Check (TIO_Ok, "Text_IO create/write/read round trip");
+         Status := Akernel_User.Files.Delete ("BD0:FZTIO.TXT");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "Text_IO test file deleted");
       end;
 
       --  C: commands end-to-end (milestone 41a): Sys:C/Info is

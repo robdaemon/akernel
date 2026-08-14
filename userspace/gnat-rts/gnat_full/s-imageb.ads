@@ -2,9 +2,9 @@
 --                                                                          --
 --                         GNAT RUN-TIME COMPONENTS                         --
 --                                                                          --
---                          A D A . T E X T _ I O                           --
+--                       S Y S T E M . I M A G E _ B                        --
 --                                                                          --
---                                 B o d y                                  --
+--                                 S p e c                                  --
 --                                                                          --
 --          Copyright (C) 1992-2025, Free Software Foundation, Inc.         --
 --                                                                          --
@@ -29,73 +29,48 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Version for use with zero foot print run time
+--  Contains the routine for computing the image in based format of signed and
+--  unsigned integers for use by ``Text_IO.Integer_IO`` and
+--  ``Text_IO.Modular_IO``.
 
-with System.Text_IO; use System.Text_IO;
+generic
 
-package body Ada.Text_IO with
-  SPARK_Mode => Off,
-  Refined_State => (File_System => null)
-is
+   type Int is range <>;
 
-   ---------
-   -- Get --
-   ---------
+   type Uns is mod <>;
 
-   procedure Get (C : out Character) is
-   begin
-      while not Is_Rx_Ready loop
-         null;
-      end loop;
+package System.Image_B is
+   pragma Pure;
 
-      C := System.Text_IO.Get;
-   end Get;
+   procedure Set_Image_Based_Integer
+     (V : Int;
+      B : Natural;
+      W : Integer;
+      S : out String;
+      P : in out Natural);
+   --  Sets the signed image of V in based format, using base value B (2..16)
+   --  starting at S (P + 1), updating P to point to the last character stored.
+   --  The image includes a leading minus sign if necessary, but no leading
+   --  spaces unless W is positive, in which case leading spaces are output if
+   --  necessary to ensure that the output string is no less than W characters
+   --  long. The caller promises that the buffer is large enough and no check
+   --  is made for this. Constraint_Error will not necessarily be raised if
+   --  this is violated, since it is perfectly valid to compile this unit with
+   --  checks off.
 
-   --------------
-   -- New_Line --
-   --------------
+   procedure Set_Image_Based_Unsigned
+     (V : Uns;
+      B : Natural;
+      W : Integer;
+      S : out String;
+      P : in out Natural);
+   --  Sets the unsigned image of V in based format, using base value B (2..16)
+   --  starting at S (P + 1), updating P to point to the last character stored.
+   --  The image includes no leading spaces unless W is positive, in which case
+   --  leading spaces are output if necessary to ensure that the output string
+   --  is no less than W characters long. The caller promises that the buffer
+   --  is large enough and no check is made for this. Constraint_Error will not
+   --  necessarily be raised if this is violated, since it is perfectly valid
+   --  to compile this unit with checks off).
 
-   procedure New_Line is
-   begin
-      if Use_Cr_Lf_For_New_Line then
-         Put (ASCII.CR);
-      end if;
-
-      Put (ASCII.LF);
-   end New_Line;
-
-   ---------
-   -- Put --
-   ---------
-
-   procedure Put (Item : Character) is
-   begin
-      while not Is_Tx_Ready loop
-         null;
-      end loop;
-
-      System.Text_IO.Put (Item);
-   end Put;
-
-   procedure Put (Item : String) is
-   begin
-      for J in Item'Range loop
-         Put (Item (J));
-      end loop;
-   end Put;
-
-   --------------
-   -- Put_Line --
-   --------------
-
-   procedure Put_Line (Item : String) is
-   begin
-      Put (Item);
-      New_Line;
-   end Put_Line;
-
-begin
-   if not Initialized then
-      Initialize;
-   end if;
-end Ada.Text_IO;
+end System.Image_B;
