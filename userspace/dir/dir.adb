@@ -1,55 +1,56 @@
+with Ada.Command_Line;
+with Ada.Directories;
+with Ada.Text_IO;
 with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
 
 --  Dir: list a directory (milestone 32; the Amiga C:Dir analog —
---  lives in Sys:C/Dir). Spawned by the shell under the uniform
---  program ABI: 1 = console stream (Send), 2 = file server
---  (Send), 3 = Bureau svc (unused; Dir opens no window).
+--  lives in Sys:C/Dir). No argument lists the CURRENT DIRECTORY
+--  (milestone 44 — the Amiga semantic); "Dir <path>" lists that
+--  directory, resolved against the cwd. Directories print with
+--  a "(dir)" tag; files with their byte size.
 --
---  No argument lists the CURRENT DIRECTORY (milestone 44 — the
---  Amiga semantic; pre-cwd this listed the default volume
---  root); "Dir <path>" lists that directory, resolved against
---  the cwd. Directories print with a "(dir)" tag; files with
---  their byte size. Enumeration is stateless: entry index 0..
---  until the file protocol says Not_Found.
+--  Milestone 54: standard library — Ada.Directories.Start_Search
+--  walks the directory (adaint -> gloss akernel_opendir/readdir
+--  -> fs Op_ReadDir); the walk raises Name_Error/Use_Error on an
+--  unreadable directory, which maps to the old "can't open".
+--  An empty directory keeps the historical quirk of reporting
+--  failure (zero entries == can't open, milestone 32 semantics).
 
 procedure Dir is
    package CLI renames Akernel_User.CLI;
-   use type CLI.U64;
-
-   Name     : String (1 .. 24);
-   Name_Len : Natural;
-   Is_Dir   : Boolean;
-   Size     : CLI.U64;
-   St       : CLI.U64;
-   Index    : CLI.U64 := 0;
+   package Dirs renames Ada.Directories;
+   use type Dirs.File_Kind;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   Akernel_User.Files.Bind (2);
+   CLI.Init;
 
    declare
-      Path : constant String :=
-        (if CLI.Arg_Count = 0 then CLI.Get_Cwd
-         else CLI.Resolve_Path (CLI.Argument (1)));
+      Path   : constant String :=
+        (if Ada.Command_Line.Argument_Count = 0 then CLI.Get_Cwd
+         else CLI.Resolve_Path (Ada.Command_Line.Argument (1)));
+      Search : Dirs.Search_Type;
+      Ent    : Dirs.Directory_Entry_Type;
+      N      : Natural := 0;
    begin
-      loop
-         St := Akernel_User.Files.Read_Dir
-           (Path, Index, Name, Name_Len, Is_Dir, Size);
-         exit when St /= Akernel_User.Files.Status_Ok;
-         if Is_Dir then
-            Akernel_User.Console.Put_Line
-              ("  " & Name (1 .. Name_Len) & "  (dir)");
+      Dirs.Start_Search (Search, Path, "*");
+      while Dirs.More_Entries (Search) loop
+         Dirs.Get_Next_Entry (Search, Ent);
+         if Dirs.Kind (Ent) = Dirs.Directory then
+            Ada.Text_IO.Put_Line
+              ("  " & Dirs.Simple_Name (Ent) & "  (dir)");
          else
-            Akernel_User.Console.Put_Line
-              ("  " & Name (1 .. Name_Len) & " " & Size'Image);
+            Ada.Text_IO.Put_Line
+              ("  " & Dirs.Simple_Name (Ent) & Dirs.Size (Ent)'Image);
          end if;
-         Index := Index + 1;
+         N := N + 1;
       end loop;
+      Dirs.End_Search (Search);
 
-      if Index = 0 then
+      if N = 0 then
          CLI.Fail_With ("Dir: can't open " & Path, CLI.RC_Error);
       end if;
+   exception
+      when Dirs.Name_Error | Dirs.Use_Error =>
+         CLI.Fail_With ("Dir: can't open " & Path, CLI.RC_Error);
    end;
 
    CLI.Exit_With (CLI.RC_Ok);

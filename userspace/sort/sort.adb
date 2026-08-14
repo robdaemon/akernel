@@ -1,5 +1,6 @@
 with Interfaces;
 with System;
+with Ada.Text_IO;
 with Akernel_User.CLI;
 with Akernel_User.Console;
 with Akernel_User.Files;
@@ -10,7 +11,10 @@ with Akernel_User.Files;
 --  (a trailing partial line gains its LF). With NO arguments
 --  (milestone 46b) Sort reads stdin and writes stdout — the
 --  pipeline filter mode: "producer | Sort" and "Sort < in >
---  out" both ride the args-page redirection trailer. The
+--  out" both ride the args-page redirection trailer.
+--  Milestone 54: filter-mode stdout is Ada.Text_IO (rides the
+--  console, redirect composes); stdin stays CLI.Get_Line (the
+--  redirect-in trailer lives in CLI, gloss can't see it). The
 --  input is slurped through the heap (1 MiB cap — the RTS
 --  heap total is 2 MiB); insertion
 --  sort — data-command inputs are small.
@@ -132,10 +136,10 @@ procedure Sort is
                      S (Natural (K) + 1) :=
                        Character'Val (Natural (Buf (L.Start + Off + K)));
                   end loop;
-                  Akernel_User.Console.Put (S (1 .. Natural (Seg)));
+                  Ada.Text_IO.Put (S (1 .. Natural (Seg)));
                   Off := Off + Seg;
                end loop;
-               Akernel_User.Console.Put ((1 => Character'Val (10)));
+               Ada.Text_IO.New_Line;
             end;
          end loop;
          return;

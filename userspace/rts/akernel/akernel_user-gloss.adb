@@ -621,7 +621,12 @@ package body Akernel_User.Gloss is
       begin
          St := Files.Read
            (F.Path (1 .. F.Path_Len), F.Offset, Buf, N, Count);
-         if St /= Files.Status_Ok then
+         if St = Files.Status_Out_Of_Range then
+            return 0;  --  past-EOF read = POSIX EOF (m54:
+                       --  newlib treats -1 as ferror and GNAT's
+                       --  Getc then raises Device_Error instead of
+                       --  a clean End_Of_File)
+         elsif St /= Files.Status_Ok then
             Fail (ENOENT);
             return -1;
          end if;

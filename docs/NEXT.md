@@ -2426,7 +2426,70 @@ Next candidates (order open):
     raise on legacy content).
     878/878 PASS SMP1/SMP4,
     failures=0, fsck clean, 375 s /
-    95 s. MILESTONE 53c COMPLETE.
+    95 s.     54 SHIPPED — the Sys:C command
+    set migrates onto the standard
+    library. Delete/MakeDir/Rename/CD
+    ride Ada.Directories (Delete_File
+    / Create_Directory / Rename /
+    Set_Directory + Current_Directory;
+    exceptions map to the Amiga RC
+    codes); Dir/List ride Start_Search
+    + Simple_Name/Kind/Size; Type/
+    Search stream Ada.Text_IO Get_Line
+    (Search shed its heap slurp and
+    2 MiB file cap; Type KEEPS the raw
+    Read_Args line — paths may contain
+    spaces, unlike argv tokens);
+    Copy/Join ride Ada.Streams.
+    Stream_IO Create/Open/Read/Write
+    (Create truncates — the old
+    Stat+Truncate dance is gone;
+    32 KiB chunk buffers on the HEAP,
+    never the 12-page stack); Sort's
+    filter-mode stdout is Text_IO
+    (stdin STAYS CLI.Get_Line — the
+    redirect-in trailer lives in CLI
+    state, gloss can't see it). All
+    keep CLI.Init + CLI.Exit_With;
+    CLI.Init now ALSO lazy-binds the
+    default handles (console 1, fs 2)
+    with the gloss Ensure_Bound
+    no-clobber rule, so programs
+    dropped their Set_Endpoint/Bind
+    boilerplate; Fail_With flushes a
+    redirected tail before exiting.
+    THE burn of the milestone: a
+    past-EOF Files.Read answers
+    Status_Out_Of_Range (4), gloss
+    turned that into -1/ENOENT,
+    newlib set the sticky ferror
+    flag, and GNAT's Getc raised
+    DEVICE_ERROR (a-textio:870)
+    instead of a clean End_Of_File
+    — every Text_IO read-loop over a
+    file died after its last full
+    buffer. One-line POSIX bridge in
+    gloss _read: Out_Of_Range =>
+    return 0. Found with a 20-line
+    temp crate (rdtest: write 18
+    bytes, Text_IO loop, crash on
+    line 3) — 2-minute boot cycles
+    vs 6-minute suite bisection;
+    crate + Makefile wiring deleted
+    after the fix. 878/878 PASS
+    SMP1/SMP4, failures=0, fsck
+    clean, qemu exits 0, ~385 s /
+    100 s. MILESTONE 54 COMPLETE.
+    Next: 55 — Calendar over a real
+    RTC (gettimeofday is still
+    epoch), then the deferred list:
+    tasking (thread-spawn + futex +
+    TLS + s-taprop), virtio-net,
+    dynamic linking (medany vs
+    medpic).
+
+    MILESTONE 53c
+    COMPLETE.
     Next: 54 — migrate remaining
     Sys:C commands onto Text_IO/
     CLI.Init/Ada.Command_Line where

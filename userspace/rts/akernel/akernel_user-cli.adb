@@ -120,6 +120,18 @@ package body Akernel_User.CLI is
 
    procedure Init is
    begin
+      --  Lazy default binding (milestone 54): same no-clobber
+      --  rule as the gloss Ensure_Bound — a program that bound
+      --  its own endpoint layout (fuzz) keeps it. Resolve_Path
+      --  reads ENV:CWD through Files, so the fs handle must be
+      --  live before any path touches it; programs no longer
+      --  bind handles 1/2 by hand.
+      if Console.Endpoint = 0 then
+         Console.Set_Endpoint (1);
+      end if;
+      if Files.Endpoint = 0 then
+         Files.Bind (2);
+      end if;
       Parse_Args;
    end Init;
 
@@ -358,6 +370,7 @@ package body Akernel_User.CLI is
    procedure Fail_With (Message : String; Code : U64 := RC_Error) is
    begin
       Console.Put_Line (Message);
+      Console.Close_Redirect;  --  flush a redirected tail (m54)
       Syscalls.Process_Exit (Code);
       loop
          Syscalls.Yield;  --  unreachable; keeps No_Return honest

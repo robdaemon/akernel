@@ -1,135 +1,54 @@
-with Interfaces;
-with System;
+with Ada.Command_Line;
+with Ada.Strings.Fixed;
+with Ada.Text_IO;
 with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
 
 --  Search: print the lines of a file containing a string
 --  (milestone 41c; the Amiga C:Search analog, grep-lite).
 --  "Search <file> <string>"; case-sensitive substring match,
---  matching lines print verbatim. The whole file is slurped
---  through the heap (the 2 MiB heap cap is the file size limit;
---  the process stack stays clear).
+--  matching lines print verbatim.
 --
---  Spawned by the shell under the uniform program ABI:
---  1 = console stream (Send), 2 = file server (Send).
+--  Milestone 54: standard library — the file streams through
+--  Ada.Text_IO.Get_Line (no more heap slurp, no 2 MiB file cap),
+--  matching is Ada.Strings.Fixed.Index, output is Put_Line
+--  (redirect composes through the console).
 
 procedure Search is
    package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
-   use type CLI.U64;
-
-   subtype U64 is CLI.U64;
-   subtype Byte is Interfaces.Unsigned_8;
-   type Byte_Array is array (U64 range <>) of Byte;
-   type Buf_Access is access Byte_Array;
-
-   Chunk : constant U64 := 32 * 1024;
-
-   function Contains
-     (Buf : Byte_Array; Lo, Hi : U64; Pat : String) return Boolean
-   is
-      use type Interfaces.Unsigned_8;
-   begin
-      if Pat'Length = 0 or else Hi - Lo + 1 < U64 (Pat'Length) then
-         return Pat'Length = 0;
-      end if;
-      for I in Lo .. Hi - U64 (Pat'Length) + 1 loop
-         declare
-            Hit : Boolean := True;
-         begin
-            for J in Pat'Range loop
-               if Buf (I + U64 (J - Pat'First)) /=
-                 Byte (Character'Pos (Pat (J)))
-               then
-                  Hit := False;
-                  exit;
-               end if;
-            end loop;
-            if Hit then
-               return True;
-            end if;
-         end;
-      end loop;
-      return False;
-   end Contains;
-
-   St   : U64;
-   Size : U64;
-   Buf  : Buf_Access;
+   Hits : Natural := 0;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   Files.Bind (2);
+   CLI.Init;
 
-   if CLI.Arg_Count /= 2 then
+   if Ada.Command_Line.Argument_Count /= 2 then
       CLI.Fail_With ("usage: Search <file> <string>", CLI.RC_Error);
    end if;
 
    declare
-      Src : constant String := CLI.Resolve_Path (CLI.Argument (1));
+      Src : constant String :=
+        CLI.Resolve_Path (Ada.Command_Line.Argument (1));
+      Pat : constant String := Ada.Command_Line.Argument (2);
+      F   : Ada.Text_IO.File_Type;
    begin
-   St := Files.Open (Src, Size);
-   if St /= Files.Status_Ok then
-      CLI.Fail_With
-        ("Search: can't open " & Src, CLI.RC_Error);
-   end if;
-
-   Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
-   declare
-      Off   : U64 := 0;
-      Count : U64;
-   begin
-      while Off < Size loop
-         St := Files.Read
-           (Src, Off, Buf.all'Address,
-            U64'Min (Chunk, Size - Off), Count);
-         if St /= Files.Status_Ok or else Count = 0 then
-            CLI.Fail_With ("Search: read failed", CLI.RC_Error);
-         end if;
-         Off := Off + Count;
-      end loop;
-   end;
-   end;
-
-   --  Walk LF-delimited lines; print the ones containing the
-   --  string.
-   declare
-      Pat  : constant String := CLI.Argument (2);
-      Lo   : U64 := 0;
-      Hits : Natural := 0;
-      Line : String (1 .. 1024);
-      LLen : Natural;
-      use type Interfaces.Unsigned_8;
-   begin
-      while Lo < Size loop
+      Ada.Text_IO.Open (F, Ada.Text_IO.In_File, Src);
+      while not Ada.Text_IO.End_Of_File (F) loop
          declare
-            Hi : U64 := Lo;
+            Line : constant String := Ada.Text_IO.Get_Line (F);
          begin
-            while Hi < Size
-              and then Buf (Hi) /= 10  --  ASCII.LF
-            loop
-               Hi := Hi + 1;
-            end loop;
-            if Hi - Lo <= U64 (Line'Length)
-              and then Contains (Buf.all, Lo,
-                                 (if Hi = Lo then Lo else Hi - 1),
-                                 Pat)
-            then
-               LLen := Natural (Hi - Lo);
-               for I in 0 .. LLen - 1 loop
-                  Line (I + 1) :=
-                    Character'Val (Natural (Buf (Lo + U64 (I))));
-               end loop;
-               Akernel_User.Console.Put_Line (Line (1 .. LLen));
+            if Ada.Strings.Fixed.Index (Line, Pat) > 0 then
+               Ada.Text_IO.Put_Line (Line);
                Hits := Hits + 1;
             end if;
-            Lo := Hi + 1;
          end;
       end loop;
-      if Hits = 0 then
-         Akernel_User.Console.Put_Line ("Search: no match");
-      end if;
+      Ada.Text_IO.Close (F);
+   exception
+      when Ada.Text_IO.Name_Error =>
+         CLI.Fail_With ("Search: can't open " & Src, CLI.RC_Error);
    end;
+
+   if Hits = 0 then
+      Ada.Text_IO.Put_Line ("Search: no match");
+   end if;
 
    CLI.Exit_With (CLI.RC_Ok);
 end Search;

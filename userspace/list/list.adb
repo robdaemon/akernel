@@ -1,7 +1,7 @@
-with Interfaces;
+with Ada.Command_Line;
+with Ada.Directories;
+with Ada.Text_IO;
 with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
 
 --  List: detailed directory listing (milestone 41c; the Amiga
 --  C:List analog). "List [<dir>]"; no argument lists the root of
@@ -10,69 +10,53 @@ with Akernel_User.Files;
 --  file protocol carries no timestamps (FAT dirents stamp the
 --  fixed 2025-01-01), so no date column yet.
 --
---  Spawned by the shell under the uniform program ABI:
---  1 = console stream (Send), 2 = file server (Send).
+--  Milestone 54: standard library — Ada.Directories.Start_Search
+--  (Op_ReadDir under the hood), Ada.Text_IO output. An empty or
+--  missing directory still prints the header; a missing one
+--  raises in Start_Search and exits RC_Error like before.
 
 procedure List is
    package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
-   use type CLI.U64;
+   package Dirs renames Ada.Directories;
+   use type Dirs.File_Kind;
 
-   subtype U64 is CLI.U64;
-
-   Name     : String (1 .. 24);
-   Name_Len : Natural;
-   Is_Dir   : Boolean;
-   Size     : U64;
-   St       : U64;
-   Index    : U64 := 0;
-
-   procedure Put_Size (S : U64) is
+   procedure Put_Size (S : Dirs.File_Size) is
       Img   : constant String := S'Image;  --  leading space
       Field : constant := 10;
       Pad   : constant Natural :=
         (if Img'Length - 1 >= Field then 1
          else Field - (Img'Length - 1));
    begin
-      Akernel_User.Console.Put (String'(1 .. Pad => ' '));
-      Akernel_User.Console.Put (Img (2 .. Img'Last));
+      Ada.Text_IO.Put (String'(1 .. Pad => ' '));
+      Ada.Text_IO.Put (Img (2 .. Img'Last));
    end Put_Size;
 
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   Files.Bind (2);
+   CLI.Init;
 
    declare
-      Path : constant String :=
-        (if CLI.Arg_Count = 0 then "BD0:"
-         else CLI.Resolve_Path (CLI.Argument (1)));
-      Probe_Size : U64;
+      Path   : constant String :=
+        (if Ada.Command_Line.Argument_Count = 0 then "BD0:"
+         else CLI.Resolve_Path (Ada.Command_Line.Argument (1)));
+      Search : Dirs.Search_Type;
+      Ent    : Dirs.Directory_Entry_Type;
    begin
-      --  Read_Dir answers Not_Found both for a missing path and
-      --  for an exhausted enumeration, so probe first: a missing
-      --  directory must exit RC_Error, not list empty.
-      St := Files.Stat (Path, Probe_Size);
-      if St = Files.Status_Not_Found then
-         CLI.Fail_With ("List: can't read " & Path, CLI.RC_Error);
-      end if;
-      Akernel_User.Console.Put_Line ("Directory """ & Path & """:");
-      loop
-         St := Files.Read_Dir
-           (Path, Index, Name, Name_Len, Is_Dir, Size);
-         exit when St = Files.Status_Not_Found;
-         if St /= Files.Status_Ok then
-            CLI.Fail_With ("List: can't read " & Path,
-                           CLI.RC_Error);
-         end if;
-         Akernel_User.Console.Put (Name (1 .. Name_Len));
-         if Is_Dir then
-            Akernel_User.Console.Put_Line ("             (dir)");
+      Dirs.Start_Search (Search, Path, "*");
+      Ada.Text_IO.Put_Line ("Directory """ & Path & """:");
+      while Dirs.More_Entries (Search) loop
+         Dirs.Get_Next_Entry (Search, Ent);
+         Ada.Text_IO.Put (Dirs.Simple_Name (Ent));
+         if Dirs.Kind (Ent) = Dirs.Directory then
+            Ada.Text_IO.Put_Line ("             (dir)");
          else
-            Put_Size (Size);
-            Akernel_User.Console.Put_Line ("");
+            Put_Size (Dirs.Size (Ent));
+            Ada.Text_IO.New_Line;
          end if;
-         Index := Index + 1;
       end loop;
+      Dirs.End_Search (Search);
+   exception
+      when Dirs.Name_Error | Dirs.Use_Error =>
+         CLI.Fail_With ("List: can't read " & Path, CLI.RC_Error);
    end;
 
    CLI.Exit_With (CLI.RC_Ok);

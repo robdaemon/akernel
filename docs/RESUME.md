@@ -1,27 +1,23 @@
-# Resume prompt (next session)
+MILESTONE 54 SHIPPED (Sys:C commands on the standard
+library: Delete/MakeDir/Rename/CD -> Ada.Directories,
+Dir/List -> Start_Search, Type/Search -> Text_IO Get_Line,
+Copy/Join -> Stream_IO, Sort filter stdout -> Text_IO;
+CLI.Init lazy-binds handles 1/2 no-clobber). 878/878 PASS
+SMP1/SMP4, 385/100 s, fsck clean. Read docs/NEXT.md (54
+entry: THE burn — past-EOF Files.Read = Status_Out_Of_Range,
+gloss mapped it to -1, newlib sticky ferror, GNAT Getc raised
+Device_Error at End_Of_File instead of clean EOF; gloss _read
+now maps Out_Of_Range to 0; temp-crate repro cycle 2 min vs
+suite bisect 6 min), docs/STATE.md, docs/IPC.md.
 
-```text
-MILESTONE 53c SHIPPED (Ada.Environment_Variables->ENV:
-files, Ada.Command_Line->args page via crt0+argv.c,
-Ada.Directories->Op_ReadDir with dir-aware stat, gloss
-getcwd/chdir->ENV:CWD with Amiga-style relative-path
-qualification; Sys:C/Echo migrated to the standard library
-as proof). 878/878 PASS SMP1/SMP4, 375/95 s, fsck clean.
-Read docs/NEXT.md (53c entry: the two POSIX-shape patches —
-__gnat_is_absolute_path and Dir_Seps += ':' — the
-"Sys:/Sys:" Normalize burn, the Compose("BD0:") zero-entry
-Search burn, s-soflin spec shadow for Dummy_Communication_
-Block, CLI.Init for redirect-trailer parsing without CLI
-args), docs/STATE.md, docs/IPC.md.
+NEXT MILESTONE: 55 — Calendar over a real RTC (Ada.Calendar
++ Formatting are vendored since 53c but gettimeofday returns
+epoch; wire an RTC source — virtio or goldfish RTC — into
+gloss _gettimeofday). Then the deferred list: tasking
+(thread-spawn + futex + TLS + s-taprop), virtio-net, dynamic
+linking (medany vs medpic).
 
-NEXT MILESTONE: 54 — migrate remaining Sys:C commands onto
-Text_IO/CLI.Init/Ada.Command_Line where it pays (keep
-CLI.Exit_With for redirects); Calendar needs a real RTC
-(gettimeofday is epoch); then the deferred list: tasking
-(thread-spawn + futex + TLS + s-taprop), virtio-net,
-dynamic linking (medany vs medpic).
-
-CURRENT SESSION STATE (53c SHIPPED):
+CURRENT SESSION STATE (54 SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).
