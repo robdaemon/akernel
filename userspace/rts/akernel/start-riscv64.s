@@ -7,6 +7,9 @@ _start:
     lla gp, __global_pointer$
     .option pop
     call akernel_register_frames
+    /*  53c: tokenize the args page into gnat_argc/gnat_argv (argv.c)
+        for Ada.Command_Line. */
+    call akernel_init_args
     /*  newlib (milestone 53b): run preinit/init arrays (and _init)
         before main so libc's constructor machinery is up. */
     call __libc_init_array

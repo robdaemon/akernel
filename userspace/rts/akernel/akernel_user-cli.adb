@@ -118,6 +118,11 @@ package body Akernel_User.CLI is
       return Tok_Count;
    end Arg_Count;
 
+   procedure Init is
+   begin
+      Parse_Args;
+   end Init;
+
    function Argument (Index : Positive) return String is
    begin
       Parse_Args;

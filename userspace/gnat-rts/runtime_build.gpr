@@ -41,7 +41,7 @@ project Runtime_Build is
    COMFLAGS := ("-ffunction-sections", "-fdata-sections", "-O2");
    ADAFLAGS := ("-gnatg", "-nostdinc", "-fno-delete-null-pointer-checks",
                 "-gnatp", "-gnatn2") & COMFLAGS;
-   CFLAGS   := ("-DIN_RTS", "-DSTANDALONE", "-Dinhibit_libc", "-DAKERNEL_NO_DIRENT", "-DAKERNEL_NO_UTIME",
+   CFLAGS   := ("-DIN_RTS", "-DSTANDALONE", "-Dinhibit_libc", "-DAKERNEL_NO_DIRENT", "-DAKERNEL_ENV_FILES", "-DAKERNEL_NO_UTIME",
                 "-Werror", "-Wall")
                & COMFLAGS;
 
@@ -62,5 +62,7 @@ project Runtime_Build is
       for Switches ("targext.c") use CFLAGS & ("-Wno-error");
       for Switches ("errno.c") use CFLAGS & ("-Wno-error");
       for Switches ("env.c") use CFLAGS & ("-Wno-error");
+      for Switches ("argv.c") use CFLAGS & ("-Wno-error");
+      for Switches ("cal.c") use CFLAGS & ("-Wno-error");
    end Compiler;
 end Runtime_Build;

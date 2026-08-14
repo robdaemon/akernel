@@ -1,26 +1,27 @@
 # Resume prompt (next session)
 
 ```text
-MILESTONE 53b SHIPPED (newlib for userspace + FULL
-Ada.Text_IO/Stream_IO/Sequential_IO/Direct_IO: Gloss syscall
-layer in Ada over Files/Console, GROUP(-lc -lm) in the
-linker script + -Wl,-u,_sbrk, gnat_full/ vendored from
-gcc-15.3.0 + C support layer, _sbrk arena 0x5200_0000).
-859/859 PASS SMP1/SMP4, 350/100 s. Read docs/NEXT.md (53b
-entry has the link-order burns: Linker_Options dropped by
-gprbuild, no _r spellings — libc has them, adaint STANDALONE
-+ minimal runtime.h, ada_source_path must list gnat_full),
-docs/STATE.md, docs/IPC.md.
+MILESTONE 53c SHIPPED (Ada.Environment_Variables->ENV:
+files, Ada.Command_Line->args page via crt0+argv.c,
+Ada.Directories->Op_ReadDir with dir-aware stat, gloss
+getcwd/chdir->ENV:CWD with Amiga-style relative-path
+qualification; Sys:C/Echo migrated to the standard library
+as proof). 878/878 PASS SMP1/SMP4, 375/95 s, fsck clean.
+Read docs/NEXT.md (53c entry: the two POSIX-shape patches —
+__gnat_is_absolute_path and Dir_Seps += ':' — the
+"Sys:/Sys:" Normalize burn, the Compose("BD0:") zero-entry
+Search burn, s-soflin spec shadow for Dummy_Communication_
+Block, CLI.Init for redirect-trailer parsing without CLI
+args), docs/STATE.md, docs/IPC.md.
 
-NEXT MILESTONE: 53c — Ada.Environment_Variables->ENV:,
-Ada.Command_Line->args page, Ada.Directories->fs Op_ReadDir
-(replace AKERNEL_NO_DIRENT stubs), gloss getcwd/chdir->
-ENV:CWD; migrate existing programs off raw syscall RTS onto
-Text_IO/CLI. Deferred-not-rejected: dynamic linking (medany
-vs medpic), tasking (thread-spawn + futex + TLS + s-taprop),
-Calendar (RTC), Sockets (virtio-net).
+NEXT MILESTONE: 54 — migrate remaining Sys:C commands onto
+Text_IO/CLI.Init/Ada.Command_Line where it pays (keep
+CLI.Exit_With for redirects); Calendar needs a real RTC
+(gettimeofday is epoch); then the deferred list: tasking
+(thread-spawn + futex + TLS + s-taprop), virtio-net,
+dynamic linking (medany vs medpic).
 
-CURRENT SESSION STATE (53b SHIPPED):
+CURRENT SESSION STATE (53c SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).

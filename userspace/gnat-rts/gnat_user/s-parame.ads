@@ -168,6 +168,10 @@ package System.Parameters is
    ------------------------------
 
    Default_Exception_Msg_Max_Length : constant := 200;
+
+   --  53c: newlib rv64 time_t is 64-bit; needed by the vendored
+   --  s-osprim (Calendar chain).
+   time_t_bits : constant := Long_Long_Integer'Size;
    --  This constant specifies the default number of characters to allow
    --  in an exception message (200 is minimum required by RM 11.4.1(18)).
 

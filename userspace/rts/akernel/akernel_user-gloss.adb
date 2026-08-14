@@ -2,6 +2,7 @@ with System;
 with System.Storage_Elements;  use System.Storage_Elements;
 with Interfaces.C;
 with Interfaces.C.Strings;
+with Ada.Unchecked_Conversion;
 with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
@@ -140,6 +141,308 @@ package body Akernel_User.Gloss is
    end Ensure_Bound;
 
    ----------------------------------------------------------------------
+   --  53c: cwd (ENV:CWD), environment (ENV:<NAME>), directory walks
+   --  (fs Op_ReadDir) and the Ada.Command_Line argv bridge. The
+   --  env/dir ops are C-exported for the vendored C support layer
+   --  (env.c, adaint.c); akernel_init_args runs from crt0.
+
+   --  ENV:CWD holds the session cwd string (m42 convention; "Sys:"
+   --  when unset). Relative newlib paths qualify against it
+   --  Amiga-style: "<cwd><name>" when the cwd ends at the volume
+   --  colon, else "<cwd>/<name>".
+   function Get_CWD return String is
+      Buf : String (1 .. 256);
+      Sz  : U64 := 0;
+      Cnt : U64 := 0;
+   begin
+      if Files.Open ("ENV:CWD", Sz) = Files.Status_Ok then
+         Sz := U64'Min (Sz, U64 (Buf'Length));
+         if Files.Read ("ENV:CWD", 0, Buf'Address, Sz, Cnt)
+              = Files.Status_Ok
+           and then Cnt > 0
+         then
+            return Buf (1 .. Natural (Cnt));
+         end if;
+      end if;
+      return "Sys:";
+   end Get_CWD;
+
+   function Set_CWD (V : String) return U64 is
+      Buf : String (1 .. 256);
+      Cnt : U64 := 0;
+      St  : U64;
+   begin
+      if V'Length = 0 or else V'Length > Buf'Length then
+         return Files.Status_Bad_Args;
+      end if;
+      for I in V'Range loop
+         Buf (I - V'First + 1) := V (I);
+      end loop;
+      St := Files.Truncate ("ENV:CWD");
+      --  Op_Write creates the file when Prefs/Env exists; a missing
+      --  truncate just means "not there yet".
+      return Files.Write
+        ("ENV:CWD", 0, Buf'Address, U64 (V'Length), Cnt);
+   end Set_CWD;
+
+   function Qualify (P : String) return String is
+   begin
+      for Ch of P loop
+         if Ch = ':' then
+            return P;  --  already volume-qualified
+         end if;
+      end loop;
+      declare
+         Cwd : constant String := Get_CWD;
+      begin
+         if Cwd (Cwd'Last) = ':' then
+            return Cwd & P;
+         end if;
+         return Cwd & "/" & P;
+      end;
+   end Qualify;
+
+   --  Environment: variables ARE files (m33a ruling), ENV:<NAME>.
+   --  env.c calls these under AKERNEL_ENV_FILES.
+   function Akernel_Env_Get
+     (Name  : Interfaces.C.Strings.chars_ptr;
+      Buf   : System.Address;
+      Bufsz : C_Int) return C_Int;
+   pragma Export (C, Akernel_Env_Get, "akernel_env_get");
+
+   function Akernel_Env_Get
+     (Name  : Interfaces.C.Strings.chars_ptr;
+      Buf   : System.Address;
+      Bufsz : C_Int) return C_Int
+   is
+      P   : constant String := "ENV:" & Interfaces.C.Strings.Value (Name);
+      Sz  : U64 := 0;
+      Cnt : U64 := 0;
+   begin
+      Ensure_Bound;
+      if Files.Open (P, Sz) /= Files.Status_Ok then
+         return -1;
+      end if;
+      Sz := U64'Min (Sz, U64 (Bufsz));
+      if Files.Read (P, 0, Buf, Sz, Cnt) /= Files.Status_Ok
+        or else Cnt = 0
+      then
+         return -1;
+      end if;
+      return C_Int (Cnt);
+   end Akernel_Env_Get;
+
+   function Akernel_Env_Set
+     (Name  : Interfaces.C.Strings.chars_ptr;
+      Value : Interfaces.C.Strings.chars_ptr) return C_Int;
+   pragma Export (C, Akernel_Env_Set, "akernel_env_set");
+
+   function Akernel_Env_Set
+     (Name  : Interfaces.C.Strings.chars_ptr;
+      Value : Interfaces.C.Strings.chars_ptr) return C_Int
+   is
+      P   : constant String := "ENV:" & Interfaces.C.Strings.Value (Name);
+      V   : constant String := Interfaces.C.Strings.Value (Value);
+      Buf : String (1 .. 1024);
+      Cnt : U64 := 0;
+      St  : U64;
+   begin
+      Ensure_Bound;
+      if V'Length > Buf'Length then
+         Fail (EINVAL);
+         return -1;
+      end if;
+      for I in V'Range loop
+         Buf (I - V'First + 1) := V (I);
+      end loop;
+      St := Files.Truncate (P);
+      St := Files.Write (P, 0, Buf'Address, U64 (V'Length), Cnt);
+      if St /= Files.Status_Ok then
+         Fail (EPERM);
+         return -1;
+      end if;
+      return 0;
+   end Akernel_Env_Set;
+
+   function Akernel_Env_Unset
+     (Name : Interfaces.C.Strings.chars_ptr) return C_Int;
+   pragma Export (C, Akernel_Env_Unset, "akernel_env_unset");
+
+   function Akernel_Env_Unset
+     (Name : Interfaces.C.Strings.chars_ptr) return C_Int
+   is
+      P  : constant String := "ENV:" & Interfaces.C.Strings.Value (Name);
+      St : U64;
+   begin
+      Ensure_Bound;
+      St := Files.Delete (P);
+      if St /= Files.Status_Ok
+        and then St /= Files.Status_Not_Found
+      then
+         Fail (EPERM);
+         return -1;
+      end if;
+      return 0;
+   end Akernel_Env_Unset;
+
+   --  Directory walks over the stateless by-index Op_ReadDir.
+   --  adaint.c's AKERNEL_NO_DIRENT branch calls these; DIR* is the
+   --  slot index + 1 (0/NULL = open failed).
+   Max_Open_Dirs : constant := 8;
+
+   type Dir_Rec is record
+      Used : Boolean := False;
+      Path : String (1 .. 256);
+      Len  : Natural := 0;
+      Next : U64 := 0;
+   end record;
+   Dir_Slots : array (1 .. Max_Open_Dirs) of Dir_Rec;
+
+   function Akernel_Opendir
+     (Name : Interfaces.C.Strings.chars_ptr) return C_Int;
+   pragma Export (C, Akernel_Opendir, "akernel_opendir");
+
+   function Akernel_Opendir
+     (Name : Interfaces.C.Strings.chars_ptr) return C_Int
+   is
+      P : constant String := Qualify (Interfaces.C.Strings.Value (Name));
+   begin
+      Ensure_Bound;
+      if P'Length = 0 or else P'Length > 256 then
+         return -1;
+      end if;
+      for I in Dir_Slots'Range loop
+         if not Dir_Slots (I).Used then
+            Dir_Slots (I).Used := True;
+            Dir_Slots (I).Len  := P'Length;
+            Dir_Slots (I).Next := 0;
+            Dir_Slots (I).Path := (others => ' ');
+            Dir_Slots (I).Path (1 .. P'Length) := P;
+            return C_Int (I - 1);
+         end if;
+      end loop;
+      return -1;
+   end Akernel_Opendir;
+
+   --  Copies the next entry name (NUL-terminated) into Buf; returns
+   --  the name length, or -1 at end of directory / on error (both
+   --  stop GNAT's iteration).
+   function Akernel_Readdir
+     (D     : C_Int;
+      Buf   : System.Address;
+      Bufsz : C_Int) return C_Int;
+   pragma Export (C, Akernel_Readdir, "akernel_readdir");
+
+   function Akernel_Readdir
+     (D     : C_Int;
+      Buf   : System.Address;
+      Bufsz : C_Int) return C_Int
+   is
+      Ent    : String (1 .. 256);
+      Ent_L  : Natural;
+      Is_Dir : Boolean;
+      Sz     : U64;
+      Slot   : Natural;
+      Out_B  : String (1 .. Ent'Length + 1) with Address => Buf;
+   begin
+      if D < 0 or else Natural (D) >= Max_Open_Dirs then
+         return -1;
+      end if;
+      Slot := Natural (D) + 1;
+      if not Dir_Slots (Slot).Used then
+         return -1;
+      end if;
+      if Files.Read_Dir
+           (Dir_Slots (Slot).Path (1 .. Dir_Slots (Slot).Len),
+            Dir_Slots (Slot).Next, Ent, Ent_L, Is_Dir, Sz)
+           /= Files.Status_Ok
+        or else Ent_L = 0
+        or else Ent_L + 1 > Natural (Bufsz)
+      then
+         return -1;
+      end if;
+      Dir_Slots (Slot).Next := Dir_Slots (Slot).Next + 1;
+      Out_B (1 .. Ent_L + 1) := Ent (1 .. Ent_L) & Character'Val (0);
+      return C_Int (Ent_L);
+   end Akernel_Readdir;
+
+   function Akernel_Closedir (D : C_Int) return C_Int;
+   pragma Export (C, Akernel_Closedir, "akernel_closedir");
+
+   function Akernel_Closedir (D : C_Int) return C_Int is
+   begin
+      if D < 0 or else Natural (D) >= Max_Open_Dirs then
+         return -1;
+      end if;
+      Dir_Slots (Natural (D) + 1).Used := False;
+      return 0;
+   end Akernel_Closedir;
+
+   --  Ada.Command_Line bridge. argv.c (vendored, 53c) owns
+   --  gnat_argc/gnat_argv; crt0 calls akernel_init_args, which
+   --  tokenizes the m33a args page exactly like CLI.Parse_Args
+   --  (space-separated, no quoting) and points gnat_argv at a
+   --  static table. argv[0] is "" — the uniform ABI does not
+   --  carry the program's own name; Ada.Command_Line.Argument
+   --  numbers then match CLI token numbers.
+   Max_Argv  : constant := 64;   --  matches CLI.Max_Args
+   Arg_Width : constant := 128;
+   Argv_Text : array (0 .. Max_Argv) of aliased
+     Interfaces.C.char_array (1 .. Arg_Width)
+     := (others => (others => Interfaces.C.nul));
+   Argv_Ptrs : array (0 .. Max_Argv) of aliased
+     Interfaces.C.Strings.chars_ptr
+     := (others => Interfaces.C.Strings.Null_Ptr);
+
+   Gnat_Argc : aliased C_Int
+     with Import, External_Name => "gnat_argc";  --  defined by argv.c
+   Gnat_Argv : System.Address
+     with Import, External_Name => "gnat_argv";
+
+   procedure Akernel_Init_Args;
+   pragma Export (C, Akernel_Init_Args, "akernel_init_args");
+
+   procedure Akernel_Init_Args is
+      function To_Ptr is new Ada.Unchecked_Conversion
+        (System.Address, Interfaces.C.Strings.chars_ptr);
+      --  chars_ptr is address-sized; this avoids the char_array_access
+      --  static-match dance for fixed-width table rows.
+
+      S   : String (1 .. 512);
+      Len : Natural;
+      I   : Natural := 1;
+      N   : Natural := 1;   --  argv[0] stays the empty command name
+   begin
+      Argv_Ptrs (0) := To_Ptr (Argv_Text (0)'Address);
+      Syscalls.Read_Args (S, Len);
+      while I <= Len and then N <= Max_Argv loop
+         while I <= Len and then S (I) = ' ' loop
+            I := I + 1;
+         end loop;
+         exit when I > Len;
+         declare
+            F : constant Natural := I;
+            L : Natural;
+         begin
+            while I <= Len and then S (I) /= ' ' loop
+               I := I + 1;
+            end loop;
+            L := Natural'Min (I - F, Arg_Width - 1);
+            for J in 0 .. L - 1 loop
+               Argv_Text (N) (Interfaces.C.size_t (J + 1)) :=
+                 Interfaces.C.To_C (S (F + J));
+            end loop;
+            Argv_Text (N) (Interfaces.C.size_t (L + 1)) :=
+              Interfaces.C.nul;
+            Argv_Ptrs (N) := To_Ptr (Argv_Text (N)'Address);
+            N := N + 1;
+         end;
+      end loop;
+      Gnat_Argc := C_Int (N);
+      Gnat_Argv := Argv_Ptrs'Address;
+   end Akernel_Init_Args;
+
+   ----------------------------------------------------------------------
    --  _sbrk arena (own VA range per the 53b ruling): memobj chunks
    --  mapped on demand, same pattern as s-memory's GNAT heap.
 
@@ -188,8 +491,9 @@ package body Akernel_User.Gloss is
       Mode  : C_Int) return C_Int
    is
       pragma Unreferenced (Mode);
-      P       : constant String :=
+      Raw_P   : constant String :=
         Interfaces.C.Strings.Value (Path);
+      P       : constant String := Qualify (Raw_P);
       F       : constant Flag_Bits := Flag_Bits (Flags);
       Slot    : Natural := 0;
       Size    : U64;
@@ -430,11 +734,17 @@ package body Akernel_User.Gloss is
    ----------------------------------------------------------------------
    --  stat family.
 
-   procedure Fill_Stat (S : Stat_Access; Size : U64; Is_TTY : Boolean) is
+   S_IFDIR : constant := 8#040000#;
+
+   procedure Fill_Stat
+     (S : Stat_Access; Size : U64; Is_TTY : Boolean;
+      Is_Dir : Boolean := False) is
    begin
       S.all := (others => <>);
       S.Mode   := U32
-        ((if Is_TTY then S_IFCHR else S_IFREG) + S_IRWXU);
+        ((if Is_TTY then S_IFCHR
+          elsif Is_Dir then S_IFDIR
+          else S_IFREG) + S_IRWXU);
       S.NLink  := 1;
       S.Size   := Size;
       S.BlkSize := 512;
@@ -478,11 +788,28 @@ package body Akernel_User.Gloss is
      (Path : Interfaces.C.Strings.chars_ptr;
       S    : Stat_Access) return C_Int
    is
-      P  : constant String := Interfaces.C.Strings.Value (Path);
+      P  : constant String := Qualify (Interfaces.C.Strings.Value (Path));
       Sz : U64;
    begin
       Ensure_Bound;
       if Files.Stat (P, Sz) /= Files.Status_Ok then
+         --  53c: the fs Stat rejects DIRECTORIES (fat32-style
+         --  Bad_Args). Probe with a by-index Read_Dir so that
+         --  stat("some/dir") — and therefore Ada.Directories.
+         --  Exists/Kind — sees directories as directories.
+         declare
+            Junk_N : String (1 .. 32);
+            Junk_L : Natural;
+            Junk_D : Boolean;
+            Junk_S : U64;
+         begin
+            if Files.Read_Dir (P, 0, Junk_N, Junk_L, Junk_D, Junk_S)
+                 = Files.Status_Ok
+            then
+               Fill_Stat (S, 0, False, Is_Dir => True);
+               return 0;
+            end if;
+         end;
          Fail (ENOENT);
          return -1;
       end if;
@@ -508,7 +835,7 @@ package body Akernel_User.Gloss is
    is
    begin
       Ensure_Bound;
-      if Files.Delete (Interfaces.C.Strings.Value (Path))
+      if Files.Delete (Qualify (Interfaces.C.Strings.Value (Path)))
            /= Files.Status_Ok
       then
          Fail (ENOENT);
@@ -529,7 +856,7 @@ package body Akernel_User.Gloss is
       pragma Unreferenced (Mode);
    begin
       Ensure_Bound;
-      if Files.Mkdir (Interfaces.C.Strings.Value (Path))
+      if Files.Mkdir (Qualify (Interfaces.C.Strings.Value (Path)))
            /= Files.Status_Ok
       then
          Fail (ENOENT);
@@ -548,14 +875,30 @@ package body Akernel_User.Gloss is
    begin
       Ensure_Bound;
       if Files.Rename
-           (Interfaces.C.Strings.Value (Old_Path),
-            Interfaces.C.Strings.Value (New_Path)) /= Files.Status_Ok
+           (Qualify (Interfaces.C.Strings.Value (Old_Path)),
+            Qualify (Interfaces.C.Strings.Value (New_Path)))
+           /= Files.Status_Ok
       then
          Fail (EPERM);
          return -1;
       end if;
       return 0;
    end Gloss_Rename;
+
+   function Gloss_Mkdir_Alias
+     (Path : Interfaces.C.Strings.chars_ptr; Mode : C_Int)
+     return C_Int;
+   pragma Export (C, Gloss_Mkdir_Alias, "mkdir");
+   --  53c: the vendored mkdir.c (__gnat_mkdir, used by
+   --  Ada.Directories.Create_Directory) calls plain mkdir(2),
+   --  which this newlib does not carry.
+
+   function Gloss_Mkdir_Alias
+     (Path : Interfaces.C.Strings.chars_ptr; Mode : C_Int)
+     return C_Int is
+   begin
+      return Gloss_Mkdir (Path, Mode);
+   end Gloss_Mkdir_Alias;
 
    ----------------------------------------------------------------------
    --  Process / misc.
@@ -696,10 +1039,17 @@ package body Akernel_User.Gloss is
    function Gloss_Stub_Path (Path : Interfaces.C.Strings.chars_ptr)
      return C_Int
    is
-      pragma Unreferenced (Path);
+      --  53c: chdir writes ENV:CWD (the m42 cwd convention), Amiga-
+      --  style. Relative targets qualify against the current cwd.
+      P : constant String :=
+        Qualify (Interfaces.C.Strings.Value (Path));
    begin
-      Fail (ENOSYS);
-      return -1;
+      Ensure_Bound;
+      if Set_CWD (P) /= Files.Status_Ok then
+         Fail (ENOENT);
+         return -1;
+      end if;
+      return 0;
    end Gloss_Stub_Path;
 
    function Gloss_Stub_Exec
@@ -773,7 +1123,7 @@ package body Akernel_User.Gloss is
    is
    begin
       Ensure_Bound;
-      if Files.Rmdir (Interfaces.C.Strings.Value (Path))
+      if Files.Rmdir (Qualify (Interfaces.C.Strings.Value (Path)))
            /= Files.Status_Ok
       then
          Fail (ENOENT);
@@ -793,7 +1143,7 @@ package body Akernel_User.Gloss is
       Sz : U64;
    begin
       Ensure_Bound;
-      if Files.Stat (Interfaces.C.Strings.Value (Path), Sz)
+      if Files.Stat (Qualify (Interfaces.C.Strings.Value (Path)), Sz)
            /= Files.Status_Ok
       then
          Fail (ENOENT);
@@ -809,14 +1159,21 @@ package body Akernel_User.Gloss is
    function Gloss_Getcwd (Buf : System.Address; Size : U64)
      return System.Address
    is
-      --  53c upgrades this to ENV:CWD; "/" is the honest root.
-      S : String (1 .. 2) with Address => Buf;
+      --  53c: ENV:CWD-backed (m42 convention).
+      S : String (1 .. 257) with Address => Buf;
    begin
-      if Buf = System.Null_Address or else Size < 2 then
-         Fail (EINVAL);
-         return System.Null_Address;
-      end if;
-      S := '/' & Character'Val (0);
+      Ensure_Bound;
+      declare
+         Cwd : constant String := Get_CWD;
+      begin
+         if Buf = System.Null_Address
+           or else Size < U64 (Cwd'Length + 1)
+         then
+            Fail (EINVAL);
+            return System.Null_Address;
+         end if;
+         S (1 .. Cwd'Length + 1) := Cwd & Character'Val (0);
+      end;
       return Buf;
    end Gloss_Getcwd;
 
@@ -959,10 +1316,17 @@ package body Akernel_User.Gloss is
    function Gloss_Chdir (Path : Interfaces.C.Strings.chars_ptr)
      return C_Int
    is
-      pragma Unreferenced (Path);
+      --  Same ENV:CWD write as _chdir above (Ada.Directories
+      --  Set_Directory calls the plain "chdir" name).
+      P : constant String :=
+        Qualify (Interfaces.C.Strings.Value (Path));
    begin
-      Fail (ENOSYS);  --  53c: ENV:CWD
-      return -1;
+      Ensure_Bound;
+      if Set_CWD (P) /= Files.Status_Ok then
+         Fail (ENOENT);
+         return -1;
+      end if;
+      return 0;
    end Gloss_Chdir;
 
    --  libgcc rv64 hard-float does not build the soft-TF helpers,

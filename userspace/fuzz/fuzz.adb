@@ -6,6 +6,8 @@ with Ada.Exceptions;
 with Ada.Finalization;
 with Ada.Real_Time;
 with Ada.Text_IO;
+with Ada.Environment_Variables;
+with Ada.Directories;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 with Akernel_User.Files;
@@ -2824,6 +2826,129 @@ begin
          Status := Akernel_User.Files.Delete ("BD0:FZTIO.TXT");
          Check (Status = Akernel_User.Files.Status_Ok,
                 "Text_IO test file deleted");
+      end;
+
+      --  Milestone 53c proofs: Environment_Variables over ENV:
+      --  files, Ada.Command_Line over the args page (through the
+      --  migrated Sys:C/Echo under shell redirection), and
+      --  Ada.Directories over Op_ReadDir + ENV:CWD.
+      declare
+         package EV renames Ada.Environment_Variables;
+      begin
+         --  Prefs/Env exists once any shell has run, but stay
+         --  image-order independent (the m36 burn).
+         Status := Akernel_User.Files.Mkdir ("Sys:Prefs");
+         Status := Akernel_User.Files.Mkdir ("Sys:Prefs/Env");
+         EV.Set ("FZ53C", "alive");
+         Check (EV.Exists ("FZ53C")
+                and then EV.Value ("FZ53C") = "alive",
+                "Environment_Variables set/value ride ENV:");
+         EV.Clear ("FZ53C");
+         Check (not EV.Exists ("FZ53C"),
+                "Environment_Variables clear rides ENV:");
+      end;
+
+      declare
+         Script   : constant String :=
+           "Echo one two three > BD0:FZ53C1.OUT" & ASCII.LF;
+         Expected : constant String := "one two three" & ASCII.LF;
+         Got      : String (1 .. Expected'Length) := (others => ' ');
+         WBuf     : array (0 .. Script'Length - 1) of
+           Interfaces.Unsigned_8;
+         Size     : U64;
+         Count    : U64;
+      begin
+         for I in Script'Range loop
+            WBuf (I - Script'First) :=
+              Interfaces.Unsigned_8 (Character'Pos (Script (I)));
+         end loop;
+         Status := Akernel_User.Files.Write
+           ("BD0:FZ53C1.TXT", 0, WBuf'Address, U64 (Script'Length),
+            Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = U64 (Script'Length),
+                "53c echo script written");
+         Run_Command ("Sys:System/Shell", "execute BD0:FZ53C1.TXT",
+                      0, "53c echo script");
+         Status := Akernel_User.Files.Open ("BD0:FZ53C1.OUT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = U64 (Expected'Length),
+                "53c echo output file");
+         if Status = Akernel_User.Files.Status_Ok then
+            Status := Akernel_User.Files.Read
+              ("BD0:FZ53C1.OUT", 0, Got'Address,
+               U64 (Got'Length), Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Got = Expected,
+                   "Command_Line args through shell + migrated Echo");
+         end if;
+         Status := Akernel_User.Files.Delete ("BD0:FZ53C1.TXT");
+         Status := Akernel_User.Files.Delete ("BD0:FZ53C1.OUT");
+      end;
+
+      declare
+         package Dirs renames Ada.Directories;
+         use type Dirs.File_Kind;
+         Search : Dirs.Search_Type;
+         Ent    : Dirs.Directory_Entry_Type;
+         N      : Natural := 0;
+         --  Capture ENV:CWD raw (file bytes) so the restore below
+         --  cannot raise on pre-existing content — a-direct's
+         --  Set_Directory validates with Is_Directory, and earlier
+         --  shell cd tests may leave a value it rejects.
+         Old_Cwd  : String (1 .. 256) := (others => ' ');
+         Old_Len  : Natural := 0;
+         Old_U64  : U64 := 0;
+         C_Size   : U64;
+         Ent_Name : String (1 .. 32);
+         Ent_Len  : Natural;
+         Ent_Dir  : Boolean;
+         Ent_Sz   : U64;
+      begin
+         if Akernel_User.Files.Open ("ENV:CWD", C_Size)
+              = Akernel_User.Files.Status_Ok
+         then
+            C_Size := U64'Min (C_Size, U64 (Old_Cwd'Length));
+            Status := Akernel_User.Files.Read
+              ("ENV:CWD", 0, Old_Cwd'Address, C_Size, Old_U64);
+            Old_Len := Natural (Old_U64);
+         end if;
+         Check (Dirs.Exists ("BD0:System/Shell")
+                and then Dirs.Kind ("BD0:System/Shell")
+                  = Dirs.Ordinary_File,
+                "Directories.Exists/Kind on a file");
+         Check (Dirs.Exists ("BD0:System")
+                and then Dirs.Kind ("BD0:System") = Dirs.Directory,
+                "Directories.Exists/Kind on a directory");
+         Check (Akernel_User.Files.Read_Dir
+                  ("BD0:", 0, Ent_Name, Ent_Len, Ent_Dir, Ent_Sz)
+                = Akernel_User.Files.Status_Ok,
+                "Read_Dir probe on BD0: root");
+         Dirs.Start_Search (Search, "BD0:", "*");
+         while Dirs.More_Entries (Search) loop
+            Dirs.Get_Next_Entry (Search, Ent);
+            N := N + 1;
+         end loop;
+         Dirs.End_Search (Search);
+         Check (N >= 3,
+                "Directories Start_Search walks Op_ReadDir (N ="
+                & N'Image & ")");
+         Dirs.Set_Directory ("BD0:");
+         declare
+            Now : constant String := Dirs.Current_Directory;
+         begin
+            --  a-direct's Current_Directory is Normalize_Pathname'd
+            --  (trailing directory separator), so both spellings
+            --  prove the ENV:CWD round trip.
+            Check (Now = "BD0:" or else Now = "BD0:/",
+                   "Directories Set/Current ride ENV:CWD (" & Now
+                   & ")");
+         end;
+         if Old_Len > 0 then
+            Status := Akernel_User.Files.Truncate ("ENV:CWD");
+            Status := Akernel_User.Files.Write
+              ("ENV:CWD", 0, Old_Cwd'Address, U64 (Old_Len), Old_U64);
+         end if;
       end;
 
       --  C: commands end-to-end (milestone 41a): Sys:C/Info is

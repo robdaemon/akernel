@@ -1316,9 +1316,17 @@ __gnat_tmp_name (char *tmp_filename)
 /*  Open directory and returns a DIR pointer.  */
 
 #ifdef AKERNEL_NO_DIRENT
-DIR* __gnat_opendir (char *name ATTRIBUTE_UNUSED)
+/* 53c: newlib has no <dirent.h>; directories are the fs Op_ReadDir
+   by-index walk in Akernel_User.Gloss. DIR* is the gloss slot + 1. */
+extern int akernel_opendir (const char *name);
+extern int akernel_readdir (int slot, char *buf, int bufsz);
+extern int akernel_closedir (int slot);
+/* Keep in sync with s-oscons SIZEOF_struct_dirent_alloc. */
+#define AKERNEL_DIRENT_BUFSZ 280
+DIR* __gnat_opendir (char *name)
 {
-   return (DIR*) 0;
+   int slot = akernel_opendir (name);
+   return slot < 0 ? (DIR*) 0 : (DIR*) (long) (slot + 1);
 }
 #else
 DIR* __gnat_opendir (char *name)
@@ -1347,11 +1355,14 @@ DIR* __gnat_opendir (char *name)
 
 #ifdef AKERNEL_NO_DIRENT
 char *
-__gnat_readdir (DIR *dirp ATTRIBUTE_UNUSED,
-                char *buffer ATTRIBUTE_UNUSED,
-                int *len ATTRIBUTE_UNUSED)
+__gnat_readdir (DIR *dirp, char *buffer, int *len)
 {
-   return (char*) 0;
+   int n = akernel_readdir ((int) (long) dirp - 1, buffer,
+                            AKERNEL_DIRENT_BUFSZ);
+   if (n < 0)
+     return (char*) 0;
+   *len = n;
+   return buffer;
 }
 #else
 char *
@@ -1400,9 +1411,9 @@ __gnat_readdir (DIR *dirp, char *buffer, int *len)
 #endif /* AKERNEL_NO_DIRENT */
 
 #ifdef AKERNEL_NO_DIRENT
-int __gnat_closedir (DIR *dirp ATTRIBUTE_UNUSED)
+int __gnat_closedir (DIR *dirp)
 {
-   return 0;
+   return akernel_closedir ((int) (long) dirp - 1);
 }
 #else
 int __gnat_closedir (DIR *dirp)
@@ -1833,7 +1844,23 @@ __gnat_file_exists (char *name)
 int
 __gnat_is_absolute_path (char *name, int length)
 {
-#ifdef __vxworks
+#if defined (AKERNEL_NO_DIRENT)
+  /* 53c: akernel paths are Amiga-shaped — a ':' before any '/' is
+     the volume label and makes the path absolute ("BD0:System"). */
+  int index;
+
+  if (name[0] == '/')
+    return 1;
+
+  for (index = 0; index < length; index++)
+    {
+      if (name[index] == ':')
+        return 1;
+      if (name[index] == '/')
+        return 0;
+    }
+  return 0;
+#elif defined (__vxworks)
   /* On VxWorks systems, an absolute path can be represented (depending on
      the host platform) as either /dir/file, or device:/dir/file, or
      device:drive_letter:/dir/file. */

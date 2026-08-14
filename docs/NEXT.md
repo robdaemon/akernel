@@ -2329,7 +2329,113 @@ Next candidates (order open):
     after "Call stack traceback
     locations:" once — unprobed,
     no test crashes remain to
-    chase it with. MILESTONE 53b
+    chase it with.     53c SHIPPED — standard-library
+    environment, command line, and
+    directories over the akernel
+    conventions. Ada.Environment_
+    Variables: env.c rewired
+    (AKERNEL_ENV_FILES) to gloss
+    helpers that read/write
+    ENV:<NAME> files (m33a ruling —
+    variables ARE files, shared with
+    the shell's set/get/unset);
+    Clear-without-Name deliberately
+    no-ops (would delete CWD/Path).
+    Ada.Command_Line: vendored
+    argv.c (gnat_argc/gnat_argv);
+    crt0 calls akernel_init_args,
+    which tokenizes the m33a args
+    page space-separated exactly
+    like CLI.Parse_Args into a
+    static 64x128 table; argv[0] =
+    "" (the uniform ABI carries no
+    program name), so Argument(N)
+    numbers match CLI tokens.
+    Ada.Directories: vendored
+    a-direct + a-dhfina + a-dirval +
+    s-filatt + the Calendar chain
+    (a-calend/a-calfor/a-catizo +
+    s-osprim posix + s-optide +
+    cal.c; a-caldel DROPPED — needs
+    tasking soft links); hand-grown
+    gnat_user/s-oscons.ads (the
+    embedded pool ships no
+    OS_Constants: ENOENT=2,
+    dirent/file_attributes buffer
+    sizes); adaint's AKERNEL_NO_
+    DIRENT stubs now call gloss
+    akernel_opendir/readdir/closedir
+    over stateless Op_ReadDir (DIR*
+    = slot+1); __gnat_mkdir from
+    vendored mkdir.c + a plain
+    "mkdir" alias in gloss; gloss
+    _stat probes Read_Dir when Stat
+    says Bad_Args so directories
+    stat as S_IFDIR (fs rejects dir
+    stat fat32-style). cwd: gloss
+    getcwd/chdir read/write ENV:CWD
+    and EVERY relative gloss path
+    qualifies against it (Amiga:
+    "cwd/name", or "cwdname" at the
+    volume colon). TWO POSIX-shape
+    patches in vendored sources
+    (documented, keep minimal):
+    adaint __gnat_is_absolute_path
+    — ':' before any '/' = absolute;
+    a-direct Dir_Seps += ':' so
+    Compose("BD0:","X") = "BD0:X"
+    and Containing_Directory splits
+    at the volume label. Without
+    them Normalize_Pathname pre-
+    pended cwd to "BD0:" (the
+    "Sys:/Sys:" burn) and Compose
+    built "BD0:/X" which fs rejects
+    — Start_Search silently returned
+    zero entries while the gloss
+    walk itself worked (gdir prints
+    proved it; Match "*" was never
+    the problem). Also: s-soflin
+    SPEC shadowed (pool dropped
+    Dummy_Communication_Block; the
+    expander needs it for
+    controlled+interface dispatch
+    tables from Ada.Containers.
+    Vectors inside a-direct);
+    s-parame gained time_t_bits=64;
+    akernel_nanosleep.c (rdtime +
+    yield) backs s-osprim
+    Timed_Delay (newlib rv64 lacks
+    nanosleep). Migration proof:
+    Sys:C/Echo now lives on
+    Ada.Command_Line + Ada.Text_IO
+    (CLI.Init — new public op —
+    parses the redirect trailer for
+    programs that never touch CLI
+    args; CLI.Exit_With still
+    closes redirects). fuzz +7
+    checks: env set/value/clear via
+    ENV:, Echo argv through shell
+    redirection read back from the
+    output file, Directories
+    Exists/Kind on file and dir,
+    Start_Search walk (N=13),
+    Set/Current_Directory round
+    trip (cwd restore uses raw
+    ENV:CWD bytes — a-direct's
+    Set_Directory validates and can
+    raise on legacy content).
+    878/878 PASS SMP1/SMP4,
+    failures=0, fsck clean, 375 s /
+    95 s. MILESTONE 53c COMPLETE.
+    Next: 54 — migrate remaining
+    Sys:C commands onto Text_IO/
+    CLI.Init/Ada.Command_Line where
+    it pays; Calendar needs a real
+    RTC (gettimeofday still epoch).
+    Deferred: tasking, virtio-net,
+    dynamic linking.
+
+    MILESTONE 53b
     COMPLETE. Next: 53c —
     Ada.Environment_Variables->
     ENV:, Ada.Command_Line->args

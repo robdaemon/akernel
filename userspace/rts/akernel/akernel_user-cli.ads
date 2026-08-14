@@ -27,6 +27,13 @@ package Akernel_User.CLI is
    --  Whitespace-separated tokens of the args page (no quoting
    --  yet). Argument returns "" for an out-of-range index.
    function Arg_Count return Natural;
+
+   --  53c: programs that live fully on the standard library
+   --  (Ada.Command_Line / Ada.Text_IO instead of the CLI arg API)
+   --  still need the args-page redirection trailer parsed before
+   --  their first output. Any CLI arg call does it lazily; Init is
+   --  the explicit form for programs that never touch CLI args.
+   procedure Init;
    function Argument (Index : Positive) return String;
 
    --  ENV:<Name> read/write. Get_Env returns "" when unset or

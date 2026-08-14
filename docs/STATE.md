@@ -120,6 +120,9 @@ IPC buffer VA (design): 0x6FFF0000
 bootinfo page VA:       0x6FFE0000
 user VA range:          0x40000000..0x80000000
 newlib _sbrk arena:     0x52000000 (53b; 16 x 256 KiB memobj chunks)
+53c: env=ENV: files; argv=args page (crt0->gnat_argv);
+     dirs=Op_ReadDir; cwd=ENV:CWD; relative gloss paths qualify
+     Amiga-style; Dir_Seps includes : (a-direct patch)
 UART PA:                0x10000000
 PLIC PA:                0x0c000000
 PLIC UART source:       10

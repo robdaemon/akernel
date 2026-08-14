@@ -1,25 +1,32 @@
+with Ada.Command_Line;
+with Ada.Text_IO;
 with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
 
 --  Echo: print arguments (milestone 41b; the Amiga C:Echo analog).
 --  "Echo [args...]" prints all arguments separated by a single
 --  space, followed by a newline.
+--
+--  Milestone 53c: migrated to the standard library as the first
+--  proof program — arguments come from Ada.Command_Line (the m33a
+--  args page, tokenized by crt0 into gnat_argv), output goes
+--  through Ada.Text_IO -> newlib stdio -> gloss fd 1 -> the
+--  console, so shell redirection (> file, | pipe) composes.
+--  CLI.Init parses the args-page redirection trailer (we never
+--  touch CLI.Arg_Count), CLI.Exit_With closes redirects.
 
 procedure Echo is
    package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package ACL renames Ada.Command_Line;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   Files.Bind (2);
+   CLI.Init;
 
-   for I in 1 .. CLI.Arg_Count loop
+   for I in 1 .. ACL.Argument_Count loop
       if I > 1 then
-         Akernel_User.Console.Put (" ");
+         Ada.Text_IO.Put (" ");
       end if;
-      Akernel_User.Console.Put (CLI.Argument (I));
+      Ada.Text_IO.Put (ACL.Argument (I));
    end loop;
-   Akernel_User.Console.Put_Line ("");
+   Ada.Text_IO.Put_Line ("");
 
    CLI.Exit_With (CLI.RC_Ok);
 end Echo;
