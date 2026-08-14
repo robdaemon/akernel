@@ -2480,13 +2480,58 @@ Next candidates (order open):
     SMP1/SMP4, failures=0, fsck
     clean, qemu exits 0, ~385 s /
     100 s. MILESTONE 54 COMPLETE.
-    Next: 55 — Calendar over a real
-    RTC (gettimeofday is still
-    epoch), then the deferred list:
-    tasking (thread-spawn + futex +
-    TLS + s-taprop), virtio-net,
-    dynamic linking (medany vs
-    medpic).
+    Next: 55.
+
+    55 SHIPPED — the wall clock.
+    qemu 10.2's RISC-V build has NO
+    RTC device (virtio-rtc-pci and
+    goldfish-rtc both absent, virt
+    DTB has none, OpenSBI has no
+    wallclock call), so the clock
+    is seed-once + synthesize: gloss
+    _gettimeofday lazily seeds from
+    (A) semihosting SYS_TIME — the
+    ebreak guard sequence with an a7
+    handshake magic (16#5E41_C10C#);
+    qemu -semihosting answers with
+    host epoch, WITHOUT it the
+    ebreak traps to the kernel whose
+    new Dispatch_Trap breakpoint
+    branch sees the magic, answers
+    a0 = -1 and Advance_SEPCs past
+    (any other a7 stays fatal) — or
+    (B) the baked RD0:System/Epoch
+    file (Makefile stamps date +%s
+    into the initrd each build), or
+    (C) epoch 0 as before. Then
+    now = seed + rdtime/10MHz with
+    tv_usec from the remainder.
+    The probe + rdtime read are
+    INLINE ASM in gloss (first cut
+    used a gnat_user C helper, but
+    syscall-RTS programs link gloss
+    without libgnat — init's link
+    died on the undefined symbol).
+    Fuzz: Calendar.Split year >=
+    2024 (got 2026 via the host),
+    Clock advances across yields.
+    BOTH seed paths verified: full
+    suite with -semihosting (A) and
+    with a QEMU= wrapper stripping
+    the flag (B — no unexpected-
+    trap halt, baked epoch read).
+    880/880 SMP1 (386 s), 879 seen
+    SMP4 (100 s) with failures=0
+    (serial-loss noise), fsck clean.
+    Ada.Calendar + Formatting now
+    tell the truth; timezone stays
+    UTC (a-catizo, TZ unset).
+    MILESTONE 55 COMPLETE. Next:
+    56 — the deferred list: tasking
+    (thread-spawn + futex + TLS +
+    s-taprop), virtio-net (then NTP
+    could REPLACE the seed), dynamic
+    linking (medany vs medpic).
 
     MILESTONE 53c
     COMPLETE.

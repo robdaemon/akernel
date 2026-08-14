@@ -152,6 +152,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 		printf 'GENFILE f%s\n' $$i > $(INITRD_ROOT)/Tests/Gen/f$$i; \
 	done
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' "$$(date +%s)" > $(INITRD_ROOT)/System/Epoch
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
@@ -167,6 +168,7 @@ $(INIT_ELF):
 
 run: all $(DISK_IMG)
 	$(QEMU) \
+	  -semihosting \
 	  -machine virt,iommu-sys=on \
 	  -smp $(QEMU_SMP) \
 	  -m $(QEMU_MEMORY) \

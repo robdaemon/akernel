@@ -1,23 +1,19 @@
-MILESTONE 54 SHIPPED (Sys:C commands on the standard
-library: Delete/MakeDir/Rename/CD -> Ada.Directories,
-Dir/List -> Start_Search, Type/Search -> Text_IO Get_Line,
-Copy/Join -> Stream_IO, Sort filter stdout -> Text_IO;
-CLI.Init lazy-binds handles 1/2 no-clobber). 878/878 PASS
-SMP1/SMP4, 385/100 s, fsck clean. Read docs/NEXT.md (54
-entry: THE burn — past-EOF Files.Read = Status_Out_Of_Range,
-gloss mapped it to -1, newlib sticky ferror, GNAT Getc raised
-Device_Error at End_Of_File instead of clean EOF; gloss _read
-now maps Out_Of_Range to 0; temp-crate repro cycle 2 min vs
-suite bisect 6 min), docs/STATE.md, docs/IPC.md.
+MILESTONE 55 SHIPPED (wall clock: gloss _gettimeofday
+seeds once from semihosting SYS_TIME — qemu -semihosting +
+a7-magic ebreak handshake, kernel breakpoint branch answers
+-1 when off — else baked RD0:System/Epoch, then synthesizes
+from rdtime/10MHz; both seed paths suite-verified). 880/880
+SMP1, failures=0 SMP4, fsck clean. Read docs/NEXT.md (55
+entry: no RTC in qemu's RISC-V build — virtio-rtc/goldfish
+both absent; inline-asm probe because syscall-RTS programs
+link gloss without libgnat), docs/STATE.md, docs/IPC.md.
 
-NEXT MILESTONE: 55 — Calendar over a real RTC (Ada.Calendar
-+ Formatting are vendored since 53c but gettimeofday returns
-epoch; wire an RTC source — virtio or goldfish RTC — into
-gloss _gettimeofday). Then the deferred list: tasking
-(thread-spawn + futex + TLS + s-taprop), virtio-net, dynamic
-linking (medany vs medpic).
+NEXT MILESTONE: 56 — the deferred list: tasking
+(thread-spawn + futex + TLS + s-taprop), virtio-net (NTP
+could then replace the clock seed), dynamic linking
+(medany vs medpic).
 
-CURRENT SESSION STATE (54 SHIPPED):
+CURRENT SESSION STATE (55 SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).

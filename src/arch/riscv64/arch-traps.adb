@@ -38,6 +38,15 @@ package body Arch.Traps is
    Interrupt_Bit         : constant U64 := 16#8000_0000_0000_0000#;
    Sstatus_SPP           : constant U64 := 16#100#;  --  trap from S-mode
    User_Ecall            : constant U64 := 8;
+   Breakpoint            : constant U64 := 3;
+   --  Semihosting clock probe handshake (milestone 55): the
+   --  userspace gloss loads a7 with this magic before the SH
+   --  guard sequence (slli x0; ebreak; srli x0). qemu with
+   --  -semihosting intercepts the ebreak itself and answers
+   --  SYS_TIME; without it the ebreak traps HERE — see
+   --  Dispatch_Trap. A breakpoint with any other a7 is not
+   --  ours and stays fatal.
+   SH_Clock_Magic        : constant U64 := 16#5E41_C10C#;
    Supervisor_Timer      : constant U64 := 5;
    Supervisor_External   : constant U64 := 9;
    Supervisor_Software   : constant U64 := 1;
@@ -2327,6 +2336,17 @@ package body Arch.Traps is
    begin
       if (Cause and Interrupt_Bit) = 0 and then Code = User_Ecall then
          Handle_Syscall (Frame);
+         return;
+      elsif (Cause and Interrupt_Bit) = 0 and then Code = Breakpoint
+        and then Trap_Frame_Get_A7 (Frame) = SH_Clock_Magic
+      then
+         --  Semihosting SYS_TIME probe from U-mode with qemu
+         --  -semihosting OFF (milestone 55): answer "no clock"
+         --  (a0 = -1) and skip the ebreak; the trailing srli of
+         --  the guard sequence executes as a nop. The gloss
+         --  falls back to the baked epoch file.
+         Trap_Frame_Set_A0 (Frame, U64'Last);  --  (long long)-1
+         Advance_SEPC (Frame);
          return;
       elsif (Cause and Interrupt_Bit) /= 0
         and then Code = Supervisor_Timer

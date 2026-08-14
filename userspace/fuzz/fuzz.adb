@@ -5,6 +5,7 @@ with Ada.Unchecked_Deallocation;
 with Ada.Exceptions;
 with Ada.Finalization;
 with Ada.Real_Time;
+with Ada.Calendar;
 with Ada.Text_IO;
 with Ada.Environment_Variables;
 with Ada.Directories;
@@ -2751,6 +2752,30 @@ begin
             Check (D > Ada.Real_Time.Time_Span_Zero
                    and then D < Ada.Real_Time.Seconds (5),
                    "Ada.Real_Time advances over rdtime");
+         end;
+
+         --  Milestone 55: the wall clock — gloss seeds once from
+         --  semihosting SYS_TIME (host time under qemu
+         --  -semihosting) or the baked RD0:System/Epoch, then
+         --  synthesizes from rdtime. Either seed lands >= 2024;
+         --  the synthesis must advance.
+         declare
+            use type Ada.Calendar.Time;
+            C0   : constant Ada.Calendar.Time := Ada.Calendar.Clock;
+            Year : Ada.Calendar.Year_Number;
+            Mon  : Ada.Calendar.Month_Number;
+            Day  : Ada.Calendar.Day_Number;
+            Secs : Ada.Calendar.Day_Duration;
+         begin
+            Ada.Calendar.Split (C0, Year, Mon, Day, Secs);
+            Check (Year >= 2024 and then Year <= 2200,
+                   "Calendar clock is wall time (year"
+                   & Ada.Calendar.Year_Number'Image (Year) & ")");
+            for I in 1 .. 50 loop
+               Ignore := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+            Check (Ada.Calendar.Clock > C0,
+                   "gettimeofday synthesis advances over rdtime");
          end;
          end if;
 

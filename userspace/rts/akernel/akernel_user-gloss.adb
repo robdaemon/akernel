@@ -3,6 +3,7 @@ with System.Storage_Elements;  use System.Storage_Elements;
 with Interfaces.C;
 with Interfaces.C.Strings;
 with Ada.Unchecked_Conversion;
+with System.Machine_Code;
 with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
@@ -989,17 +990,103 @@ package body Akernel_User.Gloss is
       return 1;
    end Gloss_Getpid;
 
+   --  Wall clock (milestone 55): seed once, then synthesize from
+   --  the rdtime CSR (10 MHz on qemu virt — akernel_rtclock.c).
+   --  Seed order: semihosting SYS_TIME (host wall clock when qemu
+   --  runs with -semihosting; the kernel's breakpoint handler
+   --  answers -1 otherwise), then the baked RD0:System/Epoch file
+   --  (build time stamped by the Makefile), then epoch 0 (the old
+   --  m53 stub behavior). Monotonic within a boot by
+   --  construction; a real RTC device can replace the seed later.
+   Clock_Seeded : Boolean := False;
+   Epoch_Seed   : U64 := 0;
+   Ticks_Seed   : U64 := 0;
+   Tick_Hz      : constant U64 := 10_000_000;
+
+   --  Semihosting SYS_TIME probe (17): the guard sequence makes
+   --  qemu -semihosting intercept the ebreak; without it the
+   --  kernel's breakpoint handler sees the a7 magic, answers -1
+   --  and skips. Inline asm so the syscall-RTS programs that link
+   --  gloss without libgnat still resolve it.
+   function SH_Time return Long_Long_Integer is
+      Result : Long_Long_Integer;
+   begin
+      --  Magic baked as an immediate: 16#5E41_C10C# = the
+      --  SH_Clock_Magic handshake in arch-traps.adb.
+      System.Machine_Code.Asm
+        (Template =>
+           "li a7, 0x5E41C10C" & ASCII.LF &
+           "li a0, 17" & ASCII.LF &
+           "li a1, 0" & ASCII.LF &
+           "slli x0, x0, 0x1f" & ASCII.LF &
+           "ebreak" & ASCII.LF &
+           "srli x0, x0, 7" & ASCII.LF &
+           "mv %0, a0",
+         Outputs  => Long_Long_Integer'Asm_Output ("=r", Result),
+         Clobber  => "a0, a1, a7, memory",
+         Volatile => True);
+      return Result;
+   end SH_Time;
+
+   function Rdtime return U64 is
+      Result : U64;
+   begin
+      System.Machine_Code.Asm
+        (Template => "csrr %0, time",
+         Outputs  => U64'Asm_Output ("=r", Result),
+         Clobber  => "memory",
+         Volatile => True);
+      return Result;
+   end Rdtime;
+
+   procedure Seed_Clock is
+      SH  : constant Long_Long_Integer := SH_Time;
+      Buf : String (1 .. 32);
+      Cnt : U64;
+      St  : U64;
+      Acc : U64 := 0;
+      Got : Boolean := False;
+   begin
+      if SH > 0 then
+         Epoch_Seed := U64 (SH);
+      else
+         --  Baked build epoch: RD0:System/Epoch holds decimal
+         --  seconds, one line, stamped at image build time.
+         Ensure_Bound;
+         St := Files.Read ("RD0:System/Epoch", 0, Buf'Address,
+                           U64 (Buf'Length), Cnt);
+         if St = Files.Status_Ok and then Cnt > 0 then
+            for I in 1 .. Natural (Cnt) loop
+               exit when Buf (I) not in '0' .. '9';
+               Acc := Acc * 10
+                 + U64 (Character'Pos (Buf (I))
+                        - Character'Pos ('0'));
+               Got := True;
+            end loop;
+         end if;
+         if Got then
+            Epoch_Seed := Acc;
+         end if;
+      end if;
+      Ticks_Seed := Rdtime;
+      Clock_Seeded := True;
+   end Seed_Clock;
+
    function Gloss_Gettimeofday (TV, TZ : System.Address) return C_Int;
    pragma Export (C, Gloss_Gettimeofday, "_gettimeofday");
 
    function Gloss_Gettimeofday (TV, TZ : System.Address) return C_Int is
       pragma Unreferenced (TZ);
       type U64_Pair is array (1 .. 2) of U64;
-      TVW : U64_Pair with Address => TV;
+      TVW     : U64_Pair with Address => TV;
+      Elapsed : U64;
    begin
-      --  No wall clock yet (the RTC/Calendar milestone): report
-      --  epoch so callers see a stable zero rather than an error.
-      TVW := (0, 0);
+      if not Clock_Seeded then
+         Seed_Clock;
+      end if;
+      Elapsed := Rdtime - Ticks_Seed;
+      TVW := (Epoch_Seed + Elapsed / Tick_Hz,
+              (Elapsed mod Tick_Hz) * 1_000_000 / Tick_Hz);
       return 0;
    end Gloss_Gettimeofday;
 
