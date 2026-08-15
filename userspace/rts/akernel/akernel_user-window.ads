@@ -40,8 +40,16 @@ use type Akernel_User.Syscalls.U64;
 --    kind 2 = pointer (value = content-relative packed state:
 --    bits 0..15 = x, 16..31 = y, 32..39 = buttons; delivered
 --    only while the pointer is inside the window content and
---    no title drag is active; consecutive pointer events are
---    COALESCED in place so moves cannot flood the ring).
+--    no title drag is active; consecutive pointer events WITH
+--    THE SAME button state are COALESCED in place so moves
+--    cannot flood the ring — a press/release edge always lands
+--    as its own event).
+--    v4 (milestone 57): a press inside the content CAPTURES
+--    the pointer: until buttons go 0 every move and the final
+--    release are delivered to the capturing window even
+--    outside the content, coordinates clamped to content
+--    bounds. Clients can drag (scrollbar knobs, text
+--    selection) without losing the release.
 --    kind 3 = close (value unused): the close gadget was
 --    clicked — the CLOSEWINDOW analog. The client is expected
 --    to Surface_Destroy and exit; Bureau never kills the

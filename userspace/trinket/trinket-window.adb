@@ -193,7 +193,7 @@ package body Trinket.Window is
       Reply_H : U64;
       Done    : Boolean := False;
    begin
-      while not Done loop
+      while not Done and then not W.Quit_Wanted loop
          Flush_Dirty (W);
          if IPC_Recv (W.Sink_EP, Reply_H) /= IPC_Ok then
             Debug_Put_Line ("trinket: recv failed");
@@ -246,6 +246,11 @@ package body Trinket.Window is
       end loop;
       Flush_Dirty (W);
    end Run;
+
+   procedure Request_Quit (W : in out Window) is
+   begin
+      W.Quit_Wanted := True;
+   end Request_Quit;
 
    procedure Close (W : in out Window) is
       Result : U64;

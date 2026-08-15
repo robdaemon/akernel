@@ -32,7 +32,10 @@ package Trinket.Window is
 
    procedure Run (W : in out Window);
    --  Event loop: returns when Bureau delivers the close-gadget
-   --  event. Draws pending damage before each blocking receive.
+   --  event OR the app calls Request_Quit (e.g. a Quit button).
+   --  Draws pending damage before each blocking receive.
+
+   procedure Request_Quit (W : in out Window);
 
    procedure Close (W : in out Window);
 
@@ -53,6 +56,7 @@ private
       Root         : Widgets.Any_Widget := null;
       Cnv          : Canvas;
       Opened       : Boolean := False;
+      Quit_Wanted  : Boolean := False;
       Prev_Buttons : U64 := 0;
    end record;
 

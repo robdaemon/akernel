@@ -1,0 +1,12 @@
+with "../trinket/trinket.gpr";
+
+project Edit extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/edit";
+   for Main use ("edit.adb");
+
+   package Builder is
+      for Executable ("edit.adb") use "edit.elf";
+   end Builder;
+end Edit;

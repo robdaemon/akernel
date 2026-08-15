@@ -2619,13 +2619,73 @@ Next candidates (order open):
     build standalone — no alire
     toolchain context; build
     through a dependent crate.
-    MILESTONE 56 COMPLETE. Next:
-    57 — window protocol v4
-    (drag/release outside content)
-    + Text_Edit widget + Edit app;
-    Trinket.Scrollbar (terminal
-    wants it); Tier-1 shared-lib
-    machinery. Deferred: tasking,
+    MILESTONE 56 COMPLETE.
+
+    MILESTONE 57 COMPLETE.
+    Window protocol v4 (Bureau
+    pointer capture: a content
+    press captures the pointer
+    until release — moves leak
+    clamped to the content rect,
+    release always delivered,
+    coalescing only merges
+    equal-button events;
+    Surface_Destroy clears
+    Capture+Drag_Slot);
+    virtio_input forwards nav keys
+    as codes 16#80#..16#88#
+    (Trinket.Key_*); terminal
+    drops codes >= 128;
+    Trinket.Scrollbar (arrows,
+    track paging, striped knob
+    drag via capture, user-only
+    On_Change); Trinket.Text_Edit
+    (512x128 heap model, cursor,
+    click-place, drag-select,
+    full key editing, Top-line
+    scroll, 3-segment selection
+    Draw); Trinket.Window.
+    Request_Quit; Sys:System/Edit
+    (Text_IO load/save, verified
+    live: typed mid-line, saved,
+    edit survived sync+reset).
+    Burns: (1) Bureau overlay
+    addresses Queue_VA(Slot)/
+    Surf_VA(Slot) elaborate at
+    CALL ENTRY before the slot
+    guard runs — an early virtio
+    tablet event with Focus=0
+    wrapped to 16#F..F# and
+    killed Bureau; clamp the
+    index INSIDE the address
+    functions, guards are not
+    enough. (2) The Files
+    package default volume is
+    RD0 (initrd) and the whole
+    Tests/ ecosystem relies on
+    it, but an interactive shell
+    typing System/Edit needs
+    BD0: — shell Stage now tries
+    CLI.Resolve_Path (cwd-aware)
+    FIRST, falls back to the raw
+    RD0-default name; a
+    Set_Default_Volume("BD0")
+    hardcode fixed the terminal
+    and deterministically broke
+    5 suite jobs tests (fuzz
+    shells stage Tests/Teardown
+    relative). (3) QMP test
+    harness: fixed sleeps lose
+    to variable boot time — poll
+    the log for 'shell online'
+    before typing, and click the
+    target window FIRST (keys go
+    to the focused window only).
+    Next: 58 — Trinket.Listview
+    + file manager; terminal
+    Scrollbar adoption; Tier-1
+    shared-lib machinery.
+    Deferred: tasking,
     virtio-net, Proc:self.
 
     MILESTONE 53c

@@ -11,6 +11,7 @@ package body Trinket.Widgets is
    type Label_Access is access Label;
    type Button_Access is access Button;
    type Group_Access is access Group;
+   type Scrollbar_Access is access Scrollbar;
 
    function Max (A, B : U64) return U64 is (if A > B then A else B);
    function Min (A, B : U64) return U64 is (if A < B then A else B);
@@ -164,6 +165,187 @@ package body Trinket.Widgets is
       return False;
    end On_Pointer;
 
+   --  Scrollbar
+
+   Arrow : constant U64 := 16;  --  arrow box height
+
+   function New_Scrollbar
+     (On_Change : Change_Callback := null) return Any_Widget
+   is
+      S : constant Scrollbar_Access := new Scrollbar;
+   begin
+      S.On_Change := On_Change;
+      return Any_Widget (S);
+   end New_Scrollbar;
+
+   procedure Clamp_Pos (W : in out Scrollbar) is
+   begin
+      if W.Pos < W.Min then
+         W.Pos := W.Min;
+      elsif W.Pos > W.Max then
+         W.Pos := W.Max;
+      end if;
+   end Clamp_Pos;
+
+   procedure Set_Range
+     (W : in out Scrollbar; Min, Max, Visible : U64)
+   is
+   begin
+      W.Min := Min;
+      W.Max := Max;
+      W.Visible := U64'Max (Visible, 1);
+      Clamp_Pos (W);
+      W.Dirty := True;
+   end Set_Range;
+
+   procedure Set_Pos (W : in out Scrollbar; P : U64) is
+   begin
+      if P /= W.Pos then
+         W.Pos := P;
+         Clamp_Pos (W);
+         W.Dirty := True;
+      end if;
+   end Set_Pos;
+
+   procedure User_Move (W : access Scrollbar; P : U64) is
+   begin
+      if P /= W.Pos then
+         W.Pos := P;
+         Clamp_Pos (W.all);
+         W.Dirty := True;
+         if W.On_Change /= null then
+            W.On_Change (W.Pos);
+         end if;
+      end if;
+   end User_Move;
+
+   --  Knob geometry: track between the arrow boxes; knob height
+   --  proportional to Visible / (Max - Min + Visible); knob top
+   --  linear in Pos.
+   procedure Knob_Rect
+     (W : Scrollbar; Top, Bottom : out U64)
+   is
+      Track_T : constant U64 := W.Y + Arrow;
+      Track_B : constant U64 := W.Y + W.H - Arrow;
+      Track_H : constant U64 := Track_B - Track_T;
+      Total   : constant U64 := W.Max - W.Min + W.Visible;
+      Knob_H  : constant U64 :=
+        U64'Max (12, Track_H * W.Visible / U64'Max (Total, 1));
+      Travel  : constant U64 := Track_H - U64'Min (Knob_H, Track_H);
+   begin
+      if Track_H <= 12 then
+         Top := Track_T;
+         Bottom := Track_T;
+         return;
+      end if;
+      Top := Track_T +
+        (if W.Max > W.Min
+         then Travel * (W.Pos - W.Min) / (W.Max - W.Min)
+         else 0);
+      Bottom := Top + U64'Min (Knob_H, Track_H);
+   end Knob_Rect;
+
+   procedure Draw (W : Scrollbar; C : Canvas) is
+      KT, KB : U64;
+   begin
+      if not Intersects (W, C) then
+         return;
+      end if;
+      Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
+      Paint.Bevel2 (C, W.X, W.Y, W.X + W.W, W.Y + W.H,
+                    Raised => False);
+      --  Arrow boxes + triangle glyphs.
+      Paint.Fill_Rect (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
+                       W.Y + Arrow - 2, Face);
+      Paint.Bevel2 (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
+                    W.Y + Arrow - 2);
+      Paint.Fill_Rect (C, W.X + 2, W.Y + W.H - Arrow + 2,
+                       W.X + W.W - 2, W.Y + W.H - 2, Face);
+      Paint.Bevel2 (C, W.X + 2, W.Y + W.H - Arrow + 2,
+                    W.X + W.W - 2, W.Y + W.H - 2);
+      declare
+         MX : constant U64 := W.X + W.W / 2;
+      begin
+         for DY in U64'(0) .. 3 loop
+            Paint.Fill_Rect (C, MX - DY, W.Y + 5 + DY,
+                             MX + DY + 1, W.Y + 6 + DY, Text_Dark);
+            Paint.Fill_Rect (C, MX - DY, W.Y + W.H - 6 - DY,
+                             MX + DY + 1, W.Y + W.H - 5 - DY,
+                             Text_Dark);
+         end loop;
+      end;
+      --  Knob (striped, the mockup look).
+      Knob_Rect (W, KT, KB);
+      if KB > KT then
+         Paint.Fill_Rect (C, W.X + 2, KT, W.X + W.W - 2, KB, Face);
+         Paint.Bevel2 (C, W.X + 2, KT, W.X + W.W - 2, KB);
+         declare
+            SY : U64 := KT + 5;
+         begin
+            while SY + 1 < KB - 4 loop
+               Paint.Fill_Rect (C, W.X + 5, SY, W.X + W.W - 5,
+                                SY + 1, Bevel_Lo);
+               SY := SY + 3;
+            end loop;
+         end;
+      end if;
+   end Draw;
+
+   function On_Pointer
+     (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
+      return Boolean
+   is
+      pragma Unreferenced (PX);
+      KT, KB : U64;
+      Track_T : constant U64 := W.Y + Arrow;
+      Track_B : constant U64 := W.Y + W.H - Arrow;
+   begin
+      case K is
+         when Press =>
+            if not Inside (W.all, PX, PY) then
+               return False;
+            end if;
+            Knob_Rect (W.all, KT, KB);
+            if PY < W.Y + Arrow then
+               User_Move (W, W.Pos - 1);
+            elsif PY >= W.Y + W.H - Arrow then
+               User_Move (W, W.Pos + 1);
+            elsif PY >= KT and then PY < KB then
+               W.Dragging := True;
+               W.Grab_DY := PY - KT;
+            elsif PY < KT then
+               User_Move (W, W.Pos - W.Visible);
+            else
+               User_Move (W, W.Pos + W.Visible);
+            end if;
+            return True;
+         when Move =>
+            if W.Dragging then
+               Knob_Rect (W.all, KT, KB);
+               declare
+                  Knob_H : constant U64 := KB - KT;
+                  Travel : constant U64 :=
+                    Track_B - Track_T - Knob_H;
+                  Rel : constant U64 :=
+                    (if PY > Track_T + W.Grab_DY
+                     then PY - Track_T - W.Grab_DY else 0);
+               begin
+                  User_Move (W, W.Min +
+                    (if Travel > 0
+                     then (W.Max - W.Min) * Rel / Travel
+                     else 0));
+               end;
+               return True;
+            end if;
+         when Release =>
+            if W.Dragging then
+               W.Dragging := False;
+               return True;
+            end if;
+      end case;
+      return False;
+   end On_Pointer;
+
    --  Group
 
    function New_Group
@@ -199,6 +381,7 @@ package body Trinket.Widgets is
       Avail   : U64;
       Each    : U64;
       Pos     : U64;
+      Fixed   : Natural := 0;  --  scrollbars pin to Arrow wide
    begin
       if W.N = 0 then
          return;
@@ -215,15 +398,28 @@ package body Trinket.Widgets is
             Pos := Pos + Each + Spacing;
          end loop;
       else
-         Avail := IX1 - IX0 - Spacing * U64 (W.N - 1);
-         Each  := Avail / U64 (W.N);
+         for I in 1 .. W.N loop
+            if W.Kids (I).all in Scrollbar then
+               Fixed := Fixed + 1;
+            end if;
+         end loop;
+         Avail := IX1 - IX0 - Spacing * U64 (W.N - 1)
+           - U64 (Fixed) * Arrow;
+         Each  := (if W.N > Fixed then Avail / U64 (W.N - Fixed)
+                   else 0);
          Pos   := IX0;
          for I in 1 .. W.N loop
-            W.Kids (I).X := Pos;
             W.Kids (I).Y := IY0;
-            W.Kids (I).W := Each;
             W.Kids (I).H := IY1 - IY0;
-            Pos := Pos + Each + Spacing;
+            if W.Kids (I).all in Scrollbar then
+               W.Kids (I).X := Pos;
+               W.Kids (I).W := Arrow;
+               Pos := Pos + Arrow + Spacing;
+            else
+               W.Kids (I).X := Pos;
+               W.Kids (I).W := Each;
+               Pos := Pos + Each + Spacing;
+            end if;
          end loop;
       end if;
       for I in 1 .. W.N loop

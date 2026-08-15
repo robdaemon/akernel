@@ -79,6 +79,32 @@ package Trinket.Widgets is
      (W : access Button; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
 
+   --  Scrollbar (milestone 57): vertical; sunken track, arrow
+   --  boxes, striped knob proportional to Visible / range.
+   --  Arrow press steps 1, track press pages, knob drags (v4
+   --  pointer capture delivers the drag + release even outside
+   --  the window). On_Change fires on USER moves only.
+   type Change_Callback is access procedure (Pos : U64);
+   type Scrollbar is new Widget with record
+      Min       : U64 := 0;
+      Max       : U64 := 0;
+      Visible   : U64 := 1;
+      Pos       : U64 := 0;
+      On_Change : Change_Callback := null;
+      Dragging  : Boolean := False;
+      Grab_DY   : U64 := 0;
+   end record;
+   function New_Scrollbar
+     (On_Change : Change_Callback := null) return Any_Widget;
+   procedure Set_Range
+     (W : in out Scrollbar; Min, Max, Visible : U64);
+   --  Clamps Pos; marks dirty; does NOT fire On_Change.
+   procedure Set_Pos (W : in out Scrollbar; P : U64);
+   overriding procedure Draw (W : Scrollbar; C : Canvas);
+   overriding function On_Pointer
+     (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
+      return Boolean;
+
    --  Group: H/V layout container with an optional frame +
    --  centered title breaking the top edge (the mockup's
    --  "File"/"Text" groups). Inset flips the frame sunken and

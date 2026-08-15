@@ -139,15 +139,20 @@ procedure Bureau is
       return 0;
    end Slot_Of;
 
+   --  Clamped at slot 1: callers overlay the queue BEFORE their
+   --  guard can run (overlay addresses elaborate at call entry),
+   --  so a 0 (no focus/capture) must not overflow U64 (Slot - 1)
+   --  — the m57 bureau death on an early tablet event.
    function Queue_VA (Slot : Natural) return U64 is
-     (Queue_VA0 + U64 (Slot - 1) * 4096);
+     (Queue_VA0 + U64 (Natural'Max (Slot, 1) - 1) * 4096);
 
    --  v3 input queue word view (layout in akernel_user-window.ads).
    type Word_Array is array (U64 range 0 .. 511) of U64
      with Volatile_Components;
 
    function Surf_VA (Slot : Natural) return U64 is
-     (Surf_VA0 + U64 (Slot - 1) * Surf_Slot_Stride);
+     (Surf_VA0 + U64 (Natural'Max (Slot, 1) - 1) *
+        Surf_Slot_Stride);
 
    --  Pane rectangle of a slot (absolute coords).
    function Pane_X (S : Natural) return U64 is (Wins (S).X + Frame);
@@ -192,6 +197,13 @@ procedure Bureau is
    Drag_Slot : Natural := 0;
    Drag_DX   : U64 := 0;
    Drag_DY   : U64 := 0;
+   --  Pointer capture (milestone 57, protocol v4): a press inside
+   --  a window's CONTENT captures the pointer — moves and the
+   --  final release keep flowing to that window (coordinates
+   --  clamped to content bounds) until buttons go 0, so a client
+   --  drag (scrollbar knob, text selection) survives leaving the
+   --  content and the release can never be lost.
+   Capture   : Natural := 0;
 
    ------------------------------------------------------------------
    --  Pixel plumbing. All drawing is clipped to the active band
@@ -607,6 +619,9 @@ procedure Bureau is
    --  signal — Bureau NEVER calls the client; a blocking forward
    --  rendezvous deadlocked against the client's Surface_Update
    --  calls, milestone 31 burn). Drop-new when the ring is full.
+   --  v4: while Capture /= 0 events go to the CAPTURED window
+   --  with coordinates clamped into content bounds instead of
+   --  being dropped outside it.
    procedure Forward_Key (Ch : U64) is
       Q  : Word_Array
         with Address => System.Storage_Elements.To_Address
@@ -675,9 +690,11 @@ procedure Bureau is
    --  active; consecutive pointer events coalesce in place so a
    --  fast pointer cannot flood the ring.
    procedure Forward_Pointer (PX, PY, Buttons : U64) is
+      T    : constant Natural :=
+        (if Capture /= 0 then Capture else Focus);
       Q  : Word_Array
         with Address => System.Storage_Elements.To_Address
-          (System.Storage_Elements.Integer_Address (Queue_VA (Focus)));
+          (System.Storage_Elements.Integer_Address (Queue_VA (T)));
       Head : U64;
       Tail : U64;
       Slot : U64;
@@ -685,31 +702,53 @@ procedure Bureau is
       CY   : U64;
       Res  : U64;
    begin
-      if Focus = 0 or else Wins (Focus).Queue_Cap = 0
+      if T = 0 or else Wins (T).Queue_Cap = 0
         or else Drag_Slot /= 0
       then
          return;
       end if;
       --  Content-relative; outside the content nothing is
-      --  delivered (frame/title interaction stays Bureau's).
-      if PX < Wins (Focus).X + Frame
-        or else PY < Wins (Focus).Y + Frame + Title_H
-      then
-         return;
-      end if;
-      CX := PX - Wins (Focus).X - Frame;
-      CY := PY - Wins (Focus).Y - Frame - Title_H;
-      if CX >= Wins (Focus).PW or else CY >= Wins (Focus).PH then
-         return;
-      end if;
+      --  delivered UNLESS captured (v4) — then coordinates clamp
+      --  into content bounds so drags track to the edge.
+      declare
+         IX : constant Long_Long_Integer :=
+           Long_Long_Integer (PX) -
+             Long_Long_Integer (Wins (T).X + Frame);
+         IY : constant Long_Long_Integer :=
+           Long_Long_Integer (PY) -
+             Long_Long_Integer (Wins (T).Y + Frame + Title_H);
+      begin
+         if Capture = 0 then
+            if IX < 0 or else IY < 0
+              or else IX >= Long_Long_Integer (Wins (T).PW)
+              or else IY >= Long_Long_Integer (Wins (T).PH)
+            then
+               return;
+            end if;
+            CX := U64 (IX);
+            CY := U64 (IY);
+         else
+            CX := U64 (Long_Long_Integer'Min
+              (Long_Long_Integer'Max (IX, 0),
+               Long_Long_Integer (Wins (T).PW - 1)));
+            CY := U64 (Long_Long_Integer'Min
+              (Long_Long_Integer'Max (IY, 0),
+               Long_Long_Integer (Wins (T).PH - 1)));
+         end if;
+      end;
       Head := Q (Win.Input_Queue_Head);
       Tail := Q (Win.Input_Queue_Tail);
       if Head > Tail then
          --  Coalesce: overwrite the newest event if it is an
-         --  undrained pointer event.
+         --  undrained pointer event WITH THE SAME button state —
+         --  merging a press into a release (or vice versa) loses
+         --  the edge and wedges client drag state.
          Slot := Win.Input_Queue_First
            + ((Head - 1) mod Win.Input_Queue_Events) * 2;
-         if Q (Slot) = Win.Input_Event_Pointer then
+         if Q (Slot) = Win.Input_Event_Pointer
+           and then (Q (Slot + 1) / 2 ** 32) mod 256 =
+                    Buttons mod 256
+         then
             Q (Slot + 1) := Win.Pack_Pointer (CX, CY, Buttons);
             return;  --  already signaled when first enqueued
          end if;
@@ -1067,6 +1106,14 @@ begin
                      Result := Cap_Delete (Wins (S).Ntfn_Cap);
                   end if;
                   Wins (S).Used := False;
+                  --  A destroyed window must not hold v4 capture
+                  --  or a title drag.
+                  if Capture = S then
+                     Capture := 0;
+                  end if;
+                  if Drag_Slot = S then
+                     Drag_Slot := 0;
+                  end if;
                   --  Remove from the z-order.
                   for I in 1 .. Z_N loop
                      if Z (I) = S then
@@ -1148,6 +1195,21 @@ begin
               and then (Prev_Buttons and 1) = 0
             then
                Pointer_Press (NX, NY);
+               --  v4: a press inside the focused window's content
+               --  captures the pointer until release. Title-band
+               --  presses (drag/close) do NOT capture — Bureau
+               --  owns those.
+               if Focus /= 0 and then Wins (Focus).Queue_Cap /= 0
+                 and then Drag_Slot = 0
+                 and then NX >= Wins (Focus).X + Frame
+                 and then NX < Wins (Focus).X + Frame +
+                   Wins (Focus).PW
+                 and then NY >= Wins (Focus).Y + Frame + Title_H
+                 and then NY < Wins (Focus).Y + Frame + Title_H +
+                   Wins (Focus).PH
+               then
+                  Capture := Focus;
+               end if;
             elsif (Buttons and 1) = 1 and then Drag_Slot /= 0 then
                Drag_Move (NX, NY);
             elsif (Buttons and 1) = 0 then
@@ -1160,6 +1222,11 @@ begin
             --  focus already in place. Shared-mem enqueue +
             --  signal only — never a rendezvous.
             Forward_Pointer (NX, NY, Buttons);
+            --  v4: the release event above is the LAST captured
+            --  delivery; clear capture after it.
+            if (Buttons and 1) = 0 then
+               Capture := 0;
+            end if;
          end;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 

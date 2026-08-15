@@ -194,11 +194,26 @@ QEMU virt RAM base:     0x80000000
   queue
   (window protocol v3: one-page event ring memobj + thread-bound
   notification per surface, pushed at Surface_Create; Bureau
-  never calls its clients) and owns pointer focus/raise/drag;
+  never calls its clients; v4 adds pointer capture — a content
+  press captures the pointer until release, moves clamped to
+  the content rect, release always delivered) and owns pointer
+  focus/raise/drag;
   virtio-gpu live — the console
   server mirrors its line-atomic output to the display over
   stream-protocol sink endpoints (Op_Attach_Sink, devmgr-wired),
-  serial stays as the debug/logging copy). The terminal is a
+  serial stays as the debug/logging copy). Trinket (milestone
+  56/57) is the opt-in static widget library (libtrinket.a):
+  retained tagged-type tree, client-side rendering into Bureau
+  surfaces, WB3.1 double-ridge look, BDF fonts from Sys:Fonts/
+  with a compiled-in Font8x8 fallback; widgets: Group (H/V
+  layout + titled frame), Label, Button, Scrollbar (arrows,
+  track paging, striped knob drag via v4 capture), Text_Edit
+  (512x128 heap model, cursor, drag-select, full nav-key
+  editing, scrolling). Sys:System/Tdemo demos it; Sys:System/
+  Edit is a real text editor on it (Text_IO load/save, Save/
+  Quit buttons, wired scrollbar). Nav keys travel as codes
+  16#80#..16#88#; text consumers drop codes >= 128. The
+  terminal is a
   console device (CON: analog) in a Bureau window: it echoes
   focused keys into its text grid, serves Op_Read from its input
   FIFO, and launches System/Shell from the Sys volume (plain CLI

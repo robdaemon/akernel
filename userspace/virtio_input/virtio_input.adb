@@ -116,6 +116,18 @@ procedure Virtio_Input is
    Key_Leftshift  : constant := 42;
    Key_Rightshift : constant := 54;
    Key_Capslock   : constant := 58;
+   --  Navigation keys (milestone 57): forwarded as codes
+   --  16#80#+ (Trinket.Key_*); text-only consumers (terminal
+   --  line discipline) drop codes >= 16#80#.
+   Key_Home       : constant := 71;
+   Key_Up         : constant := 72;
+   Key_Pageup     : constant := 73;
+   Key_Left       : constant := 75;
+   Key_Right      : constant := 77;
+   Key_End        : constant := 79;
+   Key_Down       : constant := 80;
+   Key_Pagedown   : constant := 81;
+   Key_Delete     : constant := 83;
 
    ------------------------------------------------------------------
    --  Region register access
@@ -406,6 +418,27 @@ procedure Virtio_Input is
       if not Pressed or else Code > 127 then
          return;
       end if;
+
+      --  Navigation keys bypass the ASCII keymaps: codes
+      --  16#80#..16#88# (Trinket.Key_* order).
+      declare
+         Ext : constant array (Key_Home .. Key_Delete) of U8 :=
+           (Key_Home => 16#84#, Key_Up => 16#80#,
+            Key_Pageup => 16#86#, Key_Left => 16#82#,
+            Key_Right => 16#83#, Key_End => 16#85#,
+            Key_Down => 16#81#, Key_Pagedown => 16#87#,
+            Key_Delete => 16#88#,
+            others => 0);
+      begin
+         if Code in Key_Home .. Key_Delete
+           and then Ext (Code) /= 0
+         then
+            if Seat_EP /= 0 then
+               Send_Seat_Key (Character'Val (Natural (Ext (Code))));
+            end if;
+            return;
+         end if;
+      end;
 
       Ch := (if Shift_Down
              then Keymap_Shifted (Code)

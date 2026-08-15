@@ -23,6 +23,19 @@ package Trinket is
    Sel_Blue  : constant Pixel := 16#FF60_68B0#;  --  selection
    Text_Dark : constant Pixel := 16#FF20_2020#;
 
+   --  Navigation key codes (milestone 57): virtio_input sends
+   --  these for keys outside ASCII. Text-only consumers drop
+   --  codes >= 16#80#.
+   Key_Up       : constant U64 := 16#80#;
+   Key_Down     : constant U64 := 16#81#;
+   Key_Left     : constant U64 := 16#82#;
+   Key_Right    : constant U64 := 16#83#;
+   Key_Home     : constant U64 := 16#84#;
+   Key_End      : constant U64 := 16#85#;
+   Key_Pageup   : constant U64 := 16#86#;
+   Key_Pagedown : constant U64 := 16#87#;
+   Key_Delete   : constant U64 := 16#88#;
+
    type Pixel_Array is
      array (U64 range <>) of Pixel with Volatile_Components;
 

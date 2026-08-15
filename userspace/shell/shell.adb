@@ -91,6 +91,17 @@ procedure Shell is
    --  object; returns the spawnable object cap or 0.
    function Stage (Path : String) return U64 is
       use System.Storage_Elements;
+      --  Cwd-aware resolution (ENV:CWD): the bare Files default
+      --  volume is RD0 (the initrd), so an interactive
+      --  "System/Edit" qualified to RD0: and never staged.
+      --  But fuzz scripts say "run Tests/Teardown" relative
+      --  with a BD0: cwd and Tests/ is RD0:-only. Try the
+      --  cwd-resolved name first, fall back to the raw name
+      --  (RD0 default) — both worlds stage.
+      Full    : constant String :=
+        Akernel_User.CLI.Resolve_Path (Path);
+      Name    : String (1 .. 160);
+      NLen    : Natural;
       Size    : U64 := 0;
       Pages   : U64;
       Mem_Cap : U64;
@@ -100,26 +111,44 @@ procedure Shell is
       St      : U64;
       Result  : U64;
    begin
-      St := Akernel_User.Files.Stat (Path, Size);
+      St := Akernel_User.Files.Stat (Full, Size);
+      if St /= Akernel_User.Files.Status_Ok then
+         --  Fallback: bare Files qualification (RD0: initrd),
+         --  the historical behaviour the suite's Tests/ paths
+         --  rely on.
+         St := Akernel_User.Files.Stat (Path, Size);
+         if St = Akernel_User.Files.Status_Ok then
+            NLen := Natural'Min (Path'Length, Name'Length);
+            Name (1 .. NLen) := Path (Path'First .. Path'First + NLen - 1);
+         end if;
+      else
+         NLen := Natural'Min (Full'Length, Name'Length);
+         Name (1 .. NLen) := Full (Full'First .. Full'First + NLen - 1);
+      end if;
       if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+         Debug_Put_Line ("stage: stat failed path=<" & Path & ">");
+         Debug_Put_Line ("st=" & U64'Image (St) & " size=" &
+           U64'Image (Size));
          return 0;
       end if;
       Pages := (Size + 4095) / 4096;
       Mem_Cap := Mem_Alloc (Pages);
       if Mem_Cap = Syscall_Failed then
+         Debug_Put_Line ("stage: alloc failed");
          return 0;
       end if;
       if Mem_Map (Address_Space_Cap, Mem_Cap, Stage_VA, 0,
                   Pages * 4096, 3) /= 0
       then
+         Debug_Put_Line ("stage: map failed");
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;
-      St := Akernel_User.Files.Open (Path, Size);
+      St := Akernel_User.Files.Open (Name (1 .. NLen), Size);
       while St = Akernel_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
          St := Akernel_User.Files.Read
-           (Path, Off,
+           (Name (1 .. NLen), Off,
             System'To_Address (Integer_Address (Stage_VA + Off)),
             Chunk, Count);
          exit when St /= Akernel_User.Files.Status_Ok
@@ -129,6 +158,7 @@ procedure Shell is
       if Mem_Unmap (Address_Space_Cap, Stage_VA, Pages * 4096) /= 0
         or else Off < Size
       then
+         Debug_Put_Line ("stage: read/unmap failed");
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;

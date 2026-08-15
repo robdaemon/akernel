@@ -247,11 +247,16 @@ procedure Terminal is
            + (Tail mod Akernel_User.Window.Input_Queue_Events) * 2;
          if Queue (Slot) = Akernel_User.Window.Input_Event_Key then
             declare
-               Ch : constant Character :=
-                 Character'Val (Natural (Queue (Slot + 1) and 16#FF#));
+               Code : constant Natural :=
+                 Natural (Queue (Slot + 1) and 16#FF#);
             begin
-               Input_Put (Ch);
-               Put_Char (Ch);
+               --  Milestone 57: navigation keys arrive as codes
+               --  >= 16#80# (Trinket.Key_*); the line discipline
+               --  is text-only and drops them.
+               if Code < 16#80# then
+                  Input_Put (Character'Val (Code));
+                  Put_Char (Character'Val (Code));
+               end if;
             end;
          elsif Queue (Slot) = Akernel_User.Window.Input_Event_Close
          then
