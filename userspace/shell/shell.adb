@@ -219,7 +219,7 @@ procedure Shell is
       Mem_Cap := Stage (Resolved);
       if Mem_Cap = 0 then
          Akernel_User.Console.Put_Line
-           ("command found but failed to stage: " & Word);
+           ("cannot find executable: " & Word);
          return 0;
       end if;
 

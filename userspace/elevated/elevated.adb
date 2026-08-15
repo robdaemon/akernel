@@ -60,6 +60,15 @@ procedure Elevated is
    --  (the devmgr Stage_From_FS idiom). Returns the cap or 0.
    function Stage (Path : String) return U64 is
       use System.Storage_Elements;
+      --  Same resolution contract as the shell's Stage
+      --  (milestone 57 burn): the bare Files default volume is
+      --  RD0 (initrd), so a relative "c/shutdown" qualified to
+      --  RD0: and missed — try the cwd-resolved name first,
+      --  fall back to the raw RD0-default name.
+      Full    : constant String :=
+        Akernel_User.CLI.Resolve_Path (Path);
+      Name    : String (1 .. 160);
+      NLen    : Natural;
       Size    : U64 := 0;
       Pages   : U64;
       Mem_Cap : U64;
@@ -69,8 +78,20 @@ procedure Elevated is
       St      : U64;
       Result  : U64;
    begin
-      St := Akernel_User.Files.Stat (Path, Size);
+      St := Akernel_User.Files.Stat (Full, Size);
+      if St /= Akernel_User.Files.Status_Ok then
+         St := Akernel_User.Files.Stat (Path, Size);
+         if St = Akernel_User.Files.Status_Ok then
+            NLen := Natural'Min (Path'Length, Name'Length);
+            Name (1 .. NLen) := Path (Path'First .. Path'First + NLen - 1);
+         end if;
+      else
+         NLen := Natural'Min (Full'Length, Name'Length);
+         Name (1 .. NLen) := Full (Full'First .. Full'First + NLen - 1);
+      end if;
       if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+         Akernel_User.Console.Put_Line
+           ("elevated: cannot find executable: " & Path);
          return 0;
       end if;
       Pages := (Size + 4095) / 4096;
@@ -84,11 +105,11 @@ procedure Elevated is
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;
-      St := Akernel_User.Files.Open (Path, Size);
+      St := Akernel_User.Files.Open (Name (1 .. NLen), Size);
       while St = Akernel_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
          St := Akernel_User.Files.Read
-           (Path, Off,
+           (Name (1 .. NLen), Off,
             To_Address (Integer_Address (Stage_VA + Off)),
             Chunk, Count);
          if St /= Akernel_User.Files.Status_Ok
