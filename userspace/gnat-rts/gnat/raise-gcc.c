@@ -140,7 +140,9 @@ extern void __gnat_raise_abort (void) __attribute__ ((noreturn));
 #define abort() __gnat_raise_abort()
 
 #elif defined(STANDALONE)
+#ifndef inhibit_libc
 #define inhibit_libc
+#endif
 #endif
 
 #include "unwind-pe.h"

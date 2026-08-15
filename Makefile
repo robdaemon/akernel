@@ -51,7 +51,15 @@ DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown re
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
-.PHONY: all kernel userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
+#  The userspace crates link against a custom GNAT runtime that is
+#  vendored under userspace/gnat-rts.  It is not part of Alire's
+#  dependency resolution, so a fresh clone has an empty adalib/ and
+#  every userspace program fails to bind with "Cannot find: s-stalib.ali".
+#  Build the runtime once before any userspace crate.
+RTS_GPR := userspace/gnat-rts/runtime_build.gpr
+RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
+
+.PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
@@ -60,7 +68,10 @@ kernel:
 
 userspace: $(CRATES)
 
-$(CRATES):
+$(RTS_LIB): $(RTS_GPR)
+	alr exec -- gprbuild -P $(RTS_GPR)
+
+$(CRATES): | $(RTS_LIB)
 	$(MAKE) -C userspace/$@
 
 
