@@ -2527,11 +2527,106 @@ Next candidates (order open):
     tell the truth; timezone stays
     UTC (a-catizo, TZ unset).
     MILESTONE 55 COMPLETE. Next:
-    56 — the deferred list: tasking
-    (thread-spawn + futex + TLS +
-    s-taprop), virtio-net (then NTP
-    could REPLACE the seed), dynamic
-    linking (medany vs medpic).
+    56 — Trinket core (GUI design
+    locked: retained widget tree,
+    client-side rendering, BDF
+    fonts, Tier-1 shared libs
+    land with Trinket).
+
+    MILESTONE 56 (Trinket core):
+    userspace/trinket = OPT-IN
+    static library (libtrinket.a,
+    NOT part of the RTS — GUI
+    programs link it on top of
+    akernel_program.gpr). Root
+    (palette = Bureau's exact
+    constants + Canvas = mapped
+    surface + clip rect),
+    Trinket.Paint (clipped fills +
+    the WB3.1 double-ridge Bevel2:
+    black outer, white/dark inner
+    pair, sunken for insets),
+    Trinket.Fonts (BDF loader —
+    STARTCHAR/ENCODING/DWIDTH/BBX/
+    BITMAP, 8-bit-wide <= 32-row
+    subset — from Sys:Fonts/
+    font8x8.bdf with the compiled
+    Font8x8 as fallback;
+    tools/font2bdf.py GENERATES
+    the BDF from font8x8.ads at
+    image build, bit-reversed to
+    BDF's MSB-first), Trinket.
+    Widgets (abstract tagged
+    Widget = the MUI class;
+    Group H/V layout with frame +
+    centered title breaking the
+    top edge + Inset pane mode;
+    Label (optional inset field);
+    Button (press/release, sunken
+    while held, On_Click callback);
+    dispatching Dirty_Union +
+    Clear_Dirty for damage),
+    Trinket.Window (the whole v3
+    dance: queue memobj 0x5F00_0000,
+    chunks from 0x5F80_0000,
+    thread-bound ntfn, mint/delete,
+    chunked Set_Buffer + commit;
+    Run = recv-multiplex loop:
+    notification -> drain queue ->
+    Press/Release edge derivation
+    from packed buttons -> tree
+    dispatch -> dirty union -> one
+    clip + repaint + Surface_Update
+    band; close event returns).
+    tdemo (Sys:System/Tdemo, in
+    Startup) proves it: screendump
+    shows groups/titles/insets/
+    buttons, QMP click on Save
+    logs the callback, close
+    gadget destroys the window.
+    881/880 PASS SMP1/SMP4,
+    failures=0, fsck clean.
+    Burns: (1) anonymous access
+    allocators (constant access T
+    := new T inside a constructor
+    function) inherit FUNCTION
+    accessibility — the conversion
+    to a library-level Any_Widget
+    fails the dynamic check
+    (PROGRAM_ERROR at startup);
+    named access types at library
+    level. (2) Root group at Y=0 +
+    title band at W.Y-2 wraps U64
+    -> CONSTRAINT_ERROR in
+    Fonts.Draw_Text's Integer
+    conversion; clamp. (3) A child
+    package named Trinket.Draw is
+    HIDDEN by the Widgets.Draw
+    primitive inside the body —
+    renamed to Trinket.Paint.
+    (4) U64 operators need use
+    type in EVERY child unit;
+    Interfaces has Unsigned_8,
+    not U8. (5) Adding tdemo's
+    third boot window lengthens
+    per-console-line compositing
+    under SMP4 enough that the
+    info-reap poll's 512x32-yield
+    budget went deterministically
+    short — 4096 restores it (test
+    budget, not product). (6)
+    library gpr projects don't
+    build standalone — no alire
+    toolchain context; build
+    through a dependent crate.
+    MILESTONE 56 COMPLETE. Next:
+    57 — window protocol v4
+    (drag/release outside content)
+    + Text_Edit widget + Edit app;
+    Trinket.Scrollbar (terminal
+    wants it); Tier-1 shared-lib
+    machinery. Deferred: tasking,
+    virtio-net, Proc:self.
 
     MILESTONE 53c
     COMPLETE.

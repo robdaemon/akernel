@@ -42,7 +42,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
-DISK_CRATES_SYSTEM := bureau terminal demo shell elevated shutdown reboot
+DISK_CRATES_SYSTEM := bureau terminal demo tdemo shell elevated shutdown reboot
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
@@ -107,13 +107,16 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 	mcopy -i $@@@1048576 $(INITRD_OUT)/longfile.txt "::LongFileName.txt"; \
 	mmd -i $@@@1048576 ::System; \
 	mmd -i $@@@1048576 ::C; \
+	mmd -i $@@@1048576 ::Fonts; \
+	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads > $(INITRD_OUT)/font8x8.bdf; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/font8x8.bdf ::Fonts/FONT8X8.BDF; \
 	for c in $(DISK_CRATES_SYSTEM); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \
 	  mcopy -i $@@@1048576 /tmp/ak-$$c.elf "::System/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
 	for c in $(DISK_CRATES_C); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \
 	  mcopy -i $@@@1048576 /tmp/ak-$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
-	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\n' > $(INITRD_OUT)/startup; \
+	printf 'System/Bureau\nSystem/Terminal\nSystem/Demo\nSystem/Tdemo\n' > $(INITRD_OUT)/startup; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
 initrd: $(INITRD_IMG)

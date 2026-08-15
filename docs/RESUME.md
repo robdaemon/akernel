@@ -1,8 +1,19 @@
-MILESTONE 55 SHIPPED (wall clock: semihosting/baked-epoch
-seed + rdtime synthesis, 880/880). GUI DIRECTION DECIDED —
-next milestone 56 = Trinket core (see below). Read
-docs/NEXT.md (55 entry), docs/STATE.md, docs/IPC.md,
-docs/design/trinket-mockup.png.
+MILESTONE 56 SHIPPED — Trinket
+core: opt-in GUI widget library
+(userspace/trinket, libtrinket.a,
+NOT in the RTS). Widget tagged
+tree (Group/Label/Button), BDF
+fonts from Sys:Fonts/ (font2bdf
+from font8x8.ads) + Font8x8
+fallback, WB3.1 double bevels,
+Bureau v3 window wrapper + event
+loop + damage bands. tdemo
+proves it live (click + close
+verified). 881/880 SMP1/SMP4.
+GUI design locked (below).
+Next: 57 — protocol v4
+drag/release + Text_Edit +
+Edit app; Trinket.Scrollbar.
 
 GUI DESIGN LOCKED (user decisions, 2026):
 - Widget library name: TRINKET (trinket.library; apps
@@ -14,41 +25,35 @@ GUI DESIGN LOCKED (user decisions, 2026):
   Wayland-ish split): Bureau STAYS compositor + chrome +
   focus/input routing ONLY (chrome not themeable). Trinket
   owns everything in the pane.
-- Look: Workbench 3.1/ReAction per mockup — double-ridge
-  bevels (black outer border, white inner top-left,
-  dark-gray+black inner bottom-right; sunken for insets),
-  group frames with CENTERED LABELS breaking the top edge,
-  glyph gadgets (close box, twin depth, triangle arrows),
-  striped scroll knobs, blue (#6068B0) only for active
-  title + selections. Bureau chrome gets the same
-  double-ridge recipe (constants-level change).
-- Fonts: BDF files from Sys:Fonts/ (parser: STARTCHAR/
-  ENCODING/BBX/BITMAP hex runs); Font8x8 compiled-in
-  fallback; rasterizer behind interface for later freetype.
-- Images deferred: when needed, Amiga answer was BOTH —
-  datatypes.library framework + libpng/zlib as engine
+- Look: Workbench 3.1/ReAction per mockup
+  (docs/design/trinket-mockup.png) — double-ridge bevels,
+  group frames with centered labels, glyph gadgets, striped
+  scroll knobs, blue only for active title + selections.
+  Bureau chrome keeps its single bevels for now (harmonize
+  later, constants-level change).
+- Fonts: BDF files from Sys:Fonts/ (SHIPPED 56: font8x8.bdf
+  generated from font8x8.ads by tools/font2bdf.py); Font8x8
+  compiled-in fallback; freetype later behind the same API.
+- Images deferred: datatypes.library framework + libpng/zlib
   inside picture.datatype. Revisit after file manager.
-- App order: terminal (already custom text grid — stays;
-  takes ONLY Trinket's standalone Scrollbar soon), then
-  text EDITOR (forces Text_Edit: multiline/selection/
-  scrolling), then FILE MANAGER (forces Listview + groups).
-- Window protocol v2 lacks mouse drag/release — protocol
-  v3 (Bureau-side, small) needed for selection/scrollbar.
+- App order: terminal (custom text grid stays; takes
+  Trinket.Scrollbar soon), text EDITOR (57), file manager
+  (58, forces Listview).
+- Window protocol v3 lacks drag/release-outside-content —
+  v4 (Bureau-side, small) needed for selection/scrollbar.
 - Tier-1 shared-lib machinery (fixed-VA shared runtime,
   per-process runtime data page, __getreent at fixed VA)
-  lands WITH Trinket — GUI lib is its first customer.
+  still pending — Trinket currently links statically per
+  program; Tier-1 dedups later.
 - Dynamic linking: Tier 1 chosen long-term; real ELF .so
   rejected (ld has no -shared; no ecosystem payoff).
 
-MILESTONE 56 SCOPE (agreed): Trinket core — window wrapper
-over window-protocol v2, event loop, damage propagation,
-BDF rasterizer + Font8x8 fallback, double-bevel primitives,
-Widget/Group/Label/Button, demo app proving the tree.
-Bureau untouched in 56 (pure client-side, no protocol
-risk). Then 57: protocol v3 drag/release + Text_Edit +
-Edit app; 58: Listview + file manager (Sys:Tools/Files?).
+MILESTONE 57 SCOPE (agreed): window protocol v4 (pointer
+events outside content while held), Trinket.Text_Edit
+(multiline, selection, scrolling), Edit app. Then 58:
+Listview + file manager (Sys:Tools/Files?).
 
-CURRENT SESSION STATE (55 SHIPPED; GUI direction locked):
+CURRENT SESSION STATE (56 SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).

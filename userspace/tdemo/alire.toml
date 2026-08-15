@@ -1,0 +1,14 @@
+name = "akernel_tdemo"
+description = "akernel Trinket widget-tree demo"
+version = "0.1.0-dev"
+
+authors = ["Robert Roland"]
+maintainers = ["Robert Roland <rob@retronauts.org>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+tags = []
+
+project-files = ["tdemo.gpr"]
+executables = ["tdemo.elf"]
+
+[[depends-on]]
+gnat_riscv64_elf = "*"

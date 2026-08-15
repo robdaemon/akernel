@@ -3060,7 +3060,11 @@ begin
          --  Batched yields: Info prints ~6 console lines (slow
          --  stream RPCs) and a bare yield-per-try poll outruns
          --  it under SMP4 (the echo2 reap burn, milestone 39).
-         for Try in 1 .. 512 loop
+         --  Trinket's tdemo window (milestone 56) adds per-line
+         --  compositing work in Bureau — the 512-try budget went
+         --  deterministically short on SMP4; 4096 restores
+         --  headroom.
+         for Try in 1 .. 4096 loop
             Status := Akernel_User.Syscalls.Reap_Process_Code
               (CI_Proc, CI_Code);
             if Status = 0 then
