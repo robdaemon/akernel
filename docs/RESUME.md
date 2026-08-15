@@ -1,19 +1,54 @@
-MILESTONE 55 SHIPPED (wall clock: gloss _gettimeofday
-seeds once from semihosting SYS_TIME — qemu -semihosting +
-a7-magic ebreak handshake, kernel breakpoint branch answers
--1 when off — else baked RD0:System/Epoch, then synthesizes
-from rdtime/10MHz; both seed paths suite-verified). 880/880
-SMP1, failures=0 SMP4, fsck clean. Read docs/NEXT.md (55
-entry: no RTC in qemu's RISC-V build — virtio-rtc/goldfish
-both absent; inline-asm probe because syscall-RTS programs
-link gloss without libgnat), docs/STATE.md, docs/IPC.md.
+MILESTONE 55 SHIPPED (wall clock: semihosting/baked-epoch
+seed + rdtime synthesis, 880/880). GUI DIRECTION DECIDED —
+next milestone 56 = Trinket core (see below). Read
+docs/NEXT.md (55 entry), docs/STATE.md, docs/IPC.md,
+docs/design/trinket-mockup.png.
 
-NEXT MILESTONE: 56 — the deferred list: tasking
-(thread-spawn + futex + TLS + s-taprop), virtio-net (NTP
-could then replace the clock seed), dynamic linking
-(medany vs medpic).
+GUI DESIGN LOCKED (user decisions, 2026):
+- Widget library name: TRINKET (trinket.library; apps
+  "with Trinket.Widgets"). NOT "intuition".
+- Retained widget tree (MUI/Qt-style classes = Ada tagged
+  types: Widget abstract root; Group (H/V layout); Button,
+  Label, String, Text_Edit, Listview, Scrollbar).
+- Client-side rendering into Bureau window surfaces (the
+  Wayland-ish split): Bureau STAYS compositor + chrome +
+  focus/input routing ONLY (chrome not themeable). Trinket
+  owns everything in the pane.
+- Look: Workbench 3.1/ReAction per mockup — double-ridge
+  bevels (black outer border, white inner top-left,
+  dark-gray+black inner bottom-right; sunken for insets),
+  group frames with CENTERED LABELS breaking the top edge,
+  glyph gadgets (close box, twin depth, triangle arrows),
+  striped scroll knobs, blue (#6068B0) only for active
+  title + selections. Bureau chrome gets the same
+  double-ridge recipe (constants-level change).
+- Fonts: BDF files from Sys:Fonts/ (parser: STARTCHAR/
+  ENCODING/BBX/BITMAP hex runs); Font8x8 compiled-in
+  fallback; rasterizer behind interface for later freetype.
+- Images deferred: when needed, Amiga answer was BOTH —
+  datatypes.library framework + libpng/zlib as engine
+  inside picture.datatype. Revisit after file manager.
+- App order: terminal (already custom text grid — stays;
+  takes ONLY Trinket's standalone Scrollbar soon), then
+  text EDITOR (forces Text_Edit: multiline/selection/
+  scrolling), then FILE MANAGER (forces Listview + groups).
+- Window protocol v2 lacks mouse drag/release — protocol
+  v3 (Bureau-side, small) needed for selection/scrollbar.
+- Tier-1 shared-lib machinery (fixed-VA shared runtime,
+  per-process runtime data page, __getreent at fixed VA)
+  lands WITH Trinket — GUI lib is its first customer.
+- Dynamic linking: Tier 1 chosen long-term; real ELF .so
+  rejected (ld has no -shared; no ecosystem payoff).
 
-CURRENT SESSION STATE (55 SHIPPED):
+MILESTONE 56 SCOPE (agreed): Trinket core — window wrapper
+over window-protocol v2, event loop, damage propagation,
+BDF rasterizer + Font8x8 fallback, double-bevel primitives,
+Widget/Group/Label/Button, demo app proving the tree.
+Bureau untouched in 56 (pure client-side, no protocol
+risk). Then 57: protocol v3 drag/release + Text_Edit +
+Edit app; 58: Listview + file manager (Sys:Tools/Files?).
+
+CURRENT SESSION STATE (55 SHIPPED; GUI direction locked):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).
