@@ -7,8 +7,9 @@ with Akernel_User.Files;
 --  "Path <dir> ADD" appends; "Path <dir> REMOVE" drops;
 --  "Path RESET" unsets the variable (back to the built-in
 --  default search: current dir, volume root, C:). The current
---  directory is always searched first regardless — the list
---  replaces only the built-in root+C: tail.
+--  directory is always searched first regardless, and the
+--  built-in root+C: tail is ALWAYS searched last — the list
+--  only adds (milestone 57 fix: replacing hid C: itself).
 --
 --  The list is the ENV:Path variable (';'-separated prefixes),
 --  GLOBAL like every variable — the Amiga keeps the list

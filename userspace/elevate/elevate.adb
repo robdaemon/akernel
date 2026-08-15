@@ -96,5 +96,15 @@ begin
          Akernel_User.CLI.RC_Fail);
    end if;
 
+   if Code = 255 then
+      --  The daemon staged nothing: its console is the serial
+      --  boot console, so the user-facing message is OURS.
+      --  255 is elevated's cannot-find-executable reply.
+      Akernel_User.CLI.Fail_With
+        ("Elevate: cannot find executable: " &
+         Akernel_User.CLI.Argument (1),
+         Akernel_User.CLI.RC_Fail);
+   end if;
+
    Akernel_User.CLI.Exit_With (Code);
 end Elevate;

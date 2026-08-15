@@ -270,6 +270,13 @@ begin
                            else
                               Reply_Code := Akernel_User.CLI.RC_Error;
                            end if;
+                        elsif Img = 0 then
+                           --  Distinct from any child exit code:
+                           --  Elevate prints "cannot find
+                           --  executable" (our console is the
+                           --  serial boot console — the user
+                           --  never sees it).
+                           Reply_Code := 255;
                         else
                            Reply_Code := Akernel_User.CLI.RC_Error;
                         end if;

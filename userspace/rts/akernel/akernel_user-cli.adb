@@ -164,10 +164,46 @@ package body Akernel_User.CLI is
       return Env_Buf (1 .. Natural (Count));
    end Get_Env;
 
+   --  ENV: lives at Sys:Prefs/Env, and Prefs/ ships absent from
+   --  the disk image — create the directory chain on FIRST USE
+   --  (first env write), not at image build. Directories answer
+   --  Stat with Bad_Args (dirs are not stat-able), so "missing"
+   --  is exactly Status_Not_Found. Best effort: a failing Mkdir
+   --  is ignored, the Write verdict decides.
+   procedure Ensure_Env_Dir is
+      Size : U64 := 0;
+      Txt  : String (1 .. 40);
+      TL   : Natural;
+      St   : U64;
+   begin
+      if Files.Stat ("ENV:", Size) /= Files.Status_Not_Found then
+         return;
+      end if;
+      for I in U64 range 0 .. 15 loop
+         St := Files.Assign_List (I, Txt, TL);
+         exit when St /= Files.Status_Ok;
+         if TL >= 6 and then Txt (1 .. 5) = "ENV: " then
+            declare
+               T : constant String := Txt (6 .. TL);
+            begin
+               for J in reverse T'Range loop
+                  if T (J) = '/' then
+                     St := Files.Mkdir (T (T'First .. J - 1));
+                     exit;
+                  end if;
+               end loop;
+               St := Files.Mkdir (T);
+            end;
+            return;
+         end if;
+      end loop;
+   end Ensure_Env_Dir;
+
    function Set_Env (Name : String; Value : String) return U64 is
       Count : U64 := 0;
       St    : U64;
    begin
+      Ensure_Env_Dir;
       St := Files.Truncate ("ENV:" & Name);
       for I in Value'Range loop
          Env_Buf (I - Value'First + 1) := Value (I);
@@ -198,9 +234,10 @@ package body Akernel_User.CLI is
 
       --  The current directory comes first, always (the Amiga
       --  current-dir rule; milestone 43). Then the Path variable
-      --  when set — it REPLACES the built-in list — else the
-      --  built-in default: the volume root (bare name against
-      --  the default-volume bind), then C/.
+      --  entries — they ADD to the search — and last the built-in
+      --  default: the volume root, then C:. (Path REPLACING the
+      --  built-in tail made `Path X ADD` hide every C: command
+      --  including Path itself — Amiga never removes C:.)
       declare
          Rel : constant String := Resolve_Path (Name);
       begin
@@ -233,22 +270,22 @@ package body Akernel_User.CLI is
                end if;
             end if;
          end loop;
-      else
-         --  Built-in tail: the boot volume root, then the C:
-         --  assign. Both candidates are fully qualified — no
-         --  Files.Set_Default_Volume involved (milestone 44).
-         declare
-            Root_Try : constant String := Boot_Volume & Name;
-            C_Try    : constant String := "C:" & Name;
-         begin
-            if Try (Root_Try) then
-               return Root_Try;
-            end if;
-            if Try (C_Try) then
-               return C_Try;
-            end if;
-         end;
       end if;
+
+      --  Built-in tail (always): the boot volume root, then the
+      --  C: assign. Both candidates are fully qualified — no
+      --  Files.Set_Default_Volume involved (milestone 44).
+      declare
+         Root_Try : constant String := Boot_Volume & Name;
+         C_Try    : constant String := "C:" & Name;
+      begin
+         if Try (Root_Try) then
+            return Root_Try;
+         end if;
+         if Try (C_Try) then
+            return C_Try;
+         end if;
+      end;
 
       return "";
    end Resolve_Command;

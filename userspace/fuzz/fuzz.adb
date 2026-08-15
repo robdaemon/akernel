@@ -3482,10 +3482,12 @@ begin
       end;
 
       --  The Path search list (milestone 43): ADD canonicalizes
-      --  (cwd-resolved, qualified, trailing separator), the list
-      --  REPLACES the built-in root+C: tail while set (the cwd
-      --  stays first), Which reads the same Resolve_Command.
-      --  RESET at the end restores the default — idempotent.
+      --  (cwd-resolved, qualified, trailing separator). The list
+      --  ADDS to the search — the cwd stays first and the
+      --  built-in root+C: tail is always searched last
+      --  (milestone 57: replacing the tail hid C: itself).
+      --  Which reads the same Resolve_Command. RESET at the end
+      --  restores the default — idempotent.
       declare
          Buf   : array (0 .. 63) of Interfaces.Unsigned_8;
          Size  : U64;
@@ -3521,10 +3523,13 @@ begin
                       "path add (cwd-relative, canonicalized)");
          Check_Env ("Path", "BD0:SUBDIR/", "path add wrote the list");
 
-         --  The list replaces the built-in tail: C: is gone
-         --  until added.
-         Run_Command ("Sys:C/Which", "Copy", 10,
-                      "which misses C: while path overrides");
+         --  Additive semantics: C: stays searchable while the
+         --  list is set, and list entries are searched too
+         --  (HELLO.TXT lives in SUBDIR).
+         Run_Command ("Sys:C/Which", "Copy", 0,
+                      "which still finds C: with a path set");
+         Run_Command ("Sys:C/Which", "HELLO.TXT", 0,
+                      "which finds a path-list entry");
          Run_Command ("Sys:C/Path", "BD0:C ADD", 0, "path add C:");
          Check_Env ("Path", "BD0:SUBDIR/;BD0:C/",
                     "path appended the second entry");
@@ -3566,7 +3571,7 @@ begin
       --  own boot copy).
       Run_Command ("Sys:C/Elevate", "Sys:C/Version", 0,
                    "elevate runs a command elevated");
-      Run_Command ("Sys:C/Elevate", "Sys:C/NoSuch", 10,
+      Run_Command ("Sys:C/Elevate", "Sys:C/NoSuch", 20,
                    "elevate reports an unknown command");
       Run_Command ("Sys:C/Elevate", "", 10, "elevate usage");
 
