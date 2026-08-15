@@ -106,6 +106,12 @@ package body Trinket.Widgets is
          W.Txt (1 .. W.Len), Text_Dark);
    end Draw;
 
+   procedure Set_Text (W : in out Label; S : String) is
+   begin
+      Set_Text (W.Txt, W.Len, S);
+      W.Dirty := True;
+   end Set_Text;
+
    --  Button
 
    function New_Button

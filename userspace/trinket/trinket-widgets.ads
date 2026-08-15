@@ -62,6 +62,8 @@ package Trinket.Widgets is
      (S : String; Align : Alignment := Left; Inset : Boolean := False)
       return Any_Widget;
    overriding procedure Draw (W : Label; C : Canvas);
+   procedure Set_Text (W : in out Label; S : String);
+   --  Update an existing label's text and mark it dirty.
 
    --  Button: raised face, sunken while pressed, centered bold-ish
    --  label; fires On_Click on release-inside.

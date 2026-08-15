@@ -7,7 +7,12 @@ with Akernel_User.IPC;
 with Akernel_User.Streams;
 with Akernel_User.Files;
 with Akernel_User.Window;
-with Font8x8;
+with Trinket;
+with Trinket.Paint;
+with Trinket.Fonts;
+with Trinket.Widgets;
+with Terminal_Buffer;
+with Terminal_Scroll;
 
 --  Terminal: a console device (the CON: analog) living in a
 --  Bureau window. Spawned from the Sys filesystem by the device
@@ -19,31 +24,14 @@ with Font8x8;
 --  to the console server (Op_Attach_Sink now accepts any badge),
 --  so the boot mirror lands in this pane without devmgr wiring.
 --
---  The terminal allocates its surface buffer (caps move caller ->
---  callee only), pushes chunk caps to Bureau, renders its text
---  grid into the surface (font8x8, 8x16 cells, dark on white —
---  the Startup-Sequence CLI look), and pushes damaged bands with
---  Op_Surface_Update. Scroll = memmove inside the surface + one
---  band update (no device copy exists in virtio-gpu 2D — see the
---  display-service correction in docs/NEXT.md).
---
---  Milestone 31 (console device): input arrives on the v3 async
---  channel — a one-page event queue memory object + a thread-bound
---  notification, both pushed at Surface_Create. Bureau enqueues
---  focused keys and signals; it NEVER calls the terminal (a
---  blocking forward rendezvous deadlocked against the client's
---  Surface_Update calls — milestone 31 burn). The service loop
---  multiplexes the synthetic notification message with sink
---  traffic; drained keys are ECHOED straight into the text grid
---  (line discipline lives here, like CON:) and queued in a local
---  input FIFO; Op_Read drains that FIFO (Count = 0 when empty —
---  single-threaded receiver, reads cannot block). Launching a
---  terminal starts the shell: System/Shell is staged from the Sys
---  volume (memstage pattern) and spawned with the uniform
---  namespace — 1 = Send on this sink endpoint (badge 1, its
---  console channel), 2 = the fs cap, 3 = the Bureau svc cap — so
---  shell output
---  lands in this pane alongside the boot mirror.
+--  Milestone 58: the terminal keeps its stream-sink service loop
+--  but stores text in Terminal_Buffer (circular scrollback) and
+--  renders through Trinket into the Bureau surface. A scrollbar
+--  at the right edge (Terminal_Scroll) controls the view offset
+--  into the scrollback; focused navigation keys and pointer
+--  events adjust the view, while text output and echo still go to
+--  the bottom line and auto-scroll only when the view is already
+--  at the bottom.
 
 procedure Terminal is
    use Akernel_User.Syscalls;
@@ -83,8 +71,6 @@ procedure Terminal is
    Pages   : U64;
    Surf_W  : U64;
    Surf_H  : U64;
-   Cols    : U64;
-   Rows    : U64;
 
    Obj_Caps : array (0 .. Max_Objects - 1) of U64 := (others => 0);
 
@@ -96,13 +82,8 @@ procedure Terminal is
      with Address => System.Storage_Elements.To_Address
        (System.Storage_Elements.Integer_Address (Buf_VA));
 
-   FG : constant Pixel := 16#FF20_2020#;  --  dark text
-   BG : constant Pixel := 16#FFF8_F8F8#;  --  white pane
-
-   Cur_Col : U64 := 0;
-   Cur_Row : U64 := 0;
-   Dirty_Y0 : U64 := U64'Last;
-   Dirty_Y1 : U64 := 0;
+   --  Drawing target that wraps the Bureau surface buffer.
+   Canvas : Trinket.Canvas;
 
    --  Input FIFO: focused keys (Op_Input bytes) queue here;
    --  Op_Read drains it. Drop-new on overflow (typing bursts
@@ -111,6 +92,18 @@ procedure Terminal is
    Input_Buf   : String (1 .. Input_Size);
    Input_Head  : Natural := 0;  --  next write slot (0-based)
    Input_Count : Natural := 0;
+
+   --  Last button state for synthesizing Press/Release from
+   --  v3 pointer events.
+   Prev_Buttons : U64 := 0;
+
+   Result : U64;
+
+   procedure Fail (S : String) is
+   begin
+      Debug_Put_Line ("FAIL terminal " & S);
+      Process_Exit;
+   end Fail;
 
    procedure Input_Put (Ch : Character) is
    begin
@@ -135,108 +128,113 @@ procedure Terminal is
       return True;
    end Input_Get;
 
-   Result : U64;
-
-   procedure Fail (S : String) is
+   --  Repaint the visible window into the surface buffer and mark
+   --  the whole pane dirty (Bureau flushes after the reply).
+   procedure Render is
+      Text_W : constant U64 := Surf_W - Terminal_Scroll.Scrollbar_W;
+      Rows   : constant Natural := Terminal_Buffer.Rows;
+      Cols   : constant Natural := Terminal_Buffer.Cols;
+      LH     : constant U64 := Trinket.Fonts.Line_Height;
+      Line   : String (1 .. Cols);
+      Len    : Natural;
    begin
-      Debug_Put_Line ("FAIL terminal " & S);
-      Process_Exit;
-   end Fail;
+      Terminal_Scroll.Update_Range;
+      Trinket.Paint.Fill_Rect
+        (Canvas, 0, 0, Surf_W, Surf_H, Trinket.Pane);
+      for R in 0 .. Rows - 1 loop
+         declare
+            Line_I : constant Natural := Terminal_Buffer.View_Top + R;
+            Y      : constant U64 := U64 (R) * LH;
+         begin
+            exit when Line_I >= Terminal_Buffer.Line_Count;
+            Terminal_Buffer.Get_Line (Line_I, Line, Len);
+            if Len > 0 then
+               Trinket.Fonts.Draw_Text
+                 (Canvas, 0, Y, Line (1 .. Len), Trinket.Text_Dark);
+            end if;
+         end;
+      end loop;
+      Terminal_Scroll.Draw (Canvas);
 
-   procedure Touch (Y0, Y1 : U64) is
-   begin
-      if Y0 < Dirty_Y0 then
-         Dirty_Y0 := Y0;
-      end if;
-      if Y1 > Dirty_Y1 then
-         Dirty_Y1 := Y1;
-      end if;
-   end Touch;
-
-   --  font8x8: bit 0 is the LEFTMOST pixel (burned, milestone 27b).
-   procedure Draw_Glyph (Col, Row : U64; Ch : Character) is
-      GX   : constant U64 := Col * 8;
-      GY   : constant U64 := Row * 16;
-      Bits : Font8x8.U8;
-   begin
-      for R in 0 .. 7 loop
-         if Ch in ' ' .. '~' then
-            Bits := Font8x8.Font (Ch) (R);
-         else
-            Bits := Font8x8.Font ('?') (R);
-         end if;
-         for Rep in 0 .. 1 loop
+      --  Solid block cursor at the current input position. Drawn
+      --  after the text so it overwrites the cell; full-surface
+      --  redraws erase the previous cursor position.
+      declare
+         Cur_Line : constant Natural := Terminal_Buffer.Current_Line;
+         Cur_Col  : constant Natural := Terminal_Buffer.Current_Col;
+         Top      : constant Natural := Terminal_Buffer.View_Top;
+         Rows     : constant Natural := Terminal_Buffer.Rows;
+         Char_W   : constant U64 := 8;
+      begin
+         if Cur_Line >= Top and then Cur_Line < Top + Rows then
             declare
-               Base : constant U64 :=
-                 (GY + U64 (R) * 2 + U64 (Rep)) * Surf_W + GX;
+               R : constant U64 := U64 (Cur_Line - Top);
+               X : constant U64 := U64 (Cur_Col) * Char_W;
+               Y : constant U64 := R * LH;
             begin
-               for B in 0 .. 7 loop
-                  if (Interfaces.Shift_Right (Bits, B) and 1) = 1 then
-                     Buf (Base + U64 (B)) := FG;
-                  else
-                     Buf (Base + U64 (B)) := BG;
-                  end if;
-               end loop;
+               if X + Char_W <= Surf_W - Terminal_Scroll.Scrollbar_W then
+                  Trinket.Paint.Fill_Rect
+                    (Canvas, X, Y, X + Char_W, Y + LH, Trinket.Sel_Blue);
+               end if;
             end;
-         end loop;
-      end loop;
-      Touch (GY, GY + 16);
-   end Draw_Glyph;
+         end if;
+      end;
 
-   procedure Scroll is
-   begin
-      for Y in 0 .. Surf_H - 17 loop
-         for X in 0 .. Surf_W - 1 loop
-            Buf (Y * Surf_W + X) := Buf ((Y + 16) * Surf_W + X);
-         end loop;
-      end loop;
-      for Y in Surf_H - 16 .. Surf_H - 1 loop
-         for X in 0 .. Surf_W - 1 loop
-            Buf (Y * Surf_W + X) := BG;
-         end loop;
-      end loop;
-      Touch (0, Surf_H);
-   end Scroll;
+      Terminal_Scroll.Clear_Dirty;
+      Terminal_Buffer.Clear_Dirty;
+   end Render;
 
-   procedure New_Line is
+   procedure Flush_Surface is
    begin
-      Cur_Col := 0;
-      if Cur_Row = Rows - 1 then
-         Scroll;
+      Result := Akernel_User.Window.Surface_Update
+        (Win_EP, Surf_Id, 0, 0, Surf_W, Surf_H);
+      if Result /= Akernel_User.Window.Status_Ok then
+         Debug_Put_Line ("terminal update failed");
+      end if;
+   end Flush_Surface;
+
+   procedure Scroll_Page (Up : Boolean) is
+      Top  : constant Natural := Terminal_Buffer.View_Top;
+      Rows : constant Natural := Terminal_Buffer.Rows;
+      Max  : constant Natural := Terminal_Buffer.Max_Top;
+   begin
+      if Up then
+         if Top >= Rows then
+            Terminal_Buffer.Set_Top (Top - Rows);
+         else
+            Terminal_Buffer.Set_Top (0);
+         end if;
       else
-         Cur_Row := Cur_Row + 1;
+         if Top + Rows <= Max then
+            Terminal_Buffer.Set_Top (Top + Rows);
+         else
+            Terminal_Buffer.Set_Top (Max);
+         end if;
       end if;
-   end New_Line;
+   end Scroll_Page;
 
-   procedure Put_Char (Ch : Character) is
-      Code : constant Natural := Character'Pos (Ch);
+   procedure Handle_Nav (Code : U64) is
    begin
-      if Code = 10 then
-         New_Line;
-      elsif Code = 13 then
-         Cur_Col := 0;
-      elsif Code = 9 then
-         Cur_Col := (Cur_Col + 4) / 4 * 4;
-         if Cur_Col >= Cols then
-            New_Line;
+      if Code = Trinket.Key_Up then
+         if Terminal_Buffer.View_Top > 0 then
+            Terminal_Buffer.Set_Top (Terminal_Buffer.View_Top - 1);
          end if;
-      elsif Code = 8 then
-         if Cur_Col > 0 then
-            Cur_Col := Cur_Col - 1;
-            Draw_Glyph (Cur_Col, Cur_Row, ' ');
-         end if;
-      elsif Code >= 32 and then Code < 127 then
-         Draw_Glyph (Cur_Col, Cur_Row, Ch);
-         Cur_Col := Cur_Col + 1;
-         if Cur_Col = Cols then
-            New_Line;
-         end if;
+      elsif Code = Trinket.Key_Down then
+         Terminal_Buffer.Set_Top (Terminal_Buffer.View_Top + 1);
+      elsif Code = Trinket.Key_Pageup then
+         Scroll_Page (Up => True);
+      elsif Code = Trinket.Key_Pagedown then
+         Scroll_Page (Up => False);
+      elsif Code = Trinket.Key_Home then
+         Terminal_Buffer.Set_Top (0);
+      elsif Code = Trinket.Key_End then
+         Terminal_Buffer.Set_Top (Terminal_Buffer.Max_Top);
       end if;
-   end Put_Char;
+   end Handle_Nav;
 
-   --  Drain v3 input-queue events into the local FIFO, echoing
-   --  keys into the text grid (buffer only; the band flush is at
-   --  the top of the service loop).
+   --  Drain v3 input-queue events. ASCII keys feed the local input
+   --  FIFO and echo into the scrollback; navigation keys scroll
+   --  the view; pointer events operate the scrollbar.
    procedure Drain_Input_Queue is
       Head : constant U64 := Queue (Akernel_User.Window.Input_Queue_Head);
       Tail : U64 := Queue (Akernel_User.Window.Input_Queue_Tail);
@@ -251,12 +249,42 @@ procedure Terminal is
                  Natural (Queue (Slot + 1) and 16#FF#);
             begin
                --  Milestone 57: navigation keys arrive as codes
-               --  >= 16#80# (Trinket.Key_*); the line discipline
-               --  is text-only and drops them.
+               --  >= 16#80# (Trinket.Key_*). Scroll the view for
+               --  those; queue/echo ASCII text only.
                if Code < 16#80# then
                   Input_Put (Character'Val (Code));
-                  Put_Char (Character'Val (Code));
+                  Terminal_Buffer.Put_Char (Character'Val (Code));
+               else
+                  Handle_Nav (U64 (Code));
                end if;
+            end;
+         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Pointer
+         then
+            declare
+               Val : constant U64 := Queue (Slot + 1);
+               X   : constant U64 :=
+                 Akernel_User.Window.Pointer_X (Val);
+               Y   : constant U64 :=
+                 Akernel_User.Window.Pointer_Y (Val);
+               Btn : constant U64 :=
+                 Akernel_User.Window.Pointer_Buttons (Val);
+               K   : Trinket.Widgets.Pointer_Kind;
+               Consumed : Boolean;
+               pragma Unreferenced (Consumed);
+            begin
+               if (Btn and 1) /= 0
+                 and then (Prev_Buttons and 1) = 0
+               then
+                  K := Trinket.Widgets.Press;
+               elsif (Btn and 1) = 0
+                 and then (Prev_Buttons and 1) /= 0
+               then
+                  K := Trinket.Widgets.Release;
+               else
+                  K := Trinket.Widgets.Move;
+               end if;
+               Prev_Buttons := Btn;
+               Consumed := Terminal_Scroll.Handle_Pointer (K, X, Y);
             end;
          elsif Queue (Slot) = Akernel_User.Window.Input_Event_Close
          then
@@ -272,25 +300,6 @@ procedure Terminal is
       end loop;
       Queue (Akernel_User.Window.Input_Queue_Tail) := Tail;
    end Drain_Input_Queue;
-
-   --  Push the damaged surface band to Bureau.
-   procedure Flush_Dirty is
-      Y0 : U64;
-      Y1 : U64;
-   begin
-      if Dirty_Y1 <= Dirty_Y0 then
-         return;
-      end if;
-      Y0 := Dirty_Y0;
-      Y1 := Dirty_Y1;
-      Dirty_Y0 := U64'Last;
-      Dirty_Y1 := 0;
-      Result := Akernel_User.Window.Surface_Update
-        (Win_EP, Surf_Id, 0, Y0, Surf_W, Y1 - Y0);
-      if Result /= Akernel_User.Window.Status_Ok then
-         Debug_Put_Line ("terminal update failed");
-      end if;
-   end Flush_Dirty;
 
    ------------------------------------------------------------------
 
@@ -446,8 +455,6 @@ begin
    then
       Debug_Put_Line ("terminal title failed");
    end if;
-   Cols := Surf_W / 8;
-   Rows := Surf_H / 16;
 
    --  2. Surface buffer chunks, pushed to Bureau (4 caps/call).
    Pages_Left := Pages;
@@ -510,15 +517,36 @@ begin
    end if;
    Debug_Put_Line ("PASS terminal surface ok");
 
-   --  3. Clear the pane and show it.
-   for I in 0 .. Surf_W * Surf_H - 1 loop
-      Buf (I) := BG;
-   end loop;
-   Touch (0, Surf_H);
-   Flush_Dirty;
+   --  3. Wire the surface buffer to Trinket and initialize the
+   --  scrollback/scroller. Bind the file server first because
+   --  Trinket.Fonts loads Sys:Fonts/font8x8.bdf from disk.
+   Akernel_User.Files.Bind (FS_EP);
+   Trinket.Fonts.Init;
+
+   declare
+      Text_W : constant U64 := Surf_W - Terminal_Scroll.Scrollbar_W;
+   begin
+      Terminal_Buffer.Init
+        (Natural (Text_W / 8),
+         Natural (Surf_H / Trinket.Fonts.Line_Height));
+      Terminal_Scroll.Init (Natural (Surf_W), Natural (Surf_H));
+   end;
+
+   Canvas :=
+     (Base => System.Storage_Elements.To_Address
+                (System.Storage_Elements.Integer_Address (Buf_VA)),
+      W    => Surf_W,
+      H    => Surf_H,
+      CX0  => 0,
+      CY0  => 0,
+      CX1  => Surf_W,
+      CY1  => Surf_H);
+
+   Render;
+   Flush_Surface;
    Debug_Put_Line ("terminal online");
 
-   --  3. Console device wiring: create the stream sink endpoint
+   --  4. Console device wiring: create the stream sink endpoint
    --  and self-attach it at the console server (any badge may
    --  attach since 31b — the terminal owns this endpoint and
    --  mints the Send cap itself).
@@ -551,15 +579,18 @@ begin
    --  below receives.
    Spawn_Shell;
 
-   --  4. Stream sink service: Op_Write renders text; Op_Input
-   --  queues focused keys + echoes them into the grid; Op_Read
-   --  drains the input FIFO. Damaged bands flush at the TOP of
-   --  the loop, AFTER the reply: an Op_Input is Bureau calling
-   --  us, and calling Bureau back (Surface_Update) before
-   --  replying deadlocks the rendezvous pair (docs/IPC.md:
-   --  never call your caller while serving it).
+   --  5. Stream sink service: Op_Write renders text; Op_Input
+   --  queues focused keys + echoes them into the scrollback;
+   --  Op_Read drains the input FIFO. Damaged bands flush at the
+   --  TOP of the loop, AFTER the reply: an Op_Input is Bureau
+   --  calling us, and calling Bureau back (Surface_Update) before
+   --  replying deadlocks the rendezvous pair (docs/IPC.md: never
+   --  call your caller while serving it).
    loop
-      Flush_Dirty;
+      if Terminal_Buffer.Is_Dirty or Terminal_Scroll.Is_Dirty then
+         Render;
+         Flush_Surface;
+      end if;
       Status := RPC.Receive
         (Sink_EP, Label, Request, Badge, Caps, Reply_H);
       if Status /= IPC_Ok then
@@ -576,7 +607,8 @@ begin
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop
-            Put_Char (Character'Val (Natural (Request.Data (I))));
+            Terminal_Buffer.Put_Char
+              (Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
          if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
@@ -585,7 +617,7 @@ begin
          end if;
       elsif Label = Akernel_User.Streams.Op_Input then
          --  Seat input (focused keys from Bureau): queue for
-         --  Op_Read and echo into the text grid — line discipline
+         --  Op_Read and echo into the scrollback — line discipline
          --  lives in the console device. Buffer only: the band
          --  flush happens at the top of the loop, after the reply
          --  (see the loop comment).
@@ -597,7 +629,7 @@ begin
                  Character'Val (Natural (Request.Data (I)));
             begin
                Input_Put (Ch);
-               Put_Char (Ch);
+               Terminal_Buffer.Put_Char (Ch);
             end;
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
@@ -631,7 +663,7 @@ begin
             Process_Exit;
          end if;
       else
-         --  Op_Read/Op_Input/unknown: no data.
+         --  Unknown: no data.
          Response := (Count => 0, Data => (others => 0));
          if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
             Debug_Put_Line ("terminal reply failed");
