@@ -1,6 +1,11 @@
 QEMU ?= qemu-system-riscv64
 QEMU_MEMORY ?= 4G
 QEMU_SMP ?= 4
+#  Manifest mode: interactive (default, `make run` — no test
+#  programs) vs test (`make test` — Fuzz/Spin slots boot).
+#  The initrd regenerates on every build (FORCE below) so a
+#  mode switch can never boot a stale manifest.
+INITRD_MODE ?= interactive
 #  Extra flags appended to the qemu command line. Default is
 #  headless (-nographic: serial on stdio for the test harness);
 #  override for interactive testing, e.g.
@@ -46,7 +51,7 @@ DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown re
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
-.PHONY: all kernel userspace $(CRATES) initrd run clean clean-kernel clean-userspace clean-initrd new-crate
+.PHONY: all kernel userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C)
 
@@ -127,7 +132,7 @@ initrd: $(INITRD_IMG)
 #  Milestone 53a: images install STRIPPED ELFs (the full runtime's
 #  debug info + unwind tables tripled file sizes; staging buffers
 #  are sized from the file). Symbols stay in bin/userspace/*.elf.
-$(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
+$(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	rm -rf $(INITRD_ROOT)
 	mkdir -p $(INITRD_ROOT)/System $(INITRD_ROOT)/Drivers $(INITRD_ROOT)/Tests $(INITRD_OUT)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Init $(INIT_ELF)
@@ -157,8 +162,10 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' "$$(date +%s)" > $(INITRD_ROOT)/System/Epoch
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
+ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
+endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
@@ -186,6 +193,14 @@ run: all $(DISK_IMG)
 	  -monitor unix:/tmp/qmon.sock,server,nowait \
   -qmp unix:/tmp/qqmp.sock,server,nowait \
   $(QEMU_ARGS)
+
+FORCE:
+
+#  `make test` boots the SAME system with the test manifest
+#  (Fuzz + Spin program slots) — the fuzz suite self-runs and
+#  shuts the machine down, exactly like the old `make run`.
+test:
+	$(MAKE) run INITRD_MODE=test
 
 clean: clean-kernel clean-userspace clean-initrd
 

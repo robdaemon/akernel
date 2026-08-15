@@ -47,8 +47,13 @@ CURRENT SESSION STATE (57 SHIPPED):
   make run ends with qemu exiting 0 BY ITSELF (timeout 600 =
   backstop); post-suite fsck now validates durability across
   a true power transition. Elevation's first shipped
-  consumer. INTERACTIVE make run is gone by default (drop
-  the Tests/Fuzz manifest line for an interactive boot).
+  consumer. BUILD TARGETS (post-57): `make run` =
+  INTERACTIVE manifest (no Fuzz/Spin slots) for hands-on
+  use; `make test` = the suite manifest (recurses into run
+  with INITRD_MODE=test). The initrd regenerates on every
+  build (FORCE dep) so a mode switch can never boot a stale
+  manifest. Suite flow: `make test` (QEMU_SMP=4 default,
+  =1 for the SMP1 gate).
 - 49 shipped blocking pipes (deferred replies, drain passes);
   48 the virtio-blk write-back cache + flush chain; 47
   reply-cap duplication.
@@ -537,7 +542,8 @@ Working rules burned in (details in NEXT.md):
   decode screendump PPM bytes straight (R,G,B); trust the
   user's eyes over a decoder script.
 
-Build/run: make all && make run (QEMU_SMP=1|4|8); disk.img is a
+Build/run: make all && make run (interactive) / make test
+(suite; QEMU_SMP=1|4|8); disk.img is a
 'run' dep (not in 'all'). qemu runs with -machine
 virt,iommu-sys=on and virtio-pci devices.
 ```
