@@ -9,6 +9,7 @@ with Arch.User_Mode;
 with Board.Device_Tree;
 with Board.Interrupts;
 with Board.Memory_Map;
+with Board.RTC;
 with Board.PLIC;
 with Board.UART;
 with Kernel.Boot_Files;
@@ -391,6 +392,20 @@ begin
       if Dev_Result = Kernel.Device_Tree.Ok then
          PLIC_Base := Dev_Base;
          Devices_Found := Devices_Found + 1;
+      end if;
+
+      --  Goldfish RTC (milestone 59): wall clock. Absent from the
+      --  DTB leaves the board default (qemu virt always has one).
+      Kernel.Device_Tree.Find_Device
+        (DTB        => Board.Device_Tree.Boot_DTB_Physical_Address,
+         Compatible => "google,goldfish-rtc",
+         Base       => Dev_Base,
+         Size       => Dev_Size,
+         IRQ_Source => Dev_IRQ,
+         Result     => Dev_Result);
+
+      if Dev_Result = Kernel.Device_Tree.Ok then
+         Board.RTC.Set_Base (Dev_Base);
       end if;
    end if;
 

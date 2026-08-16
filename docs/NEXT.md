@@ -2688,6 +2688,58 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 59 COMPLETE — RTC/clock
+    group. Goldfish RTC (DTB
+    "google,goldfish-rtc", board
+    default 0x101000, physmap-read —
+    no new mapping: the physmap covers
+    MMIO below RAM) behind
+    Sys_Read_Clock = 34 (a0=seconds,
+    a1=nanos since the Unix epoch,
+    both 0 = no ticking RTC; UNGATED,
+    read-only). Gloss gettimeofday
+    prefers it (m55 semihost/baked-
+    Epoch seeding stays the fallback);
+    fat32 dirent stamps are real
+    (civil_from_days; 2 s resolution;
+    pre-2000 reading = no RTC → the
+    old fixed 2025-01-01); Op_Stat
+    replies carry FAT write date/time
+    in words 2/3 (fileserver zeroes
+    them for local volumes — the
+    request's packed path would leak
+    through as a garbage stamp; procfs
+    zeroes too); Files.Stat_Ex; List
+    prints the stamp column.
+    Sys:C/Date (read-only: the
+    goldfish RTC cannot be set) and
+    Sys:C/Wait (N | M:S | UNTIL
+    HH:MM[:SS], case-insensitive
+    keyword, passed-today = tomorrow).
+    Vendored OUR OWN s-reldel (the
+    embedded one routes through
+    Ada.Real_Time.Delays = tasking):
+    Delay_For forwards to s-osprim
+    Timed_Delay; `delay Duration` now
+    works everywhere. Burns: runtime_
+    build.gpr needs the toolchain bin
+    on PATH and its failure ("no
+    compiler for language C") does NOT
+    match a ': error' grep; shell
+    `wait` (m52 jobs) collides with
+    C:Wait — an argument naming no
+    job falls through to C:Wait
+    (Amiga precedence: the C: command
+    wins), so "wait 7" with no jobs
+    SLEEPS 7 s — the m52 unknown-job
+    RC-10 test became a fallthrough
+    test; runtime ritual order:
+    gprbuild runtime_build THEN rm
+    obj/bin of the dependent crates.
+    Next: 60 — TBD.
+    Deferred: tasking, virtio-net,
+    Proc:self, dynamic linking.
+
     MILESTONE 58 COMPLETE (df2aec3 +
     f082fa5). Post-58 burns:
     Normalize_Path must IGNORE a

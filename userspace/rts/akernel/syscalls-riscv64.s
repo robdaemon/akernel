@@ -289,3 +289,13 @@ akernel_sys_system_reset:
     ecall
     ret
 .size akernel_sys_system_reset, . - akernel_sys_system_reset
+
+.global akernel_sys_read_clock
+.type akernel_sys_read_clock, @function
+akernel_sys_read_clock:
+    mv t0, a0
+    li a7, 34
+    ecall
+    sd a1, 0(t0)
+    ret
+.size akernel_sys_read_clock, . - akernel_sys_read_clock

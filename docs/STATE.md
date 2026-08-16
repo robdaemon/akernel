@@ -243,7 +243,12 @@ QEMU virt RAM base:     0x80000000
   cwd is ENV:CWD, global so a child CD moves the
   parent's session; relative args resolve through
   CLI.Resolve_Path everywhere, "/" is the Amiga
-  parent idiom, no dot components). The shell
+  parent idiom, no dot components). C:Date and
+  C:Wait (59) ride the goldfish RTC behind
+  Sys_Read_Clock (34): gettimeofday, FAT dirent
+  stamps (Op_Stat reply words 2/3, surfaced by
+  List) and Ada.Calendar all carry real wall time.
+  The shell
   prompt shows the cwd and "execute <script>"
   runs scripts (';' comments, failat stop at
   RC >= 10, nesting cap 4; "Shell execute

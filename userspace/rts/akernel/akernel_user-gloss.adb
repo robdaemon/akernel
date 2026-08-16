@@ -1076,7 +1076,18 @@ package body Akernel_User.Gloss is
       type U64_Pair is array (1 .. 2) of U64;
       TVW     : U64_Pair with Address => TV;
       Elapsed : U64;
+      Secs    : U64;
+      Ns      : U64;
    begin
+      --  Milestone 59: the board RTC (goldfish on qemu virt) is
+      --  the wall clock when it ticks; the m55 semihost/baked-
+      --  Epoch seeding + rdtime synthesis stays as the fallback
+      --  for RTC-less boards.
+      Syscalls.Read_Clock (Secs, Ns);
+      if Secs /= 0 then
+         TVW := (Secs, Ns / 1_000);
+         return 0;
+      end if;
       if not Clock_Seeded then
          Seed_Clock;
       end if;

@@ -62,6 +62,11 @@
 26 cap_delete(a0 = cap) -> 0 ok, U64'Last fail; closes one of the
    caller's own cap-table slots with the exit path's per-kind
    cleanup (object release, endpoint/IRQ/notification hooks)
+   (27-33: reply-cap duplication, process/thread introspection,
+   system_reset — see docs/IPC.md and arch-traps.adb)
+34 read_clock() -> a0 = seconds since the Unix epoch, a1 =
+   nanoseconds within the second (board RTC; goldfish on qemu
+   virt); both 0 when no RTC ticks. Ungated, read-only.
 ```
 
 IPC result codes: 0 ok, 1 invalid, 2 transfer failed, 3 endpoint gone,
@@ -380,8 +385,10 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   scan + directory chain extension), sector read-modify-write,
   cluster chain extension (free-entry scan from the FSInfo hint,
   both FAT mirrors + FSInfo updated), dirent cluster/size
-  writeback. No sparse writes (offset > size rejected); no
-  delete/mkdir/LFN-create yet.
+  writeback; Op_Rename/Op_Volume_Info (41a); dirent create/
+  write/access stamps from the board RTC (Sys_Read_Clock, 59 —
+  Op_Stat reply words 2/3 carry the FAT write date/time).
+  No sparse writes (offset > size rejected).
 - `userspace/echo/` — IPC echo server (`Tests/Echo`), spawned by the
   fuzzer with an endpoint cap at handle 1 and console Send cap at 2:
   recv/reply rounds reporting badge, words, double-reply failure,

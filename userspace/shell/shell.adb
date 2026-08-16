@@ -807,6 +807,18 @@ procedure Shell is
       --  somebody waits on it — reaping it silently first
       --  would make `wait 1` lose the code to "no such job".
       if Args'Length = 0 then
+         --  Bare wait with no jobs at all is the clock command
+         --  (milestone 59): C:Wait sleeps one second.
+         declare
+            Any : Boolean := False;
+         begin
+            for J in Jobs'Range loop
+               Any := Any or else Jobs (J).State /= Job_Free;
+            end loop;
+            if not Any then
+               return Exec ("Wait", "");
+            end if;
+         end;
          --  Bare wait: every known job, slot order; RC = the
          --  last job's exit code. Done jobs hand their code
          --  over without blocking.
@@ -825,8 +837,11 @@ procedure Shell is
       end if;
       N := Parse_Nat (Args);
       if N not in Jobs'Range or else Jobs (N).State = Job_Free then
-         Akernel_User.Console.Put_Line ("wait: no such job: " & Args);
-         return Akernel_User.CLI.RC_Error;
+         --  Milestone 59: C:Wait (the clock command) shares the
+         --  name. When the argument names no live or completed
+         --  job, the C: command wins (Amiga precedence) —
+         --  "wait 1" with no jobs sleeps one second.
+         return Exec ("Wait", Args);
       end if;
       if Jobs (N).State = Job_Active then
          RC := Reap (Jobs (N).Proc);
@@ -872,7 +887,9 @@ procedure Shell is
             Akernel_User.Console.Put_Line
               ("  jobs            list/harvest background jobs");
             Akernel_User.Console.Put_Line
-              ("  wait [n]        RC = job n's (or last) exit code");
+              ("  wait [n]        RC = job n's (or last) exit code;"); 
+            Akernel_User.Console.Put_Line
+              ("                  no matching job -> C:Wait (sleep)");
             return 0;
          elsif Word = "exit" then
             if Jobs_Active > 0 and then not Exit_Warned then

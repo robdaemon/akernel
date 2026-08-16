@@ -788,6 +788,13 @@ procedure Fileserver is
          return;
       end if;
 
+      --  Milestone 59: words 2/3 carry FAT write date/time from
+      --  fs drivers (forwarded untouched by the VFS branch); every
+      --  local reply must zero them or the request's packed path
+      --  leaks through as a garbage stamp.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
+
       Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
@@ -1685,6 +1692,13 @@ procedure Fileserver is
          return;
       end if;
 
+      --  Milestone 59: words 2/3 carry FAT write date/time from
+      --  fs drivers (forwarded untouched by the VFS branch); every
+      --  local reply must zero them or the request's packed path
+      --  leaks through as a garbage stamp.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
+
       Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
@@ -1896,6 +1910,13 @@ procedure Fileserver is
          return;
       end if;
 
+      --  Milestone 59: words 2/3 carry FAT write date/time from
+      --  fs drivers (forwarded untouched by the VFS branch); every
+      --  local reply must zero them or the request's packed path
+      --  leaks through as a garbage stamp.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
+
       Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then
          Reply2 (Files.Status_Not_Found, 0);
@@ -1975,6 +1996,13 @@ procedure Fileserver is
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
+
+      --  Milestone 59: words 2/3 carry FAT write date/time from
+      --  fs drivers (forwarded untouched by the VFS branch); every
+      --  local reply must zero them or the request's packed path
+      --  leaks through as a garbage stamp.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
 
       Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
       if V = 0 then

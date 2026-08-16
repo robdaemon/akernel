@@ -111,6 +111,38 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Stat;
 
+   function Stat_Ex
+     (Name       : String;
+      Size       : out U64;
+      Write_Date : out U64;
+      Write_Time : out U64) return U64 is
+      Q   : String (1 .. 48);
+      Len : Natural;
+   begin
+      Size := 0;
+      Write_Date := 0;
+      Write_Time := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_Stat;
+      Pack_Name (Q (1 .. Len), 0, 5);
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Size       := Syscalls.Message.Words (1);
+         Write_Date := Syscalls.Message.Words (2);
+         Write_Time := Syscalls.Message.Words (3);
+      end if;
+      return Syscalls.Message.Words (0);
+   end Stat_Ex;
+
    function Read_Dir
      (Name         : String;
       Index        : U64;

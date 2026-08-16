@@ -370,6 +370,13 @@ volume (`RD0`, settable) — the seed of a PATH resolver. Other
 devices get their label from the mounted filesystem itself; the
 manifest directive is the initrd's boot-time equivalent.
 
+Sys_Read_Clock (34) reads the board RTC (goldfish on qemu virt):
+a0 = seconds and a1 = nanoseconds since the Unix epoch, both 0 when
+no RTC ticks. Ungated and read-only. Op_Stat replies define words
+2/3 as the dirent write stamp in FAT encodings (date: year-1980 in
+bits 9..15, month 5..8, day 0..4; time: hour 11..15, minute 5..10,
+second/2 0..4); volumes without timestamps answer 0/0.
+
 Device names are `<prefix><unit>` with the unit an UNPADDED decimal
 0..99 — `RD0`, `WD0`, `PD0`..`PD9`, `PD10`..`PD99`, `BD0`..`BD99`;
 variable length, never zero-padded, split at `:` everywhere (the

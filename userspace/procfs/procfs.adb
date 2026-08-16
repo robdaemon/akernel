@@ -447,6 +447,10 @@ procedure Procfs is
    begin
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
+      --  Milestone 59: stat replies define words 2/3 as write
+      --  date/time; procfs files have none.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
       Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("procfs reply failed");

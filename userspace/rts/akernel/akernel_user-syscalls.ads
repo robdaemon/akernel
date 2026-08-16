@@ -248,6 +248,12 @@ package Akernel_User.Syscalls is
      (Admin      : U64;
       Reset_Type : U64) return U64;
 
+   --  Read_Clock (syscall 34): wall clock from the board RTC
+   --  (goldfish on qemu virt; milestone 59). Seconds/Nanos since
+   --  the Unix epoch; both 0 when the board has no ticking RTC.
+   --  Ungated — read-only and harmless to every process.
+   procedure Read_Clock (Seconds : out U64; Nanos : out U64);
+
    --  Boot files as memory objects: maps a Boot_File_Object cap's
    --  frames read-only and borrowed. File data need not start on a
    --  page boundary; Lead_In returns the byte offset of the file

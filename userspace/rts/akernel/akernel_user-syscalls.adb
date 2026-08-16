@@ -158,6 +158,11 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_system_reset";
 
+   function Raw_Read_Clock
+     (Nanos_Out : System.Address) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_read_clock";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -381,6 +386,11 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_System_Reset (Admin, Reset_Type);
    end System_Reset;
+
+   procedure Read_Clock (Seconds : out U64; Nanos : out U64) is
+   begin
+      Seconds := Raw_Read_Clock (Nanos'Address);
+   end Read_Clock;
 
    function Mem_Map_File
      (Address_Space : U64;

@@ -6,6 +6,7 @@ with Arch.IOMMU;
 with Arch.SBI;
 with Board.Interrupts;
 with Board.PLIC;
+with Board.RTC;
 with Board.UART;
 with Kernel.Boot_Files;
 with Kernel.Capabilities;
@@ -86,6 +87,7 @@ package body Arch.Traps is
    Sys_Cap_Info          : constant U64 := 31;
    Sys_Thread_Regs       : constant U64 := 32;
    Sys_System_Reset      : constant U64 := 33;
+   Sys_Read_Clock        : constant U64 := 34;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -2313,6 +2315,19 @@ package body Arch.Traps is
          Handle_Thread_Regs (Frame);
       elsif Number = Sys_System_Reset then
          Handle_System_Reset (Frame);
+      elsif Number = Sys_Read_Clock then
+         --  Sys_Read_Clock (no arguments, no authority): wall
+         --  clock from the board RTC (goldfish on qemu virt;
+         --  milestone 59). a0 = seconds since the Unix epoch,
+         --  a1 = nanoseconds within the second; both 0 when the
+         --  board has no ticking RTC. Read-only, harmless to
+         --  every process — ungated by design.
+         declare
+            Ns : constant U64 := Board.RTC.Read_Nanoseconds;
+         begin
+            Trap_Frame_Set_A0 (Frame, Ns / 1_000_000_000);
+            Trap_Frame_Set_A1 (Frame, Ns mod 1_000_000_000);
+         end;
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

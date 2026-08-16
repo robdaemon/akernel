@@ -59,11 +59,56 @@ procedure Fat32 is
    Status_Bad_Args     : constant U64 := 3;
    Status_Out_Of_Range : constant U64 := 4;
 
-   --  No RTC in the kernel: dirent create/write/access timestamps
-   --  all carry this fixed date (FAT epoch encoding: year-1980 in
-   --  bits 9..15, month 5..8, day 0..4) = 2025-01-01 00:00:00.
+   --  Milestone 59: wall clock from the board RTC via
+   --  Sys_Read_Clock — dirent create/write/access stamps carry
+   --  real time (FAT epoch encoding: year-1980 in bits 9..15,
+   --  month 5..8, day 0..4; 2-second time resolution). Without a
+   --  ticking RTC (reading before 2000-01-01) stamps fall back
+   --  to the fixed date 2025-01-01 so dirents stay valid FAT.
    Fixed_Date : constant U64 := 16#5A21#;
-   Fixed_Time : constant U64 := 0;
+
+   --  Seconds since the Unix epoch -> FAT date, via Howard
+   --  Hinnant's civil_from_days. All arithmetic stays U64: any
+   --  stampable time is after 1980.
+   function Now_Date return U64 is
+      Secs : U64;
+      Ns   : U64;
+      Z, Era, Doe, Yoe, Y, Doy, Mp, D, M : U64;
+   begin
+      Syscalls.Read_Clock (Secs, Ns);
+      if Secs < 946_684_800 then
+         return Fixed_Date;  --  no ticking RTC
+      end if;
+      Z   := Secs / 86_400 + 719_468;
+      Era := Z / 146_097;
+      Doe := Z mod 146_097;
+      Yoe := (Doe - Doe / 1_460 + Doe / 36_524 - Doe / 146_096)
+             / 365;
+      Y   := Yoe + Era * 400;
+      Doy := Doe - (365 * Yoe + Yoe / 4 - Yoe / 100);
+      Mp  := (5 * Doy + 2) / 153;
+      D   := Doy - (153 * Mp + 2) / 5 + 1;
+      M   := (if Mp < 10 then Mp + 3 else Mp - 9);
+      if M <= 2 then
+         Y := Y + 1;
+      end if;
+      Y := U64'Min (Y, 2_107);  --  FAT year ceiling
+      return (Y - 1_980) * 512 + M * 32 + D;
+   end Now_Date;
+
+   function Now_Time return U64 is
+      Secs : U64;
+      Ns   : U64;
+      Sod  : U64;
+   begin
+      Syscalls.Read_Clock (Secs, Ns);
+      if Secs < 946_684_800 then
+         return 0;
+      end if;
+      Sod := Secs mod 86_400;
+      return (Sod / 3_600) * 2_048 + ((Sod / 60) mod 60) * 32
+             + (Sod mod 60) / 2;
+   end Now_Time;
 
    Buf_Win_VA : constant U64 := 16#5400_0000#;
    Blk_Buf_VA : constant U64 := 16#5000_0000#;
@@ -1129,11 +1174,11 @@ procedure Fat32 is
                Bounce (Off + U64 (I)) := Short (U64 (I));
             end loop;
             Bounce (Off + 11) := (if Is_Dir then 16#10# else 16#20#);
-            Put16 (Off + 14, Fixed_Time);
-            Put16 (Off + 16, Fixed_Date);
-            Put16 (Off + 18, Fixed_Date);
-            Put16 (Off + 22, Fixed_Time);
-            Put16 (Off + 24, Fixed_Date);
+            Put16 (Off + 14, Now_Time);
+            Put16 (Off + 16, Now_Date);
+            Put16 (Off + 18, Now_Date);
+            Put16 (Off + 22, Now_Time);
+            Put16 (Off + 24, Now_Date);
             if Is_Dir then
                Put16 (Off + 20, New_Clus / 16#1_0000#);
                Put16 (Off + 26, New_Clus mod 16#1_0000#);
@@ -1170,21 +1215,21 @@ procedure Fat32 is
          end loop;
          Bounce (0) := Character'Pos ('.');
          Bounce (11) := 16#10#;
-         Put16 (14, Fixed_Time);
-         Put16 (16, Fixed_Date);
-         Put16 (18, Fixed_Date);
-         Put16 (22, Fixed_Time);
-         Put16 (24, Fixed_Date);
+         Put16 (14, Now_Time);
+         Put16 (16, Now_Date);
+         Put16 (18, Now_Date);
+         Put16 (22, Now_Time);
+         Put16 (24, Now_Date);
          Put16 (20, New_Clus / 16#1_0000#);
          Put16 (26, New_Clus mod 16#1_0000#);
          Bounce (32) := Character'Pos ('.');
          Bounce (33) := Character'Pos ('.');
          Bounce (32 + 11) := 16#10#;
-         Put16 (32 + 14, Fixed_Time);
-         Put16 (32 + 16, Fixed_Date);
-         Put16 (32 + 18, Fixed_Date);
-         Put16 (32 + 22, Fixed_Time);
-         Put16 (32 + 24, Fixed_Date);
+         Put16 (32 + 14, Now_Time);
+         Put16 (32 + 16, Now_Date);
+         Put16 (32 + 18, Now_Date);
+         Put16 (32 + 22, Now_Time);
+         Put16 (32 + 24, Now_Date);
          Put16 (32 + 20, Parent_Dot / 16#1_0000#);
          Put16 (32 + 26, Parent_Dot mod 16#1_0000#);
          if not Meta_Write (Cluster_Sector (New_Clus), 1) then
@@ -1253,11 +1298,11 @@ procedure Fat32 is
                Bounce (Off + U64 (I)) := Short (U64 (I));
             end loop;
             Bounce (Off + 11) := Attr;
-            Put16 (Off + 14, Fixed_Time);
-            Put16 (Off + 16, Fixed_Date);
-            Put16 (Off + 18, Fixed_Date);
-            Put16 (Off + 22, Fixed_Time);
-            Put16 (Off + 24, Fixed_Date);
+            Put16 (Off + 14, Now_Time);
+            Put16 (Off + 16, Now_Date);
+            Put16 (Off + 18, Now_Date);
+            Put16 (Off + 22, Now_Time);
+            Put16 (Off + 24, Now_Date);
             Put16 (Off + 20, Clus / 16#1_0000#);
             Put16 (Off + 26, Clus mod 16#1_0000#);
             Put32 (Off + 28, Size);
@@ -1392,9 +1437,9 @@ procedure Fat32 is
       if not Meta_Read (Dir_Sector) then
          return False;
       end if;
-      Put16 (Dir_Off + 18, Fixed_Date);
-      Put16 (Dir_Off + 22, Fixed_Time);
-      Put16 (Dir_Off + 24, Fixed_Date);
+      Put16 (Dir_Off + 18, Now_Date);
+      Put16 (Dir_Off + 22, Now_Time);
+      Put16 (Dir_Off + 24, Now_Date);
       Put16 (Dir_Off + 20, Cluster / 16#1_0000#);
       Put16 (Dir_Off + 26, Cluster mod 16#1_0000#);
       Put32 (Dir_Off + 28, Size);
@@ -1481,6 +1526,12 @@ procedure Fat32 is
             if Is_Dir then
                Reply2 (Status_Bad_Args, 0);  --  no dir stat/open
             else
+               --  Milestone 59: words 2/3 carry the write
+               --  date/time (FAT encodings) for List.
+               if Meta_Read (Dir_Sector) then
+                  Syscalls.Message.Words (2) := LE16 (Dir_Off + 24);
+                  Syscalls.Message.Words (3) := LE16 (Dir_Off + 22);
+               end if;
                Reply2 (Status_Ok, Entry_Size);
             end if;
          else

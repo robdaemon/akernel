@@ -190,6 +190,16 @@ package Akernel_User.Files is
    --  Stat/Open return a protocol status; Open also allocates and
    --  maps the read buffer on first success.
    function Stat (Name : String; Size : out U64) return U64;
+   --  Stat_Ex (milestone 59): Stat plus the dirent write stamp
+   --  in FAT encodings (date: year-1980 bits 9..15, month 5..8,
+   --  day 0..4; time: hour 11..15, minute 5..10, second/2 0..4).
+   --  Volumes without timestamps (initrd, procfs, pipes) return
+   --  both as 0.
+   function Stat_Ex
+     (Name       : String;
+      Size       : out U64;
+      Write_Date : out U64;
+      Write_Time : out U64) return U64;
    function Open (Name : String; Size : out U64) return U64;
 
    --  Directory enumeration (milestone 32, the Dir command):

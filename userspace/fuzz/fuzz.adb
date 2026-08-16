@@ -2778,6 +2778,68 @@ begin
             Check (Ada.Calendar.Clock > C0,
                    "gettimeofday synthesis advances over rdtime");
          end;
+
+         --  Milestone 59: the goldfish RTC is the wall clock
+         --  (Sys_Read_Clock; gettimeofday prefers it over the
+         --  m55 seeding). Seconds since the Unix epoch, nanos
+         --  within the second.
+         declare
+            Secs, Ns : U64;
+         begin
+            Akernel_User.Syscalls.Read_Clock (Secs, Ns);
+            Check (Secs >= 1_767_225_600  --  2026-01-01 UTC
+                   and then Ns < 1_000_000_000,
+                   "RTC reads wall time");
+         end;
+
+         --  ...and the FAT driver stamps dirents with it: a
+         --  fresh file's write date is this year, not the old
+         --  fixed 2025-01-01 (16#5A21#).
+         declare
+            Size, D, T : U64;
+            St  : U64;
+            OkF : Boolean;
+            Cnt : U64 := 0;
+            Txt : aliased constant String := "clock stamp";
+         begin
+            --  (Write_File is a sibling block's helper; Op_Write
+            --  creates the file.)
+            St := Akernel_User.Files.Write
+              ("BD0:FZCLK.TXT", 0, Txt'Address, 11, Cnt);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Cnt = 11,
+                   "clock stamp source written");
+            St := Akernel_User.Files.Stat_Ex
+              ("BD0:FZCLK.TXT", Size, D, T);
+            OkF := St = Akernel_User.Files.Status_Ok
+              and then D /= 16#5A21#
+              and then (D / 512) + 1_980 >= 2_026;
+            Run_Command ("Sys:C/Delete", "BD0:FZCLK.TXT", 0,
+                         "clock stamp file deleted");
+            Check (OkF, "fat dirent stamps the RTC date");
+         end;
+
+         --  Date prints it; Wait sleeps it (measured against
+         --  the monotonic timebase). UNTIL's live timing cannot
+         --  be suite-tested (a just-past target waits a day) —
+         --  bad forms are what we check.
+         Run_Command ("Sys:C/Date", "", 0, "date prints the RTC");
+         declare
+            use type Ada.Real_Time.Time;
+            use type Ada.Real_Time.Time_Span;
+            T0 : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+            E  : Ada.Real_Time.Time_Span;
+         begin
+            Run_Command ("Sys:C/Wait", "1", 0, "wait 1s returns ok");
+            E := Ada.Real_Time.Clock - T0;
+            Check (E >= Ada.Real_Time.Milliseconds (900)
+                   and then E < Ada.Real_Time.Seconds (20),
+                   "wait actually slept ~1s");
+         end;
+         Run_Command ("Sys:C/Wait", "UNTIL", 10,
+                      "wait UNTIL without a time fails");
+         Run_Command ("Sys:C/Wait", "bogus", 10,
+                      "wait rejects a bad argument");
          end if;
 
          --  The last-chance chain: role E raises unhandled; the
@@ -3286,9 +3348,14 @@ begin
            "run Tests/Teardown X 3" & ASCII.LF
            & "run Tests/Teardown X 4" & ASCII.LF
            & "wait" & ASCII.LF;
+         --  Milestone 59: C:Wait (the clock command) shares the
+         --  name; an argument naming no job falls through to it,
+         --  so script 6 exercises the fallthrough (2-second sleep,
+         --  RC 0, script continues). "Unknown job" is no longer an
+         --  error for a bare number — it is a sleep duration.
          Script6 : constant String :=
-           "wait 7" & ASCII.LF
-           & "set FZJ4=unreached" & ASCII.LF;
+           "wait 2" & ASCII.LF
+           & "set FZJ4=alive" & ASCII.LF;
          Script7 : constant String :=
            "run Tests/Teardown X 9" & ASCII.LF;
       begin
@@ -3386,14 +3453,14 @@ begin
          Write_File ("BD0:FZJOBS4.TXT", Script6,
                      "jobs script 4 written");
          Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS4.TXT",
-                      10, "wait on an unknown job is RC 10");
+                      0, "wait with no matching job runs C:Wait");
          declare
             St   : U64;
             Size : U64;
          begin
             St := Akernel_User.Files.Stat ("ENV:FZJ4", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
-                   "unknown-job RC stops the script");
+            Check (St = Akernel_User.Files.Status_Ok,
+                   "C:Wait fallthrough lets the script continue");
          end;
 
          Write_File ("BD0:FZJOBS5.TXT", Script7,
