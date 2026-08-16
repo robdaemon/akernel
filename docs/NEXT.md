@@ -2688,6 +2688,49 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 61 FOLLOWUP — menus on
+    every GUI app. The Op_Set_Menus
+    wire packing moved out of
+    Trinket.Window.Set_Menus into
+    Trinket.Menus.Serialize (Menus +
+    page address) so RAW-protocol
+    clients share it; Set_Menus is
+    now alloc/map/Serialize/mint/
+    call/unmap/delete. Fileman:
+    File>Open/Parent/Quit (the
+    button-row callbacks; Open spawns
+    Edit on the selection). Tdemo:
+    File>Save/Revert/Cancel/Quit
+    (Quit = Request_Quit). Terminal
+    and Demo (raw clients, pre-
+    Trinket.Window): Terminal>Quit
+    and Demo>Quit, each serializing
+    into its own transient page at
+    Queue_VA+4096, mint Map+Read+
+    Transfer, Surface_Set_Menus
+    direct, kind-4 pick = the
+    close-gadget path; demo.gpr now
+    withs trinket.gpr (Menus only —
+    the static lib links just that
+    unit). Edit untouched = the
+    serializer regression check.
+    Verified live via the QMP RMB
+    sticky-bar flow: every dropdown
+    opened, picks fired (tdemo Save
+    logged, fileman Open spawned
+    Edit), all five apps exited
+    THROUGH their menus to a clean
+    desktop. Suites green SMP1+SMP4
+    948 PASS, failures=0, fsck
+    clean, qemu self-exits 0. Burn:
+    none in code; QMP dropdown picks
+    need item-row y precision (16 px
+    rows — a click just below the
+    last item silently dismisses the
+    menu, so screenshot the OPEN
+    dropdown and measure rows before
+    clicking).
+
     MILESTONE 61 COMPLETE — Amiga
     screen-bar menus. Menus are CHROME:
     the client declares a tree once

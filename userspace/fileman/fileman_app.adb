@@ -8,6 +8,7 @@ with Trinket;
 with Trinket.Widgets;
 with Trinket.Listview;
 with Trinket.Window;
+with Trinket.Menus;
 
 package body Fileman_App is
 
@@ -39,6 +40,7 @@ package body Fileman_App is
    procedure Open_Clicked;
    procedure Parent_Clicked;
    procedure Quit_Clicked;
+   procedure Menu_Picked (Id : Syscalls.U64);
    procedure Load_Directory (P : String);
    procedure Spawn_Edit (Path : String);
 
@@ -220,6 +222,19 @@ package body Fileman_App is
       Trinket.Window.Request_Quit (Win);
    end Quit_Clicked;
 
+   --  Screen-bar menu (milestone 61): File mirrors the button
+   --  row.
+   procedure Menu_Picked (Id : Syscalls.U64) is
+   begin
+      if Id = 1 then
+         Open_Clicked;
+      elsif Id = 2 then
+         Parent_Clicked;
+      elsif Id = 3 then
+         Quit_Clicked;
+      end if;
+   end Menu_Picked;
+
    procedure Main is
       Root    : constant Trinket.Widgets.Any_Widget :=
         Trinket.Widgets.New_Group
@@ -254,6 +269,13 @@ package body Fileman_App is
       if Trinket.Window.Open
         (Win, Bureau_EP, 400, 340, "File Manager", Root)
       then
+         Trinket.Window.Set_Menus
+           (Win,
+            (1 => Trinket.Menus.M
+               ("File", (Trinket.Menus.It (1, "Open"),
+                         Trinket.Menus.It (2, "Parent"),
+                         Trinket.Menus.It (3, "Quit")))));
+         Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Load_Directory (Current_Path.all);
          Trinket.Window.Run (Win);
          Trinket.Window.Close (Win);

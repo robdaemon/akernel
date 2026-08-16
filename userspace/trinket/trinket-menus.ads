@@ -11,6 +11,8 @@
 --          ("File", (Trinket.Menus.It (1, "Save"),
 --                    Trinket.Menus.It (2, "Quit"))));
 
+with System;
+
 package Trinket.Menus is
 
    Max_Menus  : constant := 8;
@@ -42,5 +44,13 @@ package Trinket.Menus is
       return Item_Spec;
 
    function M (Title : String; Items : Item_Array) return Menu_Spec;
+
+   --  Serialize the tree into the 4096-byte page at Page using
+   --  the Op_Set_Menus wire layout (akernel_user-window.ads).
+   --  Trinket.Window.Set_Menus is alloc/map/Serialize/mint/call;
+   --  raw-protocol clients (terminal, demo) map their own page,
+   --  Serialize, mint Map+Read+Transfer and call
+   --  Akernel_User.Window.Surface_Set_Menus themselves.
+   procedure Serialize (Menus : Menu_Array; Page : System.Address);
 
 end Trinket.Menus;

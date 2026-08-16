@@ -3,6 +3,7 @@ with System;
 with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Window;
+with Trinket.Menus;
 
 --  Demo: second Bureau client (milestone 30, slice b) — proves
 --  multi-window, click-to-focus and per-window key routing.
@@ -35,6 +36,9 @@ procedure Demo is
 
    Buf_VA : constant U64 := 16#6000_0000#;
    Queue_VA : constant U64 := 16#5080_0000#;
+   --  Scratch page for the serialized screen-bar menu tree
+   --  (transient: Bureau copies it out at Op_Set_Menus).
+   Menu_VA : constant U64 := 16#5080_1000#;
 
    Req_W : constant U64 := 320;
    Req_H : constant U64 := 200;
@@ -86,6 +90,39 @@ procedure Demo is
    Queue : Word_Array
      with Address => System.Storage_Elements.To_Address
        (System.Storage_Elements.Integer_Address (Queue_VA));
+
+   --  Milestone 61 followup: screen-bar menus on the RAW window
+   --  protocol (this client predates Trinket.Window). One
+   --  transient page carries the tree serialized by
+   --  Trinket.Menus.Serialize; Bureau copies it out at
+   --  Op_Set_Menus, so the page is unmapped right after.
+   procedure Declare_Menus is
+      use System.Storage_Elements;
+      Cap    : U64;
+      Minted : U64;
+   begin
+      Cap := Mem_Alloc (1);
+      if Cap = Syscall_Failed then
+         return;
+      end if;
+      if Mem_Map (Address_Space_Cap, Cap, Menu_VA, 0, 4096, 3) /= 0
+      then
+         Result := Cap_Delete (Cap);
+         return;
+      end if;
+      Trinket.Menus.Serialize
+        ((1 => Trinket.Menus.M
+            ("Demo", (1 => Trinket.Menus.It (1, "Quit")))),
+         To_Address (Integer_Address (Menu_VA)));
+      Minted := Cap_Mint
+        (Cap, Right_Map + Right_Read + Right_Transfer, 0);
+      if Minted /= Syscall_Failed then
+         Result := Win.Surface_Set_Menus (Win_EP, Surf_Id, Minted);
+         Result := Cap_Delete (Minted);
+      end if;
+      Result := Mem_Unmap (Address_Space_Cap, Menu_VA, 4096);
+      Result := Cap_Delete (Cap);
+   end Declare_Menus;
 
    procedure Fail (S : String) is
    begin
@@ -255,6 +292,7 @@ begin
    then
       Fail ("title failed");
    end if;
+   Declare_Menus;
 
    Draw_Bars;
    if Win.Surface_Update
@@ -317,6 +355,14 @@ begin
                   --  the surface and leave.
                   Result := Win.Surface_Destroy (Win_EP, Surf_Id);
                   Process_Exit;
+               elsif Queue (Slot) = Win.Input_Event_Menu then
+                  --  Screen-bar menu pick (kind 4; value = item
+                  --  Id). Demo > Quit takes the close-gadget
+                  --  path.
+                  if (Queue (Slot + 1) and 16#FFFF_FFFF#) = 1 then
+                     Result := Win.Surface_Destroy (Win_EP, Surf_Id);
+                     Process_Exit;
+                  end if;
                end if;
                Tail := Tail + 1;
             end loop;

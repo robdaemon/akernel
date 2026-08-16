@@ -8,6 +8,7 @@ with Akernel_User.Streams;
 with Akernel_User.Files;
 with Akernel_User.Window;
 with Trinket;
+with Trinket.Menus;
 with Trinket.Paint;
 with Trinket.Fonts;
 with Trinket.Widgets;
@@ -54,6 +55,9 @@ procedure Terminal is
    --  v3 input queue (one page, shared RW with Bureau) and the
    --  thread-bound notification that signals new events.
    Queue_VA : constant U64 := 16#5080_0000#;
+   --  Scratch page for the serialized screen-bar menu tree
+   --  (transient: Bureau copies it out at Op_Set_Menus).
+   Menu_VA : constant U64 := 16#5080_1000#;
    Queue_Cap : U64 := 0;
    Ntfn_Cap  : U64 := 0;
 
@@ -435,6 +439,15 @@ procedure Terminal is
             Result := Akernel_User.Window.Surface_Destroy
               (Win_EP, Surf_Id);
             Process_Exit;
+         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Menu
+         then
+            --  Screen-bar menu pick (kind 4; value = item Id).
+            --  Terminal > Quit takes the close-gadget path.
+            if (Queue (Slot + 1) and 16#FFFF_FFFF#) = 1 then
+               Result := Akernel_User.Window.Surface_Destroy
+                 (Win_EP, Surf_Id);
+               Process_Exit;
+            end if;
          end if;
          Tail := Tail + 1;
       end loop;
@@ -529,6 +542,42 @@ procedure Terminal is
 
    ------------------------------------------------------------------
 
+   --  Milestone 61 followup: screen-bar menus on the RAW window
+   --  protocol (this client predates Trinket.Window). One
+   --  transient page carries the tree serialized by
+   --  Trinket.Menus.Serialize; Bureau copies it out at
+   --  Op_Set_Menus, so the page is unmapped right after.
+   procedure Declare_Menus is
+      use System.Storage_Elements;
+      Cap    : U64;
+      Minted : U64;
+   begin
+      Cap := Mem_Alloc (1);
+      if Cap = Syscall_Failed then
+         return;
+      end if;
+      if Mem_Map (Address_Space_Cap, Cap, Menu_VA, 0, 4096, 3) /= 0
+      then
+         Result := Cap_Delete (Cap);
+         return;
+      end if;
+      Trinket.Menus.Serialize
+        ((1 => Trinket.Menus.M
+            ("Terminal", (1 => Trinket.Menus.It (1, "Quit")))),
+         To_Address (Integer_Address (Menu_VA)));
+      Minted := Cap_Mint
+        (Cap, Right_Map + Right_Read + Right_Transfer, 0);
+      if Minted /= Syscall_Failed then
+         Result := Akernel_User.Window.Surface_Set_Menus
+           (Win_EP, Surf_Id, Minted);
+         Result := Cap_Delete (Minted);
+      end if;
+      Result := Mem_Unmap (Address_Space_Cap, Menu_VA, 4096);
+      Result := Cap_Delete (Cap);
+   end Declare_Menus;
+
+   ------------------------------------------------------------------
+
    package RPC is new Akernel_User.IPC
      (Akernel_User.Streams.Stream_Request,
       Akernel_User.Streams.Stream_Response);
@@ -595,6 +644,7 @@ begin
    then
       Debug_Put_Line ("terminal title failed");
    end if;
+   Declare_Menus;
 
    --  2. Surface buffer chunks, pushed to Bureau (4 caps/call).
    Pages_Left := Pages;

@@ -1,3 +1,13 @@
+MILESTONE 61 FOLLOWUP SHIPPED: menus on every GUI app.
+The Op_Set_Menus wire packing moved into
+Trinket.Menus.Serialize so raw-protocol clients share it;
+Fileman File>Open/Parent/Quit, Tdemo
+File>Save/Revert/Cancel/Quit, and the raw clients
+Terminal>Quit / Demo>Quit (own transient page at
+Queue_VA+4096, Surface_Set_Menus direct; demo.gpr withs
+trinket.gpr). Verified live via QMP RMB sticky-bar: all
+five apps exited THROUGH their menus. Suites green
+SMP1+SMP4 948 PASS, failures=0, fsck clean. Before that:
 MILESTONE 61 SHIPPED: Amiga screen-bar menus. Menus are
 CHROME: client declares a tree once (Op_Set_Menus=27,
 serialized one-page memobj, Bureau copies it out), Bureau
@@ -47,6 +57,10 @@ Key facts carried forward:
 - Menus: Bureau owns RMB + renders declared trees (kind-4
   pick events carry the client-chosen item Id); the bar
   clock ticks only on Bureau wakes (no timer service).
+  Wire packing = Trinket.Menus.Serialize — raw-protocol
+  clients (terminal/demo) map their own page and call
+  Surface_Set_Menus direct; Trinket apps use
+  Window.Set_Menus/Set_Menu_Handler.
 - m59: RTC behind Sys_Read_Clock=34; Wait N | M:S | UNTIL
   HH:MM[:SS]; runtime_build.gpr needs the toolchain bin on
   PATH and fails WITHOUT a ': error' line ("no compiler for
@@ -159,7 +173,13 @@ test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 61 — Amiga
+Recently landed: MILESTONE 61 followup —
+menus on every GUI app (Fileman/Tdemo via
+Trinket.Window; raw Terminal/Demo via
+Trinket.Menus.Serialize + Surface_Set_Menus
+direct). Suites green SMP1+SMP4 948 PASS,
+failures=0, fsck clean. Before that:
+MILESTONE 61 — Amiga
 screen-bar menus (RMB/sticky, chrome in
 Bureau, Edit File>Save/Quit) + bar RTC
 clock. Before that: MILESTONE 60 — terminal
