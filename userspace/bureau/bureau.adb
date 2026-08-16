@@ -1688,10 +1688,17 @@ begin
             elsif RMB and then not RMB_Was then
                --  RMB opens the focused window's menu bar and
                --  is Bureau's alone (never reaches content).
+               --  Log the edge: the GTK pointer grab eats the
+               --  first click, which leaves users thinking RMB
+               --  is broken when the focus click never landed.
+               Debug_Put_Line ("bureau: rmb down");
                if Focus /= 0 and then Wins (Focus).Menu_Count > 0
                then
                   Open_Menu;
                   Menu_Hover (NX, NY);
+               else
+                  Debug_Put_Line
+                    ("bureau: focused window has no menus");
                end if;
                Prev_Buttons := Buttons;
                Cursor_Draw (NX, NY);
