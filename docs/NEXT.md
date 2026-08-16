@@ -2789,30 +2789,46 @@ Commit between each milestone.
 
 ## Deferred (do not build yet)
 
-- Block device caches, and an explicit sync op/ecall (noted during
-  20c: the FAT driver writes through on every op). FAT32 metadata
-  cache + Op_Sync passthrough landed in 22; still open: write-back
-  policy, device-level cache shared across fs drivers, real flush
-  (VIRTIO_BLK_F_FLUSH), block-layer sync op.
-- Register fast path, >4 caps/msg.
+Live list — scrubbed post-58. Landed since this section was
+written: FAT32 metadata cache + Op_Sync (22), assigns C:/ENV:
+(36), uniform program ABI (31b), pointer events to clients
+(32/57), write-back cache + VIRTIO_BLK_F_FLUSH + block-layer
+sync (48), blocking pipes (49), clean shutdown (50).
+
+Still open:
+- Clock/RTC: Wait/Date/Time/SetDate — no RTC today; dirents
+  stamp fixed 2025-01-01, gettimeofday is epoch (m41 clock
+  group, 53c).
+- Tasking runtime (Ada tasks in userspace).
+- virtio-net (no network at all today).
+- Proc:self (needs client identity through the VFS).
+- Shell: background pipelines/redirection (m52: run takes one
+  command); script interpreter proper — If/Else/EndIf, Skip,
+  Lab, Alias, Resident (m41; we have execute + failat).
+- Trinket: images/icons (deferred from the 56 GUI plan);
+  Fileman actions (copy/delete/rename, navigation).
+- Tier-1 library follow-ups: versioning (Amiga OpenLibrary
+  version floor), reference counting across opens. Tier-2
+  runtime code loading / dynamic linking deferred-not-rejected.
+- Block layer: device-level cache shared across fs drivers
+  (write-back per-driver landed in 48).
+- Register fast path, >4 caps/msg (probe IPC cost first).
 - Custom GNAT runtime for userspace (runtime.xml + rebuilt
   adalib with s-memory/a-stream vendored in, replacing the
   stock light-rv64imafdc) — the milestone-40 RTS library is
   the pragmatic 90%; this is the purist end state, zero
   user-visible gain, toolchain-coupled build cost.
-- Kernel introspection syscalls for init state reconstruction
-  (37a process/thread snapshots + 39 admin-gated cap/register
-  dumps landed; still open: endpoint/notification object
-  listing, scheduler stats).
-- Finer-grained kernel locking / per-hart runqueues if hart counts
-  grow (BKL serializes all kernel execution; fine at hobby scale).
-- Tasking runtime; uniform program ABI (milestone 31b: one
-  namespace for every program, windows open only via
-  Surface_Create); pointer events to focused clients (v3 input
-  queue carries keys only; pointer is Bureau-internal for
-  focus/raise/drag); zero-copy direct scanout of full-screen
-  client surfaces; MSI-X for virtio-pci (INTx today, shared
-  chains); per-device IOVA spaces (IOVA = PA identity today).
+- Kernel introspection leftovers: endpoint/notification object
+  listing, scheduler stats (Avail rides this).
+- Cooperative shutdown broadcast (m50: revisit when a server
+  holds in-memory state worth saving); automated reboot-cycle
+  test (would loop); thread-id generations (m51: no consumer).
+- Zero-copy direct scanout of full-screen client surfaces;
+  MSI-X for virtio-pci (INTx today, shared chains); per-device
+  IOVA spaces (IOVA = PA identity today); true scheduler
+  priorities; finer-grained kernel locking / per-hart
+  runqueues (BKL serializes all kernel execution; fine at
+  hobby scale).
 
 ## Start by reading
 
