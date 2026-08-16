@@ -272,6 +272,13 @@ procedure Bureau is
    Clock_Min  : U64 := U64'Last;
    Clock_X0   : constant := 72;  --  Width - Clock_X0 .. - gadget
 
+   --  RMB acknowledgment: with no menu to show (focused window
+   --  declared none), the screen title inverts while RMB is
+   --  held — a visible "I saw it; nothing here" instead of a
+   --  silent no-op (Amiga reveals the screen bar; ours is
+   --  persistent, so it needs a cue).
+   Bar_Ack : Boolean := False;
+
    ------------------------------------------------------------------
    --  Pixel plumbing. All drawing is clipped to the active band
    --  (Clip_*) AND the screen.
@@ -552,7 +559,14 @@ procedure Bureau is
       --  titles/dropdown when one is active.
       Fill_Rect (0, 0, Width, Bar_H, Bar_Face);
       Fill_Rect (0, Bar_H, Width, Bar_H + 1, Bevel_Lo);
-      Draw_Text (8, 5, "Bureau", Text_Dark, Bar_Face, Stretch => 1);
+      if Bar_Ack then
+         Fill_Rect (4, 1, 60, Bar_H - 1, Title_Blue);
+         Draw_Text (8, 5, "Bureau", Title_Text, Title_Blue,
+                    Stretch => 1);
+      else
+         Draw_Text (8, 5, "Bureau", Text_Dark, Bar_Face,
+                    Stretch => 1);
+      end if;
       Draw_Gadget (Width - 24, 1, 16);
       Draw_Text (Width - Clock_X0, 5, Clock_Text,
                  Text_Dark, Bar_Face, Stretch => 1);
@@ -1699,10 +1713,18 @@ begin
                else
                   Debug_Put_Line
                     ("bureau: focused window has no menus");
+                  --  Acknowledge the gesture visibly.
+                  Bar_Ack := True;
+                  Composite_Band (0, 0, 64, Bar_H + 1);
                end if;
                Prev_Buttons := Buttons;
                Cursor_Draw (NX, NY);
             else
+            --  RMB release clears the no-menus acknowledgment.
+            if not RMB and then RMB_Was and then Bar_Ack then
+               Bar_Ack := False;
+               Composite_Band (0, 0, 64, Bar_H + 1);
+            end if;
             if (Buttons and 1) = 1
               and then (Prev_Buttons and 1) = 0
             then
