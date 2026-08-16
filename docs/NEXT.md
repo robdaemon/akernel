@@ -2702,7 +2702,15 @@ Next candidates (order open):
     drag-select, release over an item
     picks; release elsewhere leaves the
     bar OPEN (sticky, the touchpad
-    ruling) — hover switches dropdowns,
+    ruling); a menu-less window's RMB
+    inverts the "Bureau" screen title
+    while held (our bar is persistent,
+    so the gesture needs a cue) and
+    serial-logs the edge — GTK/SDL eat
+    the grab click and host touchpads
+    may not deliver button 3 at all, so
+    the log splits guest-never-saw-it
+    from no-menus — hover switches dropdowns,
     left-click picks, left-click off /
     RMB again / Esc / focus loss
     dismisses. Picks arrive as input-queue
