@@ -317,7 +317,11 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   region: select/subsel/size at 0x00..0x02, payload at 0x08;
   EV_BITS=0x11, ABS_INFO=0x12, per-type bitmaps only). Keyboard:
   US keymap with shift/capslock, printable chars (+ enter/tab/
-  backspace/escape) delivered as Op_Input to the console server.
+  backspace/escape) delivered as Op_Input to the console server;
+  navigation keys arrive as LINUX keycodes (KEY_UP=103 etc. —
+  qemu virtio-keyboard speaks input-event-codes.h, not PC set-1
+  scancodes; fixed in 60) and forward as codes 16#80#..16#88#
+  (Trinket.Key_*) to the focused GUI client.
   Tablet/mouse: absolute/relative motion and buttons are
   serial-logged for now — a structured pointer channel lands with
   the GPU console.

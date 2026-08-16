@@ -1,14 +1,37 @@
-MILESTONE 58 SHIPPED (df2aec3 + f082fa5): Trinket.Listview,
-Sys:System/Fileman file manager, terminal scrollback
-(Terminal_Buffer circular buffer + Trinket-rendered scrollbar +
-solid block cursor, nav-key/pointer scrolling), and Tier-1
-Amiga-style shared libraries (Akernel_User.Libs Open_Library/
-Close_Library, Libserv server helper, Sys:Libs/Testlib +
-Sys:C/Testlib_Client demo, fuzz lifecycle tests). Suites green
-SMP1+SMP4, failures=0, kernel self-resets. Full burn list in
-docs/NEXT.md under MILESTONE 58.
+MILESTONE 60 SHIPPED: Amiga-style command history in the
+TERMINAL (CON: analog — history is line discipline, never the
+shell): 32-entry ring, cursor Up/Down recall by injecting BS x
+length + entry bytes into the Op_Read FIFO so the shell's line
+buffer stays in sync untouched; Down past newest restores the
+stashed in-progress line; scrollback scrolling moved to
+PgUp/PgDn/Home/End. Fixed a latent m57 bug: virtio_input's nav
+table used PC set-1 scancodes but qemu virtio-keyboard speaks
+LINUX keycodes (KEY_UP=103) — nav keys never worked from a real
+keyboard. Suites green SMP1 949 / SMP4 948 PASS, failures=0,
+fsck clean, kernel self-resets. Full burn list in docs/NEXT.md
+under MILESTONE 60. Before that: MILESTONE 59 (00e996e) —
+RTC/clock group: Sys_Read_Clock=34 (goldfish RTC, a0=secs
+a1=nanos since epoch, ungated read-only), real wall time in
+gettimeofday/Ada.Calendar/FAT dirent stamps (Op_Stat words
+2/3, List stamp column), Sys:C/Date + Sys:C/Wait, vendored
+s-reldel (delay statements work), shell job-wait falls
+through to C:Wait when the argument names no job.
 
 Key facts carried forward:
+- History recall INJECTS bytes into the terminal's Op_Read
+  FIFO (BS per current char + entry text); Edit cap = 120 =
+  shell Max_Line, FIFO sized 512 for 2x120 + type-ahead.
+  Injecting more than the shell accepts desyncs it.
+- virtio-input keycodes are LINUX input-event-codes.h
+  (typewriter block coincidentally = PC set-1; nav cluster
+  does NOT). Nav keys forward as 16#80#..16#88#.
+- m59: RTC behind Sys_Read_Clock=34; Wait N | M:S | UNTIL
+  HH:MM[:SS]; runtime_build.gpr needs the toolchain bin on
+  PATH and fails WITHOUT a ': error' line ("no compiler for
+  language C"); build order: runtime THEN rm obj/bin of
+  dependent crates; Op_Stat words 2/3 = FAT write date/time,
+  0/0 on stamp-less volumes (fileserver zeroes the request's
+  packed path bytes).
 - Tier-1 library wire convention: rendezvous cap at uniform ABI
   handle 5 (Set_Grant slot 4) with Send+Receive+Transfer rights;
   the library Sends its service cap back over it, client deletes
@@ -101,22 +124,29 @@ CURRENT SESSION STATE (58 SHIPPED):
   to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-58 COMPLETE. Next: 59 TBD; the
+Open candidates — milestones 41-60 COMPLETE. Next: 61 TBD; the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
-cost first), custom GNAT runtime, virtio-net, MSI-X, true
-scheduler priorities, clock. Consciously deferred:
+cost first), custom GNAT runtime (tasking), virtio-net,
+MSI-X, true scheduler priorities, script interpreter,
+background pipelines, Trinket images, Fileman actions,
+library versioning. Consciously deferred:
 cooperative shutdown broadcast (m50: no server holds
 in-memory state worth saving today); automated reboot-cycle
 test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 58 (df2aec3,
+Recently landed: MILESTONE 60 — terminal
+command history (injection-synced, CON:
+lineage) + the Linux-keycode nav fix;
+MILESTONE 59 (00e996e) — RTC/clock group
+(Sys_Read_Clock, real dirent stamps, Date/
+Wait, s-reldel). Suites green SMP1+SMP4,
+failures=0. Before that: MILESTONE 58 (df2aec3,
 f082fa5) — Trinket.Listview + Fileman +
 terminal scrollback, and Tier-1 shared
-libraries (Libs/Libserv/Testlib). Suites
-green SMP1+SMP4, failures=0. Between 57
+libraries (Libs/Libserv/Testlib). Between 57
 and 58: bb12c86 (make run = interactive,
 make test = suite), 3fa4074 + f667fb0
 (elevated/shell cwd-aware staging +

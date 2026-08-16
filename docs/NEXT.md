@@ -2688,6 +2688,43 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 60 COMPLETE — Amiga-style
+    command history. It lives in the
+    TERMINAL (the CON: analog — line
+    discipline's home), not the shell:
+    Edit_Buf mirrors the input half of
+    the current scrollback line, Return
+    pushes it onto a 32-entry ring, and
+    cursor Up/Down recall by INJECTING
+    bytes into the Op_Read FIFO (BS x
+    current length, then the entry) so
+    the shell's own line buffer stays
+    in sync — the shell needed zero
+    changes. Down past the newest
+    restores the stashed in-progress
+    line. Scrollback scrolling moved
+    off Up/Down to PgUp/PgDn/Home/End
+    (+ scrollbar pointer). Latent m57
+    bug fixed: virtio_input's nav table
+    used PC set-1 scancodes (Up=72) but
+    qemu virtio-keyboard speaks LINUX
+    keycodes (KEY_UP=103; the
+    typewriter block coincidentally
+    matches both) — nav keys never
+    arrived from a real keyboard.
+    Bonus line-discipline fixes:
+    backspace at empty input no longer
+    eats the prompt's last character;
+    control bytes the shell ignores
+    (tab etc.) are dropped instead of
+    desyncing the display. Burns:
+    recall injection needs the Op_Read
+    FIFO sized for 2x120 + type-ahead
+    (now 512); shell Max_Line=120 is
+    the Edit cap — injecting more than
+    the shell accepts desyncs. Next:
+    61 — TBD.
+
     MILESTONE 59 COMPLETE — RTC/clock
     group. Goldfish RTC (DTB
     "google,goldfish-rtc", board

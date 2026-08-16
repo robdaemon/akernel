@@ -225,8 +225,12 @@ QEMU virt RAM base:     0x80000000
   terminal is a
   console device (CON: analog) in a Bureau window, rendered
   via Trinket since 58 (Terminal_Buffer circular scrollback
-  + right-edge scrollbar + block cursor, nav-key/pointer
-  scrolling): it echoes
+  + right-edge scrollbar + block cursor, PgUp/PgDn/Home/End
+  + pointer scrolling) with Amiga-style command history
+  since 60: cursor Up/Down recall a 32-entry ring by
+  injecting BS+entry bytes into the Op_Read FIFO (the shell
+  stays in sync untouched); Down past newest restores the
+  stashed line. It echoes
   focused keys into its scrollback, serves Op_Read from its input
   FIFO, and launches System/Shell from the Sys volume (plain CLI
   program on its stream endpoint; builtins + spawn-and-await of

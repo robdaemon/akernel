@@ -118,16 +118,21 @@ procedure Virtio_Input is
    Key_Capslock   : constant := 58;
    --  Navigation keys (milestone 57): forwarded as codes
    --  16#80#+ (Trinket.Key_*); text-only consumers (terminal
-   --  line discipline) drop codes >= 16#80#.
-   Key_Home       : constant := 71;
-   Key_Up         : constant := 72;
-   Key_Pageup     : constant := 73;
-   Key_Left       : constant := 75;
-   Key_Right      : constant := 77;
-   Key_End        : constant := 79;
-   Key_Down       : constant := 80;
-   Key_Pagedown   : constant := 81;
-   Key_Delete     : constant := 83;
+   --  line discipline) drop codes >= 16#80#. Milestone 60 fix:
+   --  these are LINUX keycodes (qemu virtio-keyboard speaks
+   --  input-event-codes.h) — the m57 table used PC set-1
+   --  scancodes (Up=72), which only coincidentally match Linux
+   --  for the typewriter block; nav keys never arrived from a
+   --  real keyboard. 110 = Insert: unmapped.
+   Key_Home       : constant := 102;
+   Key_Up         : constant := 103;
+   Key_Pageup     : constant := 104;
+   Key_Left       : constant := 105;
+   Key_Right      : constant := 106;
+   Key_End        : constant := 107;
+   Key_Down       : constant := 108;
+   Key_Pagedown   : constant := 109;
+   Key_Delete     : constant := 111;
 
    ------------------------------------------------------------------
    --  Region register access

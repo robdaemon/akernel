@@ -87,11 +87,40 @@ procedure Terminal is
 
    --  Input FIFO: focused keys (Op_Input bytes) queue here;
    --  Op_Read drains it. Drop-new on overflow (typing bursts
-   --  never block the seat).
-   Input_Size  : constant := 128;
+   --  never block the seat). Sized for history recall: a
+   --  recall injects BS x old-length + the recalled entry
+   --  (up to 2 x 120) plus type-ahead slack.
+   Input_Size  : constant := 512;
    Input_Buf   : String (1 .. Input_Size);
    Input_Head  : Natural := 0;  --  next write slot (0-based)
    Input_Count : Natural := 0;
+
+   --  Milestone 60: Amiga-style command history (the CON:
+   --  lineage — history is line discipline, so it lives here,
+   --  never in the shell). Edit_Buf mirrors the input half of
+   --  the current scrollback line (the rest is prompt/output);
+   --  at Return the line joins the ring. Cursor-Up/Down recall
+   --  older/newer entries by INJECTING bytes into the Op_Read
+   --  FIFO (BS x current length, then the entry text) so the
+   --  shell's own line buffer stays in sync with the display —
+   --  the shell sees only an edited line and needs no history
+   --  knowledge. Down past the newest entry restores the
+   --  stashed in-progress line.
+   Edit_Cap : constant := 120;  --  = the shell's Max_Line
+   Edit_Buf : String (1 .. Edit_Cap);
+   Edit_Len : Natural := 0;
+
+   Max_Hist : constant := 32;
+   type Hist_Entry is record
+      Text : String (1 .. Edit_Cap);
+      Len  : Natural := 0;
+   end record;
+   Hist      : array (0 .. Max_Hist - 1) of Hist_Entry;
+   Hist_Head : Natural := 0;  --  next write slot (ring)
+   Hist_Cnt  : Natural := 0;
+   Stash     : Hist_Entry;    --  in-progress line during recall
+   Recalling : Boolean := False;
+   Recall_Ix : Natural := 0;  --  0 = oldest .. Hist_Cnt-1 = newest
 
    --  Last button state for synthesizing Press/Release from
    --  v3 pointer events.
@@ -127,6 +156,115 @@ procedure Terminal is
       Input_Count := Input_Count - 1;
       return True;
    end Input_Get;
+
+   ------------------------------------------------------------------
+   --  Milestone 60: command history
+
+   function Hist_Slot (I : Natural) return Natural is
+     ((Hist_Head + Max_Hist - Hist_Cnt + I) mod Max_Hist);
+   --  Ring slot of entry I (0 = oldest, Hist_Cnt-1 = newest).
+
+   procedure Hist_Push is
+   begin
+      if Edit_Len = 0 then
+         return;
+      end if;
+      Hist (Hist_Head).Text (1 .. Edit_Len) := Edit_Buf (1 .. Edit_Len);
+      Hist (Hist_Head).Len := Edit_Len;
+      Hist_Head := (Hist_Head + 1) mod Max_Hist;
+      if Hist_Cnt < Max_Hist then
+         Hist_Cnt := Hist_Cnt + 1;
+      end if;
+   end Hist_Push;
+
+   --  Replace the current input line with S: erase what the
+   --  shell holds (BS per character, mirrored into the
+   --  scrollback echo) and inject the replacement as if typed.
+   procedure Recall_Replace (S : String) is
+   begin
+      for I in 1 .. Edit_Len loop
+         Input_Put (Character'Val (8));
+         Terminal_Buffer.Put_Char (Character'Val (8));
+      end loop;
+      Edit_Len := S'Length;
+      Edit_Buf (1 .. Edit_Len) := S;
+      for C of S loop
+         Input_Put (C);
+         Terminal_Buffer.Put_Char (C);
+      end loop;
+   end Recall_Replace;
+
+   procedure Recall_Older is
+   begin
+      if not Recalling then
+         if Hist_Cnt = 0 then
+            return;
+         end if;
+         Stash.Text (1 .. Edit_Len) := Edit_Buf (1 .. Edit_Len);
+         Stash.Len := Edit_Len;
+         Recalling := True;
+         Recall_Ix := Hist_Cnt - 1;
+      elsif Recall_Ix = 0 then
+         return;  --  oldest entry already on the line
+      else
+         Recall_Ix := Recall_Ix - 1;
+      end if;
+      declare
+         E : Hist_Entry renames Hist (Hist_Slot (Recall_Ix));
+      begin
+         Recall_Replace (E.Text (1 .. E.Len));
+      end;
+   end Recall_Older;
+
+   procedure Recall_Newer is
+   begin
+      if not Recalling then
+         return;
+      end if;
+      if Recall_Ix < Hist_Cnt - 1 then
+         Recall_Ix := Recall_Ix + 1;
+         declare
+            E : Hist_Entry renames Hist (Hist_Slot (Recall_Ix));
+         begin
+            Recall_Replace (E.Text (1 .. E.Len));
+         end;
+      else
+         --  Past the newest: back to the line being typed.
+         Recalling := False;
+         Recall_Replace (Stash.Text (1 .. Stash.Len));
+      end if;
+   end Recall_Newer;
+
+   --  One input character through the line discipline: queue it
+   --  for Op_Read, echo it into the scrollback, and track the
+   --  input extent in Edit_Buf. Backspace at an empty input is
+   --  swallowed (it used to eat the prompt's last character).
+   --  Other control bytes are dropped: the shell ignores them,
+   --  so queueing/echoing only desynced the display.
+   procedure Input_Char (Ch : Character) is
+      Code : constant Natural := Character'Pos (Ch);
+   begin
+      if Code = 10 or else Code = 13 then
+         Hist_Push;
+         Edit_Len := 0;
+         Recalling := False;
+         Input_Put (Ch);
+         Terminal_Buffer.Put_Char (Ch);
+      elsif Code = 8 or else Code = 127 then
+         if Edit_Len > 0 then
+            Edit_Len := Edit_Len - 1;
+            Input_Put (Ch);
+            Terminal_Buffer.Put_Char (Ch);
+         end if;
+      elsif Code >= 32 and then Code < 127 then
+         if Edit_Len < Edit_Cap then
+            Edit_Len := Edit_Len + 1;
+            Edit_Buf (Edit_Len) := Ch;
+            Input_Put (Ch);
+            Terminal_Buffer.Put_Char (Ch);
+         end if;
+      end if;
+   end Input_Char;
 
    --  Repaint the visible window into the surface buffer and mark
    --  the whole pane dirty (Bureau flushes after the reply).
@@ -213,14 +351,15 @@ procedure Terminal is
       end if;
    end Scroll_Page;
 
+   --  Milestone 60: cursor Up/Down are command history (Amiga
+   --  CON: semantics); scrollback scrolling moved to Page Up/
+   --  Page Down/Home/End (and the scrollbar pointer, unchanged).
    procedure Handle_Nav (Code : U64) is
    begin
       if Code = Trinket.Key_Up then
-         if Terminal_Buffer.View_Top > 0 then
-            Terminal_Buffer.Set_Top (Terminal_Buffer.View_Top - 1);
-         end if;
+         Recall_Older;
       elsif Code = Trinket.Key_Down then
-         Terminal_Buffer.Set_Top (Terminal_Buffer.View_Top + 1);
+         Recall_Newer;
       elsif Code = Trinket.Key_Pageup then
          Scroll_Page (Up => True);
       elsif Code = Trinket.Key_Pagedown then
@@ -249,11 +388,12 @@ procedure Terminal is
                  Natural (Queue (Slot + 1) and 16#FF#);
             begin
                --  Milestone 57: navigation keys arrive as codes
-               --  >= 16#80# (Trinket.Key_*). Scroll the view for
-               --  those; queue/echo ASCII text only.
+               --  >= 16#80# (Trinket.Key_*). Milestone 60: ASCII
+               --  goes through the line discipline (history
+               --  tracking); nav keys recall history (Up/Down)
+               --  or scroll the view (Page/Home/End).
                if Code < 16#80# then
-                  Input_Put (Character'Val (Code));
-                  Terminal_Buffer.Put_Char (Character'Val (Code));
+                  Input_Char (Character'Val (Code));
                else
                   Handle_Nav (U64 (Code));
                end if;
@@ -616,21 +756,16 @@ begin
             Process_Exit;
          end if;
       elsif Label = Akernel_User.Streams.Op_Input then
-         --  Seat input (focused keys from Bureau): queue for
-         --  Op_Read and echo into the scrollback — line discipline
-         --  lives in the console device. Buffer only: the band
-         --  flush happens at the top of the loop, after the reply
-         --  (see the loop comment).
+         --  Seat input (focused keys from Bureau): line
+         --  discipline lives in the console device — queue for
+         --  Op_Read, echo into the scrollback, track the input
+         --  line for history (milestone 60). Buffer only: the
+         --  band flush happens at the top of the loop, after
+         --  the reply (see the loop comment).
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop
-            declare
-               Ch : constant Character :=
-                 Character'Val (Natural (Request.Data (I)));
-            begin
-               Input_Put (Ch);
-               Terminal_Buffer.Put_Char (Ch);
-            end;
+            Input_Char (Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
          if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
