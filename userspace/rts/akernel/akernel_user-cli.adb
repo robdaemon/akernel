@@ -347,6 +347,11 @@ package body Akernel_User.CLI is
       --  Split the component part on '/': an empty component
       --  ascends one level (the Amiga "/" parent idiom), ".."
       --  is honoured as an alias, everything else pushes.
+      --  Exception: a TRAILING empty component is just a
+      --  trailing separator (POSIX "the directory itself") and
+      --  is ignored — "c/" is c, not its parent. The bare-"/"
+      --  idiom is unaffected: Join_Path supplies the cwd's own
+      --  separator, so "/" becomes a middle empty component.
       declare
          F : Natural := (if Colon = 0 then Path'First else Colon + 1);
 
@@ -371,7 +376,9 @@ package body Akernel_User.CLI is
                F := I + 1;
             end if;
          end loop;
-         Component (F, Path'Last);
+         if F <= Path'Last then
+            Component (F, Path'Last);
+         end if;
       end;
 
       if Colon > 0 then

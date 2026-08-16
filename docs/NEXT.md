@@ -2689,7 +2689,14 @@ Next candidates (order open):
     virtio-net, Proc:self.
 
     MILESTONE 58 COMPLETE (df2aec3 +
-    f082fa5). Post-58 burn: EVERY
+    f082fa5). Post-58 burns:
+    Normalize_Path must IGNORE a
+    trailing empty component ("dir c/"
+    is c, POSIX-style) — only MIDDLE
+    empties are the Amiga parent
+    idiom; bare "/" still ascends
+    because Join_Path contributes the
+    cwd's own separator. Also: EVERY
     ENV: write must funnel through
     CLI.Set_Env (it alone runs
     Ensure_Env_Dir) — gloss Set_CWD
