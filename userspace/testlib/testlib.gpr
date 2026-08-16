@@ -1,0 +1,14 @@
+with "../libserv/libserv.gpr";
+
+--  Testlib (milestone 58 Tier-1): example shared library server.
+--  Links liblibserv.a and exposes one function: label 1 = Uppercase.
+project Testlib extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/testlib";
+   for Main use ("testlib.adb");
+
+   package Builder is
+      for Executable ("testlib.adb") use "testlib.elf";
+   end Builder;
+end Testlib;

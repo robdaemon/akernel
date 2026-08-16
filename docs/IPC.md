@@ -618,6 +618,55 @@ open and silences the source for all partners (the rng driver's
 poll-only design silently owned source 35 until the GPU landed on
 it; rng now drains + acks like every other driver).
 
+## Library rendezvous (milestone 58 Tier-1)
+
+Amiga-style shared libraries without runtime code loading or ELF
+relocations. A library is an ordinary server program; clients obtain
+its service endpoint cap and call it through normal IPC.
+
+### Wire convention
+
+- Handle 5 in the uniform spawn ABI is reserved for the library
+  rendezvous/service endpoint. When a program is not a library
+  client this handle is simply empty.
+- Client opens a library:
+  1. Create a fresh endpoint (`EP_Create`). This is the rendezvous
+     cap.
+  2. Spawn `Sys:Libs/<Name>` with the rendezvous cap granted at
+     handle 5 with `Send + Receive + Transfer` rights.
+  3. Wait on the rendezvous endpoint with `IPC_Recv`.
+  4. The library, on startup, creates its own service endpoint and
+     sends it back to the client with a plain `Send` (no reply cap)
+     carrying the service cap in message cap slot 0.
+  5. The client installs the received cap as the library service
+     cap, deletes the rendezvous cap, and returns the service cap
+     from `Open_Library`.
+- Client closes a library:
+  - `Close_Library` deletes the service cap. The library server may
+    watch the cap close (endpoint teardown wakes any queued or
+    waiting callers with `endpoint gone`) and exit when no clients
+    remain. An explicit `Lib_Close` label may be sent first; the
+    minimal first version uses cap deletion only.
+
+### API
+
+`Akernel_User.Libs` provides:
+
+- `Open_Library (Name)` returns the service cap handle, or
+  `Invalid_Handle` (0) on failure.
+- `Close_Library (Cap)` releases the service cap.
+
+All name resolution and staging happens inside `Open_Library` using
+the existing fs cap (handle 2) and spawn machinery.
+
+### Server helper
+
+`Libserv` (a static library crate) handles the boilerplate:
+reading the rendezvous cap from handle 4, creating the service
+endpoint, sending the service cap back, then running a service loop
+on the service endpoint. The actual function dispatch is left to the
+library author.
+
 ## Deferred
 
 - Plain `send` (notify-style, no reply). Bureau->client input

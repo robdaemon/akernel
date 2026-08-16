@@ -14,6 +14,7 @@ with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
+with Akernel_User.Libs;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
@@ -4173,6 +4174,155 @@ begin
              "irq bind invalid irq cap rejected");
       Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (1, N1, 1) /= 0,
              "irq bind wrong-kind cap rejected");
+   end;
+
+   --  Shared-library lifecycle (milestone 58 Tier-1).
+   declare
+      use Akernel_User.Syscalls;
+      use Akernel_User.Libs;
+      use type Akernel_User.Syscalls.U64;
+
+      FS_Cap : constant U64 := 4;  --  fuzz manifest grant order
+      Device_Resource_Cap : constant U64 := 7;
+
+      type Info_Page is array (0 .. 511) of U64;
+      Info_Page_VA : constant U64 := 16#5900_0000#;
+      Info_Buffer  : Info_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Info_Page_VA));
+
+      Info_Cap : U64;
+      AS       : constant U64 := Address_Space_Cap;
+
+      function Open_Count return U64 is
+         Status : U64;
+      begin
+         Status := Process_Info
+           (Resource => Device_Resource_Cap,
+            Slot     => Self_Slot,
+            Buffer   => Info_Cap,
+            Offset   => 0);
+         if Status = Info_Ok then
+            return Info_Buffer (4);
+         else
+            return U64'Last;
+         end if;
+      end Open_Count;
+
+      function String_To_Words (Str : String) return IPC_Word_Array is
+         W : IPC_Word_Array := (others => 0);
+      begin
+         for I in Str'Range loop
+            declare
+               Word_Idx : constant Natural := (I - 1) / 8;
+               Byte_Idx : constant Natural := (I - 1) mod 8;
+            begin
+               W (Word_Idx) := W (Word_Idx) or
+                 (U64 (Character'Pos (Str (I))) *
+                  U64 (2 ** (Byte_Idx * 8)));
+            end;
+         end loop;
+         return W;
+      end String_To_Words;
+
+      function Words_To_String (W : IPC_Word_Array) return String is
+         Str : String (1 .. 48);
+      begin
+         for I in 0 .. 5 loop
+            for B in 0 .. 7 loop
+               Str (I * 8 + B + 1) :=
+                 Character'Val
+                   (Integer ((W (I) / U64 (2 ** (B * 8))) mod 256));
+            end loop;
+         end loop;
+         return Str;
+      end Words_To_String;
+
+      Lib     : U64;
+      Lib2    : U64;
+      Count1  : U64;
+      Count2  : U64;
+      Match   : Boolean;
+      Reply   : String (1 .. 48);
+      Console_Cap : constant U64 := 2;  --  fuzz manifest order
+      Bureau_Cap  : constant U64 := 0;  --  fuzz has no Bureau cap
+   begin
+      Info_Cap := Mem_Alloc (1);
+      Check (Info_Cap /= Syscall_Failed
+             and then Mem_Map (AS, Info_Cap, Info_Page_VA, 0, 4096, 3) = 0,
+             "libs process_info buffer ready");
+
+      --  Wait for the Sys volume to be mounted; the FAT32 volume
+      --  mounts are pushed asynchronously by init.
+      Check (Await_Volume ("Sys:Libs/Testlib"),
+             "libs sys volume available");
+
+      --  Open non-existent library returns Invalid_Handle.
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/NoSuch", Console_Cap, FS_Cap, Bureau_Cap);
+      Check (Lib = Akernel_User.Libs.Invalid_Handle,
+             "libs open missing returns invalid");
+
+      --  Open Testlib and call Uppercase.
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
+      Check (Lib /= Akernel_User.Libs.Invalid_Handle,
+             "libs open testlib ok");
+
+      Message.Label := 1;
+      Message.Words := String_To_Words ("fuzzme");
+      Message.Caps := (others => 0);
+      Message.Badge := 0;
+      Status := IPC_Call (Lib);
+      declare
+         Resp_Words : IPC_Word_Array := Message.Words;
+      begin
+         Reply := Words_To_String (Resp_Words);
+      end;
+      Check (Status = IPC_Ok
+             and then Reply (1 .. 6) = "FUZZME",
+             "libs uppercase round-trip ok");
+      Akernel_User.Libs.Close_Library (Lib);
+
+      --  Cap-leak check: our open cap count before and after is
+      --  unchanged.
+      Count1 := Open_Count;
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
+      Message.Label := 1;
+      Message.Words := String_To_Words ("leak");
+      Message.Caps := (others => 0);
+      Message.Badge := 0;
+      Status := IPC_Call (Lib);
+      Check (Status = IPC_Ok, "libs leak call ok");
+      Akernel_User.Libs.Close_Library (Lib);
+      Count2 := Open_Count;
+      Check (Count1 /= U64'Last and then Count2 /= U64'Last
+             and then Count1 = Count2,
+             "libs open call close no cap leak");
+
+      --  Multiple clients can open the same library concurrently.
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
+      Lib2 := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
+      Check (Lib /= Invalid_Handle and then Lib2 /= Invalid_Handle
+             and then Lib /= Lib2,
+             "libs multiple opens return distinct caps");
+      Akernel_User.Libs.Close_Library (Lib);
+      Akernel_User.Libs.Close_Library (Lib2);
+
+      --  Closing the last service cap lets the server exit; a new
+      --  open spawns a fresh server and still works.
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
+      Check (Lib /= Invalid_Handle,
+             "libs re-open after close ok");
+      Akernel_User.Libs.Close_Library (Lib);
+
+      Ignore := Mem_Unmap (AS, Info_Page_VA, 4096);
+      Ignore := Cap_Delete (Info_Cap);
    end;
 
    --  Random phase: every syscall except exit (9) and the blocking

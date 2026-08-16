@@ -2688,6 +2688,27 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 58 COMPLETE. Tier-1
+    shared-library machinery
+    shipped: `Akernel_User.Libs`
+    client API, `Libserv` server
+    helper, `Testlib`/`Testlib_Client`
+    demo, fuzz lifecycle tests.
+    Wire convention: rendezvous at
+    handle 5, service cap sent back
+    with `Send+Receive+Transfer`
+    rights on the rendezvous cap;
+    `Open_Library` accepts optional
+    console/fs/bureau handles and
+    falls back to console for an
+    absent bureau cap so the spawn
+    grant list stays valid. All
+    directed fuzz tests pass,
+    failures=0, kernel self-resets.
+    Next: 59 — TBD.
+    Deferred: tasking, virtio-net,
+    Proc:self, dynamic linking.
+
     MILESTONE 53c
     COMPLETE.
     Next: 54 — migrate remaining

@@ -1,0 +1,15 @@
+--  Testlib_Smoke (milestone 58 Tier-1): non-interactive smoke test
+--  for the Testlib shared library. Performs the same rendezvous flow
+--  as Testlib_Client but hardcodes the string "hello" and prints the
+--  reply to serial. Used to verify the round-trip without needing a
+--  GUI terminal.
+project Testlib_Smoke extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/testlib_smoke";
+   for Main use ("testlib_smoke.adb");
+
+   package Builder is
+      for Executable ("testlib_smoke.adb") use "testlib_smoke.elf";
+   end Builder;
+end Testlib_Smoke;

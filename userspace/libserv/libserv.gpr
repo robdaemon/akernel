@@ -1,0 +1,16 @@
+with "../rts/akernel_rts.gpr";
+
+--  Libserv (milestone 58 Tier-1): boilerplate for Amiga-style shared
+--  library servers. Library programs link liblibserv.a in addition to
+--  the RTS; it handles the rendezvous at handle 5 and the service loop.
+library project Libserv is
+   for Source_Dirs use (".");
+   for Object_Dir use "../../obj/userspace/libserv";
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "../../lib/userspace/libserv";
+   for Library_Name use "libserv";
+   for Library_Kind use "static";
+   for Languages use ("Ada");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "../gnat-rts";
+end Libserv;
