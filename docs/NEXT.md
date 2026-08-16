@@ -2689,7 +2689,18 @@ Next candidates (order open):
     virtio-net, Proc:self.
 
     MILESTONE 58 COMPLETE (df2aec3 +
-    f082fa5). GUI half: Trinket.Listview,
+    f082fa5). Post-58 burn: EVERY
+    ENV: write must funnel through
+    CLI.Set_Env (it alone runs
+    Ensure_Env_Dir) — gloss Set_CWD
+    wrote ENV:CWD directly, so on a
+    fresh disk (no Prefs/Env yet)
+    chdir failed and CD reported a
+    GOOD directory as "no such
+    directory". The suite masked it:
+    fuzz env-var tests create the
+    chain before any CD runs.
+    GUI half: Trinket.Listview,
     Sys:System/Fileman (Listview +
     Scrollbar), and the terminal rebuilt
     on Trinket — Terminal_Buffer circular

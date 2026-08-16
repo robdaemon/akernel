@@ -5,6 +5,7 @@ with Interfaces.C.Strings;
 with Ada.Unchecked_Conversion;
 with System.Machine_Code;
 with Akernel_User.Console;
+with Akernel_User.CLI;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
 
@@ -169,21 +170,16 @@ package body Akernel_User.Gloss is
    end Get_CWD;
 
    function Set_CWD (V : String) return U64 is
-      Buf : String (1 .. 256);
-      Cnt : U64 := 0;
-      St  : U64;
    begin
-      if V'Length = 0 or else V'Length > Buf'Length then
+      if V'Length = 0 or else V'Length > 256 then
          return Files.Status_Bad_Args;
       end if;
-      for I in V'Range loop
-         Buf (I - V'First + 1) := V (I);
-      end loop;
-      St := Files.Truncate ("ENV:CWD");
-      --  Op_Write creates the file when Prefs/Env exists; a missing
-      --  truncate just means "not there yet".
-      return Files.Write
-        ("ENV:CWD", 0, Buf'Address, U64 (V'Length), Cnt);
+      --  Route through CLI.Set_Env: it ensures the Sys:Prefs/Env
+      --  chain exists on first use (m58 fix) — a direct
+      --  Truncate/Write here failed on a fresh disk, and chdir
+      --  then reported a perfectly good directory as "no such
+      --  directory" (the cd-system burn).
+      return CLI.Set_Env ("CWD", V);
    end Set_CWD;
 
    function Qualify (P : String) return String is
