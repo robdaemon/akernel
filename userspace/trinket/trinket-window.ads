@@ -1,4 +1,5 @@
 with Trinket.Widgets;
+with Trinket.Menus;
 
 --  Trinket window (milestone 56): wraps the Bureau window
 --  protocol v3 dance — input queue memobj, thread-bound
@@ -37,6 +38,18 @@ package Trinket.Window is
 
    procedure Request_Quit (W : in out Window);
 
+   --  Milestone 61: Amiga screen-bar menus. Set_Menus declares
+   --  the tree (chrome — Bureau renders/operates it; RMB opens
+   --  the bar, see akernel_user-window.ads); Set_Menu_Handler
+   --  installs the pick callback (item Id). Set_Menus needs the
+   --  surface id, so call it AFTER Open; a window with no
+   --  Set_Menus shows no bar menus.
+   type Menu_Callback is access procedure (Id : U64);
+   procedure Set_Menus
+     (W : in out Window; Menus : Trinket.Menus.Menu_Array);
+   procedure Set_Menu_Handler
+     (W : in out Window; Cb : Menu_Callback);
+
    procedure Close (W : in out Window);
 
    function Surf_Width (W : Window) return U64;
@@ -58,6 +71,7 @@ private
       Opened       : Boolean := False;
       Quit_Wanted  : Boolean := False;
       Prev_Buttons : U64 := 0;
+      On_Menu      : Menu_Callback := null;
    end record;
 
 end Trinket.Window;

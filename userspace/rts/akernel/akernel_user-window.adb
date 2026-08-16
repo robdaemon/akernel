@@ -92,6 +92,17 @@ package body Akernel_User.Window is
       return Call (EP);
    end Surface_Set_Title;
 
+   function Surface_Set_Menus
+     (EP : U64; Id : U64; Page_Cap : U64) return U64 is
+   begin
+      Message.Label := Op_Set_Menus;
+      Message.Words := (others => 0);
+      Message.Words (0) := Id;
+      Message.Caps := (others => 0);
+      Message.Caps (0) := Page_Cap;
+      return Call (EP);
+   end Surface_Set_Menus;
+
    function Surface_Destroy (EP : U64; Id : U64) return U64 is
    begin
       Message.Label := Op_Surface_Destroy;

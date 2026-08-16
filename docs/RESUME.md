@@ -1,4 +1,23 @@
-MILESTONE 60 SHIPPED: Amiga-style command history in the
+MILESTONE 61 SHIPPED: Amiga screen-bar menus. Menus are
+CHROME: client declares a tree once (Op_Set_Menus=27,
+serialized one-page memobj, Bureau copies it out), Bureau
+renders bar + dropdowns and owns the whole interaction. RMB
+is Bureau's alone: down opens the focused window's bar, held
+= classic drag-select, release elsewhere = STICKY (touchpad
+ruling) — hover switches dropdowns, left-click picks,
+off-click/RMB/Esc/focus-loss dismisses. Picks = input-queue
+kind 4 (value = item Id); Trinket.Menus builder +
+Trinket.Window.Set_Menus/Set_Menu_Handler; Edit is the proof
+(File>Save/Quit, verified live via QMP). The bar also carries
+the RTC clock (HH:MM beside the depth gadget, event-driven
+refresh). Burns: renames Wins(0) raises BEFORE the body's
+guard (guard first, rename in a declare); Max_Win=4 was
+silently full at boot (now 6); the 600 s suite timeout trips
+under ambient host load — control-run the unchanged tree
+before bisecting. Suites green SMP1+SMP4 949 PASS,
+failures=0, fsck clean, kernel self-resets. Full burn list in
+docs/NEXT.md under MILESTONE 61. Before that: MILESTONE 60:
+Amiga-style command history in the
 TERMINAL (CON: analog — history is line discipline, never the
 shell): 32-entry ring, cursor Up/Down recall by injecting BS x
 length + entry bytes into the Op_Read FIFO so the shell's line
@@ -25,6 +44,9 @@ Key facts carried forward:
 - virtio-input keycodes are LINUX input-event-codes.h
   (typewriter block coincidentally = PC set-1; nav cluster
   does NOT). Nav keys forward as 16#80#..16#88#.
+- Menus: Bureau owns RMB + renders declared trees (kind-4
+  pick events carry the client-chosen item Id); the bar
+  clock ticks only on Bureau wakes (no timer service).
 - m59: RTC behind Sys_Read_Clock=34; Wait N | M:S | UNTIL
   HH:MM[:SS]; runtime_build.gpr needs the toolchain bin on
   PATH and fails WITHOUT a ': error' line ("no compiler for
@@ -124,7 +146,7 @@ CURRENT SESSION STATE (58 SHIPPED):
   to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-60 COMPLETE. Next: 61 TBD; the
+Open candidates — milestones 41-61 COMPLETE. Next: 62 TBD; the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime (tasking), virtio-net,
@@ -137,7 +159,10 @@ test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 60 — terminal
+Recently landed: MILESTONE 61 — Amiga
+screen-bar menus (RMB/sticky, chrome in
+Bureau, Edit File>Save/Quit) + bar RTC
+clock. Before that: MILESTONE 60 — terminal
 command history (injection-synced, CON:
 lineage) + the Linux-keycode nav fix;
 MILESTONE 59 (00e996e) — RTC/clock group

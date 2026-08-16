@@ -222,6 +222,13 @@ QEMU virt RAM base:     0x80000000
   the cap; Libserv carries the server boilerplate (wire
   convention in docs/IPC.md). Nav keys travel as codes
   16#80#..16#88#; text consumers drop codes >= 128. The
+  Bureau also owns the Amiga screen-bar
+  menus since 61: clients declare a tree (Op_Set_Menus,
+  copied into Bureau), RMB opens the focused window's bar
+  (sticky after release; hover drops/switches, left-click
+  picks, off-click/RMB/Esc dismisses; kind-4 pick events),
+  and the bar carries an RTC clock by the depth gadget.
+  Edit has File>Save/Quit via Trinket.Menus. The
   terminal is a
   console device (CON: analog) in a Bureau window, rendered
   via Trinket since 58 (Terminal_Buffer circular scrollback

@@ -1,8 +1,10 @@
 with System.Storage_Elements;
+with Interfaces;
 with Akernel_User.Syscalls;
 with Akernel_User.Window;
 with Trinket.Paint;
 with Trinket.Fonts;
+with Trinket.Menus;
 
 package body Trinket.Window is
    use Akernel_User.Syscalls;
@@ -16,6 +18,7 @@ package body Trinket.Window is
    --  and stacks/IPC at 0x7000_0000+.
    Queue_VA : constant U64 := 16#5F00_0000#;
    Surf_VA  : constant U64 := 16#5F80_0000#;  --  8 MiB window
+   Menu_VA  : constant U64 := 16#5F10_0000#;  --  m61 menu page
 
    Chunk_Pages : constant U64 := 64;  --  per Mem_Alloc chunk
    Max_Chunks  : constant U64 := 4;
@@ -237,6 +240,10 @@ package body Trinket.Window is
                      W.Prev_Buttons := Btn;
                   elsif Queue (Slot) = Win.Input_Event_Close then
                      Done := True;
+                  elsif Queue (Slot) = Win.Input_Event_Menu then
+                     if W.On_Menu /= null then
+                        W.On_Menu (Val and 16#FFFF_FFFF#);
+                     end if;
                   end if;
                   Tail := Tail + 1;
                end loop;
@@ -251,6 +258,119 @@ package body Trinket.Window is
    begin
       W.Quit_Wanted := True;
    end Request_Quit;
+
+   --  Milestone 61: serialize the tree into a one-page memobj
+   --  (layout in akernel_user-window.ads) and hand Bureau a
+   --  Map+Read+Transfer mint; Bureau copies it out, so the page
+   --  is deleted right after the call.
+   procedure Set_Menus
+     (W : in out Window; Menus : Trinket.Menus.Menu_Array)
+   is
+      package TM renames Trinket.Menus;
+      Page : Word_Array
+        with Address => SSE.To_Address
+          (SSE.Integer_Address (Menu_VA));
+      Cap    : U64;
+      Minted : U64;
+      Result : U64;
+      N      : Natural := 0;
+      First  : array (1 .. TM.Max_Menus) of Natural;
+
+      procedure Put_Bytes
+        (W_Idx : U64; S : String; Len : Natural) is
+      begin
+         for K in 0 .. Len - 1 loop
+            Page (W_Idx + U64 (K / 8)) := Page (W_Idx + U64 (K / 8))
+              or Interfaces.Shift_Left
+                (U64 (Character'Pos (S (S'First + K))),
+                 (K mod 8) * 8);
+         end loop;
+      end Put_Bytes;
+   begin
+      if not W.Opened then
+         return;
+      end if;
+      Cap := Mem_Alloc (1);
+      if Cap = Syscall_Failed then
+         return;
+      end if;
+      Result := Mem_Map
+        (Address_Space => Address_Space_Cap,
+         Cap           => Cap,
+         VA            => Menu_VA,
+         Offset        => 0,
+         Length        => 4096,
+         Flags         => 3);
+      if Result /= 0 then
+         Result := Cap_Delete (Cap);
+         return;
+      end if;
+      Page := (others => 0);
+      --  Total item count + per-menu first indices.
+      for I in 1 .. Natural'Min (Menus'Length, TM.Max_Menus)
+      loop
+         First (I) := N;
+         N := N + Menus (Menus'First + I - 1).Count;
+      end loop;
+      if N > TM.Max_Items then
+         N := TM.Max_Items;  --  clamp; Bureau bounds-checks too
+      end if;
+      Page (0) := U64 (Natural'Min (Menus'Length, TM.Max_Menus));
+      Page (1) := U64 (N);
+      declare
+         M_Count : constant Natural :=
+           Natural'Min (Menus'Length, TM.Max_Menus);
+         W_Idx   : U64;
+         Left    : Natural;
+      begin
+         for I in 1 .. M_Count loop
+            W_Idx := 2 + U64 (I - 1) * 4;
+            Put_Bytes (W_Idx,
+                       Menus (Menus'First + I - 1).Title,
+                       Menus (Menus'First + I - 1).Title_Len);
+            Page (W_Idx + 2) := U64 (First (I));
+            --  Clamp the count against the total-items budget.
+            Left := N - Natural'Min (First (I), N);
+            Page (W_Idx + 3) :=
+              U64 (Natural'Min (Menus (Menus'First + I - 1).Count,
+                                Left));
+         end loop;
+         declare
+            It_Idx : Natural := 0;
+         begin
+            for I in 1 .. M_Count loop
+               for J in 1 .. Menus (Menus'First + I - 1).Count loop
+                  exit when It_Idx >= N;
+                  W_Idx := 2 + U64 (M_Count) * 4 + U64 (It_Idx) * 4;
+                  declare
+                     It : TM.Item_Spec renames
+                       Menus (Menus'First + I - 1).Items (J);
+                  begin
+                     Put_Bytes (W_Idx, It.Label, It.Label_Len);
+                     Page (W_Idx + 3) :=
+                       (It.Id and 16#FFFF_FFFF#)
+                       or (if It.Disabled then 2 ** 32 else 0);
+                  end;
+                  It_Idx := It_Idx + 1;
+               end loop;
+            end loop;
+         end;
+      end;
+      Minted := Cap_Mint
+        (Cap, Right_Map + Right_Read + Right_Transfer, 0);
+      if Minted /= Syscall_Failed then
+         Result := Win.Surface_Set_Menus (W.EP, W.Id, Minted);
+         Result := Cap_Delete (Minted);
+      end if;
+      Result := Mem_Unmap (Address_Space_Cap, Menu_VA, 4096);
+      Result := Cap_Delete (Cap);
+   end Set_Menus;
+
+   procedure Set_Menu_Handler
+     (W : in out Window; Cb : Menu_Callback) is
+   begin
+      W.On_Menu := Cb;
+   end Set_Menu_Handler;
 
    procedure Close (W : in out Window) is
       Result : U64;

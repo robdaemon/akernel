@@ -99,9 +99,36 @@ procedure Bureau is
 
    package Win renames Akernel_User.Window;
 
-   Max_Win : constant := 4;
+   --  4 boot windows (demo/tdemo/fileman/terminal) + headroom —
+   --  4 was SILENTLY FULL at boot (a 5th window, e.g. Edit from
+   --  the shell, got Status_No_Slot; the m34/m38 table burn).
+   Max_Win : constant := 6;
    Surf_Max_Objects : constant := 8;
    type Cap_Set is array (0 .. Surf_Max_Objects - 1) of U64;
+
+   --  Milestone 61: per-window menu tree, COPIED out of the
+   --  client's serialized page by Op_Set_Menus (Bureau never
+   --  re-reads client memory). Wire layout in
+   --  akernel_user-window.ads.
+   Max_Menus : constant := 8;
+   Max_Items : constant := 32;  --  total across all menus
+
+   type Menu_Rec is record
+      Title     : String (1 .. 16) := (others => ' ');
+      Title_Len : Natural := 0;
+      First     : Natural := 0;   --  0-based into Items
+      Count     : Natural := 0;
+   end record;
+
+   type Item_Rec is record
+      Label     : String (1 .. 24) := (others => ' ');
+      Label_Len : Natural := 0;
+      Id        : U64 := 0;
+      Disabled  : Boolean := False;
+   end record;
+
+   type Menu_Table is array (1 .. Max_Menus) of Menu_Rec;
+   type Item_Table is array (1 .. Max_Items) of Item_Rec;
 
    type Window_Rec is record
       Used     : Boolean := False;
@@ -121,6 +148,10 @@ procedure Bureau is
       Ntfn_Cap  : U64 := 0;
       Title    : String (1 .. 40) := (others => ' ');
       Title_Len : Natural := 0;
+      --  Milestone 61: declared menus (Op_Set_Menus).
+      Menu_Count : Natural := 0;
+      Menus      : Menu_Table;
+      Items      : Item_Table;
    end record;
 
    Wins : array (1 .. Max_Win) of Window_Rec;
@@ -204,6 +235,42 @@ procedure Bureau is
    --  drag (scrollbar knob, text selection) survives leaving the
    --  content and the release can never be lost.
    Capture   : Natural := 0;
+
+   ------------------------------------------------------------------
+   --  Milestone 61: Amiga screen-bar menus. The RIGHT mouse button
+   --  is Bureau's (window content never sees it): RMB down opens
+   --  the focused window's bar; held = classic drag-select
+   --  (M_Tracking, release over an item picks); released anywhere
+   --  else the bar STAYS open (M_Sticky — touchpads) with hover
+   --  switching dropdowns, left-click picking, and left-click
+   --  elsewhere / RMB again / Esc / focus loss dismissing. While
+   --  the menu is active Bureau consumes ALL pointer events.
+   ------------------------------------------------------------------
+
+   type Menu_Mode_T is (M_Hidden, M_Tracking, M_Sticky);
+   Menu_Mode   : Menu_Mode_T := M_Hidden;
+   Menu_Slot   : Natural := 0;   --  window owning the open menu
+   Active_Menu : Natural := 0;   --  1..Menu_Count, 0 = bar only
+   Hot_Item    : Natural := 0;   --  1-based into Items, 0 = none
+   Title_X     : array (1 .. Max_Menus) of U64 := (others => 0);
+   Title_W     : array (1 .. Max_Menus) of U64 := (others => 0);
+   --  Scratch map for the client's serialized menu page.
+   Menu_VA : constant U64 := 16#6A10_0000#;
+
+   procedure Open_Menu;
+   procedure Dismiss_Menu;
+   procedure Menu_Hover (PX, PY : U64);
+   procedure Pick_Menu;
+   procedure Update_Clock;
+
+   --  Bar clock (RTC, syscall 34): HH:MM right-justified beside
+   --  the depth gadget. Painted by Paint_Band from Clock_Text;
+   --  Update_Clock refreshes on every service-loop wake (Bureau
+   --  blocks in Receive — an idle desktop's clock freezes until
+   --  the next event; noted in NEXT.md).
+   Clock_Text : String (1 .. 5) := "--:--";
+   Clock_Min  : U64 := U64'Last;
+   Clock_X0   : constant := 72;  --  Width - Clock_X0 .. - gadget
 
    ------------------------------------------------------------------
    --  Pixel plumbing. All drawing is clipped to the active band
@@ -360,6 +427,101 @@ procedure Bureau is
       end if;
    end Draw_Window;
 
+   ------------------------------------------------------------------
+   --  Milestone 61: menu geometry + chrome drawing. The panel
+   --  functions are only valid while Active_Menu /= 0 (callers
+   --  guard — indexing Menus (0) would raise).
+   ------------------------------------------------------------------
+
+   Item_H : constant := 12;      --  dropdown row height
+   Panel_Top : constant := Bar_H + 2;
+
+   function Panel_W return U64 is
+      W : Window_Rec renames Wins (Menu_Slot);
+      M : Menu_Rec renames W.Menus (Active_Menu);
+      Max_L : Natural := 0;
+   begin
+      for K in M.First + 1 .. M.First + M.Count loop
+         Max_L := Natural'Max (Max_L, W.Items (K).Label_Len);
+      end loop;
+      return U64 (Max_L) * 8 + 28;
+   end Panel_W;
+
+   function Panel_X return U64 is
+      Raw : constant U64 :=
+        (if Title_X (Active_Menu) > 6 then Title_X (Active_Menu) - 6
+         else 0);
+   begin
+      return U64'Min (Raw, Width - Panel_W);
+   end Panel_X;
+
+   function Panel_H return U64 is
+     (U64 (Wins (Menu_Slot).Menus (Active_Menu).Count) * Item_H + 6);
+
+   --  Bar menu titles + the dropped panel, drawn after the bar
+   --  so they sit above every window (the cursor stays on top —
+   --  sprite handling in Composite_Band).
+   procedure Draw_Menus is
+   begin
+      if Menu_Mode = M_Hidden then
+         return;
+      end if;
+      declare
+         W : Window_Rec renames Wins (Menu_Slot);
+      begin
+      for M in 1 .. W.Menu_Count loop
+         if M = Active_Menu then
+            Fill_Rect (Title_X (M), 1,
+                       Title_X (M) + Title_W (M), Bar_H - 1,
+                       Title_Blue);
+            Draw_Text (Title_X (M) + 8, 5,
+                       W.Menus (M).Title (1 .. W.Menus (M).Title_Len),
+                       Title_Text, Title_Blue, Stretch => 1);
+         else
+            Draw_Text (Title_X (M) + 8, 5,
+                       W.Menus (M).Title (1 .. W.Menus (M).Title_Len),
+                       Text_Dark, Bar_Face, Stretch => 1);
+         end if;
+      end loop;
+      if Active_Menu /= 0 then
+         declare
+            PX0 : constant U64 := Panel_X;
+            PW  : constant U64 := Panel_W;
+            M   : Menu_Rec renames W.Menus (Active_Menu);
+            RY  : U64;
+            Idx : Natural;
+         begin
+            Fill_Rect (PX0, Panel_Top, PX0 + PW, Panel_Top + Panel_H,
+                       Bar_Face);
+            Bevel (PX0, Panel_Top, PX0 + PW, Panel_Top + Panel_H);
+            for K in 0 .. M.Count - 1 loop
+               Idx := M.First + K + 1;
+               RY := Panel_Top + 3 + U64 (K) * Item_H;
+               if Idx = Hot_Item and then not W.Items (Idx).Disabled
+               then
+                  Fill_Rect (PX0 + 2, RY, PX0 + PW - 2, RY + Item_H,
+                             Title_Blue);
+                  Draw_Text (PX0 + 14, RY + 2,
+                             W.Items (Idx).Label
+                               (1 .. W.Items (Idx).Label_Len),
+                             Title_Text, Title_Blue, Stretch => 1);
+               elsif W.Items (Idx).Disabled then
+                  Draw_Text (PX0 + 14, RY + 2,
+                             W.Items (Idx).Label
+                               (1 .. W.Items (Idx).Label_Len),
+                             Title_Gray, Bar_Face, Stretch => 1);
+               else
+                  Draw_Text (PX0 + 14, RY + 2,
+                             W.Items (Idx).Label
+                               (1 .. W.Items (Idx).Label_Len),
+                             Text_Dark, Bar_Face, Stretch => 1);
+               end if;
+            end loop;
+         end;
+      end if;
+      end;
+   end Draw_Menus;
+
    --  Repaint the clipped absolute band in stacking order, then
    --  present it once. Caller sets the clip implicitly.
    procedure Paint_Band (X0, Y0, X1, Y1 : U64) is
@@ -385,11 +547,16 @@ procedure Bureau is
             end if;
          end;
       end loop;
-      --  Screen bar (always on top) + right-side depth gadget.
+      --  Screen bar (always on top) + right-side depth gadget,
+      --  RTC clock beside it (milestone 61), then the menu
+      --  titles/dropdown when one is active.
       Fill_Rect (0, 0, Width, Bar_H, Bar_Face);
       Fill_Rect (0, Bar_H, Width, Bar_H + 1, Bevel_Lo);
       Draw_Text (8, 5, "Bureau", Text_Dark, Bar_Face, Stretch => 1);
       Draw_Gadget (Width - 24, 1, 16);
+      Draw_Text (Width - Clock_X0, 5, Clock_Text,
+                 Text_Dark, Bar_Face, Stretch => 1);
+      Draw_Menus;
       Clip_X0 := 0;
       Clip_Y0 := 0;
       Clip_X1 := Max_W;
@@ -684,6 +851,170 @@ procedure Bureau is
       end if;
    end Forward_Close;
 
+   ------------------------------------------------------------------
+   --  Milestone 61: menu actions
+
+   --  Enqueue a menu pick (kind 4, value = item Id) into slot
+   --  S's input queue and signal. Same drop-new/shared-memory
+   --  discipline as keys and close.
+   procedure Forward_Menu (S : Natural; Id : U64) is
+      Q  : Word_Array
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (Queue_VA (S)));
+      Head : U64;
+      Tail : U64;
+      Slot : U64;
+      Res  : U64;
+   begin
+      if Wins (S).Queue_Cap = 0 then
+         return;
+      end if;
+      Head := Q (Win.Input_Queue_Head);
+      Tail := Q (Win.Input_Queue_Tail);
+      if Head - Tail >= Win.Input_Queue_Events then
+         return;  --  full: drop
+      end if;
+      Slot := Win.Input_Queue_First
+        + (Head mod Win.Input_Queue_Events) * 2;
+      Q (Slot)     := Win.Input_Event_Menu;
+      Q (Slot + 1) := Id;
+      Q (Win.Input_Queue_Head) := Head + 1;
+      Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
+                          Win.Input_Signal_Bit);
+      if Res /= 0 then
+         Debug_Put_Line ("bureau input signal failed");
+      end if;
+   end Forward_Menu;
+
+   --  Lay out the bar title cells (fixed while a menu is open:
+   --  focus cannot change — every pointer event is consumed).
+   procedure Menu_Layout is
+      X : U64 := 64;  --  after the "Bureau" screen title
+   begin
+      for M in 1 .. Wins (Menu_Slot).Menu_Count loop
+         Title_X (M) := X;
+         Title_W (M) :=
+           U64 (Wins (Menu_Slot).Menus (M).Title_Len) * 8 + 16;
+         X := X + Title_W (M);
+      end loop;
+   end Menu_Layout;
+
+   procedure Open_Menu is
+   begin
+      Menu_Slot := Focus;
+      Menu_Mode := M_Tracking;
+      Active_Menu := 0;
+      Hot_Item := 0;
+      Menu_Layout;
+      Composite_Band (0, 0, Width, Bar_H + 1);
+   end Open_Menu;
+
+   procedure Dismiss_Menu is
+      Bottom : U64 := Bar_H + 1;
+   begin
+      if Menu_Mode = M_Hidden then
+         return;
+      end if;
+      if Active_Menu /= 0 then
+         Bottom := Panel_Top + Panel_H;
+      end if;
+      Menu_Mode := M_Hidden;
+      Menu_Slot := 0;
+      Active_Menu := 0;
+      Hot_Item := 0;
+      Composite_Band (0, 0, Width, Bottom);
+   end Dismiss_Menu;
+
+   --  Hover tracking: over a bar title drops/switches that
+   --  menu; over the dropped panel highlights a row (disabled
+   --  items can never go hot); anywhere else just clears the
+   --  hot row. Repaints the bar + panel union on any change.
+   procedure Menu_Hover (PX, PY : U64) is
+      W : Window_Rec renames Wins (Menu_Slot);
+      New_Active : Natural := Active_Menu;
+      New_Hot    : Natural := 0;
+      Old_Bottom : U64 := Bar_H + 1;
+      New_Bottom : U64 := Bar_H + 1;
+   begin
+      if PY < Bar_H then
+         for M in 1 .. W.Menu_Count loop
+            if PX >= Title_X (M)
+              and then PX < Title_X (M) + Title_W (M)
+            then
+               New_Active := M;
+               exit;
+            end if;
+         end loop;
+      elsif Active_Menu /= 0 then
+         declare
+            PX0 : constant U64 := Panel_X;
+            Row : U64;
+         begin
+            if PX >= PX0 and then PX < PX0 + Panel_W
+              and then PY >= Panel_Top
+              and then PY < Panel_Top + Panel_H
+              and then PY >= Panel_Top + 3
+            then
+               Row := (PY - Panel_Top - 3) / Item_H;
+               if Row < U64 (W.Menus (Active_Menu).Count)
+                 and then not W.Items
+                   (W.Menus (Active_Menu).First + Natural (Row) + 1)
+                   .Disabled
+               then
+                  New_Hot := W.Menus (Active_Menu).First
+                    + Natural (Row) + 1;
+               end if;
+            end if;
+         end;
+      end if;
+      if New_Active = Active_Menu and then New_Hot = Hot_Item then
+         return;
+      end if;
+      if Active_Menu /= 0 then
+         Old_Bottom := Panel_Top + Panel_H;
+      end if;
+      Active_Menu := New_Active;
+      Hot_Item := New_Hot;
+      if Active_Menu /= 0 then
+         New_Bottom := Panel_Top + Panel_H;
+      end if;
+      Composite_Band (0, 0, Width, U64'Max (Old_Bottom, New_Bottom));
+   end Menu_Hover;
+
+   procedure Pick_Menu is
+      Id : constant U64 := Wins (Menu_Slot).Items (Hot_Item).Id;
+      S  : constant Natural := Menu_Slot;
+   begin
+      Forward_Menu (S, Id);
+      Dismiss_Menu;
+   end Pick_Menu;
+
+   --  Refresh the bar clock when the minute rolls over; repaints
+   --  just the clock cell. Silent while the RTC reads 0.
+   procedure Update_Clock is
+      Secs : U64;
+      Nanos : U64;
+      Mins : U64;
+      T : String (1 .. 5);
+   begin
+      Read_Clock (Secs, Nanos);
+      if Secs = 0 then
+         return;
+      end if;
+      Mins := (Secs / 60) mod 1440;
+      if Mins = Clock_Min then
+         return;
+      end if;
+      Clock_Min := Mins;
+      T (1) := Character'Val (48 + Natural ((Mins / 60) / 10));
+      T (2) := Character'Val (48 + Natural ((Mins / 60) mod 10));
+      T (3) := ':';
+      T (4) := Character'Val (48 + Natural ((Mins mod 60) / 10));
+      T (5) := Character'Val (48 + Natural ((Mins mod 60) mod 10));
+      Clock_Text := T;
+      Composite_Band (Width - Clock_X0, 0, Width - 24, Bar_H + 1);
+   end Update_Clock;
+
    --  Enqueue the focused window's pointer state (v3, packed
    --  content-relative) and signal. Delivered only while the
    --  pointer is inside the window content and no title drag is
@@ -881,7 +1212,8 @@ begin
    end if;
    Debug_Put_Line ("bureau desktop online");
 
-   --  Pointer starts centered.
+   --  Pointer starts centered; bar clock primed from the RTC.
+   Update_Clock;
    Cursor_Draw (Width / 2, Height / 2);
 
    --  Window-protocol service loop (v2: up to Max_Win slots).
@@ -964,6 +1296,9 @@ begin
                   Z_N := Z_N + 1;
                   Z (Z_N) := Slot;
                   Focus_Slot (Slot);
+                  --  A new window takes the focus: any open menu
+                  --  belonged to the previous owner.
+                  Dismiss_Menu;
                   Repaint_Window (Slot);
                   Win_Reply (Reply_H, Label, Win.Status_Ok,
                              Wins (Slot).Id, Wins (Slot).Pages,
@@ -1079,6 +1414,10 @@ begin
                   FW : constant U64 := Wins (S).FW;
                   FH : constant U64 := Wins (S).FH;
                begin
+                  --  Its menu bar (if open) dies with the window.
+                  if S = Menu_Slot then
+                     Dismiss_Menu;
+                  end if;
                   if Wins (S).Mapped then
                      for I in 0 .. Wins (S).Got - 1 loop
                         This := U64'Min
@@ -1168,6 +1507,123 @@ begin
             end if;
          end;
 
+      elsif Label = Win.Op_Set_Menus then
+         --  Milestone 61: copy the serialized tree out of the
+         --  client's one-shot page into the slot (Bureau never
+         --  re-reads client memory). caps 0 = 0 clears.
+         declare
+            S : constant Natural := Slot_Of (Message.Words (0));
+            St : U64 := Win.Status_Ok;
+
+            procedure Get_Chars
+              (Page : Word_Array; W_Idx : U64;
+               Dest : out String; Len : out Natural) is
+               B : U64;
+            begin
+               Dest := (others => ' ');
+               Len := 0;
+               for K in 0 .. Dest'Length - 1 loop
+                  B := Interfaces.Shift_Right
+                    (Page (W_Idx + U64 (K / 8)), (K mod 8) * 8)
+                    and 16#FF#;
+                  exit when B = 0;
+                  if B >= 32 and then B <= 126 then
+                     Dest (Dest'First + K) := Character'Val (B);
+                     Len := K + 1;
+                  end if;
+               end loop;
+            end Get_Chars;
+         begin
+            if S = 0 then
+               Win_Reply (Reply_H, Label, Win.Status_Bad_Id,
+                          0, 0, 0, 0);
+            else
+               if S = Menu_Slot then
+                  Dismiss_Menu;
+               end if;
+               if Message.Caps (0) = 0 then
+                  Wins (S).Menu_Count := 0;
+                  if S = Focus then
+                     Composite_Band (0, 0, Width, Bar_H + 1);
+                  end if;
+               elsif Mem_Map
+                 (Address_Space => Address_Space_Cap,
+                  Cap           => Message.Caps (0),
+                  VA            => Menu_VA,
+                  Offset        => 0,
+                  Length        => 4096,
+                  Flags         => 1) /= 0
+               then
+                  St := Win.Status_Bad_Caps;
+                  Result := Cap_Delete (Message.Caps (0));
+               else
+                  declare
+                     Page : Word_Array
+                       with Address =>
+                         System.Storage_Elements.To_Address
+                           (System.Storage_Elements.Integer_Address
+                              (Menu_VA));
+                     M : constant Natural := Natural (Page (0));
+                     N : constant Natural := Natural (Page (1));
+                  begin
+                     if M < 1 or else M > Max_Menus
+                       or else N < 1 or else N > Max_Items
+                     then
+                        St := Win.Status_Bad_Index;
+                     else
+                        Wins (S).Menu_Count := M;
+                        for I in 1 .. M loop
+                           declare
+                              WI : constant U64 :=
+                                2 + U64 (I - 1) * 4;
+                              First : constant Natural :=
+                                Natural (Page (WI + 2));
+                              Cnt   : constant Natural :=
+                                Natural (Page (WI + 3));
+                           begin
+                              Get_Chars
+                                (Page, WI,
+                                 Wins (S).Menus (I).Title,
+                                 Wins (S).Menus (I).Title_Len);
+                              --  Clamp the span into the item
+                              --  table — a hostile/buggy client
+                              --  must not index out of bounds.
+                              Wins (S).Menus (I).First :=
+                                Natural'Min (First, N);
+                              Wins (S).Menus (I).Count :=
+                                Natural'Min
+                                  (Cnt, N - Wins (S).Menus (I).First);
+                           end;
+                        end loop;
+                        for I in 1 .. N loop
+                           declare
+                              WI : constant U64 :=
+                                2 + U64 (M) * 4 + U64 (I - 1) * 4;
+                              W3 : constant U64 := Page (WI + 3);
+                           begin
+                              Get_Chars
+                                (Page, WI,
+                                 Wins (S).Items (I).Label,
+                                 Wins (S).Items (I).Label_Len);
+                              Wins (S).Items (I).Id :=
+                                W3 and 16#FFFF_FFFF#;
+                              Wins (S).Items (I).Disabled :=
+                                ((W3 / 2 ** 32) and 1) = 1;
+                           end;
+                        end loop;
+                        if S = Focus then
+                           Composite_Band (0, 0, Width, Bar_H + 1);
+                        end if;
+                     end if;
+                  end;
+                  Result := Mem_Unmap (Address_Space_Cap,
+                                       Menu_VA, 4096);
+                  Result := Cap_Delete (Message.Caps (0));
+               end if;
+               Win_Reply (Reply_H, Label, St, 0, 0, 0, 0);
+            end if;
+         end;
+
       elsif Label = Win.Op_Set_Focus then
          --  v1 devmgr wiring, obsolete in v2 (focus is internal).
          --  Answer and drop the cap so the table stays clean.
@@ -1177,7 +1633,14 @@ begin
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Key then
-         Forward_Key (Message.Words (0));
+         --  While a menu is open, Esc dismisses it and is eaten;
+         --  everything else still flows to the focused window.
+         if Menu_Mode /= M_Hidden and then Message.Words (0) = 27
+         then
+            Dismiss_Menu;
+         else
+            Forward_Key (Message.Words (0));
+         end if;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       elsif Label = Win.Op_Pointer then
@@ -1187,10 +1650,52 @@ begin
             NY : constant U64 :=
               Message.Words (1) * Height / 32768;
             Buttons : constant U64 := Message.Words (2);
+            LMB : constant Boolean := (Buttons and 1) /= 0;
+            LMB_Was : constant Boolean := (Prev_Buttons and 1) /= 0;
+            RMB : constant Boolean := (Buttons and 2) /= 0;
+            RMB_Was : constant Boolean := (Prev_Buttons and 2) /= 0;
          begin
             --  Erase first: a drag repaint would make the
             --  saved under-rect stale.
             Cursor_Erase;
+            if Menu_Mode /= M_Hidden then
+               --  Milestone 61: the menu owns the pointer.
+               if RMB and then not RMB_Was then
+                  Dismiss_Menu;  --  RMB again toggles off
+               elsif not RMB and then RMB_Was
+                 and then Menu_Mode = M_Tracking
+               then
+                  --  Release ends drag-select: over an item =
+                  --  pick; anywhere else the bar STAYS open
+                  --  (sticky — the touchpad ruling).
+                  if Hot_Item /= 0 then
+                     Pick_Menu;
+                  else
+                     Menu_Mode := M_Sticky;
+                     Menu_Hover (NX, NY);
+                  end if;
+               elsif LMB and then not LMB_Was then
+                  if Hot_Item /= 0 then
+                     Pick_Menu;
+                  elsif NY >= Bar_H then
+                     Dismiss_Menu;  --  click off the bar: eaten
+                  end if;
+               else
+                  Menu_Hover (NX, NY);
+               end if;
+               Prev_Buttons := Buttons;
+               Cursor_Draw (NX, NY);
+            elsif RMB and then not RMB_Was then
+               --  RMB opens the focused window's menu bar and
+               --  is Bureau's alone (never reaches content).
+               if Focus /= 0 and then Wins (Focus).Menu_Count > 0
+               then
+                  Open_Menu;
+                  Menu_Hover (NX, NY);
+               end if;
+               Prev_Buttons := Buttons;
+               Cursor_Draw (NX, NY);
+            else
             if (Buttons and 1) = 1
               and then (Prev_Buttons and 1) = 0
             then
@@ -1227,11 +1732,16 @@ begin
             if (Buttons and 1) = 0 then
                Capture := 0;
             end if;
+            end if;
          end;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
       else
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
       end if;
+
+      --  Bar clock tick (Bureau blocks in Receive, so this is
+      --  event-driven: one repaint per visible minute change).
+      Update_Clock;
    end loop;
 end Bureau;

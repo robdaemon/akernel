@@ -54,8 +54,37 @@ use type Akernel_User.Syscalls.U64;
 --    clicked — the CLOSEWINDOW analog. The client is expected
 --    to Surface_Destroy and exit; Bureau never kills the
 --    window itself.
+--    kind 4 = menu (value = item Id, milestone 61): a menu
+--    item was picked from the screen-bar menus this window
+--    declared with Op_Set_Menus.
 --
---  Up to 4 windows. Bureau owns stacking, focus
+--  Menus (milestone 61, Amiga screen-bar lineage): menus are
+--  CHROME — the client declares a tree, Bureau renders the bar
+--  and dropdowns above all windows and owns the whole
+--  interaction. The RIGHT mouse button is reserved to Bureau
+--  (Amiga convention; window content never sees it): RMB down
+--  opens the focused window's menu bar, holding it tracks
+--  titles/items, releasing over an item picks it (classic
+--  drag-select); releasing anywhere else leaves the bar OPEN
+--  (sticky — touchpads), then hover switches dropdowns, a
+--  left-click picks, and left-click elsewhere / RMB again /
+--  Esc / focus loss dismisses. The tree crosses as a
+--  serialized one-page memory object and is COPIED into Bureau
+--  at set time (Bureau never re-reads client memory).
+--    Op_Set_Menus (27): w0 = surface id; caps 0 = one-page
+--      memobj (Map+Read+Transfer) holding the tree below;
+--      caps 0 = 0 clears the window's menus. Reply w0 =
+--      status. Page layout (u64 words, little-endian byte
+--      packing like Op_Set_Title):
+--        word 0 = menu count M (1..8), word 1 = item count N
+--        (1..32). Then M menu records of 4 words: w0..w1 =
+--        title (16 bytes), w2 = first item index (0-based
+--        into the item records), w3 = item count. Then N item
+--        records of 4 words: w0..w2 = label (24 bytes), w3 =
+--        item Id (bits 0..31, echoed in the kind-4 event) |
+--        flags (bit 32 = disabled/ghosted).
+--
+--  Up to 6 windows. Bureau owns stacking, focus
 --  (click-to-focus/raise), title dragging and per-window
 --  titles.
 --
@@ -107,6 +136,7 @@ package Akernel_User.Window is
    Op_Surface_Destroy       : constant U64 := 24;
    Op_Set_Title             : constant U64 := 25;
    Op_Set_Focus             : constant U64 := 26;
+   Op_Set_Menus             : constant U64 := 27;
    Op_Key                   : constant U64 := 30;
    Op_Pointer               : constant U64 := 31;
 
@@ -125,6 +155,7 @@ package Akernel_User.Window is
    Input_Event_Key    : constant U64 := 1;
    Input_Event_Pointer : constant U64 := 2;
    Input_Event_Close  : constant U64 := 3;
+   Input_Event_Menu   : constant U64 := 4;
    Input_Signal_Bit   : constant U64 := 1;
 
    --  Pointer event value packing (content-relative).
@@ -148,6 +179,10 @@ package Akernel_User.Window is
       Grant_H        : out U64) return U64;
    function Surface_Set_Title
      (EP : U64; Id : U64; S : String) return U64;
+   function Surface_Set_Menus
+     (EP : U64; Id : U64; Page_Cap : U64) return U64;
+   --  Page_Cap = one-page memobj (Map+Read+Transfer) with the
+   --  serialized menu tree, or 0 to clear.
    function Surface_Destroy (EP : U64; Id : U64) return U64;
    function Surface_Set_Buffer
      (EP   : U64;

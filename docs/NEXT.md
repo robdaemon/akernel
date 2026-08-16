@@ -2688,6 +2688,49 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 61 COMPLETE — Amiga
+    screen-bar menus. Menus are CHROME:
+    the client declares a tree once
+    (Op_Set_Menus=27, serialized one-page
+    memobj, Bureau COPIES it out — never
+    re-reads client memory), Bureau
+    renders bar + dropdowns above all
+    windows and owns the interaction.
+    RMB is Bureau's alone (content never
+    sees it): down opens the focused
+    window's bar, held = classic
+    drag-select, release over an item
+    picks; release elsewhere leaves the
+    bar OPEN (sticky, the touchpad
+    ruling) — hover switches dropdowns,
+    left-click picks, left-click off /
+    RMB again / Esc / focus loss
+    dismisses. Picks arrive as input-queue
+    kind 4 (value = item Id); Trinket.Menus
+    is the declarative builder,
+    Trinket.Window.Set_Menus +
+    Set_Menu_Handler wire it up. Edit is
+    the proof: File>Save/Quit. The bar
+    also gained the RTC clock (HH:MM,
+    right-justified beside the depth
+    gadget, refreshed on service-loop
+    wakes — Bureau blocks in Receive, so
+    an idle desktop's clock freezes until
+    the next event). Burns: (1) a library-
+    level `W : Rec renames Wins (Slot)`
+    with Slot=0 raises at elaboration
+    BEFORE the guard inside the body can
+    run — guard first, rename inside a
+    declare (the Draw_Menus boot crash);
+    (2) Max_Win=4 was SILENTLY FULL at
+    boot (4 boot windows; Edit got
+    No_Slot) — now 6; (3) the 600 s suite
+    timeout tripped under ambient host
+    load (load ~1.5) with 0 FAIL on the
+    UNCHANGED tree too — control-run with
+    stash before bisecting; 900 s passes.
+    Next: 62 — TBD.
+
     MILESTONE 60 COMPLETE — Amiga-style
     command history. It lives in the
     TERMINAL (the CON: analog — line

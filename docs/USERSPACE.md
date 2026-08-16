@@ -254,7 +254,11 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   (Op_Set_Buffer, minted Map+Read+Write+Manage+Transfer, its
   minted copies deleted per call), commits, renders the
   Workbench-3.x-style desktop: gray palette, "Bureau" screen
-  bar with a right-side gadget placeholder, one matted window
+  bar with RTC clock + right-side gadget placeholder and
+  Amiga-style screen-bar menus (milestone 61: RMB opens the
+  focused window's declared menu tree — sticky after release,
+  hover switches dropdowns, left-click picks; RMB never reaches
+  window content), one matted window
   (dark frame + gadtools bevel + blue ACTIVE title bar with
   close/depth placeholders + white pane), presents the frame,
   then blocks (clients arrive in slice 3). Burned (then un-burned): pixels are

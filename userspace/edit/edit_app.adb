@@ -5,6 +5,7 @@ with Trinket;
 with Trinket.Widgets;
 with Trinket.Text_Edit;
 with Trinket.Window;
+with Trinket.Menus;
 
 package body Edit_App is
    use Akernel_User.Syscalls;
@@ -48,6 +49,16 @@ package body Edit_App is
    begin
       Trinket.Window.Request_Quit (Win);
    end Quit_Clicked;
+
+   --  Milestone 61: File menu (Amiga screen bar — right-click).
+   procedure Menu_Picked (Id : U64) is
+   begin
+      if Id = 1 then
+         Save_Clicked;
+      elsif Id = 2 then
+         Quit_Clicked;
+      end if;
+   end Menu_Picked;
 
    procedure Scroll_Moved (Pos : U64) is
    begin
@@ -119,6 +130,12 @@ package body Edit_App is
       if Trinket.Window.Open
         (Win, 3, 460, 340, "Edit", Root)
       then
+         Trinket.Window.Set_Menus
+           (Win,
+            (1 => Trinket.Menus.M
+               ("File", (Trinket.Menus.It (1, "Save"),
+                         Trinket.Menus.It (2, "Quit")))));
+         Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Sync_Scrollbar;
          Debug_Put_Line ("edit online");
          Trinket.Window.Run (Win);
