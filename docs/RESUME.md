@@ -1,9 +1,30 @@
-MILESTONE 57 SHIPPED (window protocol v4 pointer capture,
-Trinket.Scrollbar, Trinket.Text_Edit, Sys:System/Edit).
-Suites green SMP1 881 / SMP4 880 PASS, failures=0, fsck
-clean. Full burn list in docs/NEXT.md under MILESTONE 57.
+MILESTONE 58 SHIPPED (df2aec3 + f082fa5): Trinket.Listview,
+Sys:System/Fileman file manager, terminal scrollback
+(Terminal_Buffer circular buffer + Trinket-rendered scrollbar +
+solid block cursor, nav-key/pointer scrolling), and Tier-1
+Amiga-style shared libraries (Akernel_User.Libs Open_Library/
+Close_Library, Libserv server helper, Sys:Libs/Testlib +
+Sys:C/Testlib_Client demo, fuzz lifecycle tests). Suites green
+SMP1+SMP4, failures=0, kernel self-resets. Full burn list in
+docs/NEXT.md under MILESTONE 58.
 
 Key facts carried forward:
+- Tier-1 library wire convention: rendezvous cap at uniform ABI
+  handle 5 (Set_Grant slot 4) with Send+Receive+Transfer rights;
+  the library Sends its service cap back over it, client deletes
+  the rendezvous cap; Close_Library = delete the service cap.
+  Sys:Libs/<Name> is the install path; Open_Library stages+
+  spawns on demand and falls back to console for an absent
+  bureau cap so the spawn grant list stays valid.
+- Terminal is Trinket-rendered scrollback, NOT a direct text
+  grid: Terminal_Buffer.Put_Char must keep Buffer(Current).Len
+  in sync with Current_Len or typing echo never shows.
+- Path env is ADDITIVE: cwd first, Path entries, then the
+  built-in root+C: tail ALWAYS. The m44 replace semantics hid
+  C: itself ("unknown command: Path"). Sys:Prefs/Env ships
+  absent from the image — CLI.Set_Env creates the chain on
+  first write (Stat of a dir answers Bad_Args, missing is
+  exactly Not_Found).
 - Bureau v4: content press captures pointer until release;
   moves clamped to content rect; release always delivered;
   coalesce only merges equal-button pointer events.
@@ -13,6 +34,9 @@ Key facts carried forward:
   raw-name (RD0 default) fallback. NEVER hardcode
   Set_Default_Volume in the shell — the Tests/ RD0
   convention is load-bearing for fuzz.
+  Elevated's Stage resolves the same way (3fa4074); a stage
+  failure replies 255 and Elevate prints "cannot find
+  executable" itself — the daemon's console is serial-only.
 - Bureau Queue_VA/Surf_VA clamp slot >= 1 internally —
   overlay addresses elaborate before guards run.
 - Edit app: `System/Edit <path>` from the shell; Save via
@@ -22,7 +46,7 @@ Key facts carried forward:
   the log for 'shell online' before sending input; click
   the window to focus before typing.
 
-CURRENT SESSION STATE (57 SHIPPED):
+CURRENT SESSION STATE (58 SHIPPED):
 - Shell job control (Amiga RUN lineage): `run` backgrounds
   one command (no pipes/redirect yet), `jobs` lists,
   `wait [n]` yields the exit code as RC (failat composes).
@@ -69,14 +93,15 @@ CURRENT SESSION STATE (57 SHIPPED):
   blocking (old checks HANG); String(1..16) := 10-char literal
   is the m37b CE again; fuzz helper names live in SIBLING
   declare blocks — new blocks declare their own; drain AFTER
-  the current op's window unmap; Elevated resolves targets
-  through ITS OWN cwd — pass full Sys:... paths; harness
+  the current op's window unmap; daemon consoles are serial-
+  only — user-facing errors must be printed by the CLIENT
+  (Elevate's 255 convention); harness
   timeout 600 s (now backstop only — qemu self-exits 0).
 - 848/847 PASS SMP1/SMP4 (one old fat-lfn line lost
   to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-52 COMPLETE. Next: the
+Open candidates — milestones 41-58 COMPLETE. Next: 59 TBD; the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime, virtio-net, MSI-X, true
@@ -87,7 +112,20 @@ test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 52 — shell
+Recently landed: MILESTONE 58 (df2aec3,
+f082fa5) — Trinket.Listview + Fileman +
+terminal scrollback, and Tier-1 shared
+libraries (Libs/Libserv/Testlib). Suites
+green SMP1+SMP4, failures=0. Between 57
+and 58: bb12c86 (make run = interactive,
+make test = suite), 3fa4074 + f667fb0
+(elevated/shell cwd-aware staging +
+"cannot find executable", ENV: first-use
+dir creation, additive Path). Before that:
+MILESTONE 57 (e9cfe2f) — window protocol
+v4 pointer capture, Scrollbar, Text_Edit,
+Edit app. 881/880 PASS. 53-56 in NEXT.md.
+Before that: MILESTONE 52 — shell
 job control (run/jobs/wait; Done jobs
 keep exit codes until wait claims;
 Amiga orphan semantics). 848/847 PASS,

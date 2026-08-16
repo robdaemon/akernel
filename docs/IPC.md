@@ -662,7 +662,7 @@ the existing fs cap (handle 2) and spawn machinery.
 ### Server helper
 
 `Libserv` (a static library crate) handles the boilerplate:
-reading the rendezvous cap from handle 4, creating the service
+reading the rendezvous cap from handle 5 (Set_Grant slot 4), creating the service
 endpoint, sending the service cap back, then running a service loop
 on the service endpoint. The actual function dispatch is left to the
 library author.

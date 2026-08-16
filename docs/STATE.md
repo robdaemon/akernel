@@ -209,13 +209,25 @@ QEMU virt RAM base:     0x80000000
   layout + titled frame), Label, Button, Scrollbar (arrows,
   track paging, striped knob drag via v4 capture), Text_Edit
   (512x128 heap model, cursor, drag-select, full nav-key
-  editing, scrolling). Sys:System/Tdemo demos it; Sys:System/
+  editing, scrolling), Listview (58). Sys:System/Tdemo demos
+  it; Sys:System/
   Edit is a real text editor on it (Text_IO load/save, Save/
-  Quit buttons, wired scrollbar). Nav keys travel as codes
+  Quit buttons, wired scrollbar); Sys:System/Fileman is the
+  file manager (Listview + Scrollbar). Tier-1 Amiga-style
+  shared libraries (58) ride the same uniform ABI: a library
+  is a server program installed at Sys:Libs/<Name>,
+  Akernel_User.Libs.Open_Library stages+spawns it on demand
+  and collects its service cap over a rendezvous cap at
+  handle 5 (Send+Receive+Transfer), Close_Library deletes
+  the cap; Libserv carries the server boilerplate (wire
+  convention in docs/IPC.md). Nav keys travel as codes
   16#80#..16#88#; text consumers drop codes >= 128. The
   terminal is a
-  console device (CON: analog) in a Bureau window: it echoes
-  focused keys into its text grid, serves Op_Read from its input
+  console device (CON: analog) in a Bureau window, rendered
+  via Trinket since 58 (Terminal_Buffer circular scrollback
+  + right-edge scrollbar + block cursor, nav-key/pointer
+  scrolling): it echoes
+  focused keys into its scrollback, serves Op_Read from its input
   FIFO, and launches System/Shell from the Sys volume (plain CLI
   program on its stream endpoint; builtins + spawn-and-await of
   FS-resident programs, nestable; bare command names resolve

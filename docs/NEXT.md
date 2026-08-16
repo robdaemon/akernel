@@ -2688,7 +2688,19 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
-    MILESTONE 58 COMPLETE. Tier-1
+    MILESTONE 58 COMPLETE (df2aec3 +
+    f082fa5). GUI half: Trinket.Listview,
+    Sys:System/Fileman (Listview +
+    Scrollbar), and the terminal rebuilt
+    on Trinket — Terminal_Buffer circular
+    scrollback replaces the direct text
+    grid, right-edge scrollbar, nav keys
+    (Up/Down/PageUp/PageDown/Home/End) and
+    pointer scrolling, solid block cursor.
+    Burn: Terminal_Buffer.Put_Char must
+    keep Buffer(Current).Len in sync with
+    Current_Len or partial lines/typing
+    echo never render. Tier-1
     shared-library machinery
     shipped: `Akernel_User.Libs`
     client API, `Libserv` server
