@@ -370,6 +370,11 @@ volume (`RD0`, settable) — the seed of a PATH resolver. Other
 devices get their label from the mounted filesystem itself; the
 manifest directive is the initrd's boot-time equivalent.
 
+Device names are `<prefix><unit>` with the unit an UNPADDED decimal
+0..99 — `RD0`, `WD0`, `PD0`..`PD9`, `PD10`..`PD99`, `BD0`..`BD99`;
+variable length, never zero-padded, split at `:` everywhere (the
+fileserver accepts device and label names up to 16 chars each).
+
 Stateless reads (no fids, no close). The read buffer is client-owned
 (replies cannot transfer caps — the reply path zeroes cap slots);
 the transferred cap pins the frames while the server holds it. The

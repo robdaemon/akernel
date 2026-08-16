@@ -239,10 +239,26 @@ procedure Init is
       Push_Block_Mount_As ("WD0", "Disk", Blk_EP);
    end Push_Block_Mount;
 
+   --  Device names are <prefix><unit> with the unit an UNPADDED
+   --  decimal, 0 .. 99 (PD0 .. PD9, PD10 .. PD99 — variable
+   --  length, never zero-padded). The fileserver accepts device
+   --  and label names up to 16 chars each and everything
+   --  downstream splits at ':', so no fixed width anywhere.
+   function Unit_Image (N : Natural) return String is
+   begin
+      if N < 10 then
+         return (1 => Character'Val (Character'Pos ('0') + N));
+      else
+         return Character'Val (Character'Pos ('0') + N / 10)
+              & Character'Val (Character'Pos ('0') + N mod 10);
+      end if;
+   end Unit_Image;
+
    --  Enumerate populated partition slots via the part_query op
    --  and mount each as a raw volume (device "PDN", label
-   --  "PartN") on the file server, handing over a partN-badged
-   --  Send cap minted from the partition service endpoint. Init
+   --  "PartN", N unpadded) on the file server, handing over a
+   --  partN-badged Send cap minted from the partition service
+   --  endpoint. Init
    --  deletes its own copy of each minted cap after the push;
    --  the file server keeps the volume's.
    procedure Push_Part_Mounts is
@@ -251,8 +267,6 @@ procedure Init is
       Query_Cap  : U64;
       Part_Cap   : U64;
       Count      : U64;
-      Dev        : String (1 .. 3) := "PD0";
-      Lab        : String (1 .. 5) := "Part0";
    begin
       Query_Cap := Cap_Mint (PARTMGR_EP, Right_Send, Badge_Base);
       if Query_Cap = Syscall_Failed then
@@ -277,15 +291,17 @@ procedure Init is
       --  Probe fills slots 0 .. Count-1 in order.
       --  Caps handed to the file server need Transfer as well as
       --  Send: the kernel's message cap transfer requires the
-      --  sender's cap to carry the Transfer right.
-      for N in 0 .. 7 loop
+      --  sender's cap to carry the Transfer right. Unit numbers
+      --  are unpadded decimals; partmgr caps at Max_Parts (8)
+      --  today, the naming itself supports 0 .. 99.
+      for N in 0 .. 99 loop
          exit when U64 (N) >= Count;
          Part_Cap := Cap_Mint (PARTMGR_EP, Right_Send + Right_Transfer,
                                Badge_Base + U64 (N));
          if Part_Cap /= Syscall_Failed then
-            Dev (3) := Character'Val (Character'Pos ('0') + N);
-            Lab (5) := Character'Val (Character'Pos ('0') + N);
-            Push_Block_Mount_As (Dev, Lab, Part_Cap);
+            Push_Block_Mount_As
+              ("PD" & Unit_Image (N), "Part" & Unit_Image (N),
+               Part_Cap);
             if Cap_Delete (Part_Cap) /= 0 then
                Debug_Put_Line ("part cap delete failed");
             end if;
