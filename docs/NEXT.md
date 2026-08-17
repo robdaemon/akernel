@@ -2688,6 +2688,75 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 62 COMPLETE — true
+    scheduler priorities. Every thread
+    carries an Amiga-range priority
+    (-128..127, default 0); the global
+    ready queue is now a packed array
+    popped BEST-FIRST (priority, then
+    boosted, then FIFO) instead of a
+    strict-FIFO ring — at all-0 the
+    order is byte-identical to the
+    ring. Priority crossings preempt
+    immediately: Wake/set_priority IPIs
+    any hart running a strictly lower
+    priority (the software-interrupt
+    path reschedules via the tick's
+    Handle_Preemption), and Handle_
+    Syscall's tail checks Should_
+    Preempt so the WAKER's hart hands
+    over at syscall exit — guarded on
+    Current = the entering thread
+    (Handle_Exit falls through with
+    Current switched; saving that frame
+    into the new thread's TCB would
+    corrupt it). Sys_Set_Priority=35:
+    a0 = U64'Last (self) or a
+    Process_Object cap WITH Manage
+    (the spawn/reap cap — Amiga
+    SetTaskPri under capability
+    discipline), a1 = signed request
+    clamped to the range; returns
+    status + OLD priority. Process_Info
+    grows to 9 words (word 8 = priority
+    sign-extended); Proc:<pid>/status
+    renders a signed "priority N" line.
+    Shell gains `pri <job> <n>`
+    (ChangeTaskPri lineage) over its
+    job process caps. Fuzz: 24 directed
+    checks (self old-value/clamp to
+    127, rejections incl. no-Manage
+    mint, cross-process set on a
+    BLOCKED echo child, word-8 mirror,
+    Proc: render). Burns: (1) THE
+    BOOST IS POSITIONAL — moving it
+    from push-time position to a
+    pop-time flag without consuming
+    it at pop let a woken-then-
+    yield-polling thread (fuzz's reap
+    storm) win EVERY scan; children
+    never ran, 22 reap timeouts,
+    deterministic — pop must clear the
+    flag (the ring spent it with one
+    head-insert). (2) Directed self
+    tests must only RAISE: a self-lower
+    across a reschedule with the Spin
+    hog ready at 0 parks the caller
+    forever on UP (strict priorities,
+    by design) — negative values are
+    tested on a BLOCKED child. (3) The
+    fuzz random generator is mod 31
+    with an exclusion list — a new
+    syscall is NOT automatically in the
+    random pool (set_priority with a
+    garbage self-target would suicide
+    the suite; stays excluded).
+    Suites green SMP1+SMP4 972 PASS,
+    failures=0, fsck clean, qemu
+    self-exits 0; live: `run Wait 30` +
+    `pri 1 -64` + jobs/errors via QMP.
+    Next: 63 — TBD.
+
     MILESTONE 61 FOLLOWUP — menus on
     every GUI app. The Op_Set_Menus
     wire packing moved out of

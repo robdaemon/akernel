@@ -87,6 +87,27 @@ thread's saved trap-frame a0 in its TCB context
 Userspace result codes (a0): 0 ok, 1 invalid, 2 transfer failed,
 3 endpoint gone, 4 reply gone.
 
+## Scheduling and priorities (milestone 62)
+
+Every thread carries an Amiga-range priority (-128..127, default
+0). The single global ready queue feeds all harts; selection is
+best-first: strictly higher priority wins, ties break boosted-
+first (freshly woken by IPC/notification), then FIFO. The wakeup
+boost is consumed at selection — it orders a woken thread's FIRST
+run only, never a requeue, so a boosted yield loop cannot starve
+the queue. At uniform priority 0 behaviour is exactly the pre-62
+round-robin.
+
+Preemption is immediate on a priority crossing: a wake (or a
+cross-process set_priority raise) that makes a thread ready at a
+strictly higher priority than some hart's running thread IPIs
+that hart, and the software-interrupt path reschedules it (the
+tick path); the waker's own hart checks at syscall exit. Equal
+priorities never preempt early — they wait for the 20 Hz tick or
+a block, as before. Strict priorities mean a self-lower below a
+never-blocking hog's priority parks the caller until the hog
+blocks — by design (Amiga semantics); on UP there is no escape.
+
 ## Syscalls
 
 ```text
@@ -598,13 +619,20 @@ cap_mint(cap, rights_mask, badge) -> cap     (syscall 28)
   partN-badged partition-service caps). Note a cap transferred
   in a message must carry the Transfer right.
 process_info(resource, slot, buf, off) -> st (syscall 30)
-  kernel introspection: 64-byte process snapshot (ids incl.
+  kernel introspection: 72-byte process snapshot (ids incl.
   spawner, lifecycle/thread state, cap count, IPC flags,
-  blocked-on endpoint, call badge) written into a caller-owned
+  blocked-on endpoint, call badge, word 8 = scheduling
+  priority sign-extended, -128..127) written into a caller-owned
   memory object (Write right) through the physmap. slot 0..127
   or U64'Last = self; 0 ok, 1 no-such-slot (enumeration end),
   U64'Last rejected. Authority: the device_resource
   Kernel_Object+Manage cap, same gate as io_map/irq_create.
+set_priority(target, request) -> a0 0/1, a1 old (syscall 35)
+  Amiga SetTaskPri with capability discipline. target = U64'Last
+  for the calling thread itself, else a Process_Object cap WITH
+  Manage (the spawn/reap cap a parent holds over a child).
+  request is signed and clamped to -128..127. Rejections (bad
+  handle, wrong kind, no Manage, dead slot) answer 1.
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks

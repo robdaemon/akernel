@@ -149,6 +149,21 @@ package Kernel.Tasks is
      (TCB    : in out Thread_Control_Block;
       Queued : Boolean);
 
+   --  Scheduling priority (milestone 62), Amiga task-priority
+   --  lineage: -128 .. 127, default 0.  The scheduler always runs
+   --  the highest-priority ready thread; ties break boosted-first
+   --  (freshly woken), then FIFO.  A strictly higher priority
+   --  becoming ready preempts a running lower-priority thread
+   --  immediately (IPI + syscall-exit check); equal priorities
+   --  round-robin on the 20 Hz tick exactly as before.
+   subtype Thread_Priority is Integer range -128 .. 127;
+
+   function Priority (TCB : Thread_Control_Block) return Thread_Priority;
+
+   procedure Set_Priority
+     (TCB          : in out Thread_Control_Block;
+      New_Priority : Thread_Priority);
+
    --  Wakeup boost: set when a blocked thread is woken (IPC
    --  transfer, notification), cleared when it blocks again.
    --  Boosted threads requeue at the FRONT of the ready queue so
@@ -340,6 +355,7 @@ private
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
       Boosted          : Boolean;
+      Priority         : Thread_Priority;
       Bound_Ntfn       : System.Address;
       Recv_EP          : System.Address;
       Debug_Line       : String (1 .. Debug_Line_Max);

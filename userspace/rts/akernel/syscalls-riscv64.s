@@ -299,3 +299,13 @@ akernel_sys_read_clock:
     sd a1, 0(t0)
     ret
 .size akernel_sys_read_clock, . - akernel_sys_read_clock
+
+.global akernel_sys_set_priority
+.type akernel_sys_set_priority, @function
+akernel_sys_set_priority:
+    mv t0, a2
+    li a7, 35
+    ecall
+    sd a1, 0(t0)
+    ret
+.size akernel_sys_set_priority, . - akernel_sys_set_priority

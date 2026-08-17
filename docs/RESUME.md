@@ -1,3 +1,16 @@
+MILESTONE 62 SHIPPED: true scheduler priorities. Amiga range
+-128..127 per thread (default 0); the global ready queue pops
+best-first (priority, boosted, FIFO — all-0 is byte-identical to
+the old ring). Priority crossings preempt immediately (IPI to
+outranked harts + Should_Preempt at syscall exit, guarded on
+Current = entering thread). Sys_Set_Priority=35 (self via
+U64'Last, or a Manage-bearing process cap; clamped; returns old).
+Process_Info word 8 + Proc: priority line; shell `pri <job> <n>`.
+Suites green SMP1+SMP4 972 PASS, failures=0, fsck clean, qemu
+self-exits 0. Burn of the milestone: the wakeup boost is
+POSITIONAL — consume it at pop or a boosted yield-poll starves
+every child (22 deterministic reap timeouts). Full burn list in
+docs/NEXT.md under MILESTONE 62. Before that:
 MILESTONE 61 FOLLOWUP SHIPPED: menus on every GUI app.
 The Op_Set_Menus wire packing moved into
 Trinket.Menus.Serialize so raw-protocol clients share it;
@@ -61,6 +74,13 @@ Key facts carried forward:
   clients (terminal/demo) map their own page and call
   Surface_Set_Menus direct; Trinket apps use
   Window.Set_Menus/Set_Menu_Handler.
+- m62: priorities -128..127, default 0; best-first pop
+  (priority, boosted, FIFO); boost consumed AT POP (positional,
+  one first-run only). Preemption on strict priority crossings
+  only; equal priorities wait for tick/block. Sys_Set_Priority:
+  self = U64'Last, child = Manage process cap; clamped; a0
+  status, a1 old. Self-lowering below a never-blocking hog
+  parks you (UP: forever) — strict by design.
 - m59: RTC behind Sys_Read_Clock=34; Wait N | M:S | UNTIL
   HH:MM[:SS]; runtime_build.gpr needs the toolchain bin on
   PATH and fails WITHOUT a ': error' line ("no compiler for
@@ -160,11 +180,11 @@ CURRENT SESSION STATE (58 SHIPPED):
   to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-61 COMPLETE. Next: 62 TBD; the
+Open candidates — milestones 41-62 COMPLETE. Next: 63 TBD; the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime (tasking), virtio-net,
-MSI-X, true scheduler priorities, script interpreter,
+MSI-X, script interpreter,
 background pipelines, Trinket images, Fileman actions,
 library versioning. Consciously deferred:
 cooperative shutdown broadcast (m50: no server holds
@@ -173,7 +193,15 @@ test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 61 followup —
+Recently landed: MILESTONE 62 — true
+scheduler priorities (best-first pop,
+immediate crossing preemption,
+Sys_Set_Priority=35 self/Manage-cap,
+Proc: priority render, shell `pri`;
+boost-consumed-at-pop burn). Suites
+green SMP1+SMP4 972 PASS, failures=0,
+fsck clean. Before that: MILESTONE 61
+followup —
 menus on every GUI app (Fileman/Tdemo via
 Trinket.Window; raw Terminal/Demo via
 Trinket.Menus.Serialize + Surface_Set_Menus

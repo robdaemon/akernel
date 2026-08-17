@@ -88,6 +88,7 @@ package body Arch.Traps is
    Sys_Thread_Regs       : constant U64 := 32;
    Sys_System_Reset      : constant U64 := 33;
    Sys_Read_Clock        : constant U64 := 34;
+   Sys_Set_Priority      : constant U64 := 35;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1982,6 +1983,96 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, Result);
    end Handle_System_Reset;
 
+   --  Sys_Set_Priority (milestone 62), Amiga SetTaskPri with
+   --  capability discipline.  a0 = target: U64'Last for the
+   --  calling thread itself, else a cap handle naming a
+   --  Process_Object with the Manage right (the spawn/reap cap a
+   --  parent holds over its children).  a1 = requested priority,
+   --  interpreted as signed and clamped into -128 .. 127.
+   --  Returns a0 = 0 ok / 1 rejected (bad handle, wrong kind, no
+   --  Manage, dead slot); a1 = the OLD priority, sign-extended.
+   --  A successful cross-process set IPIs the harts so a victim
+   --  running thread (or a freshly raised queued one) reschedules
+   --  now; a self-set is covered by the syscall-exit preemption
+   --  check in Handle_Syscall.
+   procedure Handle_Set_Priority (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+      use type Interfaces.Integer_64;
+
+      function To_I64 is new Ada.Unchecked_Conversion
+        (Source => U64, Target => Interfaces.Integer_64);
+      function To_U64 is new Ada.Unchecked_Conversion
+        (Source => Interfaces.Integer_64, Target => U64);
+
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Target_Arg : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Req        : constant Interfaces.Integer_64 :=
+        To_I64 (Trap_Frame_Get_A1 (Frame));
+      New_Pri    : constant Kernel.Tasks.Thread_Priority :=
+        Kernel.Tasks.Thread_Priority
+          (Interfaces.Integer_64'Max
+             (-128, Interfaces.Integer_64'Min (127, Req)));
+      Old_Pri    : Kernel.Tasks.Thread_Priority := 0;
+      Found      : Boolean;
+      Cap_Handle : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result : Kernel.Capabilities.Status;
+      Cap_Info   : Kernel.Capabilities.Cap_Entry;
+      Rejected   : Boolean := False;
+   begin
+      if Current = null then
+         Rejected := True;
+      elsif Target_Arg = U64'Last then
+         Old_Pri := Kernel.Tasks.Priority (Current.all);
+         Kernel.Tasks.Set_Priority (Current.all, New_Pri);
+      else
+         Decode_Handle (Target_Arg, Cap_Handle, Handle_Valid);
+         if Handle_Valid then
+            Kernel.Tasks.Lookup_Cap
+              (TCB       => Current.all,
+               Cap       => Cap_Handle,
+               Result    => Cap_Result,
+               Out_Entry => Cap_Info);
+         end if;
+         if not Handle_Valid
+           or else Cap_Result /= Kernel.Capabilities.Ok
+           or else Cap_Info.Kind /= Kernel.Capabilities.Process_Object
+           or else not Cap_Info.Rights.Manage
+         then
+            Rejected := True;
+         else
+            Kernel.Processes.Set_Thread_Priority
+              (Process_Object => Cap_Info.Object,
+               New_Priority   => New_Pri,
+               Old_Priority   => Old_Pri,
+               Found          => Found);
+            if not Found then
+               Rejected := True;
+            else
+               --  The target may be running on another hart (now
+               --  possibly outranked) or queued with a freshly
+               --  raised priority; every hart re-evaluates on the
+               --  IPI (Should_Preempt in the software-interrupt
+               --  path).  Broadcast is fine: cross-process sets
+               --  are rare.
+               Kernel.CPUs.Notify_Work;
+            end if;
+         end if;
+      end if;
+
+      if Rejected then
+         Trap_Frame_Set_A0 (Frame, 1);
+         Trap_Frame_Set_A1 (Frame, 0);
+      else
+         Trap_Frame_Set_A0 (Frame, 0);
+         Trap_Frame_Set_A1
+           (Frame, To_U64 (Interfaces.Integer_64 (Old_Pri)));
+      end if;
+   end Handle_Set_Priority;
+
    --  Sys_Cap_Info (a0 = admin cap, a1 = slot 0..127 or U64'Last
    --  for self, a2 = cap-table index, a3 = buffer memory-object
    --  cap, a4 = byte offset): one cap-table slot snapshot into the
@@ -2233,6 +2324,10 @@ package body Arch.Traps is
    procedure Handle_Syscall (Frame : System.Address) is
       Number           : constant U64 := Trap_Frame_Get_A7 (Frame);
       Scheduler_Result : Kernel.Scheduler.Status;
+      --  Thread that trapped in; the tail preemption check only
+      --  applies while it is still the hart's current thread.
+      Entering         : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
    begin
       if Number = Sys_Yield then
          Advance_SEPC (Frame);
@@ -2328,11 +2423,29 @@ package body Arch.Traps is
             Trap_Frame_Set_A0 (Frame, Ns / 1_000_000_000);
             Trap_Frame_Set_A1 (Frame, Ns mod 1_000_000_000);
          end;
+      elsif Number = Sys_Set_Priority then
+         Handle_Set_Priority (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
 
       Advance_SEPC (Frame);
+
+      --  Priority preemption at syscall exit (milestone 62): when
+      --  a strictly higher-priority thread is ready -- woken by an
+      --  IPC reply/notification during this call, or our own
+      --  priority just dropped -- hand the hart over now rather
+      --  than waiting out the 50 ms tick.  Guarded on the entering
+      --  thread still being current: handlers that rescheduled
+      --  (block/yield) return early, and Handle_Exit falls through
+      --  with Current changed -- saving THIS frame into the new
+      --  thread's TCB would corrupt its saved context.
+      if Kernel.Scheduler.Current = Entering
+        and then Kernel.Scheduler.Should_Preempt
+      then
+         Save_Current_Context (Frame);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
+      end if;
    end Handle_Syscall;
 
    --  SMP: every trap (user ecall, timer, external, software, fault)
@@ -2385,6 +2498,14 @@ package body Arch.Traps is
          --  IPI from a waker: the work is visible through the ready
          --  queue; this hart only needs to drop the pending bit.
          Arch.SBI.Clear_Software_Pending;
+         --  Milestone 62: the IPI also fires when a woken or
+         --  freshly-raised thread outranks what this hart runs.
+         --  Preempt now (the tick path) rather than waiting 50 ms;
+         --  Handle_Preemption itself no-ops for SPP-set (kernel/
+         --  idle) traps.
+         if Kernel.Scheduler.Should_Preempt then
+            Handle_Preemption (Frame);
+         end if;
          return;
       end if;
 

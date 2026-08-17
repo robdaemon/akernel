@@ -80,8 +80,9 @@ procedure Fuzz is
    Sys_Process_Info   : constant U64 := 30;
    Sys_Cap_Info       : constant U64 := 31;
    Sys_Thread_Regs    : constant U64 := 32;
+   Sys_Set_Priority   : constant U64 := 35;
 
-   Highest_Known      : constant U64 := 30;
+   Highest_Known      : constant U64 := 35;
 
    Failed : constant U64 := U64'Last;
 
@@ -1953,6 +1954,235 @@ begin
       end loop;
       Check (Reaped2, "admin test echo reaped");
       Status := Akernel_User.Syscalls.Cap_Delete (My_EP);
+   end;
+
+   --  62: scheduler priorities.  Sys_Set_Priority semantics: self
+   --  target, old-value return, clamping to -128..127, rejection
+   --  paths, the Process_Info word-8 mirror, and a cross-process
+   --  set through a child process cap (Manage right).  Self tests
+   --  only ever RAISE above the default 0: with the Spin hog
+   --  ready at 0, a self-lower would hand every hart to Spin the
+   --  moment a reschedule hits (strict priorities, by design) and
+   --  on SMP1 the suite would never run again.  Negative values
+   --  are exercised on the BLOCKED child instead -- it is parked
+   --  in Receive until we drive its three rounds, so neither its
+   --  priority nor our observations race the scheduler.
+   declare
+      Pri_VA : constant U64 := 16#5060_0000#;
+      type Info_Page is array (0 .. 511) of U64;
+      PPage : Info_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Pri_VA));
+      Pri_Buf  : U64;
+      Pri_EP   : U64;
+      Pri_Proc : U64;
+      Pri_Pid  : U64 := 0;
+      Pri_Slot : U64 := U64'Last;
+      NoMan_P  : U64;
+      Calls_Ok : Boolean := True;
+      Reaped_P : Boolean := False;
+      --  Manifest grant order: 7 = device_resource, 8 = admin
+      --  (block-local names in sibling blocks; declared per the
+      --  sibling-declare-block rule).
+      Pri_Resource : constant U64 := 7;
+      Pri_Admin    : constant U64 := 8;
+   begin
+      Pri_Buf := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
+      Check (Pri_Buf /= U64'Last, "priority info buffer allocated");
+      Check (Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A1 => Pri_Buf, A2 => Pri_VA,
+                A3 => 0, A4 => 4096, A5 => 3) = 0,
+             "priority info buffer mapped");
+
+      --  Self: default 0, old-value return, positive clamp to 127
+      --  (visible in info word 8), restore.  Raises only (above).
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => U64'Last,
+                        A1 => 7) = 0 and then Last_A1 = 0,
+             "priority self set from default 0");
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => U64'Last,
+                        A1 => 500) = 0 and then Last_A1 = 7,
+             "priority set returns previous value");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Pri_Resource,
+                        A1 => U64'Last, A2 => Pri_Buf) = 0
+             and then PPage (8) = 127,
+             "priority clamped to 127 in process info");
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => U64'Last,
+                        A1 => 0) = 0 and then Last_A1 = 127,
+             "priority restored to 0");
+
+      --  Rejections: nonsense handle, wrong kind (console endpoint).
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => 9000,
+                        A1 => 5) = 1,
+             "priority bad handle rejected");
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => Console_EP,
+                        A1 => 5) = 1,
+             "priority wrong-kind cap rejected");
+
+      --  Cross-process: an echo child parked on its OWN endpoint
+      --  (never called yet -> blocked in Receive; fresh endpoint,
+      --  not the shared EP -- a dying receiver fails it, M34).
+      Pri_EP := Raw_Ecall (Number => Sys_EP_Create);
+      Check (Pri_EP < 256, "priority test endpoint created");
+      Akernel_User.Syscalls.Set_Grant
+        (0, Pri_EP,
+         Akernel_User.Syscalls.Right_Send +
+           Akernel_User.Syscalls.Right_Receive,
+         0);
+      Akernel_User.Syscalls.Set_Grant
+        (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image,
+                           A1 => 2);
+      Pri_Proc := Last_A1;
+      Check (Status = 0 and then Pri_Proc /= 0,
+             "priority child spawned");
+
+      --  A minted copy WITHOUT Manage must not set.
+      NoMan_P := Akernel_User.Syscalls.Cap_Mint
+        (Pri_Proc, Akernel_User.Syscalls.Right_Read, 0);
+      Check (NoMan_P /= U64'Last, "priority no-Manage mint ok");
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => NoMan_P,
+                        A1 => 5) = 1,
+             "priority no-Manage process cap rejected");
+      Status := Akernel_User.Syscalls.Cap_Delete (NoMan_P);
+
+      --  The real cap (Read+Manage) sets; badge of the process
+      --  cap is the child's pid (spawn ABI), read via cap_info.
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => Pri_Proc,
+                        A1 => 42) = 0 and then Last_A1 = 0,
+             "priority child set via process cap");
+      Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Pri_Admin,
+                        A1 => U64'Last, A2 => Pri_Proc,
+                        A3 => Pri_Buf) = 0
+             and then PPage (5) = 1,
+             "priority child cap info valid");
+      Pri_Pid := PPage (4);
+
+      --  Slot scan by pid: word 8 shows 42 on the blocked child.
+      for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
+      loop
+         if Raw_Ecall (Number => Sys_Process_Info, A0 => Pri_Resource,
+                       A1 => U64 (Slot), A2 => Pri_Buf) = 0
+           and then PPage (0) = Pri_Pid
+         then
+            Pri_Slot := U64 (Slot);
+         end if;
+      end loop;
+      Check (Pri_Slot /= U64'Last and then PPage (8) = 42,
+             "priority child visible in process info");
+
+      --  Negative clamp on the BLOCKED child: -500 lands at -128
+      --  (sign-extended on the wire), old value 42.
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => Pri_Proc,
+                        A1 => U64'Last - 499) = 0
+             and then Last_A1 = 42,
+             "priority child negative clamp request");
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => Pri_Resource,
+                        A1 => Pri_Slot, A2 => Pri_Buf) = 0
+             and then PPage (8) = U64'Last - 127,
+             "priority child clamped to -128");
+
+      --  Procfs renders the same value end to end over the fs
+      --  path: Proc:<pid>/status carries a signed priority line.
+      declare
+         use type Interfaces.Unsigned_8;
+         S_Size  : U64 := 0;
+         S_Count : U64 := 0;
+         S_St    : U64;
+         S_Path  : String (1 .. 40);
+         S_Len   : Natural := 5;
+         S_Buf   : array (0 .. 1023) of Interfaces.Unsigned_8;
+         Pid_Num : U64 := Pri_Pid;
+         Digs    : String (1 .. 20);
+         D_Len   : Natural := 0;
+
+         function Has (S : String) return Boolean is
+         begin
+            if S_Count < U64 (S'Length) then
+               return False;
+            end if;
+            for I in 0 .. Natural (S_Count) - S'Length loop
+               declare
+                  Hit : Boolean := True;
+               begin
+                  for J in 0 .. S'Length - 1 loop
+                     if Character'Val (Natural (S_Buf (I + J)))
+                       /= S (S'First + J)
+                     then
+                        Hit := False;
+                        exit;
+                     end if;
+                  end loop;
+                  if Hit then
+                     return True;
+                  end if;
+               end;
+            end loop;
+            return False;
+         end Has;
+      begin
+         S_Path (1 .. 5) := "Proc:";
+         if Pid_Num = 0 then
+            D_Len := 1;
+            Digs (1) := '0';
+         else
+            while Pid_Num /= 0 loop
+               D_Len := D_Len + 1;
+               Digs (D_Len) := Character'Val
+                 (Character'Pos ('0') + Natural (Pid_Num mod 10));
+               Pid_Num := Pid_Num / 10;
+            end loop;
+         end if;
+         for I in 1 .. D_Len loop
+            S_Len := S_Len + 1;
+            S_Path (S_Len) := Digs (D_Len - I + 1);
+         end loop;
+         S_Path (S_Len + 1 .. S_Len + 7) := "/status";
+         S_Len := S_Len + 7;
+
+         S_St := Akernel_User.Files.Stat (S_Path (1 .. S_Len), S_Size);
+         Check (S_St = Akernel_User.Files.Status_Ok and then S_Size > 0,
+                "priority proc status stat");
+         S_St := Akernel_User.Files.Open (S_Path (1 .. S_Len), S_Size);
+         Check (S_St = Akernel_User.Files.Status_Ok,
+                "priority proc status opens");
+         S_St := Akernel_User.Files.Read
+           (S_Path (1 .. S_Len), 0, S_Buf'Address,
+            U64 (S_Buf'Length), S_Count);
+         Check (S_St = Akernel_User.Files.Status_Ok and then S_Count > 0,
+                "priority proc status reads");
+         Check (Has ("priority -128"),
+                "priority proc status renders the clamped value");
+      end;
+      Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => Pri_Proc,
+                        A1 => 0) = 0
+             and then Last_A1 = U64'Last - 127,
+             "priority child restored to 0");
+
+      --  Echo exits after three calls; drive them and reap (same
+      --  pacing as the admin block: checks double as yields).
+      for Round in 1 .. 3 loop
+         Akernel_User.Syscalls.Message.Label := 16#AD#;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Caps  := (others => 0);
+         Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => Pri_EP);
+         if Status /= 0 then
+            Calls_Ok := False;
+         end if;
+      end loop;
+      Check (Calls_Ok, "priority test echo rounds delivered");
+      for Try in 1 .. 1024 loop
+         Status := Raw_Ecall (Number => Sys_Reap, A0 => Pri_Proc);
+         if Status = 0 then
+            Reaped_P := True;
+            exit;
+         end if;
+         Ignore := Raw_Ecall (Number => Sys_Yield);
+      end loop;
+      Check (Reaped_P, "priority test echo reaped");
+      Status := Akernel_User.Syscalls.Cap_Delete (Pri_EP);
    end;
 
    --  38a/38b cap stress: the paged cap table allocates a page

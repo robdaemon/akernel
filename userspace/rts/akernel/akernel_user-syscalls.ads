@@ -171,8 +171,9 @@ package Akernel_User.Syscalls is
    --  4 blocked-irq, 5 blocked-notification, 6 dead); 4 open cap
    --  count; 5 flags (bit0 awaiting reply, bit1 reply wanted,
    --  bit2 wakeup-boosted, bit3 ready-queued); 6 receive endpoint
-   --  object address (0 = none); 7 badge of the last Call.
-   Process_Info_Word_Count : constant := 8;
+   --  object address (0 = none); 7 badge of the last Call;
+   --  8 scheduling priority, sign-extended (-128..127; m62).
+   Process_Info_Word_Count : constant := 9;
    type Process_Info_Words is
      array (0 .. Process_Info_Word_Count - 1) of U64;
    --  Spawn-table size — mirror of the kernel's
@@ -188,6 +189,21 @@ package Akernel_User.Syscalls is
       Slot     : U64;
       Buffer   : U64;
       Offset   : U64 := 0) return U64;
+
+   --  Set_Priority (syscall 35, milestone 62): Amiga SetTaskPri
+   --  with capability discipline. Target = Priority_Self for the
+   --  calling thread, else a Process_Object cap WITH the Manage
+   --  right (the spawn/reap cap a parent holds over a child).
+   --  New_Priority is clamped into -128 .. 127 (Amiga task
+   --  priority range); the scheduler always runs the highest-
+   --  priority ready thread and a priority-crossing wake preempts
+   --  immediately. Returns 0 (Old_Priority = the previous value)
+   --  or 1 (bad handle / wrong kind / no Manage / dead slot).
+   Priority_Self : constant U64 := U64'Last;
+   function Set_Priority
+     (Target       : U64;
+      New_Priority : Integer;
+      Old_Priority : out Integer) return U64;
 
    --  Cap_Info (syscall 31): one cap-table slot of a process,
    --  64-byte record into a caller-owned memory object. Authority:

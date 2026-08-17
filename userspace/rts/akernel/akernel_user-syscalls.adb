@@ -1,6 +1,7 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
+with Ada.Unchecked_Conversion;
 
 package body Akernel_User.Syscalls is
    use type Interfaces.Unsigned_64;
@@ -162,6 +163,13 @@ package body Akernel_User.Syscalls is
      (Nanos_Out : System.Address) return U64
      with Import, Convention => C,
           External_Name => "akernel_sys_read_clock";
+
+   function Raw_Set_Priority
+     (Target  : U64;
+      Request : U64;
+      Old_Out : System.Address) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_set_priority";
 
    function Raw_Mem_Map_File
      (Address_Space : U64;
@@ -391,6 +399,25 @@ package body Akernel_User.Syscalls is
    begin
       Seconds := Raw_Read_Clock (Nanos'Address);
    end Read_Clock;
+
+   function Set_Priority
+     (Target       : U64;
+      New_Priority : Integer;
+      Old_Priority : out Integer) return U64
+   is
+      function To_U64 is new Ada.Unchecked_Conversion
+        (Source => Interfaces.Integer_64, Target => U64);
+      function To_I64 is new Ada.Unchecked_Conversion
+        (Source => U64, Target => Interfaces.Integer_64);
+      Old_Bits : U64 := 0;
+      Status   : constant U64 :=
+        Raw_Set_Priority
+          (Target, To_U64 (Interfaces.Integer_64 (New_Priority)),
+           Old_Bits'Address);
+   begin
+      Old_Priority := Integer (To_I64 (Old_Bits));
+      return Status;
+   end Set_Priority;
 
    function Mem_Map_File
      (Address_Space : U64;

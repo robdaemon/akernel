@@ -5,11 +5,15 @@ package body Kernel.Scheduler is
    use type Kernel.Tasks.Thread_State;
 
    type Queue_Index is range 0 .. Max_Tasks - 1;
-   type Ready_Queue is array (Queue_Index) of Kernel.Tasks.Thread_Access;
 
-   Queue : Ready_Queue := (others => null);
-   Head  : Queue_Index := Queue_Index'First;
-   Tail  : Queue_Index := Queue_Index'First;
+   --  The ready queue is a plain packed array, not a ring: priority
+   --  selection (milestone 62) pops an arbitrary slot, and at
+   --  Max_Tasks = 144 the O(n) shifts cost a KiB of copies at most
+   --  -- nothing next to the IPC traffic that triggers them.
+   --  Index 0 is the head.  Priority-0 threads keep pre-62
+   --  behaviour exactly: tail push, head pop, boost head-insert.
+   Queue : array (Queue_Index) of Kernel.Tasks.Thread_Access :=
+     (others => null);
    Count : Natural range 0 .. Max_Tasks := 0;
 
    --  Per-hart running thread (SMP).  One global ready queue feeds
@@ -26,6 +30,45 @@ package body Kernel.Scheduler is
    begin
       Current_TCBS (Kernel.CPUs.Current) := TCB;
    end Set_My_Current;
+
+   --  Best-first ordering: strictly higher priority wins; at equal
+   --  priority a boosted thread (freshly woken) wins; at equal
+   --  (priority, boost) the earlier queue slot wins (FIFO), so the
+   --  scan only replaces Best on a strict improvement.
+   function Better
+     (Cand : Kernel.Tasks.Thread_Control_Block;
+      Best : Kernel.Tasks.Thread_Control_Block) return Boolean
+   is
+   begin
+      return Kernel.Tasks.Priority (Cand)
+               > Kernel.Tasks.Priority (Best)
+        or else (Kernel.Tasks.Priority (Cand)
+                   = Kernel.Tasks.Priority (Best)
+                 and then Kernel.Tasks.Is_Boosted (Cand)
+                 and then not Kernel.Tasks.Is_Boosted (Best));
+   end Better;
+
+   --  True when a running hart is executing a thread that TCB
+   --  strictly outranks.  Drives the cross-hart preemption IPI:
+   --  without it a priority-crossing wake would wait for the
+   --  victim hart's next tick (50 ms) or block.
+   function Outranks_Running
+     (TCB : Kernel.Tasks.Thread_Control_Block) return Boolean
+   is
+      Cur : Kernel.Tasks.Thread_Access;
+   begin
+      for CPU in Current_TCBS'Range loop
+         Cur := Current_TCBS (CPU);
+         if Cur /= null
+           and then Kernel.Tasks.State (Cur.all) = Kernel.Tasks.Running
+           and then Kernel.Tasks.Priority (TCB)
+                      > Kernel.Tasks.Priority (Cur.all)
+         then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Outranks_Running;
 
    procedure Push
      (TCB    : Kernel.Tasks.Thread_Access;
@@ -54,29 +97,28 @@ package body Kernel.Scheduler is
 
       --  Boosted threads (freshly woken by IPC/notification, or
       --  preempted while still boosted) jump the queue: a CPU hog
-      --  then only runs when nobody interactive is ready.
+      --  then only runs when nobody interactive is ready.  The
+      --  boost orders WITHIN a priority class; a strictly higher
+      --  priority elsewhere still wins the pop.
       if Boost then
-         if Head = Queue_Index'First then
-            Head := Queue_Index'Last;
-         else
-            Head := Queue_Index'Pred (Head);
-         end if;
-         Queue (Head) := TCB;
+         for I in reverse 1 .. Count loop
+            Queue (Queue_Index (I)) := Queue (Queue_Index (I - 1));
+         end loop;
+         Queue (Queue_Index'First) := TCB;
       else
-         Queue (Tail) := TCB;
-         if Tail = Queue_Index'Last then
-            Tail := Queue_Index'First;
-         else
-            Tail := Queue_Index'Succ (Tail);
-         end if;
+         Queue (Queue_Index (Count)) := TCB;
       end if;
       Kernel.Tasks.Set_Queued (TCB.all, True);
       Count := Count + 1;
 
       --  Empty -> nonempty: an idle hart may be sleeping in wfi;
-      --  IPI it so it reschedules promptly.  Skipped for Yield's own
-      --  requeue (the same hart pops again immediately).
-      if Notify and then Was_Empty then
+      --  IPI it so it reschedules promptly.  Priority crossing: a
+      --  running hart whose thread TCB outranks must preempt now,
+      --  not at its next tick.  Skipped for Yield's own requeue
+      --  (the same hart pops again immediately).
+      if Notify
+        and then (Was_Empty or else Outranks_Running (TCB.all))
+      then
          Kernel.CPUs.Notify_Work;
       end if;
 
@@ -87,37 +129,63 @@ package body Kernel.Scheduler is
      (TCB    : out Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
+      Best     : Kernel.Tasks.Thread_Access := null;
+      Best_Idx : Natural := 0;
+      Cand     : Kernel.Tasks.Thread_Access;
+      W        : Natural := 0;
    begin
-      while Count > 0 loop
-         TCB := Queue (Head);
-         Queue (Head) := null;
-         if TCB /= null then
-            Kernel.Tasks.Set_Queued (TCB.all, False);
-         end if;
-         if Head = Queue_Index'Last then
-            Head := Queue_Index'First;
-         else
-            Head := Queue_Index'Succ (Head);
-         end if;
-         Count := Count - 1;
-
-         if TCB /= null
-           and then Kernel.Tasks.State (TCB.all) /= Kernel.Tasks.Dead
+      --  One pass: compact out null/dead entries (the lazy GC the
+      --  old ring did while popping) and find the best thread.
+      for R in 0 .. Count - 1 loop
+         Cand := Queue (Queue_Index (R));
+         if Cand /= null
+           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
          then
-            Result := Ok;
-            return;
+            if Best = null or else Better (Cand.all, Best.all) then
+               Best := Cand;
+               Best_Idx := W;
+            end if;
+            Queue (Queue_Index (W)) := Cand;
+            if W /= R then
+               Queue (Queue_Index (R)) := null;
+            end if;
+            W := W + 1;
+         else
+            if Cand /= null then
+               Kernel.Tasks.Set_Queued (Cand.all, False);
+            end if;
+            Queue (Queue_Index (R)) := null;
          end if;
       end loop;
+      Count := W;
 
-      TCB := null;
-      Result := Queue_Empty;
+      if Best = null then
+         TCB := null;
+         Result := Queue_Empty;
+         return;
+      end if;
+
+      --  Remove the winner, preserving FIFO order of the rest.
+      for I in Best_Idx + 1 .. Count - 1 loop
+         Queue (Queue_Index (I - 1)) := Queue (Queue_Index (I));
+      end loop;
+      Queue (Queue_Index (Count - 1)) := null;
+      Count := Count - 1;
+
+      Kernel.Tasks.Set_Queued (Best.all, False);
+      --  The boost is POSITIONAL, not a property of the thread:
+      --  the old ring spent it with one head-insert, after which a
+      --  yielded thread tail-pushed like everyone else.  Consume
+      --  it here or a woken-then-yielding thread (a reap poll
+      --  storm) keeps winning the scan and starves the queue.
+      Kernel.Tasks.Set_Boosted (Best.all, False);
+      TCB := Best;
+      Result := Ok;
    end Pop;
 
    procedure Initialize is
    begin
       Queue := (others => null);
-      Head := Queue_Index'First;
-      Tail := Queue_Index'First;
       Count := 0;
       Current_TCBS := (others => null);
    end Initialize;
@@ -156,6 +224,33 @@ package body Kernel.Scheduler is
    begin
       return My_Current;
    end Current;
+
+   --  True when a queued thread strictly outranks this hart's
+   --  running thread.  Checked at syscall exit and on the
+   --  preemption IPI so a priority-crossing wake takes over the
+   --  hart immediately instead of waiting for the 50 ms tick.
+   function Should_Preempt return Boolean is
+      Cur  : constant Kernel.Tasks.Thread_Access := My_Current;
+      Cand : Kernel.Tasks.Thread_Access;
+   begin
+      if Cur = null
+        or else Kernel.Tasks.State (Cur.all) /= Kernel.Tasks.Running
+      then
+         return False;
+      end if;
+
+      for R in 0 .. Count - 1 loop
+         Cand := Queue (Queue_Index (R));
+         if Cand /= null
+           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
+           and then Kernel.Tasks.Priority (Cand.all)
+                      > Kernel.Tasks.Priority (Cur.all)
+         then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Should_Preempt;
 
    procedure Yield (Result : out Status) is
       Next : Kernel.Tasks.Thread_Access;
@@ -249,11 +344,8 @@ package body Kernel.Scheduler is
      (TCB    : Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
-      New_Queue : Ready_Queue := (others => null);
-      New_Tail  : Queue_Index := Queue_Index'First;
-      New_Count : Natural range 0 .. Max_Tasks := 0;
-      Scan      : Queue_Index := Head;
-      Candidate : Kernel.Tasks.Thread_Access;
+      Cand : Kernel.Tasks.Thread_Access;
+      W    : Natural := 0;
    begin
       if TCB = null then
          Result := Invalid_Task;
@@ -266,38 +358,24 @@ package body Kernel.Scheduler is
          end if;
       end loop;
 
-      for I in Natural range 1 .. Count loop
-         Candidate := Queue (Scan);
-         Queue (Scan) := null;
+      for R in 0 .. Count - 1 loop
+         Cand := Queue (Queue_Index (R));
+         Queue (Queue_Index (R)) := null;
 
-         if Candidate /= null then
-            Kernel.Tasks.Set_Queued (Candidate.all, False);
+         if Cand /= null then
+            Kernel.Tasks.Set_Queued (Cand.all, False);
 
-            if Candidate /= TCB
-              and then Kernel.Tasks.State (Candidate.all) /= Kernel.Tasks.Dead
+            if Cand /= TCB
+              and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
             then
-               New_Queue (New_Tail) := Candidate;
-               Kernel.Tasks.Set_Queued (Candidate.all, True);
-               if New_Tail = Queue_Index'Last then
-                  New_Tail := Queue_Index'First;
-               else
-                  New_Tail := Queue_Index'Succ (New_Tail);
-               end if;
-               New_Count := New_Count + 1;
+               Queue (Queue_Index (W)) := Cand;
+               Kernel.Tasks.Set_Queued (Cand.all, True);
+               W := W + 1;
             end if;
-         end if;
-
-         if Scan = Queue_Index'Last then
-            Scan := Queue_Index'First;
-         else
-            Scan := Queue_Index'Succ (Scan);
          end if;
       end loop;
 
-      Queue := New_Queue;
-      Head := Queue_Index'First;
-      Tail := New_Tail;
-      Count := New_Count;
+      Count := W;
       Result := Ok;
    end Remove_Thread;
 

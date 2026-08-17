@@ -39,5 +39,11 @@ package Kernel.Scheduler is
      (TCB    : Kernel.Tasks.Thread_Access;
       Result : out Status);
 
+   --  True when a queued thread strictly outranks this hart's
+   --  running thread (milestone 62 priorities).  Checked at
+   --  syscall exit and on the preemption IPI so a priority-
+   --  crossing wake reschedules immediately, not at the next tick.
+   function Should_Preempt return Boolean;
+
    function Ready_Count return Natural;
 end Kernel.Scheduler;

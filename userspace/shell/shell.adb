@@ -738,6 +738,34 @@ procedure Shell is
       return N;
    end Parse_Nat;
 
+   --  Signed parse for `pri` (Amiga ChangeTaskPri lineage);
+   --  Ok is False on anything but [-]digits.
+   function Parse_Int (S : String; Ok : out Boolean) return Integer is
+      N    : Integer := 0;
+      Neg  : Boolean := False;
+      From : Positive := S'First;
+   begin
+      Ok := False;
+      if S'Length = 0 then
+         return 0;
+      end if;
+      if S (S'First) = '-' then
+         Neg := True;
+         From := S'First + 1;
+         if From > S'Last then
+            return 0;
+         end if;
+      end if;
+      for I in From .. S'Last loop
+         if S (I) not in '0' .. '9' or else N > 1000 then
+            return 0;
+         end if;
+         N := N * 10 + (Character'Pos (S (I)) - Character'Pos ('0'));
+      end loop;
+      Ok := True;
+      return (if Neg then -N else N);
+   end Parse_Int;
+
    function Run_Background (Word : String; Args : String) return U64
    is
       Proc : U64;
@@ -890,6 +918,8 @@ procedure Shell is
               ("  wait [n]        RC = job n's (or last) exit code;"); 
             Akernel_User.Console.Put_Line
               ("                  no matching job -> C:Wait (sleep)");
+            Akernel_User.Console.Put_Line
+              ("  pri <job> <n>   set a background job's priority");
             return 0;
          elsif Word = "exit" then
             if Jobs_Active > 0 and then not Exit_Warned then
@@ -918,6 +948,50 @@ procedure Shell is
          elsif Word = "jobs" then
             Harvest (Loud => True);
             return 0;
+         elsif Word = "pri" then
+            --  Amiga ChangeTaskPri lineage: `pri <job> <n>` sets a
+            --  live background job's scheduling priority
+            --  (-128..127) through its process cap (Manage right
+            --  — the shell owns its children's caps).
+            declare
+               J_Last  : Natural;
+               P_First : Natural;
+               N       : Natural;
+               Pri     : Integer;
+               Old     : Integer := 0;
+               Ok      : Boolean;
+            begin
+               Split_Cmd (Rest, J_Last, P_First);
+               if P_First > Rest'Last then
+                  Akernel_User.Console.Put_Line
+                    ("usage: pri <job> <priority>");
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+               N := Parse_Nat (Rest (Rest'First .. J_Last));
+               Pri := Parse_Int (Rest (P_First .. Rest'Last), Ok);
+               if not Ok then
+                  Akernel_User.Console.Put_Line
+                    ("pri: bad priority '" & Rest (P_First .. Rest'Last)
+                     & "'");
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+               if N not in Jobs'Range
+                 or else Jobs (N).State /= Job_Active
+               then
+                  Akernel_User.Console.Put_Line
+                    ("pri: no active job " & Rest (Rest'First .. J_Last));
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+               if Set_Priority
+                    (Target       => Jobs (N).Proc,
+                     New_Priority => Pri,
+                     Old_Priority => Old) /= 0
+               then
+                  Akernel_User.Console.Put_Line ("pri: set failed");
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+               return 0;
+            end;
          elsif Word = "wait" then
             return Wait_Job (Rest);
          elsif Word = "execute" then

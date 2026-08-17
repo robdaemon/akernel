@@ -63,6 +63,7 @@ package body Kernel.Tasks is
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
       TCB.Boosted := False;
+      TCB.Priority := 0;
       TCB.Bound_Ntfn := System.Null_Address;
       TCB.Recv_EP := System.Null_Address;
       TCB.Debug_Len := 0;
@@ -298,6 +299,19 @@ package body Kernel.Tasks is
    begin
       return TCB.Boosted;
    end Is_Boosted;
+
+   function Priority (TCB : Thread_Control_Block) return Thread_Priority is
+   begin
+      return TCB.Priority;
+   end Priority;
+
+   procedure Set_Priority
+     (TCB          : in out Thread_Control_Block;
+      New_Priority : Thread_Priority)
+   is
+   begin
+      TCB.Priority := New_Priority;
+   end Set_Priority;
 
    procedure Set_Boosted
      (TCB     : in out Thread_Control_Block;

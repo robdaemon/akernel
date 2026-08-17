@@ -1,6 +1,7 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
+with Ada.Unchecked_Conversion;
 with Akernel_User.Syscalls;
 with Akernel_User.Console;
 
@@ -74,17 +75,21 @@ procedure Procfs is
      renames Interfaces.Shift_Left;
 
    --  process_info destination page (the kernel writes the
-   --  64-byte record at offset 0 through the physmap).
-   type Info_Words is array (0 .. 7) of U64;
+   --  72-byte record at offset 0 through the physmap; m62 grew
+   --  it from 64 with the priority word).
+   type Info_Words is array (0 .. 8) of U64;
    Info : Info_Words
      with Volatile, Address => To_Address (Info_VA);
 
-   --  cap_info records are read at byte offset 64 of the same
-   --  page (never collides with a process_info snapshot); the
+   function To_Priority is new Ada.Unchecked_Conversion
+     (Source => U64, Target => Interfaces.Integer_64);
+
+   --  cap_info records are read at byte offset 128 of the same
+   --  page (clear of the 72-byte process_info snapshot); the
    --  thread_regs record (320 bytes) uses offset 0 inside the
    --  dedicated regs render only, after Snapshot is done.
    CapW : Syscalls.Cap_Info_Words
-     with Volatile, Address => To_Address (Info_VA + 64);
+     with Volatile, Address => To_Address (Info_VA + 128);
    Regs : Syscalls.Thread_Regs_Words
      with Volatile, Address => To_Address (Info_VA);
 
@@ -165,6 +170,7 @@ procedure Procfs is
       Flags     : U64 := 0;
       Endpoint  : U64 := 0;
       Badge     : U64 := 0;
+      Priority  : Integer := 0;
    end record;
 
    Snaps      : array (0 .. Max_Slots - 1) of Proc_Snap;
@@ -193,7 +199,8 @@ procedure Procfs is
                Caps      => Info (4),
                Flags     => Info (5),
                Endpoint  => Info (6),
-               Badge     => Info (7));
+               Badge     => Info (7),
+               Priority  => Integer (To_Priority (Info (8))));
             Live_Count := Live_Count + 1;
          else
             Snaps (S).Live := False;
@@ -344,6 +351,14 @@ procedure Procfs is
       Put_Str ("badge ");
       Put_Hex (Snaps (Idx).Badge);
       Put_Char (LF);
+      Put_Str ("priority ");
+      if Snaps (Idx).Priority < 0 then
+         Put_Char ('-');
+         Put_Dec (U64 (abs Snaps (Idx).Priority));
+      else
+         Put_Dec (U64 (Snaps (Idx).Priority));
+      end if;
+      Put_Char (LF);
    end Render_Status;
 
    function Kind_Name (Kind : U64) return String is
@@ -381,7 +396,7 @@ procedure Procfs is
                Slot      => U64 (Idx),
                Cap_Index => Cap_Index,
                Buffer    => Info_Cap,
-               Offset    => 64) = Syscalls.Info_Ok
+               Offset    => 128) = Syscalls.Info_Ok
          then
             Found := Found + 1;
             Put_Dec (CapW (0));

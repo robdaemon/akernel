@@ -39,6 +39,12 @@ package body Kernel.Processes is
    Threads   : Thread_Slot_Array;
    Used      : Slot_Used_Array := (others => False);
 
+   --  Sign-preserving narrowing for info snapshots (priority is
+   --  signed; the wire word is raw bits).
+   function To_U64 is new Ada.Unchecked_Conversion
+     (Source => Interfaces.Integer_64, Target => U64);
+   subtype I64 is Interfaces.Integer_64;
+
    --  Free list over unused slots. Invariant: a slot is on the
    --  list iff Used (slot) = False. Spawn PEEKS the head and
    --  pops only at the commit point (Used := True), so the many
@@ -749,8 +755,33 @@ package body Kernel.Processes is
          5 => Flags,
          6 => U64 (System.Storage_Elements.To_Integer
                      (Kernel.Tasks.Recv_Endpoint (TCB))),
-         7 => Kernel.Tasks.IPC_Badge (TCB));
+         7 => Kernel.Tasks.IPC_Badge (TCB),
+         8 => To_U64 (I64 (Kernel.Tasks.Priority (TCB))));
    end Fill_Info;
+
+   procedure Set_Thread_Priority
+     (Process_Object : System.Address;
+      New_Priority   : Kernel.Tasks.Thread_Priority;
+      Old_Priority   : out Kernel.Tasks.Thread_Priority;
+      Found          : out Boolean)
+   is
+   begin
+      Old_Priority := 0;
+      Found := False;
+      for Slot in 0 .. Max_Process_Slots - 1 loop
+         if Used (Process_Index (Slot))
+           and then Processes (Process_Index (Slot))'Address
+                      = Process_Object
+         then
+            Old_Priority :=
+              Kernel.Tasks.Priority (Threads (Process_Index (Slot)));
+            Kernel.Tasks.Set_Priority
+              (Threads (Process_Index (Slot)), New_Priority);
+            Found := True;
+            return;
+         end if;
+      end loop;
+   end Set_Thread_Priority;
 
    function Slot_Count return Natural is (Max_Process_Slots);
 

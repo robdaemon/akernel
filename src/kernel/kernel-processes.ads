@@ -1,4 +1,5 @@
 with Interfaces;
+with System;
 with Kernel.Capabilities;
 with Kernel.Tasks;
 
@@ -61,8 +62,21 @@ package Kernel.Processes is
    --    6 endpoint object the thread is blocked receiving on
    --      (0 = not in a receive wait)
    --    7 badge recorded at the thread's last Call
-   Info_Word_Count : constant := 8;
+   --    8 scheduling priority, sign-extended (-128 .. 127;
+   --      milestone 62)
+   Info_Word_Count : constant := 9;
    type Process_Info_Words is array (0 .. Info_Word_Count - 1) of U64;
+
+   --  Sys_Set_Priority backing op (milestone 62): set the
+   --  priority of the (single) thread owned by the process whose
+   --  PCB is at Process_Object (a Process_Object cap's object
+   --  address, authority already checked by the caller).  Found is
+   --  False when the address names no live table process.
+   procedure Set_Thread_Priority
+     (Process_Object : System.Address;
+      New_Priority   : Kernel.Tasks.Thread_Priority;
+      Old_Priority   : out Kernel.Tasks.Thread_Priority;
+      Found          : out Boolean);
 
    --  Process table bound for by-slot enumeration.
    function Slot_Count return Natural;
