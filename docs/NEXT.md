@@ -2688,6 +2688,69 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 63 COMPLETE — Trinket
+    images, datatypes-style. Trinket.
+    Images: a decoded Image (W/H +
+    heap pixel span, chunky AARRGGBB)
+    behind Load, which sniffs magic
+    and dispatches to a decoder child
+    package — Trinket.Images.Bmp
+    today (uncompressed BI_RGB 24/
+    32-bit, bottom-up AND top-down,
+    every read bounds-checked), Xpm/
+    ILBM slot in later without API
+    changes. Transparency is color-key
+    (Workbench mask lineage): the
+    CLIENT sets Has_Key/Key, Blit
+    skips keyed pixels; 32-bit alpha
+    bytes are carried, never blended.
+    Blit is clipped span copies into
+    any Canvas — no Bureau surface
+    needed, so fuzz render-tests blits
+    against a plain memobj canvas.
+    Widgets gains Image_Widget
+    (centered 1:1, borrows the image;
+    the app owns Load/Free). Assets:
+    tools/gen_images.py deterministically
+    generates bars/keyed/grad32/trunc
+    BMPs, mcopy'd to Tests/Img/;
+    fuzz duplicates the formulas in 12
+    directed checks (dims, exact pixels,
+    alpha byte, Malformed/IO_Error/
+    Unsupported rejections, keyed-blit
+    skip, clip respect, Free). Tdemo
+    showcases bars + keyed disc in a
+    new Images group. Burns: (1)
+    Files.Bind IS MANUAL — an app
+    that never touched the fs has
+    FS_Cap = 0 and every Files op
+    answers Bad_Args CLIENT-side;
+    tdemo's boot failure posed as a
+    mount race (my 5 s volume wait
+    ran to timeout) and as leaf
+    case-sensitivity (Copy's "can't
+    open <src>" actually failed the
+    DEST create — client error labels
+    lie; probe with Type, the pure
+    reader). (2) A blit test pixel
+    must sit outside EVERY prior blit
+    in the block — my clip check
+    sampled (10,10), inside the keyed
+    disc painted one line earlier.
+    (3) The 600 s suite timeout no
+    longer exists in the Makefile —
+    the harness timeout is the
+    CALLER's; two same-line 700 s
+    "stalls" were ambient host load
+    (timestamped control AND m63 runs
+    both 571 s; gate runs want
+    timeout 1000). Suites green
+    SMP1+SMP4 984 PASS, failures=0,
+    fsck clean, qemu self-exits 0;
+    live: tdemo renders both bitmaps,
+    keyed disc floats on face. Next:
+    64 — TBD.
+
     MILESTONE 62 COMPLETE — true
     scheduler priorities. Every thread
     carries an Amiga-range priority

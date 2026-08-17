@@ -12,6 +12,31 @@ package body Trinket.Widgets is
    type Button_Access is access Button;
    type Group_Access is access Group;
    type Scrollbar_Access is access Scrollbar;
+   type Image_Access is access Image_Widget;
+
+   --  Image widget: centered 1:1 blit, color-key honored.
+   function New_Image (Img : Trinket.Images.Image) return Any_Widget is
+      I : constant Image_Access := new Image_Widget;
+   begin
+      I.Img := Img;
+      return Any_Widget (I);
+   end New_Image;
+
+   overriding procedure Draw (W : Image_Widget; C : Canvas) is
+      DX : U64 := W.X;
+      DY : U64 := W.Y;
+   begin
+      if not Trinket.Images.Loaded (W.Img) then
+         return;
+      end if;
+      if W.W > W.Img.W then
+         DX := W.X + (W.W - W.Img.W) / 2;
+      end if;
+      if W.H > W.Img.H then
+         DY := W.Y + (W.H - W.Img.H) / 2;
+      end if;
+      Trinket.Images.Blit (C, W.Img, DX, DY);
+   end Draw;
 
    function Max (A, B : U64) return U64 is (if A > B then A else B);
    function Min (A, B : U64) return U64 is (if A < B then A else B);

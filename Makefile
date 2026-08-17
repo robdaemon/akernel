@@ -131,6 +131,11 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 	mmd -i $@@@1048576 ::Fonts; \
 	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads > $(INITRD_OUT)/font8x8.bdf; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/font8x8.bdf ::Fonts/FONT8X8.BDF; \
+	mmd -i $@@@1048576 ::Tests; \
+	mmd -i $@@@1048576 ::Tests/Img; \
+	python3 tools/gen_images.py $(INITRD_OUT)/img; \
+	for f in bars keyed grad32 trunc; do \
+	  mcopy -i $@@@1048576 $(INITRD_OUT)/img/$$f.bmp "::Tests/Img/$$(printf '%s' $$f | tr a-z A-Z).BMP"; done; \
 	mmd -i $@@@1048576 ::Libs; \
 	for c in $(DISK_CRATES_LIBS); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \

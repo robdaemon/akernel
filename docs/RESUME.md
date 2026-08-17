@@ -1,3 +1,18 @@
+MILESTONE 63 SHIPPED: Trinket images, datatypes-style.
+Trinket.Images.Load sniffs magic and dispatches to decoder
+children (Bmp: BI_RGB 24/32-bit, bottom-up + top-down, fully
+bounds-checked); color-key transparency set client-side; Blit =
+clipped span copies into any Canvas (fuzz render-tests against a
+plain memobj canvas, no Bureau surface needed). Widgets gains
+Image_Widget; tdemo showcases bars + keyed disc from
+Tests/Img/ (tools/gen_images.py assets). Suites green SMP1+SMP4
+984 PASS, failures=0, fsck clean, qemu self-exits 0. Burns:
+Files.Bind is MANUAL (unbound = client-side Bad_Args posing as
+a mount race); client error labels lie (Copy named the source,
+the DEST create failed — probe with Type); the Makefile has no
+600 s timeout anymore — gate runs want timeout 1000, and
+timestamped control+m63 runs both took 571 s. Full burn list in
+docs/NEXT.md under MILESTONE 63. Before that:
 MILESTONE 62 SHIPPED: true scheduler priorities. Amiga range
 -128..127 per thread (default 0); the global ready queue pops
 best-first (priority, boosted, FIFO — all-0 is byte-identical to
@@ -81,6 +96,11 @@ Key facts carried forward:
   self = U64'Last, child = Manage process cap; clamped; a0
   status, a1 old. Self-lowering below a never-blocking hog
   parks you (UP: forever) — strict by design.
+- m63: Trinket.Images = Load (sniff+dispatch, Bmp decoder
+  child) + color-key Blit into any Canvas; Image_Widget borrows
+  the image, the app owns Load/Free. Files.Bind (2) FIRST in
+  any app new to the fs. BMP gen formulas live in
+  tools/gen_images.py AND the fuzz checks — change both.
 - m59: RTC behind Sys_Read_Clock=34; Wait N | M:S | UNTIL
   HH:MM[:SS]; runtime_build.gpr needs the toolchain bin on
   PATH and fails WITHOUT a ': error' line ("no compiler for
@@ -180,12 +200,13 @@ CURRENT SESSION STATE (58 SHIPPED):
   to serial noise, failures=0), fsck clean pre/post,
   qemu exits 0 (self-poweroff) on both.
 
-Open candidates — milestones 41-62 COMPLETE. Next: 63 TBD; the
+Open candidates — milestones 41-63 COMPLETE. Next: 64 TBD; the
 deferred list (docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime (tasking), virtio-net,
 MSI-X, script interpreter,
-background pipelines, Trinket images, Fileman actions,
+background pipelines, Fileman actions (deficons —
+could ride Trinket.Images), Xpm/ILBM decoders,
 library versioning. Consciously deferred:
 cooperative shutdown broadcast (m50: no server holds
 in-memory state worth saving today); automated reboot-cycle
@@ -193,7 +214,13 @@ test (would loop); thread-id generations (m51: no identity
 consumer today); background pipelines/redirection (m52:
 run takes one command).
 
-Recently landed: MILESTONE 62 — true
+Recently landed: MILESTONE 63 — Trinket
+images (datatypes-style Load dispatch,
+Bmp decoder, color-key Blit, Image_Widget,
+tdemo showcase, gen_images.py assets;
+Files.Bind burn). Suites green SMP1+SMP4
+984 PASS, failures=0, fsck clean.
+Before that: MILESTONE 62 — true
 scheduler priorities (best-first pop,
 immediate crossing preemption,
 Sys_Set_Priority=35 self/Manage-cap,

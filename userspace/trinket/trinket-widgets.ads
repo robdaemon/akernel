@@ -2,6 +2,7 @@
 --  MUI classes map to Ada tagged types — Widget is the abstract
 --  root; Group (H/V layout), Label and Button ship in 56;
 --  String, Text_Edit, Listview, Scrollbar follow in 57+.
+with Trinket.Images;
 --
 --  Geometry: X/Y/W/H are window-content-absolute, assigned by the
 --  parent's Layout. Damage: a widget sets Dirty when its look
@@ -44,6 +45,16 @@ package Trinket.Widgets is
    procedure Clear_Dirty (W : in out Widget);
 
    function Intersects (W : Widget; C : Canvas) return Boolean;
+
+
+   --  Image widget (milestone 63): a decoded Trinket.Images.Image
+   --  painted centered in its layout rect (clip does the rest).
+   --  The widget borrows the image — the app owns Load/Free.
+   type Image_Widget is new Widget with record
+      Img : Trinket.Images.Image;
+   end record;
+   function New_Image (Img : Trinket.Images.Image) return Any_Widget;
+   overriding procedure Draw (W : Image_Widget; C : Canvas);
 
    Max_Text : constant := 48;
    subtype Text_Len is Natural range 0 .. Max_Text;

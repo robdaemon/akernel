@@ -15,6 +15,8 @@ with Akernel_User.Files;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
 with Akernel_User.Libs;
+with Trinket;
+with Trinket.Images;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
@@ -2183,6 +2185,106 @@ begin
       end loop;
       Check (Reaped_P, "priority test echo reaped");
       Status := Akernel_User.Syscalls.Cap_Delete (Pri_EP);
+   end;
+
+   --  63: Trinket.Images — datatype-style decode of the generated
+   --  BMP assets (formulas duplicated from tools/gen_images.py),
+   --  rejection paths, and Blit semantics (color-key skip + canvas
+   --  clip) verified against a plain memobj canvas — no Bureau
+   --  surface needed, Canvas is just an address + geometry.
+   declare
+      use type Trinket.Images.Status;
+      use type Interfaces.Unsigned_32;
+      Img_VA : constant U64 := 16#5062_0000#;
+      type Canvas_Page is
+        array (0 .. 2047) of Interfaces.Unsigned_32;
+      CPage : Canvas_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (Img_VA));
+      Img_Mem : U64;
+      C       : Trinket.Canvas;
+      Bars    : Trinket.Images.Image;
+      Keyed   : Trinket.Images.Image;
+      Grad    : Trinket.Images.Image;
+      Junk    : Trinket.Images.Image;
+      ISt     : Trinket.Images.Status;
+
+      function Pix (Img : Trinket.Images.Image; X, Y : U64)
+                    return Interfaces.Unsigned_32
+      is (Img.Data (Y * Img.W + X));
+   begin
+      Trinket.Images.Load ("BD0:Tests/Img/bars.bmp", Bars, ISt);
+      Check (ISt = Trinket.Images.Ok
+             and then Bars.W = 64 and then Bars.H = 48,
+             "images bars decodes 64x48");
+      Check (Pix (Bars, 0, 0) = 16#FF10_EF80#,
+             "images bars first-bar pixel");
+      Check (Pix (Bars, 63, 47) = 16#FFF0_0F80#,
+             "images bars last-bar pixel");
+
+      Trinket.Images.Load ("BD0:Tests/Img/keyed.bmp", Keyed, ISt);
+      Check (ISt = Trinket.Images.Ok
+             and then Keyed.W = 32 and then Keyed.H = 32
+             and then Pix (Keyed, 15, 15) = 16#FFFF_8800#
+             and then Pix (Keyed, 0, 0) = 16#FFFF_00FF#,
+             "images keyed disc over magenta field");
+
+      --  32-bit top-down: alpha byte carried, never blended.
+      Trinket.Images.Load ("BD0:Tests/Img/grad32.bmp", Grad, ISt);
+      Check (ISt = Trinket.Images.Ok
+             and then Grad.W = 40 and then Grad.H = 30
+             and then Pix (Grad, 5, 7) = 16#0C1E_38C8#,
+             "images grad32 top-down with alpha byte");
+
+      Trinket.Images.Load ("BD0:Tests/Img/trunc.bmp", Junk, ISt);
+      Check (ISt = Trinket.Images.Malformed
+             and then not Trinket.Images.Loaded (Junk),
+             "images truncated bmp rejected malformed");
+      Trinket.Images.Load ("BD0:Tests/Img/nope.bmp", Junk, ISt);
+      Check (ISt = Trinket.Images.IO_Error,
+             "images missing file is io error");
+      Trinket.Images.Load ("BD0:README.TXT", Junk, ISt);
+      Check (ISt = Trinket.Images.Unsupported,
+             "images text file unsupported");
+
+      --  Blit into a plain 48x40 memobj canvas.
+      Img_Mem := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 2);
+      Check (Img_Mem /= U64'Last
+             and then Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A1 => Img_Mem, A2 => Img_VA,
+                A3 => 0, A4 => 8192, A5 => 3) = 0,
+             "images canvas pages mapped");
+      C := (Base =>
+              System'To_Address
+                (System.Storage_Elements.Integer_Address (Img_VA)),
+            W => 48, H => 40, CX0 => 0, CY0 => 0,
+            CX1 => 48, CY1 => 40);
+      for I in CPage'Range loop
+         CPage (I) := 16#FFC0_C0C4#;  --  Trinket.Face
+      end loop;
+
+      Keyed.Has_Key := True;
+      Keyed.Key := 16#FFFF_00FF#;
+      Trinket.Images.Blit (C, Keyed, 0, 0);
+      Check (CPage (15 * 48 + 15) = 16#FFFF_8800#
+             and then CPage (0) = 16#FFC0_C0C4#,
+             "images keyed blit skips key pixels");
+
+      Trinket.Set_Clip (C, 24, 20, 48, 40);
+      Trinket.Images.Blit (C, Bars, 0, 0);
+      Check (CPage (10 * 48 + 40) = 16#FFC0_C0C4#
+             and then CPage (25 * 48 + 30) = 16#FF70_8F80#,
+             "images blit respects the canvas clip");
+
+      Trinket.Images.Free (Bars);
+      Trinket.Images.Free (Keyed);
+      Trinket.Images.Free (Grad);
+      Check (not Trinket.Images.Loaded (Bars),
+             "images free clears the record");
+      Status := Akernel_User.Syscalls.Cap_Delete (Img_Mem);
    end;
 
    --  38a/38b cap stress: the paged cap table allocates a page
