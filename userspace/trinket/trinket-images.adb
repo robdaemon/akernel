@@ -2,6 +2,7 @@ with Ada.Unchecked_Deallocation;
 with Interfaces;
 with Akernel_User.Files;
 with Trinket.Images.Bmp;
+with Trinket.Images.Xpm;
 
 package body Trinket.Images is
    use type U64;
@@ -43,6 +44,8 @@ package body Trinket.Images is
             --  Datatype dispatch: magic-sniff in decoder order.
             if Bmp.Claims (Buf.all'Address, Size) then
                Bmp.Decode (Buf.all'Address, Size, Img, St);
+            elsif Xpm.Claims (Buf.all'Address, Size) then
+               Xpm.Decode (Buf.all'Address, Size, Img, St);
             else
                St := Unsupported;
             end if;

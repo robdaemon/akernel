@@ -115,13 +115,15 @@ package body Akernel_User.Files is
      (Name       : String;
       Size       : out U64;
       Write_Date : out U64;
-      Write_Time : out U64) return U64 is
+      Write_Time : out U64;
+      Is_Dir     : out Boolean) return U64 is
       Q   : String (1 .. 48);
       Len : Natural;
    begin
       Size := 0;
       Write_Date := 0;
       Write_Time := 0;
+      Is_Dir := False;
       Qualified (Name, Q, Len);
       if FS_Cap = 0 or else Len = 0 then
          return Status_Bad_Args;
@@ -139,6 +141,7 @@ package body Akernel_User.Files is
          Size       := Syscalls.Message.Words (1);
          Write_Date := Syscalls.Message.Words (2);
          Write_Time := Syscalls.Message.Words (3);
+         Is_Dir     := Syscalls.Message.Words (4) = 1;
       end if;
       return Syscalls.Message.Words (0);
    end Stat_Ex;

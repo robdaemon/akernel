@@ -36,6 +36,7 @@ procedure List is
    procedure Put_Stamp (Path, Name : String) is
       use type Akernel_User.Files.U64;
       Size, D, T : Akernel_User.Files.U64;
+      Is_D       : Boolean;
       Full : constant String :=
         (if Path'Length > 0
            and then (Path (Path'Last) = ':'
@@ -43,7 +44,7 @@ procedure List is
          then Path & Name
          else Path & "/" & Name);
    begin
-      if Akernel_User.Files.Stat_Ex (Full, Size, D, T) /=
+      if Akernel_User.Files.Stat_Ex (Full, Size, D, T, Is_D) /=
            Akernel_User.Files.Status_Ok
         or else D = 0
       then

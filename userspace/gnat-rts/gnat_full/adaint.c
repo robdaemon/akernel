@@ -807,7 +807,14 @@ __gnat_rename (char *from, char *to)
     return ret;
   }
 #else
-  return rename (from, to);
+  {
+     /* akernel (milestone 64): this newlib implements _rename_r as
+        link()+unlink() and _link is stubbed (FAT has no hardlinks),
+        so plain rename(3) can NEVER succeed here.  Call the Gloss
+        _rename hook (fs Op_Rename) directly.  */
+     extern int _rename (const char *from, const char *to);
+     return _rename (from, to);
+  }
 #endif
 }
 

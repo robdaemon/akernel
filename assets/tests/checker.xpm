@@ -1,0 +1,16 @@
+/* XPM */
+static char *checker[] = {
+"8 8 4 1",
+"a c None",
+"b c #FF0000",
+"c c #00FF00",
+"d c #0000FF",
+"abababab",
+"babababa",
+"cdcdcdcd",
+"dcdcdcdc",
+"abcdcbad",
+"badcdabc",
+"ddccbbaa",
+"aaaabbbb"
+};

@@ -7,9 +7,6 @@
 with System;
 package Trinket.Images.Bmp is
 
-   Max_Dimension : constant U64 := 1024;
-   --  Reject absurd headers before they can size an allocation.
-
    function Claims (Buf : System.Address; Len : U64) return Boolean;
    --  True when the bytes start with the "BM" magic.
 

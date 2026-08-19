@@ -36,8 +36,25 @@ package body Trinket.Listview is
       W.N := 0;
       W.Sel := 0;
       W.Top := 0;
+      W.Has_Icons := False;
       W.Dirty := True;
    end Clear;
+
+   procedure Set_Item_Icon
+     (W : in out Listview; I : Positive;
+      Icon : access constant Trinket.Images.Image)
+   is
+   begin
+      if I <= W.N then
+         W.Items (I).Icon := Icon;
+         W.Has_Icons := True;
+         W.Dirty := True;
+      end if;
+   end Set_Item_Icon;
+
+   --  Rows grow to the icon cell once any item carries an icon.
+   function Row_Height (W : Listview) return U64 is
+     (if W.Has_Icons then Icon_Size + 2 else Fonts.Line_Height);
 
    procedure Add_Item (W : in out Listview; S : String) is
    begin
@@ -59,12 +76,12 @@ package body Trinket.Listview is
    end Get_Item;
 
    function Visible_Rows (W : Listview) return U64 is
-      LH : constant U64 := Fonts.Line_Height;
+      RH : constant U64 := Row_Height (W);
    begin
-      if W.H < LH then
+      if W.H < RH then
          return 1;
       end if;
-      return U64'Max (1, W.H / LH);
+      return U64'Max (1, W.H / RH);
    end Visible_Rows;
 
    function Max_Top (W : Listview) return U64 is
@@ -141,7 +158,9 @@ package body Trinket.Listview is
    overriding procedure Draw (W : Listview; C : Canvas) is
       C2  : Canvas := C;
       Vis : constant U64 := Visible_Rows (W);
+      RH  : constant U64 := Row_Height (W);
       LH  : constant U64 := Fonts.Line_Height;
+      TX  : constant U64 := W.X + (if W.Has_Icons then 22 else 4);
       Y   : U64;
    begin
       Set_Clip (C2, W.X, W.Y, W.X + W.W, W.Y + W.H);
@@ -156,18 +175,24 @@ package body Trinket.Listview is
             Idx : constant U64 := W.Top + R;
          begin
             exit when Idx >= U64 (W.N);
-            Y := W.Y + R * LH;
-            if Y + LH > W.Y + W.H then
+            Y := W.Y + R * RH;
+            if Y + RH > W.Y + W.H then
                exit;
             end if;
 
             if Natural (Idx + 1) = W.Sel then
                Paint.Fill_Rect
-                 (C2, W.X, Y, W.X + W.W, Y + LH, Sel_Blue);
+                 (C2, W.X, Y, W.X + W.W, Y + RH, Sel_Blue);
+            end if;
+
+            if W.Items (Natural (Idx + 1)).Icon /= null then
+               Trinket.Images.Blit
+                 (C2, W.Items (Natural (Idx + 1)).Icon.all,
+                  W.X + 2, Y + 1);
             end if;
 
             Fonts.Draw_Text
-              (C2, W.X + 4, Y,
+              (C2, TX, Y + (RH - LH) / 2,
                W.Items (Natural (Idx + 1)).Text
                  (1 .. W.Items (Natural (Idx + 1)).Len),
                Text_Dark);
@@ -223,7 +248,7 @@ package body Trinket.Listview is
      (W : access Listview; K : Widgets.Pointer_Kind; PX, PY : U64)
       return Boolean
    is
-      LH : constant U64 := Fonts.Line_Height;
+      RH : constant U64 := Row_Height (W.all);
       R  : U64;
       Idx : Natural;
    begin
@@ -237,7 +262,7 @@ package body Trinket.Listview is
          return True;
       end if;
 
-      R := (PY - W.Y) / LH;
+      R := (PY - W.Y) / RH;
       Idx := Natural (W.Top + R) + 1;
       if Idx <= W.N then
          Set_Selected (W.all, Idx);

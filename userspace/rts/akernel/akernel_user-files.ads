@@ -194,12 +194,15 @@ package Akernel_User.Files is
    --  in FAT encodings (date: year-1980 bits 9..15, month 5..8,
    --  day 0..4; time: hour 11..15, minute 5..10, second/2 0..4).
    --  Volumes without timestamps (initrd, procfs, pipes) return
-   --  both as 0.
+   --  both as 0.  Milestone 64: Is_Dir (word 4) — Stat answers
+   --  DIRECTORIES now (size 0), so stat of an empty drawer works
+   --  and Ada.Directories enumerations no longer truncate at one.
    function Stat_Ex
      (Name       : String;
       Size       : out U64;
       Write_Date : out U64;
-      Write_Time : out U64) return U64;
+      Write_Time : out U64;
+      Is_Dir     : out Boolean) return U64;
    function Open (Name : String; Size : out U64) return U64;
 
    --  Directory enumeration (milestone 32, the Dir command):

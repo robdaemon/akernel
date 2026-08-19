@@ -792,31 +792,36 @@ package body Akernel_User.Gloss is
    is
       P  : constant String := Qualify (Interfaces.C.Strings.Value (Path));
       Sz : U64;
+      WD, WT : U64;
+      Is_D   : Boolean;
    begin
       Ensure_Bound;
-      if Files.Stat (P, Sz) /= Files.Status_Ok then
-         --  53c: the fs Stat rejects DIRECTORIES (fat32-style
-         --  Bad_Args). Probe with a by-index Read_Dir so that
-         --  stat("some/dir") — and therefore Ada.Directories.
-         --  Exists/Kind — sees directories as directories.
-         declare
-            Junk_N : String (1 .. 32);
-            Junk_L : Natural;
-            Junk_D : Boolean;
-            Junk_S : U64;
-         begin
-            if Files.Read_Dir (P, 0, Junk_N, Junk_L, Junk_D, Junk_S)
-                 = Files.Status_Ok
-            then
-               Fill_Stat (S, 0, False, Is_Dir => True);
-               return 0;
-            end if;
-         end;
-         Fail (ENOENT);
-         return -1;
+      if Files.Stat_Ex (P, Sz, WD, WT, Is_D) = Files.Status_Ok then
+         --  64: Stat answers directories directly (word 4).
+         Fill_Stat (S, Sz, False, Is_Dir => Is_D);
+         return 0;
       end if;
-      Fill_Stat (S, Sz, False);
-      return 0;
+      --  53c: some volumes still reject Stat on DIRECTORIES
+      --  (procfs pid dirs).  Probe with a by-index Read_Dir so
+      --  that stat("some/dir") — and therefore Ada.Directories.
+      --  Exists/Kind — sees directories as directories.  Empty
+      --  dirs have no index 0, so this probe is only a fallback
+      --  for volumes that never answer Stat on dirs at all.
+      declare
+         Junk_N : String (1 .. 32);
+         Junk_L : Natural;
+         Junk_D : Boolean;
+         Junk_S : U64;
+      begin
+         if Files.Read_Dir (P, 0, Junk_N, Junk_L, Junk_D, Junk_S)
+              = Files.Status_Ok
+         then
+            Fill_Stat (S, 0, False, Is_Dir => True);
+            return 0;
+         end if;
+      end;
+      Fail (ENOENT);
+      return -1;
    end Gloss_Stat;
 
    function Gloss_Isatty (FD : C_Int) return C_Int;

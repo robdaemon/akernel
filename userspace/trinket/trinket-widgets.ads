@@ -76,9 +76,38 @@ package Trinket.Widgets is
    procedure Set_Text (W : in out Label; S : String);
    --  Update an existing label's text and mark it dirty.
 
+   --  Input (milestone 64): the single-line string gadget the
+   --  m56 plan deferred (MUI String class lineage). Sunken pane
+   --  field, click focuses + positions the cursor, printables
+   --  insert, BS/Del edit, Left/Right/Home/End move, Enter fires
+   --  On_Commit. Keys are consumed ONLY while Focused — an
+   --  unfocused Input is transparent so sibling widgets (a
+   --  listview's arrows) keep working; the app clears focus when
+   --  the user clicks elsewhere (e.g. from a selection callback).
+   type Click_Callback is access procedure;
+   Max_Input : constant := 96;
+   type Input is new Widget with record
+      Buf       : String (1 .. Max_Input);
+      Len       : Natural := 0;
+      Cur       : Natural := 0;      --  0-based, insert BEFORE Cur
+      HOff      : Natural := 0;      --  first visible char
+      Focused   : Boolean := False;
+      On_Commit : Click_Callback := null;
+   end record;
+   function New_Input return Any_Widget;
+   function Get_Text (W : Input) return String;
+   procedure Set_Text (W : in out Input; S : String);
+   procedure Set_Focused (W : in out Input; F : Boolean);
+   function Is_Focused (W : Input) return Boolean is (W.Focused);
+   overriding procedure Draw (W : Input; C : Canvas);
+   overriding function On_Key
+     (W : access Input; Code : U64) return Boolean;
+   overriding function On_Pointer
+     (W : access Input; K : Pointer_Kind; PX, PY : U64)
+      return Boolean;
+
    --  Button: raised face, sunken while pressed, centered bold-ish
    --  label; fires On_Click on release-inside.
-   type Click_Callback is access procedure;
    type Button is new Widget with record
       Txt      : String (1 .. Max_Text);
       Len      : Text_Len := 0;
@@ -122,21 +151,29 @@ package Trinket.Widgets is
    --  centered title breaking the top edge (the mockup's
    --  "File"/"Text" groups). Inset flips the frame sunken and
    --  fills the interior Pane-white (the text area look).
+   --  Kids share the group's extent in the layout direction
+   --  proportionally to their WEIGHT (MUI lineage; milestone
+   --  64): default 1 = the original equal split; a listview in
+   --  a tall row takes Weight 5+ and the labels/buttons stay
+   --  thin. Horizontal groups still pin scrollbars to Arrow
+   --  wide before splitting the remainder by weight.
    type Direction is (Vertical, Horizontal);
    Max_Children : constant := 12;
    type Kid_Array is array (1 .. Max_Children) of Any_Widget;
+   type Wt_Array is array (1 .. Max_Children) of U64;
    type Group is new Widget with record
       Dir        : Direction := Vertical;
       Title      : String (1 .. 24);
       Title_Len  : Natural := 0;
       Inset      : Boolean := False;
       Kids       : Kid_Array := (others => null);
+      Wts        : Wt_Array := (others => 1);
       N          : Natural := 0;
    end record;
    function New_Group
      (Dir : Direction; Title : String := ""; Inset : Boolean := False)
       return Any_Widget;
-   procedure Add (G : in out Group; Child : Any_Widget);
+   procedure Add (G : in out Group; Child : Any_Widget; Weight : U64 := 1);
    overriding procedure Layout (W : in out Group);
    overriding procedure Draw (W : Group; C : Canvas);
    overriding function On_Pointer

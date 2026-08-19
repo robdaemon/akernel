@@ -1021,12 +1021,68 @@ begin
              "fat mkdir exists rejected");
 
       Status := Akernel_User.Files.Stat ("BD0:MKTEST", Size);
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
-             "fat dir stat rejected");
+      Check (Status = Akernel_User.Files.Status_Ok
+             and then Size = 0,
+             "fat dir stat ok");
+
+      declare
+         WD, WT : U64;
+         Dir_D  : Boolean;
+      begin
+         Status := Akernel_User.Files.Stat_Ex
+           ("BD0:MKTEST", Size, WD, WT, Dir_D);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Dir_D,
+                "fat dir stat reports is-dir");
+      end;
 
       Status := Akernel_User.Files.Mkdir ("BD0:NODIR/SUB");
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat mkdir bad parent rejected");
+
+      --  A fresh directory must be VISIBLE in a listing, not just
+      --  resolvable by path (m64: live fileman/shell mkdirs landed
+      --  at slot 16 of a full root sector and never listed).
+      declare
+         Ent     : String (1 .. 24);
+         Ent_L   : Natural;
+         Ent_Dir : Boolean;
+         Ent_Sz  : U64;
+         Seen    : Boolean := False;
+      begin
+         for Index in 0 .. 40 loop
+            Status := Akernel_User.Files.Read_Dir
+              ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+            exit when Status /= Akernel_User.Files.Status_Ok;
+            if Ent_L = 6 and then Ent (1 .. 6) = "MKTEST" then
+               Seen := True;
+            end if;
+         end loop;
+         Check (Seen, "fat mkdir visible in readdir");
+      end;
+
+      --  ...and through Ada.Directories too: an EMPTY drawer's
+      --  stat must not poison Start_Search's attribute fetch
+      --  (the m64 truncation bug: stat of an empty dir failed,
+      --  Get_Next_Entry raised Use_Error on Attr_Error_Code and
+      --  the listing stopped AT the fresh drawer — live fileman
+      --  and C:Dir both lost newly created drawers to it).
+      declare
+         package Dirs renames Ada.Directories;
+         S    : Dirs.Search_Type;
+         Ent  : Dirs.Directory_Entry_Type;
+         Seen : Boolean := False;
+      begin
+         Dirs.Start_Search (S, "BD0:", "*");
+         while Dirs.More_Entries (S) loop
+            Dirs.Get_Next_Entry (S, Ent);
+            if Dirs.Simple_Name (Ent) = "MKTEST" then
+               Seen := True;
+            end if;
+         end loop;
+         Dirs.End_Search (S);
+         Check (Seen, "fat empty dir survives Ada.Directories");
+      end;
 
       declare
          Text : constant String := "AKINNER!";
@@ -1289,6 +1345,25 @@ begin
         ("BD0:RENTEST/B.TXT", "BD0:RENTEST/SUB/C.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename move ok");
+
+      --  Ada.Directories.Rename rides __gnat_rename -> newlib
+      --  rename(3): this newlib implements _rename_r as
+      --  link()+unlink() and _link is stubbed (no hardlinks on
+      --  FAT), so the C-level rename can never succeed unless
+      --  __gnat_rename calls the Gloss _rename hook directly
+      --  (m64 — live fileman Rename hit exactly that wall).
+      declare
+         package Dirs renames Ada.Directories;
+      begin
+         Dirs.Rename ("BD0:RENTEST/SUB/C.TXT", "BD0:RENTEST/SUB/D.TXT");
+         Check (Dirs.Exists ("BD0:RENTEST/SUB/D.TXT")
+                and then not Dirs.Exists ("BD0:RENTEST/SUB/C.TXT"),
+                "fat rename via Ada.Directories ok");
+         Dirs.Rename ("BD0:RENTEST/SUB/D.TXT", "BD0:RENTEST/SUB/C.TXT");
+      exception
+         when others =>
+            Check (False, "fat rename via Ada.Directories ok");
+      end;
 
       Status := Akernel_User.Files.Stat ("BD0:RENTEST/B.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
@@ -2287,6 +2362,101 @@ begin
       Status := Akernel_User.Syscalls.Cap_Delete (Img_Mem);
    end;
 
+   --  XPM decoder (milestone 64): the text sibling slots behind
+   --  the same Load dispatch. Expected pixels are fixed by the
+   --  checked-in assets under assets/tests/ (checker 8x8 cpp-1
+   --  with None keys, cpp2 4x2 two-char keys, bad = truncated
+   --  pixel rows) — change the assets and these asserts
+   --  together. None decodes to pixel 0 and the DECODER sets
+   --  Has_Key/Key := 0 (XPM carries transparency on disk).
+   declare
+      use type Trinket.Images.Status;
+      use type Interfaces.Unsigned_32;
+      XVA : constant U64 := 16#5064_0000#;
+      type Canvas_Page is
+        array (0 .. 2047) of Interfaces.Unsigned_32;
+      XPage : Canvas_Page
+        with Volatile, Address =>
+          System'To_Address
+            (System.Storage_Elements.Integer_Address (XVA));
+      X_Mem : U64;
+      XC    : Trinket.Canvas;
+      Chk   : Trinket.Images.Image;
+      Two   : Trinket.Images.Image;
+      Junk  : Trinket.Images.Image;
+      XSt   : Trinket.Images.Status;
+
+      function Pix (Img : Trinket.Images.Image; X, Y : U64)
+                    return Interfaces.Unsigned_32
+      is (Img.Data (Y * Img.W + X));
+   begin
+      Trinket.Images.Load ("BD0:Tests/Img/checker.xpm", Chk, XSt);
+      Check (XSt = Trinket.Images.Ok
+             and then Chk.W = 8 and then Chk.H = 8,
+             "xpm checker decodes 8x8");
+      Check (Trinket.Images.Loaded (Chk)
+             and then Chk.Has_Key and then Chk.Key = 0,
+             "xpm none pixels arm the color key");
+      Check (Pix (Chk, 0, 0) = 0 and then Pix (Chk, 0, 7) = 0
+             and then Pix (Chk, 1, 0) = 16#FFFF_0000#
+             and then Pix (Chk, 0, 2) = 16#FF00_FF00#
+             and then Pix (Chk, 0, 3) = 16#FF00_00FF#
+             and then Pix (Chk, 4, 7) = 16#FFFF_0000#,
+             "xpm checker exact pixels incl none");
+
+      Trinket.Images.Load ("BD0:Tests/Img/cpp2.xpm", Two, XSt);
+      Check (XSt = Trinket.Images.Ok
+             and then Two.W = 4 and then Two.H = 2
+             and then Pix (Two, 0, 0) = 16#FF11_2233#
+             and then Pix (Two, 1, 0) = 0
+             and then Pix (Two, 2, 1) = 16#FF11_2233#
+             and then Pix (Two, 3, 1) = 16#FF44_5566#,
+             "xpm two-char keys decode");
+
+      Trinket.Images.Load ("BD0:Tests/Img/bad.xpm", Junk, XSt);
+      Check (XSt = Trinket.Images.Malformed
+             and then not Trinket.Images.Loaded (Junk),
+             "xpm truncated rows rejected malformed");
+      Trinket.Images.Load ("BD0:Tests/Img/nope.xpm", Junk, XSt);
+      Check (XSt = Trinket.Images.IO_Error,
+             "xpm missing file is io error");
+      --  Dispatch order: BMP magic must not reach the XPM
+      --  decoder (its Claims requires the /* XPM */ marker).
+      Trinket.Images.Load ("BD0:Tests/Img/bars.bmp", Junk, XSt);
+      Check (XSt = Trinket.Images.Ok
+             and then Junk.W = 64 and then Junk.H = 48,
+             "xpm leaves bmp claims alone");
+      Trinket.Images.Free (Junk);
+
+      --  Keyed blit end to end into a fresh 48x40 canvas: None
+      --  pixels leave the background, colored pixels land.
+      X_Mem := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 2);
+      Check (X_Mem /= U64'Last
+             and then Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A1 => X_Mem, A2 => XVA,
+                A3 => 0, A4 => 8192, A5 => 3) = 0,
+             "xpm canvas pages mapped");
+      XC := (Base =>
+               System'To_Address
+                 (System.Storage_Elements.Integer_Address (XVA)),
+             W => 48, H => 40, CX0 => 0, CY0 => 0,
+             CX1 => 48, CY1 => 40);
+      for I in XPage'Range loop
+         XPage (I) := 16#FF12_3456#;
+      end loop;
+      Trinket.Images.Blit (XC, Chk, 0, 0);
+      Check (XPage (0) = 16#FF12_3456#
+             and then XPage (1) = 16#FFFF_0000#
+             and then XPage (2 * 48) = 16#FF00_FF00#,
+             "xpm keyed blit skips none pixels");
+
+      Trinket.Images.Free (Chk);
+      Trinket.Images.Free (Two);
+      Status := Akernel_User.Syscalls.Cap_Delete (X_Mem);
+   end;
+
    --  38a/38b cap stress: the paged cap table allocates a page
    --  per 128 handles. Minting 300 one-page memory objects must
    --  cross handles 128 and 256 (pages 1 and 2); closing them
@@ -3131,6 +3301,7 @@ begin
             Size, D, T : U64;
             St  : U64;
             OkF : Boolean;
+            Is_D : Boolean;
             Cnt : U64 := 0;
             Txt : aliased constant String := "clock stamp";
          begin
@@ -3142,7 +3313,7 @@ begin
                    and then Cnt = 11,
                    "clock stamp source written");
             St := Akernel_User.Files.Stat_Ex
-              ("BD0:FZCLK.TXT", Size, D, T);
+              ("BD0:FZCLK.TXT", Size, D, T, Is_D);
             OkF := St = Akernel_User.Files.Status_Ok
               and then D /= 16#5A21#
               and then (D / 512) + 1_980 >= 2_026;

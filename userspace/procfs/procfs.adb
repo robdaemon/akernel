@@ -591,6 +591,11 @@ procedure Procfs is
       Idx  : Natural;
    begin
       Resolve (Path_Of (0), Kind, Idx);
+      --  Milestone 64: word 4 is the is-dir flag — zero the
+      --  packed-path leftovers or files could report as dirs.
+      Syscalls.Message.Words (2) := 0;
+      Syscalls.Message.Words (3) := 0;
+      Syscalls.Message.Words (4) := 0;
       case Kind is
          when 2 =>
             Render_Tree;

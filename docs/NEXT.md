@@ -2688,6 +2688,99 @@ Next candidates (order open):
     Deferred: tasking,
     virtio-net, Proc:self.
 
+    MILESTONE 64 COMPLETE — Fileman
+    actions + deficons + XPM, and
+    two runtime-level bugs flushed
+    out by exercising them. Trinket.
+    Images.Xpm is the second decoder
+    child (XPM3 subset: quoted-string
+    body, cpp 1-2, <=256 colors, only
+    the c token honored — None /
+    #RRGGBB / #RGB; None decodes to
+    pixel 0 AND the decoder arms
+    Has_Key/Key:=0 itself, since XPM
+    carries transparency on disk
+    where BMP left it to the client).
+    Assets are checked-in text (the
+    point of XPM): defdraw/deffile/
+    deftool 16x16 icons ride to
+    System/Icons, checker/cpp2/bad to
+    Tests/Img. Widgets gains Input
+    (the 56 String gadget: sunken
+    field, click-to-focus, insert/
+    BS/Del/arrows/Home/End, Enter
+    commits, focus-gated keys with
+    Up/Down always falling through;
+    Group.On_Key now walks children
+    in REVERSE add order so a focused
+    late child wins) and Group layout
+    got MUI weights (Add's Weight
+    defaults 1 = the old equal split;
+    vertical positions are cumulative
+    weight fractions, no drift).
+    Listview carries per-item icons
+    (rows grow 8->18 once any icon
+    attaches; the app owns the
+    Images). Fileman loads the three
+    deficons at startup, picks
+    drawer/file/tool per entry (tool
+    = ELF magic sniff of the first
+    4 bytes, bounded), and its
+    buttons/menus do Open/Parent/
+    Rename/Copy To/New Drawer/Delete/
+    Quit through Ada.Directories with
+    a status label; selection pre-
+    fills the input (Workbench rename-
+    in-place). Live-verified end to
+    end: drawer created/renamed/
+    deleted, README copied, icons per
+    type. Burns: (1) EMPTY-DIR STAT
+    POISON — fat32 Stat rejected
+    directories, so Gloss's 53c
+    workaround probed Read_Dir(P,0),
+    which an EMPTY dir fails (no
+    index 0 once "."" are skipped):
+    a-direct Start_Search then tagged
+    the entry Attr_Error_Code and
+    Get_Next_Entry raised Use_Error,
+    truncating EVERY Dirs listing at
+    a freshly created drawer (the m63
+    "Copy can't open" burn was this
+    too, misread). Fixed server-side:
+    Op_Stat answers dirs (size 0) and
+    word 4 is is_dir on the wire
+    (IPC.md updated, w4 zeroed in
+    fileserver/procfs local replies
+    — packed-path leftovers leak!),
+    Stat_Ex grew Is_Dir, Gloss_Stat
+    uses it with the old probe as
+    fallback for volumes that still
+    reject (procfs pid dirs). (2)
+    NEWLIB RENAME CANNOT WORK — its
+    _rename_r is link()+unlink() and
+    _link is stubbed (no hardlinks on
+    FAT), so every a-direct Rename
+    died before any fs traffic; the
+    vendored adaint.c __gnat_rename
+    now calls the Gloss _rename hook
+    directly. Fuzz covers both
+    (dir-stat ok/is-dir, mkdir visible
+    in readdir AND through
+    Ada.Directories, rename via
+    Ada.Directories). (3) THE RTS
+    MAKE RULE TRACKED ONLY ITS GPR —
+    adalib stayed stale and the
+    adaint patch silently never
+    linked; RTS_LIB now depends on
+    the vendored sources. (4) The
+    terminal garbles output when QMP
+    typing lands mid-render — harness
+    artifact, not fs state; ground
+    truth is dd+mtools on the host
+    image. Suites green SMP1+SMP4
+    997 PASS, failures=0, fsck clean.
+    Next: 65 — TBD.
+
     MILESTONE 63 COMPLETE — Trinket
     images, datatypes-style. Trinket.
     Images: a decoded Image (W/H +
@@ -3104,24 +3197,23 @@ Commit between each milestone.
 
 ## Deferred (do not build yet)
 
-Live list — scrubbed post-58. Landed since this section was
-written: FAT32 metadata cache + Op_Sync (22), assigns C:/ENV:
-(36), uniform program ABI (31b), pointer events to clients
-(32/57), write-back cache + VIRTIO_BLK_F_FLUSH + block-layer
-sync (48), blocking pipes (49), clean shutdown (50).
+Live list — scrubbed post-58, again post-64. Landed since this
+section was written: FAT32 metadata cache + Op_Sync (22), assigns
+C:/ENV: (36), uniform program ABI (31b), pointer events to clients
+(32/57), write-back cache + VIRTIO_BLK_F_FLUSH + block-layer sync
+(48), blocking pipes (49), clean shutdown (50), clock/RTC (59),
+scheduler priorities (62), Trinket images (63), Fileman actions
++ deficons + XPM (64).
 
 Still open:
-- Clock/RTC: Wait/Date/Time/SetDate — no RTC today; dirents
-  stamp fixed 2025-01-01, gettimeofday is epoch (m41 clock
-  group, 53c).
 - Tasking runtime (Ada tasks in userspace).
 - virtio-net (no network at all today).
 - Proc:self (needs client identity through the VFS).
 - Shell: background pipelines/redirection (m52: run takes one
   command); script interpreter proper — If/Else/EndIf, Skip,
   Lab, Alias, Resident (m41; we have execute + failat).
-- Trinket: images/icons (deferred from the 56 GUI plan);
-  Fileman actions (copy/delete/rename, navigation).
+- Trinket: ILBM decoder (Xpm landed 64; BMP 63); fileman
+  deficons could later ride per-file .info parsing.
 - Tier-1 library follow-ups: versioning (Amiga OpenLibrary
   version floor), reference counting across opens. Tier-2
   runtime code loading / dynamic linking deferred-not-rejected.

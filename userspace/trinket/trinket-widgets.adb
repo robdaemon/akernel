@@ -137,6 +137,178 @@ package body Trinket.Widgets is
       W.Dirty := True;
    end Set_Text;
 
+   --  Input
+
+   function New_Input return Any_Widget is
+   begin
+      return Any_Widget'(new Input);
+   end New_Input;
+
+   function Get_Text (W : Input) return String is
+   begin
+      return W.Buf (1 .. W.Len);
+   end Get_Text;
+
+   procedure Set_Text (W : in out Input; S : String) is
+      N : constant Natural := Natural'Min (S'Length, Max_Input);
+   begin
+      W.Len := N;
+      if N > 0 then
+         W.Buf (1 .. N) := S (S'First .. S'First + N - 1);
+      end if;
+      W.Cur  := N;
+      W.Dirty := True;
+   end Set_Text;
+
+   procedure Set_Focused (W : in out Input; F : Boolean) is
+   begin
+      if W.Focused /= F then
+         W.Focused := F;
+         W.Dirty := True;   --  cursor bar appears/disappears
+      end if;
+   end Set_Focused;
+
+   --  Keep the cursor inside the visible window by scrolling
+   --  HOff (character granularity; the font is 8 px monospace).
+   procedure Ensure_Visible (W : in out Input) is
+      CW      : constant U64 := 8;
+      Visible : constant Natural :=
+        (if W.W > 8 then Natural ((W.W - 8) / CW) else 1);
+   begin
+      if W.Cur < W.HOff then
+         W.HOff := W.Cur;
+      elsif W.Cur > W.HOff + Visible then
+         W.HOff := W.Cur - Visible;
+      end if;
+   end Ensure_Visible;
+
+   procedure Draw (W : Input; C : Canvas) is
+      C2 : Canvas := C;
+      LH : constant U64 := Fonts.Line_Height;
+      CW : constant U64 := 8;
+      TY : constant U64 :=
+        W.Y + (if W.H > LH then (W.H - LH) / 2 else 0);
+      VN : constant Natural := Natural'Min (W.Len, W.HOff +
+        (if W.W > 8 then Natural ((W.W - 8) / CW) else 1));
+   begin
+      if not Intersects (W, C) then
+         return;
+      end if;
+      Set_Clip (C2, W.X, W.Y, W.X + W.W, W.Y + W.H);
+      Paint.Fill_Rect (C2, W.X, W.Y, W.X + W.W, W.Y + W.H, Pane);
+      Paint.Bevel2 (C2, W.X, W.Y, W.X + W.W, W.Y + W.H,
+                    Raised => False);
+      if VN > W.HOff then
+         Fonts.Draw_Text
+           (C2, W.X + 4, TY + 2,
+            W.Buf (W.HOff + 1 .. VN), Text_Dark);
+      end if;
+      if W.Focused then
+         Paint.Fill_Rect
+           (C2, W.X + 4 + U64 (W.Cur - W.HOff) * CW, TY + 2,
+            W.X + 5 + U64 (W.Cur - W.HOff) * CW, TY + 2 + LH,
+            Text_Dark);
+      end if;
+   end Draw;
+
+   function On_Key (W : access Input; Code : U64) return Boolean is
+      CW : constant U64 := 8;
+      pragma Unreferenced (CW);
+   begin
+      if not W.Focused then
+         return False;
+      end if;
+
+      if Code >= 32 and then Code <= 126 then
+         if W.Len < Max_Input then
+            --  Insert at cursor.
+            for I in reverse W.Cur + 1 .. W.Len loop
+               W.Buf (I + 1) := W.Buf (I);
+            end loop;
+            W.Buf (W.Cur + 1) := Character'Val (Natural (Code));
+            W.Len := W.Len + 1;
+            W.Cur := W.Cur + 1;
+            Ensure_Visible (W.all);
+            W.Dirty := True;
+         end if;
+         return True;
+      elsif Code = 8 then               --  Backspace
+         if W.Cur > 0 then
+            for I in W.Cur .. W.Len - 1 loop
+               W.Buf (I) := W.Buf (I + 1);
+            end loop;
+            W.Len := W.Len - 1;
+            W.Cur := W.Cur - 1;
+            Ensure_Visible (W.all);
+            W.Dirty := True;
+         end if;
+         return True;
+      elsif Code = 127 or else Code = Key_Delete then
+         if W.Cur < W.Len then
+            for I in W.Cur + 1 .. W.Len - 1 loop
+               W.Buf (I) := W.Buf (I + 1);
+            end loop;
+            W.Len := W.Len - 1;
+            W.Dirty := True;
+         end if;
+         return True;
+      elsif Code = 13 then              --  Enter
+         if W.On_Commit /= null then
+            W.On_Commit.all;
+         end if;
+         return True;
+      elsif Code = Key_Left then
+         if W.Cur > 0 then
+            W.Cur := W.Cur - 1;
+            Ensure_Visible (W.all);
+            W.Dirty := True;
+         end if;
+         return True;
+      elsif Code = Key_Right then
+         if W.Cur < W.Len then
+            W.Cur := W.Cur + 1;
+            Ensure_Visible (W.all);
+            W.Dirty := True;
+         end if;
+         return True;
+      elsif Code = Key_Home then
+         W.Cur := 0;
+         Ensure_Visible (W.all);
+         W.Dirty := True;
+         return True;
+      elsif Code = Key_End then
+         W.Cur := W.Len;
+         Ensure_Visible (W.all);
+         W.Dirty := True;
+         return True;
+      end if;
+
+      --  Up/Down/PageUp/PageDown fall through: a focused input
+      --  does not steal a sibling listview's navigation keys.
+      return False;
+   end On_Key;
+
+   function On_Pointer
+     (W : access Input; K : Pointer_Kind; PX, PY : U64)
+      return Boolean
+   is
+      CW : constant U64 := 8;
+   begin
+      if K /= Press or else not Inside (W.all, PX, PY) then
+         return False;
+      end if;
+      W.Focused := True;
+      if PX > W.X + 4 then
+         W.Cur := Natural'Min
+           (W.Len, W.HOff + Natural ((PX - W.X - 4) / CW));
+      else
+         W.Cur := W.HOff;
+      end if;
+      Ensure_Visible (W.all);
+      W.Dirty := True;
+      return True;
+   end On_Pointer;
+
    --  Button
 
    function New_Button
@@ -393,11 +565,12 @@ package body Trinket.Widgets is
       return Any_Widget (G);
    end New_Group;
 
-   procedure Add (G : in out Group; Child : Any_Widget) is
+   procedure Add (G : in out Group; Child : Any_Widget; Weight : U64 := 1) is
    begin
       if G.N < Max_Children then
          G.N := G.N + 1;
          G.Kids (G.N) := Child;
+         G.Wts (G.N) := (if Weight = 0 then 1 else Weight);
       end if;
    end Add;
 
@@ -410,35 +583,46 @@ package body Trinket.Widgets is
       IX1     : constant U64 := W.X + W.W - Margin;
       IY1     : constant U64 := W.Y + W.H - Margin;
       Avail   : U64;
-      Each    : U64;
       Pos     : U64;
       Fixed   : Natural := 0;  --  scrollbars pin to Arrow wide
+      Total_W : U64 := 0;
+      Cum     : U64;
+      Prev    : U64;
    begin
       if W.N = 0 then
          return;
       end if;
       if W.Dir = Vertical then
-         Avail := IY1 - IY0 - Spacing * U64 (W.N - 1);
-         Each  := Avail / U64 (W.N);
-         Pos   := IY0;
+         --  Weighted split (MUI lineage): positions derive from
+         --  the CUMULATIVE weight fraction so rounding never
+         --  drifts or leaves a remainder strip.
          for I in 1 .. W.N loop
+            Total_W := Total_W + W.Wts (I);
+         end loop;
+         Avail := IY1 - IY0 - Spacing * U64 (W.N - 1);
+         Cum   := 0;
+         for I in 1 .. W.N loop
+            Prev := Cum;
+            Cum  := Cum + W.Wts (I);
             W.Kids (I).X := IX0;
-            W.Kids (I).Y := Pos;
+            W.Kids (I).Y := IY0 + Spacing * U64 (I - 1)
+              + Avail * Prev / Total_W;
             W.Kids (I).W := IX1 - IX0;
-            W.Kids (I).H := Each;
-            Pos := Pos + Each + Spacing;
+            W.Kids (I).H := Avail * Cum / Total_W
+              - Avail * Prev / Total_W;
          end loop;
       else
          for I in 1 .. W.N loop
             if W.Kids (I).all in Scrollbar then
                Fixed := Fixed + 1;
+            else
+               Total_W := Total_W + W.Wts (I);
             end if;
          end loop;
          Avail := IX1 - IX0 - Spacing * U64 (W.N - 1)
            - U64 (Fixed) * Arrow;
-         Each  := (if W.N > Fixed then Avail / U64 (W.N - Fixed)
-                   else 0);
-         Pos   := IX0;
+         Pos := IX0;
+         Cum := 0;
          for I in 1 .. W.N loop
             W.Kids (I).Y := IY0;
             W.Kids (I).H := IY1 - IY0;
@@ -447,9 +631,14 @@ package body Trinket.Widgets is
                W.Kids (I).W := Arrow;
                Pos := Pos + Arrow + Spacing;
             else
+               Prev := Cum;
+               Cum  := Cum + W.Wts (I);
                W.Kids (I).X := Pos;
-               W.Kids (I).W := Each;
-               Pos := Pos + Each + Spacing;
+               W.Kids (I).W :=
+                 (if Total_W > 0
+                  then Avail * Cum / Total_W - Avail * Prev / Total_W
+                  else 0);
+               Pos := Pos + W.Kids (I).W + Spacing;
             end if;
          end loop;
       end if;
@@ -517,7 +706,12 @@ package body Trinket.Widgets is
 
    function On_Key (W : access Group; Code : U64) return Boolean is
    begin
-      for I in 1 .. W.N loop
+      --  Later-added children get first crack: a focusable
+      --  gadget added after a list steals editing keys only
+      --  while focused (Input gates on Focused), and key
+      --  priority never overlaps visually (layout has no
+      --  z-order).
+      for I in reverse 1 .. W.N loop
          if W.Kids (I).On_Key (Code) then
             return True;
          end if;

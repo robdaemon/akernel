@@ -1,8 +1,13 @@
+with Trinket.Images;
 with Trinket.Widgets;
 
 --  Trinket listview (milestone 58): a vertical scrolling list of
 --  text items with selection. Designed to pair with a Trinket
---  scrollbar in a horizontal group.
+--  scrollbar in a horizontal group. Milestone 64 added optional
+--  per-item icons: once Set_Item_Icon attaches any image, every
+--  row grows to Icon_Size + 2 tall with a 16x16 icon cell at the
+--  left (the Workbench list-mode look); the app owns the Image
+--  objects and must outlive the widget.
 package Trinket.Listview is
 
    type Listview is new Widgets.Widget with private;
@@ -19,6 +24,14 @@ package Trinket.Listview is
 
    procedure Add_Item (W : in out Listview; S : String);
    --  Append an item; truncated to the internal width.
+
+   Icon_Size : constant U64 := 16;
+   procedure Set_Item_Icon
+     (W : in out Listview; I : Positive;
+      Icon : access constant Trinket.Images.Image);
+   --  Attach an icon to item I (1-based). The first attachment
+   --  flips every row to icon height; the list borrows the
+   --  image.
 
    function Item_Count (W : Listview) return Natural;
 
@@ -59,6 +72,7 @@ private
    type Item_Rec is record
       Text : Item_String;
       Len  : Natural;
+      Icon : access constant Trinket.Images.Image := null;
    end record;
    type Item_Array is array (1 .. Max_Items) of Item_Rec;
 
@@ -67,6 +81,7 @@ private
       N         : Natural := 0;
       Sel       : Natural := 0;  --  1-based, 0 = none
       Top       : U64 := 0;
+      Has_Icons : Boolean := False;
       On_Change : Selected_Callback := null;
    end record;
 

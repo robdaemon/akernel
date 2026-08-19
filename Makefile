@@ -63,6 +63,10 @@ CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_
 #  Build the runtime once before any userspace crate.
 RTS_GPR := userspace/gnat-rts/runtime_build.gpr
 RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
+#  The library must track its SOURCES too: depending on the gpr
+#  alone left adalib/ stale after vendored-runtime edits (the m64
+#  adaint.c __gnat_rename patch silently never linked).
+RTS_SRCS := $(shell find userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
 .PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
 
@@ -73,7 +77,7 @@ kernel:
 
 userspace: $(CRATES)
 
-$(RTS_LIB): $(RTS_GPR)
+$(RTS_LIB): $(RTS_GPR) $(RTS_SRCS)
 	alr exec -- gprbuild -P $(RTS_GPR)
 
 $(CRATES): | $(RTS_LIB)
@@ -136,6 +140,11 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 	python3 tools/gen_images.py $(INITRD_OUT)/img; \
 	for f in bars keyed grad32 trunc; do \
 	  mcopy -i $@@@1048576 $(INITRD_OUT)/img/$$f.bmp "::Tests/Img/$$(printf '%s' $$f | tr a-z A-Z).BMP"; done; \
+	for f in checker cpp2 bad; do \
+	  mcopy -i $@@@1048576 assets/tests/$$f.xpm "::Tests/Img/$$(printf '%s' $$f | tr a-z A-Z).XPM"; done; \
+	mmd -i $@@@1048576 ::System/Icons; \
+	for f in defdraw deffile deftool; do \
+	  mcopy -i $@@@1048576 assets/icons/$$f.xpm "::System/Icons/$$(printf '%s' $$f | tr a-z A-Z).XPM"; done; \
 	mmd -i $@@@1048576 ::Libs; \
 	for c in $(DISK_CRATES_LIBS); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \

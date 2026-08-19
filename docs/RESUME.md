@@ -1,3 +1,29 @@
+MILESTONE 64 SHIPPED: Fileman actions + deficons + XPM.
+Trinket.Images.Xpm joins Bmp behind Load (XPM3 subset, cpp 1-2,
+c None/#RRGGBB/#RGB; None arms the color key in the DECODER).
+Widgets gains Input (focus-gated string gadget; Group.On_Key
+walks children in REVERSE add order) and MUI-weighted Group
+layout; Listview carries per-item icons (rows 8->18 with icons).
+Fileman loads System/Icons deficons, picks drawer/file/tool per
+entry (ELF magic sniff), and does Open/Parent/Rename/Copy To/
+New Drawer/Delete/Quit via Ada.Directories — all live-verified.
+Two runtime-level bugs flushed: (1) EMPTY-DIR STAT POISON —
+fat32 Stat rejected dirs and Gloss's 53c Read_Dir(P,0) probe
+fails for EMPTY ones, so a-direct Start_Search raised Use_Error
+and truncated every listing at a fresh drawer (the m63 "Copy
+can't open" burn was this); fixed on the wire: Op_Stat answers
+dirs with word 4 = is_dir (IPC.md updated; w4 hygiene in
+fileserver/procfs), Stat_Ex grew Is_Dir. (2) NEWLIB _rename_r
+is link()+unlink() with _link stubbed, so a-direct Rename could
+never work; vendored adaint.c __gnat_rename now calls the Gloss
+_rename hook directly. Trap: the RTS make rule tracked only its
+gpr — adalib went stale and the adaint patch silently never
+linked; RTS_LIB now depends on the vendored sources. Harness
+note: the terminal garbles output under fast QMP typing
+(artifact, not fs state) — ground truth is dd+mtools on the
+host image. Suites green SMP1+SMP4 997 PASS, failures=0, fsck
+clean, qemu self-exits 0. Full burn list in docs/NEXT.md under
+MILESTONE 64. Before that:
 MILESTONE 63 SHIPPED: Trinket images, datatypes-style.
 Trinket.Images.Load sniffs magic and dispatches to decoder
 children (Bmp: BI_RGB 24/32-bit, bottom-up + top-down, fully

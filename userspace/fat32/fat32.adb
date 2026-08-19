@@ -1523,8 +1523,18 @@ procedure Fat32 is
                           Dir_Sector, Dir_Off, Parent, Parent_Last,
                           Comp_First, F1, F2, F3, F4)
          then
-            if Is_Dir then
-               Reply2 (Status_Bad_Args, 0);  --  no dir stat/open
+            --  Milestone 64: Stat ANSWERS directories (size 0,
+            --  word 4 = 1) — the old blanket rejection made every
+            --  stat of an EMPTY directory fail (Gloss's Read_Dir
+            --  probe only reaches non-empty dirs), which made
+            --  Ada.Directories.Start_Search flag the entry with
+            --  Attr_Error_Code and Get_Next_Entry raise Use_Error,
+            --  truncating listings at freshly created drawers.
+            --  Open still rejects them (no byte stream).
+            if Is_Dir
+              and then Syscalls.Message.Label = Op_Open
+            then
+               Reply2 (Status_Bad_Args, 0);  --  no dir open
             else
                --  Milestone 59: words 2/3 carry the write
                --  date/time (FAT encodings) for List.
@@ -1532,7 +1542,10 @@ procedure Fat32 is
                   Syscalls.Message.Words (2) := LE16 (Dir_Off + 24);
                   Syscalls.Message.Words (3) := LE16 (Dir_Off + 22);
                end if;
-               Reply2 (Status_Ok, Entry_Size);
+               Syscalls.Message.Words (4) :=
+                 (if Is_Dir then 1 else 0);
+               Reply2
+                 (Status_Ok, (if Is_Dir then 0 else Entry_Size));
             end if;
          else
             Reply2 (Status_Not_Found, 0);

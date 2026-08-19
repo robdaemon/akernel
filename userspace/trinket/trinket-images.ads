@@ -2,21 +2,27 @@ with System;
 
 --  Trinket images (milestone 63): Amiga datatypes-style pluggable
 --  picture decoding. Load sniffs the format and dispatches to a
---  decoder child package (Bmp today; Xpm/ILBM slot in as sibling
---  decoders without touching this API). Decoded pixels are chunky
+--  decoder child package (Bmp and Xpm today; ILBM slots in as
+--  a sibling without touching this API). Decoded pixels are chunky
 --  AARRGGBB, same layout as surfaces, so Blit is a clipped span
 --  copy into any Canvas.
 --
 --  Transparency is color-key (Workbench mask lineage): an image
---  with Has_Key skips pixels equal to Key during Blit. Loaders
---  leave Has_Key False — the CLIENT sets the key (BMP carries no
---  mask; 32-bit alpha bytes are preserved but never blended).
+--  with Has_Key skips pixels equal to Key during Blit. BMP
+--  loaders leave Has_Key False — the CLIENT sets the key (BMP
+--  carries no mask; 32-bit alpha bytes are preserved but never
+--  blended). XPM carries transparency on disk: its decoder sets
+--  Has_Key/Key := 0 when any pixel is keyed "None".
 package Trinket.Images is
 
    type Status is (Ok, IO_Error, Unsupported, Malformed);
    --  Unsupported: no decoder claims the bytes. Malformed: a
    --  decoder claimed them and the file failed bounds/consistency
    --  checks. IO_Error: stat/open/read/close failed.
+
+   Max_Dimension : constant U64 := 1024;
+   --  Shared decoder guard: reject absurd dimensions before they
+   --  can size an allocation.
 
    type Pixel_Data is array (U64 range <>) of Pixel;
    type Pixel_Access is access Pixel_Data;

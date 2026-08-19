@@ -247,7 +247,9 @@ Op_Set_Name = 0  init -> server: (sentinel, length, name[32]) with
                  lists cap at 32 — caps ride the name push since
                  milestone 38b), one per boot file, pushed right
                  after spawn, then a zero-word no-cap terminator
-Op_Stat     = 1  words = name[48] -> (status, size)
+Op_Stat     = 1  words = name[48] -> (status, size, w2/w3 stamp,
+                 w4 is_dir); directories answer (Ok, 0, stamp, 1)
+                 — Open still rejects them (no byte stream)
 Op_Open     = 2  words = name[48] -> (status, size); client then
                  allocates/maps its read buffer (memory object)
 Op_Read     = 3  (offset, length, name[32]) + buffer memory cap in
@@ -396,7 +398,12 @@ a0 = seconds and a1 = nanoseconds since the Unix epoch, both 0 when
 no RTC ticks. Ungated and read-only. Op_Stat replies define words
 2/3 as the dirent write stamp in FAT encodings (date: year-1980 in
 bits 9..15, month 5..8, day 0..4; time: hour 11..15, minute 5..10,
-second/2 0..4); volumes without timestamps answer 0/0.
+second/2 0..4); volumes without timestamps answer 0/0. Word 4 is
+the is-dir flag (milestone 64): 1 when the path names a directory,
+else 0; Stat on a directory succeeds (size 0) so that stat of an
+EMPTY drawer works — the old blanket rejection made empty dirs
+un-stat-able, which poisoned Ada.Directories searches (truncated
+listings at freshly created drawers).
 
 Device names are `<prefix><unit>` with the unit an UNPADDED decimal
 0..99 — `RD0`, `WD0`, `PD0`..`PD9`, `PD10`..`PD99`, `BD0`..`BD99`;
