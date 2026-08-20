@@ -12,9 +12,20 @@ The previous full resume is archived at `docs/HISTORY.md`.
   `docs/trinket/`; Ravenscar tasking runtime design under
   `docs/runtime/tasking.md`.
 
+## Active
+
+**Milestone 66 — kernel thread primitives** (see
+`docs/runtime/tasking.md`).
+
+- Add `Thread_Create`, `Thread_Exit`, `Thread_Self` syscalls.
+- Move to per-thread IPC buffers (initial thread keeps the legacy
+  `0x6FFF_0000` VA; secondary threads supply a memory cap + VA).
+- Set `tp` from a syscall argument so each task can have TLS.
+- Add a minimal userspace thread test before touching Ada tasking.
+
 ## Open candidates
 
-Pick one to start next:
+Pick one after M66:
 
 1. **Proc:self / client identity through the VFS** — let a filesystem
    server know which process is calling (badge or process id on every
@@ -30,8 +41,6 @@ Pick one to start next:
 6. **Background pipelines** — extend shell `run` to chains with `|`
    and `PIPE:`.
 7. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
-8. **Ravenscar tasking runtime** — implement the design in
-   `docs/runtime/tasking.md`.
 
 ## Working rules
 
