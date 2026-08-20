@@ -654,6 +654,12 @@ thread_exit() (syscall 37)
   cleaned up.
 thread_self() -> thread id (syscall 38)
   Returns the stable kernel thread id of the current thread.
+sleep_until(deadline) -> 0/1 (syscall 39)
+  Blocks the calling thread until the riscv `time` CSR reaches
+  `deadline` (mtime ticks, same units as `rdtime`). The kernel
+  keeps a sorted sleep queue and programs the CLINT timer for the
+  earliest pending deadline, while still preserving the 20 Hz
+  quantum tick when no sleeps are due.
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks

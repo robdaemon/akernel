@@ -13,6 +13,7 @@ package Kernel.Tasks is
       Blocked_Receive,
       Blocked_IRQ,
       Blocked_Notification,
+      Blocked_Sleeping,
       Dead);
 
    type Process_State is
@@ -185,6 +186,15 @@ package Kernel.Tasks is
    procedure Set_Boosted
      (TCB     : in out Thread_Control_Block;
       Boosted : Boolean);
+
+   --  Absolute deadline stored when the thread enters the kernel
+   --  sleep queue (milestone 66b).
+   procedure Set_Sleep_Deadline
+     (TCB      : in out Thread_Control_Block;
+      Deadline : Kernel.Capabilities.U64);
+
+   function Sleep_Deadline
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
    procedure Set_State
      (TCB       : in out Thread_Control_Block;
@@ -369,6 +379,7 @@ private
       Queued           : Boolean;
       Boosted          : Boolean;
       Priority         : Thread_Priority;
+      Sleep_Deadline   : Kernel.Capabilities.U64;
       Bound_Ntfn       : System.Address;
       Recv_EP          : System.Address;
       Debug_Line       : String (1 .. Debug_Line_Max);

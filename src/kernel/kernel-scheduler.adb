@@ -1,8 +1,10 @@
+with Arch.SBI;
 with Kernel.CPUs;
 
 package body Kernel.Scheduler is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
+   use type U64;
 
    type Queue_Index is range 0 .. Max_Tasks - 1;
 
@@ -15,6 +17,13 @@ package body Kernel.Scheduler is
    Queue : array (Queue_Index) of Kernel.Tasks.Thread_Access :=
      (others => null);
    Count : Natural range 0 .. Max_Tasks := 0;
+
+   --  Sleep queue: sorted by ascending deadline.  A thread appears
+   --  here only while its state is Blocked_Sleeping.
+   type Sleep_Index is range 0 .. 319;
+   Sleep_Queue : array (Sleep_Index) of Kernel.Tasks.Thread_Access :=
+     (others => null);
+   Sleep_Count : Natural range 0 .. Max_Tasks := 0;
 
    --  Per-hart running thread (SMP).  One global ready queue feeds
    --  all harts; threads migrate freely.  All state is protected by
@@ -124,6 +133,51 @@ package body Kernel.Scheduler is
 
       Result := Ok;
    end Push;
+
+   --  Insert a thread into the sleep queue keeping ascending-deadline
+   --  order.  Caller must have already set the thread's sleep deadline
+   --  and verified Sleep_Count < Max_Tasks.
+   procedure Insert_Sleeper (TCB : Kernel.Tasks.Thread_Access) is
+      Deadline : constant U64 := Kernel.Tasks.Sleep_Deadline (TCB.all);
+      Pos      : Natural := Sleep_Count;
+   begin
+      for I in 0 .. Sleep_Count - 1 loop
+         if Sleep_Queue (Sleep_Index (I)) /= null
+           and then Kernel.Tasks.Sleep_Deadline (Sleep_Queue (Sleep_Index (I)).all)
+                      > Deadline
+         then
+            Pos := I;
+            exit;
+         end if;
+      end loop;
+
+      for I in reverse Pos + 1 .. Sleep_Count loop
+         Sleep_Queue (Sleep_Index (I)) := Sleep_Queue (Sleep_Index (I - 1));
+      end loop;
+      Sleep_Queue (Sleep_Index (Pos)) := TCB;
+      Sleep_Count := Sleep_Count + 1;
+   end Insert_Sleeper;
+
+   --  Remove a thread from the sleep queue if present.  Safe to call
+   --  when the thread is not sleeping.
+   procedure Remove_Sleeper (TCB : Kernel.Tasks.Thread_Access) is
+      Found : Boolean := False;
+   begin
+      for I in 0 .. Sleep_Count - 1 loop
+         if not Found then
+            if Sleep_Queue (Sleep_Index (I)) = TCB then
+               Found := True;
+            end if;
+         else
+            Sleep_Queue (Sleep_Index (I - 1)) := Sleep_Queue (Sleep_Index (I));
+         end if;
+      end loop;
+
+      if Found then
+         Sleep_Count := Sleep_Count - 1;
+         Sleep_Queue (Sleep_Index (Sleep_Count)) := null;
+      end if;
+   end Remove_Sleeper;
 
    procedure Pop
      (TCB    : out Kernel.Tasks.Thread_Access;
@@ -335,10 +389,81 @@ package body Kernel.Scheduler is
          return;
       end if;
 
+      if Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Blocked_Sleeping then
+         Remove_Sleeper (TCB);
+      end if;
+
       Kernel.Tasks.Set_State (TCB.all, Kernel.Tasks.Ready);
       Kernel.Tasks.Set_Boosted (TCB.all, True);
       Push (TCB, Result, Boost => True);
    end Wake;
+
+   procedure Sleep_Until
+     (Deadline : U64;
+      Result   : out Status)
+   is
+      Cur : constant Kernel.Tasks.Thread_Access := My_Current;
+      Now : constant U64 := Arch.SBI.Time;
+   begin
+      if Cur = null then
+         Result := No_Current_Task;
+         return;
+      end if;
+
+      --  Past or equal deadlines return synchronously (Ada semantics
+      --  for delay until a time already reached).
+      if Deadline <= Now then
+         Result := Ok;
+         return;
+      end if;
+
+      if Sleep_Count = Max_Tasks then
+         Result := Queue_Full;
+         return;
+      end if;
+
+      Kernel.Tasks.Set_Sleep_Deadline (Cur.all, Deadline);
+      Insert_Sleeper (Cur);
+      Arch.SBI.Set_Timer (Next_Timer_Deadline (Now));
+      Block_Current (Kernel.Tasks.Blocked_Sleeping, Result);
+   end Sleep_Until;
+
+   procedure Check_Sleepers
+     (Now           : U64;
+      Next_Deadline : out U64)
+   is
+      TCB : Kernel.Tasks.Thread_Access;
+      Wake_Result : Status;
+   begin
+      while Sleep_Count > 0 loop
+         TCB := Sleep_Queue (Sleep_Index'First);
+         exit when TCB = null
+           or else Kernel.Tasks.Sleep_Deadline (TCB.all) > Now;
+
+         Remove_Sleeper (TCB);
+         --  The thread may already have been woken by another path
+         --  (e.g., a signal); Wake is a no-op for Ready/Running.
+         Wake (TCB, Wake_Result);
+      end loop;
+
+      if Sleep_Count = 0 then
+         Next_Deadline := U64'Last;
+      else
+         TCB := Sleep_Queue (Sleep_Index'First);
+         if TCB = null then
+            Next_Deadline := U64'Last;
+         else
+            Next_Deadline := Kernel.Tasks.Sleep_Deadline (TCB.all);
+         end if;
+      end if;
+   end Check_Sleepers;
+
+   function Next_Timer_Deadline (Now : U64) return U64 is
+      Next_Sleep : U64;
+   begin
+      Check_Sleepers (Now, Next_Sleep);
+      return U64'Min (Now + Quantum_Interval, Next_Sleep);
+   end Next_Timer_Deadline;
 
    procedure Remove_Thread
      (TCB    : Kernel.Tasks.Thread_Access;
@@ -357,6 +482,10 @@ package body Kernel.Scheduler is
             Current_TCBS (CPU) := null;
          end if;
       end loop;
+
+      --  A dying or forcibly removed thread must leave the sleep queue
+      --  too, otherwise it could be woken after its resources are gone.
+      Remove_Sleeper (TCB);
 
       for R in 0 .. Count - 1 loop
          Cand := Queue (Queue_Index (R));

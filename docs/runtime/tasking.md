@@ -34,7 +34,7 @@ before program exit.
 | `Thread_Exit` | terminate the current thread; when the last thread exits the process exits |
 | `Thread_Self` | return a stable thread id for `Ada.Task_Identification.Current_Task` |
 | `Thread_Wait` / `Thread_Reap` | join a thread, mirroring `Reap_Process` |
-| `Sleep_Until` | block the calling thread until an absolute `Ada.Real_Time.Time`; kernel maintains a sleep queue and programs the timer |
+| `Sleep_Until` | block the calling thread until an absolute `Ada.Real_Time.Time`; kernel maintains a sleep queue and programs the timer (done) |
 | `Mutex_Create` / `Mutex_Lock` / `Mutex_Unlock` | kernel mutex with FIFO wait queue (for the RTS global lock and protected objects) |
 | `Cond_Wait` / `Cond_Signal` | condition variable, or reuse notification objects per wait |
 | per-thread IPC buffer | each thread needs its own 4 KiB message page; today `0x6FFF_0000` is per-process |

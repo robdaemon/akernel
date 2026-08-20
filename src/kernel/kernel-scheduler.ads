@@ -1,8 +1,16 @@
+with Interfaces;
 with Kernel.Tasks;
 
 package Kernel.Scheduler is
    --  128 process slots + secondary threads + IRQ tasks + margin.
    Max_Tasks : constant := 320;
+
+   subtype U64 is Interfaces.Unsigned_64;
+
+   --  Preemptive round-robin quantum: 20 Hz.  The timer interrupt
+   --  fires at most this often, but will fire earlier when a sleep
+   --  deadline is sooner.
+   Quantum_Interval : constant U64 := 500_000;
 
    type Status is
      (Ok,
@@ -46,4 +54,21 @@ package Kernel.Scheduler is
    function Should_Preempt return Boolean;
 
    function Ready_Count return Natural;
+
+   --  Sleep queue (milestone 66b).  Deadline is an absolute time in
+   --  the same units as Arch.SBI.Time (mtime ticks).  A deadline in
+   --  the past returns immediately without blocking.
+   procedure Sleep_Until
+     (Deadline : U64;
+      Result   : out Status);
+
+   --  Wake any threads whose deadline has passed.  Returns the
+   --  earliest still-pending deadline, or U64'Last when empty.
+   procedure Check_Sleepers
+     (Now           : U64;
+      Next_Deadline : out U64);
+
+   --  Convenience for timer reprogramming: earliest of the next
+   --  quantum tick and the next sleep deadline.
+   function Next_Timer_Deadline (Now : U64) return U64;
 end Kernel.Scheduler;

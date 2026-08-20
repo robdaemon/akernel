@@ -17,11 +17,12 @@ The previous full resume is archived at `docs/HISTORY.md`.
 **Milestone 66 — kernel thread primitives** (see
 `docs/runtime/tasking.md`).
 
-- Add `Thread_Create`, `Thread_Exit`, `Thread_Self` syscalls.
-- Move to per-thread IPC buffers (initial thread keeps the legacy
+- [x] Add `Thread_Create`, `Thread_Exit`, `Thread_Self` syscalls.
+- [x] `Sleep_Until` syscall + kernel sleep queue + timer programming.
+- [ ] Move to per-thread IPC buffers (initial thread keeps the legacy
   `0x6FFF_0000` VA; secondary threads supply a memory cap + VA).
-- Set `tp` from a syscall argument so each task can have TLS.
-- Add a minimal userspace thread test before touching Ada tasking.
+- [ ] Set `tp` from a syscall argument so each task can have TLS.
+- [ ] Add a minimal userspace thread test before touching Ada tasking.
 
 ## Open candidates
 

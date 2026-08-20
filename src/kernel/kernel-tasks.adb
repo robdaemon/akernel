@@ -341,6 +341,21 @@ package body Kernel.Tasks is
       TCB.Boosted := Boosted;
    end Set_Boosted;
 
+   procedure Set_Sleep_Deadline
+     (TCB      : in out Thread_Control_Block;
+      Deadline : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.Sleep_Deadline := Deadline;
+   end Set_Sleep_Deadline;
+
+   function Sleep_Deadline
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.Sleep_Deadline;
+   end Sleep_Deadline;
+
    procedure Set_State
      (TCB       : in out Thread_Control_Block;
       New_State : Thread_State)

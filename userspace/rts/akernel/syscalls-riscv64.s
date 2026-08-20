@@ -333,3 +333,11 @@ akernel_sys_thread_self:
     ecall
     ret
 .size akernel_sys_thread_self, . - akernel_sys_thread_self
+
+.global akernel_sys_sleep_until
+.type akernel_sys_sleep_until, @function
+akernel_sys_sleep_until:
+    li a7, 39
+    ecall
+    ret
+.size akernel_sys_sleep_until, . - akernel_sys_sleep_until

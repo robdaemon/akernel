@@ -34,8 +34,6 @@ package body Arch.Traps is
    use type Kernel.Tasks.Thread_Access;
    use type System.Address;
 
-   Timer_Ticks_Per_Second : constant U64 := 10_000_000;
-   Timer_Interval        : constant U64 := Timer_Ticks_Per_Second / 20;
    Interrupt_Bit         : constant U64 := 16#8000_0000_0000_0000#;
    Sstatus_SPP           : constant U64 := 16#100#;  --  trap from S-mode
    User_Ecall            : constant U64 := 8;
@@ -92,6 +90,7 @@ package body Arch.Traps is
    Sys_Thread_Create     : constant U64 := 36;
    Sys_Thread_Exit     : constant U64 := 37;
    Sys_Thread_Self       : constant U64 := 38;
+   Sys_Sleep_Until       : constant U64 := 39;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -330,7 +329,8 @@ package body Arch.Traps is
          --  sleep here: this is the per-hart main stack, never a
          --  resumable thread's kernel stack.
          Poll_Pending_Interrupts;
-         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+         Arch.SBI.Set_Timer
+           (Kernel.Scheduler.Next_Timer_Deadline (Arch.SBI.Time));
          Kernel.Lock.Release;
          Arch.SBI.Wait_For_Interrupt;
          Kernel.Lock.Acquire;
@@ -1107,6 +1107,35 @@ package body Arch.Traps is
       Trap_Frame_Set_A0
         (Frame, U64 (Kernel.Processes.Thread_Self (Current)));
    end Handle_Thread_Self;
+
+   procedure Handle_Sleep_Until (Frame : System.Address) is
+      Current  : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Deadline : constant U64 := Trap_Frame_Get_A0 (Frame);
+      Sleep_Result : Kernel.Scheduler.Status;
+      Sched_Result : Kernel.Scheduler.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      --  Past deadlines return immediately; otherwise block until
+      --  the timer interrupt wakes us.
+      if Deadline <= Arch.SBI.Time then
+         Trap_Frame_Set_A0 (Frame, 0);
+         Advance_SEPC (Frame);
+         return;
+      end if;
+
+      Advance_SEPC (Frame);
+      --  Preset the resume result: success (a0 = 0).  This value
+      --  is copied into the saved context before the thread blocks.
+      Trap_Frame_Set_A0 (Frame, 0);
+      Save_Current_Context (Frame);
+      Kernel.Scheduler.Sleep_Until (Deadline, Sleep_Result);
+      Schedule_Saved_Context (Frame, Sched_Result);
+   end Handle_Sleep_Until;
 
    procedure Handle_EP_Create (Frame : System.Address) is
       use type Kernel.Capabilities.Status;
@@ -2488,6 +2517,9 @@ package body Arch.Traps is
          return;
       elsif Number = Sys_Thread_Self then
          Handle_Thread_Self (Frame);
+      elsif Number = Sys_Sleep_Until then
+         Handle_Sleep_Until (Frame);
+         return;
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;
@@ -2542,7 +2574,8 @@ package body Arch.Traps is
       elsif (Cause and Interrupt_Bit) /= 0
         and then Code = Supervisor_Timer
       then
-         Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+         Arch.SBI.Set_Timer
+           (Kernel.Scheduler.Next_Timer_Deadline (Arch.SBI.Time));
          Tick_Count := Tick_Count + 1;
          if Tick_Count = 1 then
             Board.UART.Put_Line ("timer interrupt online");
@@ -2640,7 +2673,8 @@ package body Arch.Traps is
       Board.UART.Put ("hart ");
       Board.UART.Put_Decimal (Natural (Self));
       Board.UART.Put_Line (" online");
-      Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+      Arch.SBI.Set_Timer
+        (Kernel.Scheduler.Next_Timer_Deadline (Arch.SBI.Time));
       Arch.SBI.Enable_Timer_And_Software_SIE;
       Arch.SBI.Enable_User_Counters;
       Idle_Loop;
@@ -2648,7 +2682,8 @@ package body Arch.Traps is
 
    procedure Initialize is
    begin
-      Arch.SBI.Set_Timer (Arch.SBI.Time + Timer_Interval);
+      Arch.SBI.Set_Timer
+        (Kernel.Scheduler.Next_Timer_Deadline (Arch.SBI.Time));
       Arch.SBI.Enable_Timer_Interrupts;
       Arch.SBI.Enable_External_Interrupts;
       Arch.SBI.Enable_Software_Interrupts;

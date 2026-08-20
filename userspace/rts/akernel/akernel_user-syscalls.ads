@@ -168,7 +168,8 @@ package Akernel_User.Syscalls is
    --  id (0 = kernel-started, stable after the spawner exits);
    --  2 lifecycle (0 initializing, 1 alive, 2 dead); 3 thread
    --  state (0 ready, 1 running, 2 blocked-send, 3 blocked-recv,
-   --  4 blocked-irq, 5 blocked-notification, 6 dead); 4 open cap
+   --  4 blocked-irq, 5 blocked-notification, 6 blocked-sleeping,
+   --  7 dead); 4 open cap
    --  count; 5 flags (bit0 awaiting reply, bit1 reply wanted,
    --  bit2 wakeup-boosted, bit3 ready-queued); 6 receive endpoint
    --  object address (0 = none); 7 badge of the last Call;
@@ -225,6 +226,12 @@ package Akernel_User.Syscalls is
    function Thread_Create return U64;
    procedure Thread_Exit;
    function Thread_Self return U64;
+
+   --  Sleep_Until (syscall 39): blocks the calling thread until the
+   --  riscv time CSR reaches Deadline (mtime ticks, i.e. the same
+   --  units as Read_Time). Returns 0 on normal wakeup, 1 on failure.
+   function Read_Time return U64;
+   function Sleep_Until (Deadline : U64) return U64;
 
    --  Cap_Info (syscall 31): one cap-table slot of a process,
    --  64-byte record into a caller-owned memory object. Authority:

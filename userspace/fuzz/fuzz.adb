@@ -1797,7 +1797,7 @@ begin
          if Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
                        A1 => U64 (Slot), A2 => Info_Cap) = 0
          then
-            if Page (2) > 2 or else Page (3) > 6 then
+            if Page (2) > 2 or else Page (3) > 7 then
                States_Ok := False;
             end if;
             for J in 0 .. Live_Slots - 1 loop
@@ -4921,6 +4921,25 @@ begin
       Ignore := Cap_Delete (Info_Cap);
    end;
 
+   --  Milestone 66b: Sleep_Until sanity check.  Deadline is in
+   --  mtime ticks (10 kHz on qemu virt); sleep 1 ms and verify we
+   --  actually waited.  A past deadline returns immediately.
+   declare
+      use Akernel_User.Syscalls;
+      T0       : constant U64 := Read_Time;
+      Deadline : constant U64 := T0 + 10_000;
+      R        : U64;
+      T1       : U64;
+   begin
+      R := Sleep_Until (Deadline);
+      T1 := Read_Time;
+      Check (R = 0, "sleep_until returns ok");
+      Check (T1 >= Deadline, "sleep_until waits until deadline");
+
+      R := Sleep_Until (T0);  --  past deadline
+      Check (R = 0, "sleep_until past returns ok");
+   end;
+
    --  Random phase: every syscall except exit (9) and the blocking
    --  set.  Spawn's image
    --  cap forced to 0 so no spawn can succeed.  debug_putchar bytes
@@ -4932,7 +4951,8 @@ begin
       end if;
 
       --  Skip exit (9), the blocking IPC trio (12-14), ntfn_wait
-      --  (19), cap_delete (26), cap_mint (28) and ipc_send (29):
+      --  (19), cap_delete (26), cap_mint (28), ipc_send (29) and
+      --  sleep_until (39):
       --  a random call/recv/wait/send with no peer or no pending
       --  bits would block this thread forever, a random delete
       --  could close this process's granted caps (console, fs) out
@@ -4948,6 +4968,7 @@ begin
         and then Number /= Sys_Cap_Delete
         and then Number /= 28
         and then Number /= 29
+        and then Number /= 39
       then
          A0 := Arg_Value;
          A1 := Arg_Value;
