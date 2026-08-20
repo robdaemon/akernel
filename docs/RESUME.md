@@ -16,7 +16,7 @@ failures=0, fsck clean, qemu self-exits 0. Burns: inserting
 a new manifest token shifted every hardcoded Fuzz handle —
 Constants Must Be Centralized. Also, `Boot_Cap` is not mapped
 in non-init processes, so do not call it from spawned clients.
-Full burn list in docs/NEXT.md under MILESTONE 65. Before that:
+Full burn list is in the milestone commit and archived docs/NEXT.md under MILESTONE 65. Before that:
 
 MILESTONE 64 SHIPPED: Fileman actions + deficons + XPM.
 Trinket.Images.Xpm joins Bmp behind Load (XPM3 subset, cpp 1-2,
@@ -42,7 +42,7 @@ linked; RTS_LIB now depends on the vendored sources. Harness
 note: the terminal garbles output under fast QMP typing
 (artifact, not fs state) — ground truth is dd+mtools on the
 host image. Suites green SMP1+SMP4 997 PASS, failures=0, fsck
-clean, qemu self-exits 0. Full burn list in docs/NEXT.md under
+clean, qemu self-exits 0. Full burn list is in the milestone commit and archived docs/NEXT.md under
 MILESTONE 64. Before that:
 MILESTONE 63 SHIPPED: Trinket images, datatypes-style.
 Trinket.Images.Load sniffs magic and dispatches to decoder
@@ -57,8 +57,7 @@ Files.Bind is MANUAL (unbound = client-side Bad_Args posing as
 a mount race); client error labels lie (Copy named the source,
 the DEST create failed — probe with Type); the Makefile has no
 600 s timeout anymore — gate runs want timeout 1000, and
-timestamped control+m63 runs both took 571 s. Full burn list in
-docs/NEXT.md under MILESTONE 63. Before that:
+timestamped control+m63 runs both took 571 s. Full burn list is in the milestone commit and archived docs/NEXT.md under MILESTONE 63. Before that:
 MILESTONE 62 SHIPPED: true scheduler priorities. Amiga range
 -128..127 per thread (default 0); the global ready queue pops
 best-first (priority, boosted, FIFO — all-0 is byte-identical to
@@ -70,8 +69,7 @@ Process_Info word 8 + Proc: priority line; shell `pri <job> <n>`.
 Suites green SMP1+SMP4 972 PASS, failures=0, fsck clean, qemu
 self-exits 0. Burn of the milestone: the wakeup boost is
 POSITIONAL — consume it at pop or a boosted yield-poll starves
-every child (22 deterministic reap timeouts). Full burn list in
-docs/NEXT.md under MILESTONE 62. Before that:
+every child (22 deterministic reap timeouts). Full burn list is in the milestone commit and archived docs/NEXT.md under MILESTONE 62. Before that:
 MILESTONE 61 FOLLOWUP SHIPPED: menus on every GUI app.
 The Op_Set_Menus wire packing moved into
 Trinket.Menus.Serialize so raw-protocol clients share it;
@@ -99,8 +97,7 @@ guard (guard first, rename in a declare); Max_Win=4 was
 silently full at boot (now 6); the 600 s suite timeout trips
 under ambient host load — control-run the unchanged tree
 before bisecting. Suites green SMP1+SMP4 949 PASS,
-failures=0, fsck clean, kernel self-resets. Full burn list in
-docs/NEXT.md under MILESTONE 61. Before that: MILESTONE 60:
+failures=0, fsck clean, kernel self-resets. Full burn list is in the milestone commit and archived docs/NEXT.md under MILESTONE 61. Before that: MILESTONE 60:
 Amiga-style command history in the
 TERMINAL (CON: analog — history is line discipline, never the
 shell): 32-entry ring, cursor Up/Down recall by injecting BS x
@@ -111,8 +108,7 @@ PgUp/PgDn/Home/End. Fixed a latent m57 bug: virtio_input's nav
 table used PC set-1 scancodes but qemu virtio-keyboard speaks
 LINUX keycodes (KEY_UP=103) — nav keys never worked from a real
 keyboard. Suites green SMP1 949 / SMP4 948 PASS, failures=0,
-fsck clean, kernel self-resets. Full burn list in docs/NEXT.md
-under MILESTONE 60. Before that: MILESTONE 59 (00e996e) —
+fsck clean, kernel self-resets. Full burn list is in the milestone commit and archived docs/NEXT.md under MILESTONE 60. Before that: MILESTONE 59 (00e996e) —
 RTC/clock group: Sys_Read_Clock=34 (goldfish RTC, a0=secs
 a1=nanos since epoch, ungated read-only), real wall time in
 gettimeofday/Ada.Calendar/FAT dirent stamps (Op_Stat words
@@ -228,7 +224,7 @@ CURRENT SESSION STATE (58 SHIPPED):
   reply-cap duplication.
 - 47 shipped reply-cap duplication; 46 Amiga pipes; 45
   elevation.
-- BURNS logged in NEXT.md: kernel REJECTS write-only Mem_Map
+- BURNS logged in the git history: kernel REJECTS write-only Mem_Map
   ((Flags and 3) = 2) — RW windows ask Flags 3; silent-reply-1
   failure paths need a Debug_Put_Line; a failing multi-edit
   call rolls back ALL edits; make all -j races the shared RTS
@@ -247,7 +243,7 @@ CURRENT SESSION STATE (58 SHIPPED):
   qemu exits 0 (self-poweroff) on both.
 
 Open candidates — milestones 41-63 COMPLETE. Next: 64 TBD; the
-deferred list (docs/NEXT.md): Proc:self (needs client
+deferred list (archived docs/NEXT.md): Proc:self (needs client
 identity through the VFS), register fast path (probe IPC
 cost first), custom GNAT runtime (tasking), virtio-net,
 MSI-X, script interpreter,
@@ -300,7 +296,7 @@ make test = suite), 3fa4074 + f667fb0
 dir creation, additive Path). Before that:
 MILESTONE 57 (e9cfe2f) — window protocol
 v4 pointer capture, Scrollbar, Text_Edit,
-Edit app. 881/880 PASS. 53-56 in NEXT.md.
+Edit app. 881/880 PASS. 53-56 in the git history.
 Before that: MILESTONE 52 — shell
 job control (run/jobs/wait; Done jobs
 keep exit codes until wait claims;
@@ -351,14 +347,14 @@ MILESTONE 41 COMPLETE — 41c
 data commands (Join/Search/Sort/List) with
 idempotent fuzz end-to-end tests. 500 PASS
 SMP1+SMP4 on both image sources, failures=0,
-fsck clean pre/post suite. Burns in NEXT.md
+fsck clean pre/post suite. Burns in the git history
 (41c entry). Before that: MILESTONE 41b — Sys:C/ session
 commands (Set/Get/Unset/Assign/Echo/Which/Version/
 Fault), shell thins to help/exit +
 CLI.Resolve_Command, fuzz Run_Command end-to-end
 tests, Files.Write lazy shared buffer, and a
 host-less tools/mkdisk.py that passes fsck.fat AND
-sgdisk -v (four layout burns logged in NEXT.md:
+sgdisk -v (four layout burns logged in the git history:
 BPB field-width shift, dot-entry overwrite, LFN
 terminator, backup GPT). 423 PASS SMP1+SMP4 on
 both image sources, failures=0, fsck clean
@@ -617,7 +613,7 @@ overflowed it (store fault at stack_base - 8); init now gets
 4 stack pages like spawned processes, big buffers
 library-level.
 
-Working rules burned in (details in NEXT.md):
+Working rules burned in (details in the milestone commits and archived docs/NEXT.md):
 - Commit per milestone; docs current-state only.
 - Fuzz tests must be idempotent across reused disk images;
   validate driver writes with host fsck.fat on the extracted
