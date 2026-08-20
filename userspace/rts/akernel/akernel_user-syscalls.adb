@@ -171,6 +171,18 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_set_priority";
 
+   function Raw_Thread_Create return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_create";
+
+   procedure Raw_Thread_Exit
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_exit";
+
+   function Raw_Thread_Self return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_self";
+
    function Raw_Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;
@@ -418,6 +430,52 @@ package body Akernel_User.Syscalls is
       Old_Priority := Integer (To_I64 (Old_Bits));
       return Status;
    end Set_Priority;
+
+   procedure Thread_Create_Write_Params (Params : Thread_Create_Params) is
+      use System.Storage_Elements;
+
+      type Param_Block is record
+         Stack_VA      : U64;
+         Stack_Pages   : U64;
+         Entry_PC      : U64;
+         Arg           : U64;
+         TLS_Base      : U64;
+         Priority_Bits : U64;
+         Stack_Cap     : U64;
+         IPC_Cap       : U64;
+         IPC_VA        : U64;
+      end record;
+
+      P : Param_Block
+        with Volatile, Address => System'To_Address
+          (Integer_Address (IPC_Buffer_VA) + Integer_Address (8));
+   begin
+      P :=
+        (Stack_VA      => Params.Stack_VA,
+         Stack_Pages   => Params.Stack_Pages,
+         Entry_PC      => Params.Entry_PC,
+         Arg           => Params.Arg,
+         TLS_Base      => Params.TLS_Base,
+         Priority_Bits => Params.Priority_Bits,
+         Stack_Cap     => Params.Stack_Cap,
+         IPC_Cap       => Params.IPC_Cap,
+         IPC_VA        => Params.IPC_VA);
+   end Thread_Create_Write_Params;
+
+   function Thread_Create return U64 is
+   begin
+      return Raw_Thread_Create;
+   end Thread_Create;
+
+   procedure Thread_Exit is
+   begin
+      Raw_Thread_Exit;
+   end Thread_Exit;
+
+   function Thread_Self return U64 is
+   begin
+      return Raw_Thread_Self;
+   end Thread_Self;
 
    function Mem_Map_File
      (Address_Space : U64;

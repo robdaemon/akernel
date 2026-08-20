@@ -41,6 +41,8 @@ package body Kernel.Objects is
       end if;
 
       case Cap.Kind is
+         when Kernel.Capabilities.Thread_Object =>
+            null;
          when Kernel.Capabilities.Endpoint_Object =>
             --  Receiver-side teardown permanently fails the endpoint
             --  so queued/current callers wake with

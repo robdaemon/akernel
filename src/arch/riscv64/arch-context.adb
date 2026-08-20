@@ -26,11 +26,15 @@ package body Arch.Context is
      (Context   : out Thread_Context;
       PC        : U64;
       Stack     : U64;
-      User_Satp : U64)
+      User_Satp : U64;
+      TLS_Base  : U64 := 0;
+      Arg       : U64 := 0)
    is
    begin
       Context.Trap_Frame := (others => 0);
       Context.Trap_Frame (1) := Stack; -- x2/sp
+      Context.Trap_Frame (Trap_Frame_TP_Index) := TLS_Base; -- x4/tp
+      Context.Trap_Frame (Trap_Frame_A0_Index) := Arg;        -- x10/a0
       Context.Trap_Frame (Trap_Frame_PC_Index) := PC;
       Context.Trap_Frame (Trap_Frame_Satp_Index) := User_Satp;
       Context.Is_Valid := True;

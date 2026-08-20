@@ -12,6 +12,7 @@ with Kernel.Scheduler;
 
 package body Kernel.Processes is
    use type Interfaces.Unsigned_64;
+   use type Interfaces.Integer_64;
    use type System.Address;
    use type Arch.MMU.Status;
    use type Kernel.Capabilities.Status;
@@ -23,21 +24,29 @@ package body Kernel.Processes is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
-   --  128 slots: room for real session workloads (windows,
-   --  editors, nested shells, test children). Slot alloc/reap is
-   --  O(1) via a free list — a linear Used-scan was fine at 32,
-   --  wrong shape at scale. One thread per process.
+   --  128 process slots, plus a separate thread table for
+   --  multi-threaded processes (Milestone 66). Each process has
+   --  one or more threads; threads share the process cap table.
    Max_Process_Slots : constant := 128;
+   Max_Thread_Slots  : constant := 256;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
+   type Thread_Index  is range 0 .. Max_Thread_Slots - 1;
    type Process_Slot_Array is array (Process_Index)
      of aliased Kernel.Tasks.Process_Control_Block;
-   type Thread_Slot_Array is array (Process_Index)
+   type Thread_Slot_Array is array (Thread_Index)
      of aliased Kernel.Tasks.Thread_Control_Block;
    type Slot_Used_Array is array (Process_Index) of Boolean;
+   type Thread_Used_Array is array (Thread_Index) of Boolean;
 
    Processes : Process_Slot_Array;
    Threads   : Thread_Slot_Array;
    Used      : Slot_Used_Array := (others => False);
+   Thread_Used : Thread_Used_Array := (others => False);
+
+   --  Per-process live thread count. A process stays alive as long
+   --  as any of its threads are alive.
+   Process_Thread_Count : array (Process_Index) of Natural :=
+     (others => 0);
 
    --  Sign-preserving narrowing for info snapshots (priority is
    --  signed; the wire word is raw bits).
@@ -55,6 +64,21 @@ package body Kernel.Processes is
    Free_Next : array (Process_Index) of Free_Index :=
      (others => Free_None);
    Free_Head : Free_Index := Free_None;
+
+   --  Free list over thread slots. Any free slot may hold a
+   --  secondary thread; initial threads are pinned to their process
+   --  slot index and freed by Discard_Slot.
+   Thread_Free_None : constant := -1;
+   type Thread_Free_Index is range Thread_Free_None
+     .. Max_Thread_Slots - 1;
+   Thread_Free_Next : array (Thread_Index) of Thread_Free_Index :=
+     (others => Thread_Free_None);
+   Thread_Free_Head : Thread_Free_Index := Thread_Free_None;
+
+   --  Unique thread ids for secondary threads (initial threads keep
+   --  their historical slot+4 values). Starts above any plausible
+   --  process slot id.
+   Next_Thread_Id : Kernel.Tasks.Thread_Id := 1024;
 
    --  Pid generations (milestone 51): pid = Generation * 256 +
    --  slot base, where the base (slot + 4 — pids 1..3 are the
@@ -118,6 +142,18 @@ package body Kernel.Processes is
          end if;
       end loop;
       Free_Head := Free_Index (Process_Index'First);
+
+      Thread_Used := (others => False);
+      for I in Thread_Index loop
+         if I = Thread_Index'Last then
+            Thread_Free_Next (I) := Thread_Free_None;
+         else
+            Thread_Free_Next (I) := Thread_Free_Index (I + 1);
+         end if;
+      end loop;
+      Thread_Free_Head := Thread_Free_Index (Thread_Index'First);
+      Process_Thread_Count := (others => 0);
+      Next_Thread_Id := 1024;
    end Initialize;
 
    --  Mint the parent's grant-list entries (in the parent's IPC
@@ -237,8 +273,9 @@ package body Kernel.Processes is
      (Slot       : Process_Index;
       Close_Caps : Boolean)
    is
+      Thread_Slot : constant Thread_Index := Thread_Index (Slot);
       Stack_Top  : constant U64 :=
-        Kernel.Tasks.Kernel_Stack_Top (Threads (Slot));
+        Kernel.Tasks.Kernel_Stack_Top (Threads (Thread_Slot));
       PMM_Result : Kernel.Physical_Memory.Status;
       Cap_Result : Kernel.Capabilities.Status;
    begin
@@ -246,15 +283,15 @@ package body Kernel.Processes is
          Kernel.Physical_Memory.Deallocate_Frame
            (Frame  => Stack_Top - Kernel.Physical_Memory.Page_Size,
             Result => PMM_Result);
-         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (Slot), 0);
+         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (Thread_Slot), 0);
       end if;
 
-      Kernel.Tasks.Set_State (Threads (Slot), Kernel.Tasks.Dead);
-      Kernel.Tasks.Set_Queued (Threads (Slot), False);
+      Kernel.Tasks.Set_State (Threads (Thread_Slot), Kernel.Tasks.Dead);
+      Kernel.Tasks.Set_Queued (Threads (Thread_Slot), False);
       if Close_Caps then
          for Cap in Kernel.Capabilities.Handle loop
             Kernel.Tasks.Close_Cap
-              (Threads (Slot)'Unchecked_Access, Cap, Cap_Result,
+              (Threads (Thread_Slot)'Unchecked_Access, Cap, Cap_Result,
                Thread_Dying => True);
          end loop;
       else
@@ -263,6 +300,10 @@ package body Kernel.Processes is
       Kernel.Tasks.Set_Process_State
         (PCB       => Processes (Slot),
          New_State => Kernel.Tasks.Process_Dead);
+      if Thread_Used (Thread_Slot) then
+         Thread_Used (Thread_Slot) := False;
+      end if;
+      Process_Thread_Count (Slot) := 0;
       if Used (Slot) then
          Used (Slot) := False;
          Free_Next (Slot) := Free_Head;
@@ -283,6 +324,7 @@ package body Kernel.Processes is
       Cap_Result   : Kernel.Capabilities.Status;
       Sched_Result : Kernel.Scheduler.Status;
       Slot         : Process_Index := Process_Index'First;
+      Thread_Slot  : Thread_Index := Thread_Index'First;
       New_Process_Id : Kernel.Tasks.Process_Id;
       New_Thread_Id  : Kernel.Tasks.Thread_Id;
       Root               : U64 := 0;
@@ -444,6 +486,7 @@ package body Kernel.Processes is
       Slot_Generation (Slot) :=
         (Slot_Generation (Slot) + 1) mod Generation_Wrap;
       New_Thread_Id := Kernel.Tasks.Thread_Id (Natural (Slot) + 4);
+      Thread_Slot := Thread_Index (Slot);
       Kernel.Tasks.Initialize_Process (Processes (Slot), New_Process_Id);
       Kernel.Tasks.Set_Spawner_Id
         (Processes (Slot),
@@ -459,17 +502,20 @@ package body Kernel.Processes is
       end if;
 
       Kernel.Tasks.Initialize_Thread
-        (TCB     => Threads (Slot),
+        (TCB     => Threads (Thread_Slot),
          Id      => New_Thread_Id,
          Process => Processes (Slot)'Unchecked_Access);
       Kernel.Tasks.Set_Kernel_Stack_Top
-        (TCB       => Threads (Slot),
+        (TCB       => Threads (Thread_Slot),
          Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
       Kernel.Tasks.Set_IPC_Buffer
-        (TCB      => Threads (Slot),
-         Phys_PA => IPC_Buffer_Frame);
+        (TCB      => Threads (Thread_Slot),
+         Phys_PA  => IPC_Buffer_Frame);
+      Kernel.Tasks.Set_IPC_Buffer_VA
+        (TCB     => Threads (Thread_Slot),
+         User_VA => Kernel.Tasks.IPC_Buffer_VA);
       Kernel.Tasks.Initialize_Context
-        (TCB       => Threads (Slot),
+        (TCB       => Threads (Thread_Slot),
          PC        => Start_PC,
          Stack     => Stack_Top,
          User_Satp => Arch.MMU.Satp_Value (Root));
@@ -480,7 +526,6 @@ package body Kernel.Processes is
          Destroy_Address_Space (Root);
          return;
       end if;
-
 
       Kernel.Tasks.Set_Process_State
         (PCB       => Processes (Slot),
@@ -504,7 +549,7 @@ package body Kernel.Processes is
       end if;
 
       Kernel.Scheduler.Add_Task
-        (TCB    => Threads (Slot)'Unchecked_Access,
+        (TCB    => Threads (Thread_Slot)'Unchecked_Access,
          Result => Sched_Result);
 
       if Sched_Result /= Kernel.Scheduler.Ok then
@@ -516,6 +561,8 @@ package body Kernel.Processes is
          return;
       end if;
 
+      Thread_Used (Thread_Slot) := True;
+      Process_Thread_Count (Slot) := 1;
       Used (Slot) := True;
       Free_Head := Free_Next (Slot);
       Result := Ok;
@@ -602,6 +649,28 @@ package body Kernel.Processes is
       Spawn_Image (Parent, Image, Grant_Count, Result, Process_Cap);
    end Spawn_Boot_Image;
 
+   --  Map a live process pointer back to its slot index.
+   function Process_Slot_Of
+     (Process : Kernel.Tasks.Process_Access) return Process_Index
+   is
+   begin
+      if Process = null then
+         return Process_Index'First;
+      end if;
+      for I in Process_Index loop
+         if Processes (I)'Address = Process.all'Address then
+            return I;
+         end if;
+      end loop;
+      return Process_Index'First;
+   end Process_Slot_Of;
+
+   --  The initial thread of a process lives in the thread table at
+   --  the same index as its process slot.
+   function Initial_Thread_Slot
+     (Slot : Process_Index) return Thread_Index
+   is (Thread_Index (Natural (Slot)));
+
    --  Runs cleanup hooks and closes every cap in the owning process's
    --  table. Runs at exit and again at reap; closing each cap makes
    --  the second pass a no-op so refcounted objects are released
@@ -639,20 +708,450 @@ package body Kernel.Processes is
      (Thread : Kernel.Tasks.Thread_Access;
       Code   : Kernel.Capabilities.U64) is
       Process : Kernel.Tasks.Process_Access;
+      Slot    : Process_Index;
    begin
       if Thread = null then
          return;
       end if;
 
-      Cleanup_Cap_Refs (Thread);
       Process := Kernel.Tasks.Owning_Process (Thread.all);
-      if Process /= null then
-         Kernel.Tasks.Set_Exit_Code (Process.all, Code);
+      if Process = null then
+         return;
+      end if;
+
+      Slot := Process_Slot_Of (Process);
+      Kernel.Tasks.Set_Exit_Code (Process.all, Code);
+      Kernel.Tasks.Set_Process_State
+        (PCB       => Process.all,
+         New_State => Kernel.Tasks.Process_Dead);
+
+      --  Kill every thread of this process. The caller remains
+      --  current and will be removed by Scheduler.Exit_Current.
+      for T in Thread_Index loop
+         if Thread_Used (T)
+           and then Kernel.Tasks.Owning_Process (Threads (T)) = Process
+         then
+            declare
+               Top : constant U64 :=
+                 Kernel.Tasks.Kernel_Stack_Top (Threads (T));
+               PMM_Result : Kernel.Physical_Memory.Status;
+            begin
+               if Top /= 0 then
+                  Kernel.Physical_Memory.Deallocate_Frame
+                    (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+                     Result => PMM_Result);
+                  Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T), 0);
+               end if;
+            end;
+
+            Kernel.Tasks.Set_State (Threads (T), Kernel.Tasks.Dead);
+            Kernel.Tasks.Set_Queued (Threads (T), False);
+
+            if Threads (T)'Address /= Thread.all'Address then
+               declare
+                  Ignore : Kernel.Scheduler.Status;
+               begin
+                  Kernel.Scheduler.Remove_Thread
+                    (Threads (T)'Unchecked_Access, Ignore);
+               end;
+            end if;
+
+            Thread_Used (T) := False;
+            --  Initial slots are tied to their process slots; only
+            --  secondary slots go back to the thread free list.
+            if T >= Thread_Index (Max_Process_Slots) then
+               Thread_Free_Next (T) := Thread_Free_Head;
+               Thread_Free_Head := Thread_Free_Index (T);
+            end if;
+         end if;
+      end loop;
+
+      Process_Thread_Count (Slot) := 0;
+      Cleanup_Cap_Refs (Thread);
+   end Mark_Exited;
+
+   Thread_Cap_Rights : constant Kernel.Capabilities.Rights :=
+     (Read     => False,
+      Write    => False,
+      Execute  => False,
+      Map      => False,
+      Send     => False,
+      Receive  => False,
+      Wait     => True,
+      Ack      => False,
+      Transfer => False,
+      Manage   => True);
+
+   function Priority_From_Bits
+     (Bits : U64) return Kernel.Tasks.Thread_Priority
+   is
+      function To_I64 is new Ada.Unchecked_Conversion
+        (Source => U64, Target => Interfaces.Integer_64);
+      P       : constant Interfaces.Integer_64 := To_I64 (Bits);
+      Clamped : constant Interfaces.Integer_64 :=
+        Interfaces.Integer_64'Max
+          (-128, Interfaces.Integer_64'Min (127, P));
+   begin
+      return Kernel.Tasks.Thread_Priority (Clamped);
+   end Priority_From_Bits;
+
+   procedure Thread_Create
+     (Parent      : Kernel.Tasks.Thread_Access;
+      Thread_Cap  : out Kernel.Capabilities.Handle;
+      Result      : out Status)
+   is
+      use type Kernel.Capabilities.Object_Kind;
+
+      Current       : constant Kernel.Tasks.Thread_Access := Parent;
+      Process       : Kernel.Tasks.Process_Access;
+      P_Slot        : Process_Index;
+      T_Slot        : Thread_Index;
+      Stack_Cap     : Kernel.Capabilities.Handle;
+      IPC_Cap       : Kernel.Capabilities.Handle;
+      Stack_Info    : Kernel.Capabilities.Cap_Entry;
+      IPC_Info      : Kernel.Capabilities.Cap_Entry;
+      Cap_Result    : Kernel.Capabilities.Status;
+      MMU_Result    : Arch.MMU.Status;
+      PMM_Result    : Kernel.Physical_Memory.Status;
+      Sched_Result  : Kernel.Scheduler.Status;
+      KStack_Frame  : U64 := 0;
+      Stack_VA      : U64;
+      Stack_Pages   : U64;
+      Entry_PC      : U64;
+      Arg           : U64;
+      TLS_Base      : U64;
+      IPC_VA        : U64;
+      Priority_Bits : U64;
+      New_Priority  : Kernel.Tasks.Thread_Priority;
+      New_Thread_Id : Kernel.Tasks.Thread_Id;
+      New_Cap       : Kernel.Capabilities.Handle;
+
+      procedure Undo_Stack_Map (Mapped : U64)
+      is
+         Ignore : Arch.MMU.Status;
+      begin
+         for Page in U64 range 0 .. Mapped - 1 loop
+            Arch.MMU.Unmap_Borrowed_Page
+              (Root    => Kernel.Tasks.Address_Space_Root (Current.all),
+               Virtual => Stack_VA - (Stack_Pages - Page) *
+                 Arch.MMU.Page_Size,
+               Result  => Ignore);
+         end loop;
+      end Undo_Stack_Map;
+
+      function IPC_Word (Offset : U64) return U64 is
+         Cell : U64
+           with Address => System'To_Address
+             (System.Storage_Elements.Integer_Address
+               (Arch.Phys_To_Virt
+                  (Kernel.Tasks.IPC_Buffer_PA (Current.all)) + Offset));
+      begin
+         return Cell;
+      end IPC_Word;
+
+   begin
+      Thread_Cap := Kernel.Capabilities.Invalid_Handle;
+      Result := Invalid_Parent;
+
+      if Current = null then
+         return;
+      end if;
+
+      Process := Kernel.Tasks.Owning_Process (Current.all);
+      if Process = null then
+         return;
+      end if;
+      P_Slot := Process_Slot_Of (Process);
+      Result := No_Slot;
+
+      if Kernel.Tasks.IPC_Buffer_PA (Current.all) = 0 then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      --  Parameter block lives in the caller's IPC buffer.
+      Stack_VA      := IPC_Word (8);
+      Stack_Pages   := IPC_Word (16);
+      Entry_PC      := IPC_Word (24);
+      Arg           := IPC_Word (32);
+      TLS_Base      := IPC_Word (40);
+      Priority_Bits := IPC_Word (48);
+      Stack_Cap     := Kernel.Capabilities.Handle (IPC_Word (56));
+      IPC_Cap       := Kernel.Capabilities.Handle (IPC_Word (64));
+
+      New_Priority := Priority_From_Bits (Priority_Bits);
+
+      --  Basic VA sanity: user region [0x4000_0000, 0x8000_0000).
+      if Stack_VA mod Arch.MMU.Page_Size /= 0
+        or else Stack_VA < 16#4000_0000#
+        or else Stack_VA > 16#8000_0000#
+        or else Stack_Pages * Arch.MMU.Page_Size >
+          Stack_VA - 16#4000_0000#
+      then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      IPC_VA := IPC_Word (72);
+      if IPC_VA mod Arch.MMU.Page_Size /= 0
+        or else IPC_VA < 16#4000_0000#
+        or else IPC_VA > 16#8000_0000#
+      then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      --  Validate stack cap.
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Stack_Cap,
+         Result    => Cap_Result,
+         Out_Entry => Stack_Info);
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Stack_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not Stack_Info.Rights.Map
+        or else not Stack_Info.Rights.Read
+        or else not Stack_Info.Rights.Write
+        or else Stack_Pages = 0
+        or else Stack_Pages > Kernel.Memory.Page_Count (Stack_Info.Object)
+      then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      --  Validate IPC buffer cap.
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => IPC_Cap,
+         Result    => Cap_Result,
+         Out_Entry => IPC_Info);
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else IPC_Info.Kind /= Kernel.Capabilities.Memory_Object
+        or else not IPC_Info.Rights.Map
+        or else not IPC_Info.Rights.Read
+        or else not IPC_Info.Rights.Write
+        or else Kernel.Memory.Page_Count (IPC_Info.Object) < 1
+      then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      --  Reserve a kernel stack for the new thread.
+      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, KStack_Frame);
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         Result := Load_Failed;
+         return;
+      end if;
+
+      --  Reserve a secondary thread slot.
+      if Thread_Free_Head = Thread_Free_None then
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => KStack_Frame,
+            Result => PMM_Result);
+         return;
+      end if;
+      T_Slot := Thread_Index (Thread_Free_Head);
+      Thread_Free_Head := Thread_Free_Next (T_Slot);
+      Thread_Used (T_Slot) := True;
+
+      --  Map the user stack (descending from Stack_VA).
+      for Page in U64 range 0 .. Stack_Pages - 1 loop
+         Arch.MMU.Map_Page
+           (Root     => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual  => Stack_VA - (Stack_Pages - Page) *
+              Arch.MMU.Page_Size,
+            Physical => Kernel.Memory.Frame_At (Stack_Info.Object, Page),
+            Flags    => Arch.MMU.User_RWX,
+            Result   => MMU_Result);
+         if MMU_Result /= Arch.MMU.Ok then
+            Undo_Stack_Map (Page);
+            Thread_Used (T_Slot) := False;
+            Thread_Free_Next (T_Slot) := Thread_Free_Head;
+            Thread_Free_Head := Thread_Free_Index (T_Slot);
+            Kernel.Physical_Memory.Deallocate_Frame
+              (Frame  => KStack_Frame,
+               Result => PMM_Result);
+            Result := Load_Failed;
+            return;
+         end if;
+      end loop;
+
+      Arch.MMU.Map_Page
+        (Root     => Kernel.Tasks.Address_Space_Root (Current.all),
+         Virtual  => IPC_VA,
+         Physical => Kernel.Memory.Frame_At (IPC_Info.Object, 0),
+         Flags    => Arch.MMU.User_RW,
+         Result   => MMU_Result);
+      if MMU_Result /= Arch.MMU.Ok then
+         Undo_Stack_Map (Stack_Pages);
+         Thread_Used (T_Slot) := False;
+         Thread_Free_Next (T_Slot) := Thread_Free_Head;
+         Thread_Free_Head := Thread_Free_Index (T_Slot);
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => KStack_Frame,
+            Result => PMM_Result);
+         Result := Load_Failed;
+         return;
+      end if;
+
+      --  Build the thread.
+      New_Thread_Id := Next_Thread_Id;
+      Next_Thread_Id :=
+        Kernel.Tasks.Thread_Id (Natural (Next_Thread_Id) + 1);
+
+      Kernel.Tasks.Initialize_Thread
+        (TCB     => Threads (T_Slot),
+         Id      => New_Thread_Id,
+         Process => Process);
+      Kernel.Tasks.Set_Kernel_Stack_Top
+        (TCB       => Threads (T_Slot),
+         Stack_Top => KStack_Frame + Kernel.Physical_Memory.Page_Size);
+      Kernel.Tasks.Set_IPC_Buffer
+        (TCB     => Threads (T_Slot),
+         Phys_PA => Kernel.Memory.Frame_At (IPC_Info.Object, 0));
+      Kernel.Tasks.Set_IPC_Buffer_VA
+        (TCB     => Threads (T_Slot),
+         User_VA => IPC_VA);
+      Kernel.Tasks.Set_Priority
+        (TCB          => Threads (T_Slot),
+         New_Priority => New_Priority);
+      Kernel.Tasks.Initialize_Context
+        (TCB       => Threads (T_Slot),
+         PC        => Entry_PC,
+         Stack     => Stack_VA,
+         User_Satp => Arch.MMU.Satp_Value
+           (Kernel.Tasks.Process_Address_Space_Root (Process.all)),
+         TLS_Base  => TLS_Base,
+         Arg       => Arg);
+
+      --  Hand back a thread cap.
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.Thread_Object,
+         Object => Threads (T_Slot)'Address,
+         Rights => Thread_Cap_Rights,
+         Badge  => U64 (New_Thread_Id),
+         Result => Cap_Result,
+         Cap    => New_Cap);
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         Arch.MMU.Unmap_Borrowed_Page
+           (Root    => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual => IPC_VA,
+            Result  => MMU_Result);
+         Undo_Stack_Map (Stack_Pages);
+         Thread_Used (T_Slot) := False;
+         Thread_Free_Next (T_Slot) := Thread_Free_Head;
+         Thread_Free_Head := Thread_Free_Index (T_Slot);
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => KStack_Frame,
+            Result => PMM_Result);
+         Result := Cap_Failed;
+         return;
+      end if;
+
+      Kernel.Scheduler.Add_Task
+        (TCB    => Threads (T_Slot)'Unchecked_Access,
+         Result => Sched_Result);
+      if Sched_Result /= Kernel.Scheduler.Ok then
+         Kernel.Tasks.Close_Cap (Current, New_Cap, Cap_Result);
+         Arch.MMU.Unmap_Borrowed_Page
+           (Root    => Kernel.Tasks.Address_Space_Root (Current.all),
+            Virtual => IPC_VA,
+            Result  => MMU_Result);
+         Undo_Stack_Map (Stack_Pages);
+         Thread_Used (T_Slot) := False;
+         Thread_Free_Next (T_Slot) := Thread_Free_Head;
+         Thread_Free_Head := Thread_Free_Index (T_Slot);
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => KStack_Frame,
+            Result => PMM_Result);
+         Result := Scheduler_Failed;
+         return;
+      end if;
+
+      Process_Thread_Count (P_Slot) := Process_Thread_Count (P_Slot) + 1;
+      Thread_Cap := New_Cap;
+      Result := Ok;
+   end Thread_Create;
+
+   procedure Thread_Exit
+     (Thread : Kernel.Tasks.Thread_Access;
+      Result : out Status)
+   is
+      Process    : Kernel.Tasks.Process_Access;
+      P_Slot     : Process_Index;
+      T_Slot     : Thread_Index := Thread_Index'First;
+      Found      : Boolean := False;
+      PMM_Result : Kernel.Physical_Memory.Status;
+      Ignore     : Kernel.Scheduler.Status;
+      Top        : U64;
+   begin
+      Result := Invalid_Parent;
+      if Thread = null then
+         return;
+      end if;
+
+      Process := Kernel.Tasks.Owning_Process (Thread.all);
+      if Process = null then
+         return;
+      end if;
+      P_Slot := Process_Slot_Of (Process);
+
+      for T in Thread_Index loop
+         if Thread_Used (T)
+           and then Threads (T)'Address = Thread.all'Address
+         then
+            T_Slot := T;
+            Found := True;
+            exit;
+         end if;
+      end loop;
+
+      if not Found then
+         Result := Invalid_Program;
+         return;
+      end if;
+
+      --  Last thread takes the process down.
+      if Process_Thread_Count (P_Slot) = 1 then
+         Kernel.Tasks.Set_Exit_Code (Process.all, 0);
          Kernel.Tasks.Set_Process_State
            (PCB       => Process.all,
             New_State => Kernel.Tasks.Process_Dead);
+         Cleanup_Cap_Refs (Thread);
       end if;
-   end Mark_Exited;
+      Process_Thread_Count (P_Slot) := Process_Thread_Count (P_Slot) - 1;
+
+      Top := Kernel.Tasks.Kernel_Stack_Top (Threads (T_Slot));
+      if Top /= 0 then
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+            Result => PMM_Result);
+         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
+      end if;
+
+      Kernel.Tasks.Set_State (Threads (T_Slot), Kernel.Tasks.Dead);
+      Kernel.Tasks.Set_Queued (Threads (T_Slot), False);
+      Kernel.Scheduler.Remove_Thread
+        (Threads (T_Slot)'Unchecked_Access, Ignore);
+      Thread_Used (T_Slot) := False;
+      if T_Slot >= Thread_Index (Max_Process_Slots) then
+         Thread_Free_Next (T_Slot) := Thread_Free_Head;
+         Thread_Free_Head := Thread_Free_Index (T_Slot);
+      end if;
+      Result := Ok;
+   end Thread_Exit;
+
+   function Thread_Self
+     (Thread : Kernel.Tasks.Thread_Access)
+      return Kernel.Tasks.Thread_Id
+   is
+   begin
+      if Thread = null then
+         return 0;
+      end if;
+      return Kernel.Tasks.Id (Thread.all);
+   end Thread_Self;
 
    procedure Reap_Process
      (Parent      : Kernel.Tasks.Thread_Access;
@@ -704,7 +1203,8 @@ package body Kernel.Processes is
 
       if Kernel.Tasks.Lifecycle_State (Processes (Slot))
         /= Kernel.Tasks.Process_Dead
-        or else Kernel.Tasks.State (Threads (Slot)) /= Kernel.Tasks.Dead
+        or else Kernel.Tasks.State
+          (Threads (Initial_Thread_Slot (Slot))) /= Kernel.Tasks.Dead
       then
          Result := Not_Exited;
          return;
@@ -717,7 +1217,7 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Cleanup_Cap_Refs (Threads (Slot)'Unchecked_Access);
+      Cleanup_Cap_Refs (Threads (Initial_Thread_Slot (Slot))'Unchecked_Access);
       Destroy_Address_Space
         (Kernel.Tasks.Process_Address_Space_Root (Processes (Slot)));
       Kernel.Tasks.Set_Process_Address_Space_Root (Processes (Slot), 0);
@@ -774,9 +1274,11 @@ package body Kernel.Processes is
                       = Process_Object
          then
             Old_Priority :=
-              Kernel.Tasks.Priority (Threads (Process_Index (Slot)));
+              Kernel.Tasks.Priority
+                (Threads (Initial_Thread_Slot (Process_Index (Slot))));
             Kernel.Tasks.Set_Priority
-              (Threads (Process_Index (Slot)), New_Priority);
+              (Threads (Initial_Thread_Slot (Process_Index (Slot))),
+               New_Priority);
             Found := True;
             return;
          end if;
@@ -798,7 +1300,7 @@ package body Kernel.Processes is
       then
          Fill_Info
            (Processes (Process_Index (Slot)),
-            Threads (Process_Index (Slot)), Words);
+            Threads (Initial_Thread_Slot (Process_Index (Slot))), Words);
          Found := True;
       end if;
    end Read_Process_Info;
@@ -870,7 +1372,8 @@ package body Kernel.Processes is
         and then Used (Process_Index (Slot))
       then
          Fill_Cap_Info
-           (Threads (Process_Index (Slot)), Cap_Index, Words, Found);
+           (Threads (Initial_Thread_Slot (Process_Index (Slot))),
+            Cap_Index, Words, Found);
       end if;
    end Read_Cap_Info;
 
@@ -907,18 +1410,19 @@ package body Kernel.Processes is
          return;
       end if;
       Found := True;
-      State := Kernel.Tasks.State (Threads (Process_Index (Slot)));
+      State := Kernel.Tasks.State
+        (Threads (Initial_Thread_Slot (Process_Index (Slot))));
       if State = Kernel.Tasks.Ready
         or else State = Kernel.Tasks.Running
         or else not Kernel.Tasks.Has_Context
-          (Threads (Process_Index (Slot)))
+          (Threads (Initial_Thread_Slot (Process_Index (Slot))))
       then
          --  Live registers are not in the saved frame.
          Busy := True;
          return;
       end if;
       Kernel.Tasks.Read_Context_Words
-        (Threads (Process_Index (Slot)), Frame);
+        (Threads (Initial_Thread_Slot (Process_Index (Slot))), Frame);
       for I in Frame'Range loop
          Words (I) := Frame (I);
       end loop;

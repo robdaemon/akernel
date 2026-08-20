@@ -89,6 +89,9 @@ package body Arch.Traps is
    Sys_System_Reset      : constant U64 := 33;
    Sys_Read_Clock        : constant U64 := 34;
    Sys_Set_Priority      : constant U64 := 35;
+   Sys_Thread_Create     : constant U64 := 36;
+   Sys_Thread_Exit     : constant U64 := 37;
+   Sys_Thread_Self       : constant U64 := 38;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1051,6 +1054,59 @@ package body Arch.Traps is
 
       Schedule_Saved_Context (Frame, Scheduler_Result);
    end Handle_Exit;
+
+   procedure Handle_Thread_Create (Frame : System.Address) is
+      Current    : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      New_Cap    : Kernel.Capabilities.Handle;
+      Proc_Result : Kernel.Processes.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Processes.Thread_Create (Current, New_Cap, Proc_Result);
+      if Proc_Result = Kernel.Processes.Ok then
+         Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+      else
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+      end if;
+   end Handle_Thread_Create;
+
+   procedure Handle_Thread_Exit (Frame : System.Address) is
+      Current     : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Proc_Result : Kernel.Processes.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Flush_Debug_Line (Current);
+      Kernel.Processes.Thread_Exit (Current, Proc_Result);
+      if Proc_Result /= Kernel.Processes.Ok then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Schedule_Saved_Context (Frame, Scheduler_Result);
+   end Handle_Thread_Exit;
+
+   procedure Handle_Thread_Self (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 0);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0
+        (Frame, U64 (Kernel.Processes.Thread_Self (Current)));
+   end Handle_Thread_Self;
 
    procedure Handle_EP_Create (Frame : System.Address) is
       use type Kernel.Capabilities.Status;
@@ -2425,6 +2481,13 @@ package body Arch.Traps is
          end;
       elsif Number = Sys_Set_Priority then
          Handle_Set_Priority (Frame);
+      elsif Number = Sys_Thread_Create then
+         Handle_Thread_Create (Frame);
+      elsif Number = Sys_Thread_Exit then
+         Handle_Thread_Exit (Frame);
+         return;
+      elsif Number = Sys_Thread_Self then
+         Handle_Thread_Self (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

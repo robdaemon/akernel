@@ -205,6 +205,27 @@ package Akernel_User.Syscalls is
       New_Priority : Integer;
       Old_Priority : out Integer) return U64;
 
+   --  Threading primitives (Milestone 66).
+   --  Thread_Create: caller fills Thread_Create_Params and writes it
+   --  to the IPC buffer with Thread_Create_Write_Params; then calls
+   --  Thread_Create. Returns the new thread cap handle or Syscall_Failed.
+   type Thread_Create_Params is record
+      Stack_VA      : U64;
+      Stack_Pages   : U64;
+      Entry_PC      : U64;
+      Arg           : U64;
+      TLS_Base      : U64;
+      Priority_Bits : U64;
+      Stack_Cap     : U64;
+      IPC_Cap       : U64;
+      IPC_VA        : U64;
+   end record;
+
+   procedure Thread_Create_Write_Params (Params : Thread_Create_Params);
+   function Thread_Create return U64;
+   procedure Thread_Exit;
+   function Thread_Self return U64;
+
    --  Cap_Info (syscall 31): one cap-table slot of a process,
    --  64-byte record into a caller-owned memory object. Authority:
    --  Admin must be the admin Admin_Object cap with Manage

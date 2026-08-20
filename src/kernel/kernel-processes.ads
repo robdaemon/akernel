@@ -45,6 +45,36 @@ package Kernel.Processes is
      (Thread : Kernel.Tasks.Thread_Access;
       Code   : Kernel.Capabilities.U64);
 
+   --  Threading primitives (Milestone 66).
+   --  Thread_Create: create a new thread in the caller's process.
+   --  The caller writes a parameter block into its IPC buffer:
+   --    words(0) = stack top VA
+   --    words(1) = stack pages
+   --    words(2) = entry PC
+   --    words(3) = argument (passed in a0)
+   --    words(4) = TLS base
+   --    words(5) = priority (signed, raw bits)
+   --    caps(0)  = stack memory cap (Map+Read+Write)
+   --    caps(1)  = IPC buffer memory cap (Map+Read+Write)
+   --    caps(2,3) = 0
+   --  Returns the new thread cap handle (Thread_Object, Manage+Wait)
+   --  or U64'Last on failure.
+   procedure Thread_Create
+     (Parent      : Kernel.Tasks.Thread_Access;
+      Thread_Cap  : out Kernel.Capabilities.Handle;
+      Result      : out Status);
+
+   --  Thread_Exit: terminate the current thread. If it is the last
+   --  thread of the process, the process exits with code 0.
+   procedure Thread_Exit
+     (Thread : Kernel.Tasks.Thread_Access;
+      Result : out Status);
+
+   --  Thread_Self: stable kernel thread id for the current thread.
+   function Thread_Self
+     (Thread : Kernel.Tasks.Thread_Access)
+      return Kernel.Tasks.Thread_Id;
+
    --  Process introspection (milestone 37a): fixed-size binary
    --  snapshot of one process for the process_info syscall; the
    --  userspace caller renders it (kernel never formats text).

@@ -56,6 +56,7 @@ package body Kernel.Tasks is
       TCB.Process := Process;
       TCB.Kernel_Stack_Top := 0;
       TCB.IPC_Buffer := 0;
+      TCB.IPC_Buffer_User_VA := 0;
       TCB.Awaiting_Reply := False;
       TCB.Reply_Wanted   := False;
       TCB.Queue_Next := null;
@@ -256,18 +257,37 @@ package body Kernel.Tasks is
       return TCB.IPC_Buffer;
    end IPC_Buffer_PA;
 
+   procedure Set_IPC_Buffer_VA
+     (TCB     : in out Thread_Control_Block;
+      User_VA : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.IPC_Buffer_User_VA := User_VA;
+   end Set_IPC_Buffer_VA;
+
+   function IPC_Buffer_VA_Of
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.IPC_Buffer_User_VA;
+   end IPC_Buffer_VA_Of;
+
    procedure Initialize_Context
      (TCB       : in out Thread_Control_Block;
       PC        : Kernel.Capabilities.U64;
       Stack     : Kernel.Capabilities.U64;
-      User_Satp : Kernel.Capabilities.U64)
+      User_Satp : Kernel.Capabilities.U64;
+      TLS_Base  : Kernel.Capabilities.U64 := 0;
+      Arg       : Kernel.Capabilities.U64 := 0)
    is
    begin
       Arch.Context.Initialize_User
         (Context   => TCB.Context,
          PC        => PC,
          Stack     => Stack,
-         User_Satp => User_Satp);
+         User_Satp => User_Satp,
+         TLS_Base  => TLS_Base,
+         Arg       => Arg);
    end Initialize_Context;
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean is

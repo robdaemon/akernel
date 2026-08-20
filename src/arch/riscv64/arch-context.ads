@@ -23,7 +23,9 @@ package Arch.Context is
      (Context   : out Thread_Context;
       PC        : U64;
       Stack     : U64;
-      User_Satp : U64);
+      User_Satp : U64;
+      TLS_Base  : U64 := 0;
+      Arg       : U64 := 0);
 
    function Valid (Context : Thread_Context) return Boolean;
 
@@ -54,6 +56,7 @@ private
    Trap_Frame_Last_Index : constant := Trap_Frame_Word_Count - 1;
    Trap_Frame_A0_Index   : constant := 9;  --  x10
    Trap_Frame_A1_Index   : constant := 10; --  x11
+   Trap_Frame_TP_Index   : constant := 3;  --  x4
 
    type Trap_Frame_Word_Array is array
      (Natural range 0 .. Trap_Frame_Last_Index) of U64;

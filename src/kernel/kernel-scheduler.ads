@@ -1,8 +1,8 @@
 with Kernel.Tasks;
 
 package Kernel.Scheduler is
-   --  128 process slots (one task each) + IRQ tasks + margin.
-   Max_Tasks : constant := 144;
+   --  128 process slots + secondary threads + IRQ tasks + margin.
+   Max_Tasks : constant := 320;
 
    type Status is
      (Ok,

@@ -309,3 +309,27 @@ akernel_sys_set_priority:
     sd a1, 0(t0)
     ret
 .size akernel_sys_set_priority, . - akernel_sys_set_priority
+
+.global akernel_sys_thread_create
+.type akernel_sys_thread_create, @function
+akernel_sys_thread_create:
+    li a7, 36
+    ecall
+    ret
+.size akernel_sys_thread_create, . - akernel_sys_thread_create
+
+.global akernel_sys_thread_exit
+.type akernel_sys_thread_exit, @function
+akernel_sys_thread_exit:
+    li a7, 37
+    ecall
+    ret
+.size akernel_sys_thread_exit, . - akernel_sys_thread_exit
+
+.global akernel_sys_thread_self
+.type akernel_sys_thread_self, @function
+akernel_sys_thread_self:
+    li a7, 38
+    ecall
+    ret
+.size akernel_sys_thread_self, . - akernel_sys_thread_self

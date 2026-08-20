@@ -640,6 +640,20 @@ set_priority(target, request) -> a0 0/1, a1 old (syscall 35)
   Manage (the spawn/reap cap a parent holds over a child).
   request is signed and clamped to -128..127. Rejections (bad
   handle, wrong kind, no Manage, dead slot) answer 1.
+thread_create() -> thread cap handle or U64'Last (syscall 36)
+  Creates a new thread in the CALLING process. The caller fills
+  a parameter block in its IPC buffer first (words/caps layout in
+  Akernel_User.Syscalls.Thread_Create_Params). The kernel maps
+  the supplied stack + IPC-buffer memory-object pages into the
+  process address space, allocates a kernel stack, sets tp and
+  a0 from the parameters, and enqueues the thread. Returns a
+  Thread_Object cap (Wait+Manage) or U64'Last on any failure.
+thread_exit() (syscall 37)
+  Terminates the current thread. If this was the last thread of
+  the process, the process exits with code 0 and its caps are
+  cleaned up.
+thread_self() -> thread id (syscall 38)
+  Returns the stable kernel thread id of the current thread.
 ```
 
 A thread binds at most one notification to itself. IPC_Recv checks

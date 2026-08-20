@@ -128,11 +128,23 @@ package Kernel.Tasks is
    function IPC_Buffer_PA
      (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
+   --  Per-thread IPC buffer user VA (tasking). The initial thread of
+   --  each process keeps the legacy IPC_Buffer_VA constant; secondary
+   --  threads allocate their own page and the kernel records the VA.
+   procedure Set_IPC_Buffer_VA
+     (TCB     : in out Thread_Control_Block;
+      User_VA : Kernel.Capabilities.U64);
+
+   function IPC_Buffer_VA_Of
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
+
    procedure Initialize_Context
      (TCB       : in out Thread_Control_Block;
       PC        : Kernel.Capabilities.U64;
       Stack     : Kernel.Capabilities.U64;
-      User_Satp : Kernel.Capabilities.U64);
+      User_Satp : Kernel.Capabilities.U64;
+      TLS_Base  : Kernel.Capabilities.U64 := 0;
+      Arg       : Kernel.Capabilities.U64 := 0);
 
    function Has_Context (TCB : Thread_Control_Block) return Boolean;
 
@@ -348,6 +360,7 @@ private
       Process          : Process_Access;
       Kernel_Stack_Top : Kernel.Capabilities.U64;
       IPC_Buffer       : Kernel.Capabilities.U64;
+      IPC_Buffer_User_VA : Kernel.Capabilities.U64;
       Awaiting_Reply   : Boolean;
       Reply_Wanted     : Boolean;
       Queue_Next       : Thread_Access;
