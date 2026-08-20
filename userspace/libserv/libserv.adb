@@ -7,7 +7,9 @@ package body Libserv is
 
    procedure Run
      (On_Open  : access procedure;
-      Dispatch : Dispatch_Procedure)
+      Dispatch : Dispatch_Procedure;
+      Version  : U64 := 0;
+      Revision : U64 := 0)
    is
       use Syscalls;
 
@@ -25,8 +27,10 @@ package body Libserv is
 
       --  Send the service endpoint cap back to the client through the
       --  rendezvous endpoint. The client waits on handle 5 with Receive.
+      --  Words 0/1 advertise the library version/revision for the
+      --  manager's OpenLibrary version floor.
       Message.Label := 0;
-      Message.Words := (others => 0);
+      Message.Words := (0 => Version, 1 => Revision, others => 0);
       Message.Caps := (0 => Service_EP, others => 0);
       Message.Badge := 0;
 

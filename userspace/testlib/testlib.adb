@@ -6,5 +6,8 @@ with Testlib_Lib;
 
 procedure Testlib is
 begin
-   Libserv.Run (Testlib_Lib.On_Open'Access, Testlib_Lib.Dispatch'Access);
+   --  Testlib version 1.0.  The version floor is enforced by the
+   --  library manager (milestone 65).
+   Libserv.Run (Testlib_Lib.On_Open'Access, Testlib_Lib.Dispatch'Access,
+                Version => 1, Revision => 0);
 end Testlib;

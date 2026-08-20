@@ -30,11 +30,15 @@ package Libserv is
    --  Run the library server lifecycle:
    --  1. Read the rendezvous cap from handle 5.
    --  2. Create the service endpoint and send it back to the client.
+   --     The rendezvous message carries Version in word 0 and
+   --     Revision in word 1 (Amiga OpenLibrary version floor).
    --  3. Call On_Open (if non-null).
    --  4. Receive requests and dispatch them until the service endpoint
    --      is closed (Status = IPC_Endpoint_Gone) or Dispatch sets Shutdown.
    procedure Run
      (On_Open  : access procedure;
-      Dispatch : Dispatch_Procedure);
+      Dispatch : Dispatch_Procedure;
+      Version  : U64 := 0;
+      Revision : U64 := 0);
 
 end Libserv;

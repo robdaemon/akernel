@@ -36,5 +36,8 @@ package Device_Manager is
    --  missing image (logs and returns; Elevate then fails
    --  cleanly on the unanswered Call).
    Elevated_EP : Akernel_User.Syscalls.U64 := 0;
+   --  Library manager endpoint (milestone 65): Send side granted to
+   --  every spawned program so Open_Library can reach the manager.
+   Libman_EP : Akernel_User.Syscalls.U64 := 0;
    procedure Start_Elevated;
 end Device_Manager;

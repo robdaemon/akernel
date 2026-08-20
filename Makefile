@@ -34,6 +34,7 @@ VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 VIRTIO_GPU_ELF := bin/userspace/virtio_gpu.elf
+LIBMAN_ELF := bin/userspace/libman.elf
 BUREAU_ELF := bin/userspace/bureau.elf
 TERMINAL_ELF := bin/userspace/terminal.elf
 DEMO_ELF := bin/userspace/demo.elf
@@ -50,7 +51,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu
+INITRD_CRATES := init serial fuzz spin memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait
 DISK_CRATES_LIBS := testlib
@@ -66,7 +67,7 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  The library must track its SOURCES too: depending on the gpr
 #  alone left adalib/ stale after vendored-runtime edits (the m64
 #  adaint.c __gnat_rename patch silently never linked).
-RTS_SRCS := $(shell find userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
+RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
 .PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
 
@@ -189,6 +190,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Memstage $(MEMSTAGE_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Echo_Server $(ECHO_SERVER_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Teardown $(TEARDOWN_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
 		printf 'GENFILE f%s\n' $$i > $(INITRD_ROOT)/Tests/Gen/f$$i; \
@@ -196,8 +198,9 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	printf '%s\n' 'volume RD0 Initrd ci' > $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' "$$(date +%s)" > $(INITRD_ROOT)/System/Epoch
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 8 System/Libman console fs libman_server' >> $(INITRD_ROOT)/System/Manifest
 ifeq ($(INITRD_MODE),test)
-	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest

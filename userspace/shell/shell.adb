@@ -168,10 +168,11 @@ procedure Shell is
    --  Run Word as a child on this shell's channel: same console
    --  (Send, badge 0), fs and Bureau svc caps, a one-page
    --  argument string memory object at handle 4 (the Amiga
-   --  command-line analog; milestone 33a — always granted, an
+   --  command-line analog; milestone 33a - always granted, an
    --  empty page when Args is empty, so the handle layout stays
-   --  uniform) and the elevation service (Send) at handle 5
-   --  (milestone 45). When Out_Path/In_Path is nonempty the
+   --  uniform), the shared-library manager at handle 5
+   --  (milestone 65), and the elevation service (Send) at handle
+   --  6 (milestone 45). When Out_Path/In_Path is nonempty the
    --  args page gains the milestone-46b redirection trailer so
    --  the child's RTS routes console output / stdin through
    --  those fs paths. Returns the child process cap (0 on
@@ -1038,6 +1039,7 @@ procedure Shell is
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
    Akernel_User.Files.Bind (FS_EP);
+
    --  Allocate the files-package buffer up front: variable
    --  writes (Files.Write) need it even before any staging.
    declare

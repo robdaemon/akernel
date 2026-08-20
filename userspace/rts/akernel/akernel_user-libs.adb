@@ -13,8 +13,112 @@ package body Akernel_User.Libs is
 
    Stage_VA : constant U64 := 16#5A00_0000#;
    Args_VA  : constant U64 := 16#5A40_0000#;
+   Libman_Handle : constant U64 := 6;
+
+   Bound_Libman : U64 := 0;
 
    type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
+
+   --  Per-process open table: needed only so Close_Library knows
+   --  whether a handle was obtained through the shared manager or
+   --  by a private spawn.
+   Max_Open : constant := 16;
+   Max_Name : constant := 64;
+
+   type Open_Source is (From_Libman, From_Self);
+
+   type Open_Entry is record
+      Name_Len : Natural := 0;
+      Name     : String (1 .. Max_Name) := (others => Character'Val (0));
+      Cap      : U64 := 0;
+      Source   : Open_Source := From_Self;
+   end record;
+
+   Open_Table : array (1 .. Max_Open) of Open_Entry;
+
+   --  Manager request labels (must match userspace/libman).
+   Req_Open  : constant U64 := 1;
+   Req_Close : constant U64 := 2;
+
+   function Pack_Name_40 (S : String) return IPC_Word_Array is
+      W   : IPC_Word_Array := (others => 0);
+      Len : constant Natural := Natural'Min (S'Length, 40);
+   begin
+      for I in 1 .. Len loop
+         declare
+            Word_Idx : constant Natural := (I - 1) / 8;
+            Byte_Idx : constant Natural := (I - 1) mod 8;
+         begin
+            W (Word_Idx) := W (Word_Idx) or
+              (U64 (Character'Pos (S (S'First + I - 1))) *
+               U64 (2 ** (Byte_Idx * 8)));
+         end;
+      end loop;
+      return W;
+   end Pack_Name_40;
+
+   function Manager_Cap return U64 is
+   begin
+      if Bound_Libman /= 0 then
+         return Bound_Libman;
+      end if;
+      return Libman_Handle;
+   end Manager_Cap;
+
+   function Libman_Available return Boolean is
+      Probe : constant U64 :=
+        Cap_Mint (Manager_Cap, Right_Send + Right_Transfer, 0);
+      Result : U64;
+   begin
+      if Probe = Syscall_Failed then
+         return False;
+      end if;
+      Result := Cap_Delete (Probe);
+      return True;
+   end Libman_Available;
+
+   function Find_Entry (Cap : U64) return Natural is
+   begin
+      for I in Open_Table'Range loop
+         if Open_Table (I).Cap = Cap then
+            return I;
+         end if;
+      end loop;
+      return 0;
+   end Find_Entry;
+
+   function Add_Entry
+     (Name   : String;
+      Cap    : U64;
+      Source : Open_Source) return Boolean
+   is
+      Len : constant Natural := Natural'Min (Name'Length, Max_Name);
+   begin
+      for I in Open_Table'Range loop
+         if Open_Table (I).Cap = 0 then
+            Open_Table (I).Name_Len := Len;
+            if Len > 0 then
+               Open_Table (I).Name (1 .. Len) :=
+                 Name (Name'First .. Name'First + Len - 1);
+            end if;
+            Open_Table (I).Cap := Cap;
+            Open_Table (I).Source := Source;
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Add_Entry;
+
+   procedure Remove_Entry (Cap : U64) is
+   begin
+      for I in Open_Table'Range loop
+         if Open_Table (I).Cap = Cap then
+            Open_Table (I).Cap := 0;
+            Open_Table (I).Name_Len := 0;
+            return;
+         end if;
+      end loop;
+   end Remove_Entry;
 
    --  Stage a file from the file server into a fresh memory object
    --  suitable for spawning. Returns the memory-object cap or 0 on
@@ -99,15 +203,61 @@ package body Akernel_User.Libs is
       return Mem_Cap;
    end Make_Args_Cap;
 
-   ----------------
-   -- Open_Library --
-   ----------------
+   procedure Bind (Libman_Cap : U64) is
+   begin
+      Bound_Libman := Libman_Cap;
+   end Bind;
 
-   function Open_Library
+   function Open_Via_Libman
      (Name        : String;
-      Console_Cap : U64 := 1;
-      FS_Cap      : U64 := 2;
-      Bureau_Cap  : U64 := 3) return U64
+      Min_Version : U64) return U64
+   is
+      Status  : U64;
+      Service : U64;
+   begin
+      Message.Label := Req_Open;
+      Message.Words := Pack_Name_40 (Name);
+      Message.Words (5) := Min_Version;
+      Message.Caps := (others => 0);
+      Message.Badge := 0;
+
+      Status := IPC_Call (Manager_Cap);
+      if Status /= IPC_Ok or else Message.Label /= 1 then
+         return 0;
+      end if;
+
+      Service := Message.Caps (0);
+      if Service = 0 then
+         return 0;
+      end if;
+
+      if Add_Entry (Name, Service, From_Libman) then
+         return Service;
+      end if;
+
+      --  Table full: clean up and fail.
+      Status := Cap_Delete (Service);
+      return 0;
+   end Open_Via_Libman;
+
+   procedure Close_Via_Libman (Name : String) is
+      Status : U64;
+      Result : U64;
+   begin
+      Message.Label := Req_Close;
+      Message.Words := Pack_Name_40 (Name);
+      Message.Caps := (others => 0);
+      Message.Badge := 0;
+      Status := IPC_Call (Manager_Cap);
+      Result := Status;  --  ignore failures
+   end Close_Via_Libman;
+
+   function Open_Via_Self
+     (Name        : String;
+      Console_Cap : U64;
+      FS_Cap      : U64;
+      Bureau_Cap  : U64;
+      Min_Version : U64) return U64
    is
       Image      : U64;
       Rendezvous : U64;
@@ -117,10 +267,8 @@ package body Akernel_User.Libs is
       Status     : U64;
       Reply_H    : U64;
       Result     : U64;
-      FS_EP      : constant U64 := FS_Cap;
+      Version    : U64;
    begin
-      Files.Bind (FS_EP);
-
       Image := Stage (Name);
       if Image = 0 then
          return Invalid_Handle;
@@ -139,13 +287,8 @@ package body Akernel_User.Libs is
          return Invalid_Handle;
       end if;
 
-      --  Uniform ABI for the library server: console, fs, bureau,
-      --  empty args page, and the rendezvous cap at handle 5.
       Set_Grant (0, Console_Cap, Right_Send, 0);
       Set_Grant (1, FS_Cap, Right_Send, 0);
-      --  If the caller has no Bureau cap, reuse the console cap in
-      --  the bureau slot so the grant list stays valid. The library
-      --  reads its actual bureau handle only if it needs windows.
       Set_Grant (2,
                  (if Bureau_Cap /= 0 then Bureau_Cap else Console_Cap),
                  Right_Send, 0);
@@ -170,11 +313,15 @@ package body Akernel_User.Libs is
       end if;
 
       Service := Message.Caps (0);
-      if Service = 0 then
+      Version := Message.Words (0);
+      if Service = 0 or else Version < Min_Version then
          Result := Cap_Delete (Args_Cap);
          Result := Cap_Delete (Image);
          Result := Cap_Delete (Rendezvous);
          Result := Cap_Delete (Proc);
+         if Service /= 0 then
+            Result := Cap_Delete (Service);
+         end if;
          return Invalid_Handle;
       end if;
 
@@ -183,7 +330,47 @@ package body Akernel_User.Libs is
       Result := Cap_Delete (Rendezvous);
       Result := Cap_Delete (Proc);
 
-      return Service;
+      if Add_Entry (Name, Service, From_Self) then
+         return Service;
+      end if;
+      Result := Cap_Delete (Service);
+      return Invalid_Handle;
+   end Open_Via_Self;
+
+   ----------------
+   -- Open_Library --
+   ----------------
+
+   function Open_Library
+     (Name        : String;
+      Console_Cap : U64 := 1;
+      FS_Cap      : U64 := 2;
+      Bureau_Cap  : U64 := 3;
+      Min_Version : U64 := 0) return U64
+   is
+      Service : U64;
+      Result  : U64;
+   begin
+      Files.Bind (FS_Cap);
+
+      --  Prefer the shared library manager when available.
+      if Libman_Available then
+         Service := Open_Via_Libman (Name, Min_Version);
+         if Service /= 0 then
+            return Service;
+         end if;
+         --  If the manager is present but unreachable, fall back to
+         --  a private copy.  If the manager answered with a clean
+         --  failure (e.g. not found), we do NOT fall back.
+      end if;
+
+      Service := Open_Via_Self
+        (Name, Console_Cap, FS_Cap, Bureau_Cap, Min_Version);
+      if Service /= 0 then
+         return Service;
+      end if;
+
+      return Invalid_Handle;
    end Open_Library;
 
    -----------------
@@ -192,10 +379,19 @@ package body Akernel_User.Libs is
 
    procedure Close_Library (Cap : U64) is
       Result : U64;
+      Idx    : constant Natural := Find_Entry (Cap);
    begin
-      if Cap /= Invalid_Handle then
-         Result := Cap_Delete (Cap);
+      if Cap = Invalid_Handle then
+         return;
       end if;
+
+      if Idx /= 0 and then Open_Table (Idx).Source = From_Libman then
+         Close_Via_Libman
+           (Open_Table (Idx).Name (1 .. Open_Table (Idx).Name_Len));
+      end if;
+
+      Result := Cap_Delete (Cap);
+      Remove_Entry (Cap);
    end Close_Library;
 
 end Akernel_User.Libs;

@@ -203,9 +203,11 @@ procedure Fuzz is
    Reaped        : Boolean;
    Ignore        : U64;
 
-   --  Granted caps: ipc_test endpoint at handle 1, console Send cap
-   --  at handle 2, Tests/Echo_Server image cap at handle 3.
-   Console_EP : constant U64 := 2;
+   --  Granted caps: ipc_test=1, console=2, Tests/Echo_Server=3,
+   --  fs=4, System/Manifest=5, libman=6, part0=7, device_resource=8,
+   --  admin=9, elevated_svc=10.
+   Console_EP   : constant U64 := 2;
+   Elevated_Cap : constant U64 := 10;
 
    --  Helper: stage a C: command from disk and spawn it under the
    --  uniform ABI, exactly as the shell does.  Args is the
@@ -297,7 +299,7 @@ procedure Fuzz is
       --  uniform command ABI; fuzz's own copy rides the
       --  "elevated_svc" manifest token (handle 9).
       Akernel_User.Syscalls.Set_Grant
-        (4, 9, Akernel_User.Syscalls.Right_Send, 0);
+        (4, Elevated_Cap, Akernel_User.Syscalls.Right_Send, 0);
       Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 5, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
@@ -545,7 +547,7 @@ begin
    --  object the server maps into its own address space.
    declare
       FS_EP         : constant U64 := 4;  --  manifest grant order
-      Manifest_Cap  : constant U64 := 5;
+      Manifest_Cap  : constant U64 := 5;  --  System/Manifest token
       use type Interfaces.Unsigned_8;
       Buf           : array (0 .. 63) of Interfaces.Unsigned_8;
       Big_Buf       : array (0 .. 511) of Interfaces.Unsigned_8;
@@ -673,11 +675,11 @@ begin
       end;
       Check (Match, "blk volume unaligned read ok");
 
-      --  Partition query op (part0 token = handle 6, badge
+      --  Partition query op (part0 token = handle 7, badge
       --  16#1000#): slot 0 is the FAT32 partition at LBA 2048,
       --  122880 sectors; the image has exactly one partition.
       declare
-         Part_EP : constant U64 := 6;  --  manifest grant order
+         Part_EP : constant U64 := 7;  --  manifest grant order (part0)
       begin
          Check (Await_Volume ("PD0:disk"), "part volume appears");
          Akernel_User.Syscalls.Message.Label := 3;  --  part_query
@@ -1733,7 +1735,7 @@ begin
    --  naming this process, and must be the ONLY live child (the
    --  memstage child was reaped before this point).
    declare
-      Resource_Cap : constant U64 := 7;  --  manifest grant order
+      Resource_Cap : constant U64 := 8;  --  manifest grant order
       Info_VA      : constant U64 := 16#5020_0000#;
       type Info_Page is array (0 .. 511) of U64;
       Page : Info_Page
@@ -1826,7 +1828,7 @@ begin
    --  Admin_Object + Manage; capability possession IS the
    --  identity (no user model in the kernel).
    declare
-      Admin_Cap : constant U64 := 8;  --  manifest grant order
+      Admin_Cap : constant U64 := 9;  --  manifest grant order
       Admin_VA  : constant U64 := 16#5040_0000#;
       type Admin_Page is array (0 .. 511) of U64;
       APage : Admin_Page
@@ -1902,7 +1904,7 @@ begin
 
       --  Self cap walk: count of valid caps must equal the
       --  process_info cap count (two syscalls cross-checked).
-      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                         A1 => U64'Last, A2 => Admin_Buf) = 0,
              "process_info self for cap count");
       Cap_Total := 0;
@@ -1914,7 +1916,7 @@ begin
             Cap_Total := Cap_Total + 1;
          end if;
       end loop;
-      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                         A1 => U64'Last, A2 => Admin_Buf) = 0
              and then U64 (Cap_Total) = APage (4),
              "cap walk count matches process_info count");
@@ -1941,7 +1943,7 @@ begin
       --  Self pid via process_info, then the slot whose spawner
       --  is us and which is not our own slot: the echo child
       --  (only live child in this window).
-      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+      Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                         A1 => U64'Last, A2 => Admin_Buf) = 0,
              "process_info self for slot scan");
       Echo_Pid := 0;
@@ -1950,7 +1952,7 @@ begin
       begin
          for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
          loop
-            if Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+            if Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                           A1 => U64 (Slot), A2 => Admin_Buf) = 0
             then
                if APage (0) = Self_P then
@@ -2059,11 +2061,11 @@ begin
       NoMan_P  : U64;
       Calls_Ok : Boolean := True;
       Reaped_P : Boolean := False;
-      --  Manifest grant order: 7 = device_resource, 8 = admin
+      --  Manifest grant order: 8 = device_resource, 9 = admin
       --  (block-local names in sibling blocks; declared per the
       --  sibling-declare-block rule).
-      Pri_Resource : constant U64 := 7;
-      Pri_Admin    : constant U64 := 8;
+      Pri_Resource : constant U64 := 8;
+      Pri_Admin    : constant U64 := 9;
    begin
       Pri_Buf := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 1);
       Check (Pri_Buf /= U64'Last, "priority info buffer allocated");
@@ -3047,7 +3049,7 @@ begin
          for Slot in 0 ..
            Akernel_User.Syscalls.Process_Table_Slots - 1
          loop
-            if Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+            if Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                           A1 => U64 (Slot), A2 => Gen_Info) = 0
             then
                Pre (Slot) := GPage (0);
@@ -3071,7 +3073,7 @@ begin
          loop
             if Pre (Slot) = 0
               and then Raw_Ecall (Number => Sys_Process_Info,
-                                  A0 => 7, A1 => U64 (Slot),
+                                  A0 => 8, A1 => U64 (Slot),
                                   A2 => Gen_Info) = 0
             then
                New1 := New1 + 1;
@@ -3094,7 +3096,7 @@ begin
             Ignore := Raw_Ecall (Number => Sys_Yield);
          end loop;
          Check (G_Done, "generation first peer reaped");
-         Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 7,
+         Check (Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                            A1 => U64 (Slot1), A2 => Gen_Info) = 1,
                 "generation slot freed on reap");
 
@@ -3114,7 +3116,7 @@ begin
          loop
             if Pre (Slot) = 0
               and then Raw_Ecall (Number => Sys_Process_Info,
-                                  A0 => 7, A1 => U64 (Slot),
+                                  A0 => 8, A1 => U64 (Slot),
                                   A2 => Gen_Info) = 0
             then
                New2 := New2 + 1;
@@ -4753,7 +4755,8 @@ begin
       use type Akernel_User.Syscalls.U64;
 
       FS_Cap : constant U64 := 4;  --  fuzz manifest grant order
-      Device_Resource_Cap : constant U64 := 7;
+      Libman_Cap : constant U64 := 6;  --  shared-library manager
+      Device_Resource_Cap : constant U64 := 8;
 
       type Info_Page is array (0 .. 511) of U64;
       Info_Page_VA : constant U64 := 16#5900_0000#;
@@ -4828,13 +4831,25 @@ begin
       Check (Await_Volume ("Sys:Libs/Testlib"),
              "libs sys volume available");
 
+      --  Use the shared library manager (milestone 65); fall back
+      --  to a private spawn if it is unavailable.
+      Bind (Libman_Cap);
+
       --  Open non-existent library returns Invalid_Handle.
       Lib := Akernel_User.Libs.Open_Library
         ("Sys:Libs/NoSuch", Console_Cap, FS_Cap, Bureau_Cap);
       Check (Lib = Akernel_User.Libs.Invalid_Handle,
              "libs open missing returns invalid");
 
-      --  Open Testlib and call Uppercase.
+      --  Version floor: Testlib advertises version 1.  Requesting
+      --  version 2 must fail.
+      Lib := Akernel_User.Libs.Open_Library
+        ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap,
+         Min_Version => 2);
+      Check (Lib = Akernel_User.Libs.Invalid_Handle,
+             "libs version floor rejects low version");
+
+      --  Open Testlib (version floor 0) and call Uppercase.
       Lib := Akernel_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Check (Lib /= Akernel_User.Libs.Invalid_Handle,
@@ -4873,6 +4888,8 @@ begin
              "libs open call close no cap leak");
 
       --  Multiple clients can open the same library concurrently.
+      --  With the shared manager each open mints a distinct cap but
+      --  the underlying server is shared.
       Lib := Akernel_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Lib2 := Akernel_User.Libs.Open_Library
@@ -4880,11 +4897,20 @@ begin
       Check (Lib /= Invalid_Handle and then Lib2 /= Invalid_Handle
              and then Lib /= Lib2,
              "libs multiple opens return distinct caps");
-      Akernel_User.Libs.Close_Library (Lib);
-      Akernel_User.Libs.Close_Library (Lib2);
 
-      --  Closing the last service cap lets the server exit; a new
-      --  open spawns a fresh server and still works.
+      --  Calling through the first cap still works after closing the
+      --  second (ref-counting across opens).
+      Akernel_User.Libs.Close_Library (Lib2);
+      Message.Label := 1;
+      Message.Words := String_To_Words ("still");
+      Message.Caps := (others => 0);
+      Message.Badge := 0;
+      Status := IPC_Call (Lib);
+      Check (Status = IPC_Ok, "libs shared server survives partial close");
+      Akernel_User.Libs.Close_Library (Lib);
+
+      --  Closing the last cap lets the manager expunge the shared
+      --  server; a new open succeeds.
       Lib := Akernel_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Check (Lib /= Invalid_Handle,

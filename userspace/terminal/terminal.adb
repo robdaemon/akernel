@@ -517,7 +517,7 @@ procedure Terminal is
       --  (Send; a shell child is GUI only once it calls
       --  Surface_Create), 4 = an empty args page (the uniform
       --  layout — commands take their argument string there),
-      --  5 = the elevation service (Send; milestone 45).
+      --  5 = the elevation service (milestone 45).
       Args_Cap := Mem_Alloc (1);
       if Args_Cap = Syscall_Failed then
          Debug_Put_Line ("terminal shell args alloc failed");

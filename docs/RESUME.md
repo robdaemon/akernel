@@ -1,3 +1,23 @@
+MILESTONE 65 SHIPPED: Tier-1 library versioning + shared
+library manager. Added `userspace/libman` (`System/Libman`),
+a system-wide registry that loads each library once, enforces
+an Amiga-style `Min_Version` floor, mints per-client service
+caps, and expunges the server when the open count reaches zero.
+`Akernel_User.Libs` gained `Bind(Libman_Cap)` so programs opt
+into the manager; `Open_Library` falls back to a private spawn
+when no manager is bound. `Libserv` now advertises `Version`/
+`Revision` in the rendezvous reply (words 0/1). The fuzz
+harness binds the manager and exercises version-floor rejection,
+multi-open distinct caps, partial-close refcounting, and
+re-open after expunge. The manifest grew a `libman` token
+(handle 6 in the fuzz line) and the remaining Fuzz handle
+constants were realigned; suite green again SMP1+SMP4 with
+failures=0, fsck clean, qemu self-exits 0. Burns: inserting
+a new manifest token shifted every hardcoded Fuzz handle —
+Constants Must Be Centralized. Also, `Boot_Cap` is not mapped
+in non-init processes, so do not call it from spawned clients.
+Full burn list in docs/NEXT.md under MILESTONE 65. Before that:
+
 MILESTONE 64 SHIPPED: Fileman actions + deficons + XPM.
 Trinket.Images.Xpm joins Bmp behind Load (XPM3 subset, cpp 1-2,
 c None/#RRGGBB/#RGB; None arms the color key in the DECODER).

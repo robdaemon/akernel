@@ -3203,10 +3203,12 @@ C:/ENV: (36), uniform program ABI (31b), pointer events to clients
 (32/57), write-back cache + VIRTIO_BLK_F_FLUSH + block-layer sync
 (48), blocking pipes (49), clean shutdown (50), clock/RTC (59),
 scheduler priorities (62), Trinket images (63), Fileman actions
-+ deficons + XPM (64).
++ deficons + XPM (64), Tier-1 library versioning + shared
+library manager with reference-counted opens (65).
 
 Still open:
-- Tasking runtime (Ada tasks in userspace).
+- Tasking runtime (Ada tasks in userspace). Design started:
+  see `docs/runtime/tasking.md`; target Ravenscar profile first.
 - virtio-net (no network at all today).
 - Proc:self (needs client identity through the VFS).
 - Shell: background pipelines/redirection (m52: run takes one
@@ -3214,9 +3216,7 @@ Still open:
   Lab, Alias, Resident (m41; we have execute + failat).
 - Trinket: ILBM decoder (Xpm landed 64; BMP 63); fileman
   deficons could later ride per-file .info parsing.
-- Tier-1 library follow-ups: versioning (Amiga OpenLibrary
-  version floor), reference counting across opens. Tier-2
-  runtime code loading / dynamic linking deferred-not-rejected.
+- Tier-2 runtime code loading / dynamic linking deferred-not-rejected.
 - Block layer: device-level cache shared across fs drivers
   (write-back per-driver landed in 48).
 - Register fast path, >4 caps/msg (probe IPC cost first).

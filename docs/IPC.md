@@ -665,54 +665,71 @@ open and silences the source for all partners (the rng driver's
 poll-only design silently owned source 35 until the GPU landed on
 it; rng now drains + acks like every other driver).
 
-## Library rendezvous (milestone 58 Tier-1)
+## Library rendezvous (milestone 58 Tier-1 / 65 follow-up)
 
 Amiga-style shared libraries without runtime code loading or ELF
 relocations. A library is an ordinary server program; clients obtain
 its service endpoint cap and call it through normal IPC.
 
-### Wire convention
+Milestone 65 adds a shared-library manager (`System/Libman`).  The
+manager keeps a system-wide list of loaded libraries with Amiga-style
+version floors and open counts.  Each `Open_Library` either mints a
+new cap to an already-resident library server or loads and starts a
+fresh one; `Close_Library` decrements the reference count and lets the
+manager expunge the server when no clients remain.  If the manager is
+unavailable, `Open_Library` falls back to spawning a private copy of
+the library server.
 
-- Handle 5 in the uniform spawn ABI is reserved for the library
-  rendezvous/service endpoint. When a program is not a library
-  client this handle is simply empty.
-- Client opens a library:
-  1. Create a fresh endpoint (`EP_Create`). This is the rendezvous
-     cap.
-  2. Spawn `Sys:Libs/<Name>` with the rendezvous cap granted at
-     handle 5 with `Send + Receive + Transfer` rights.
-  3. Wait on the rendezvous endpoint with `IPC_Recv`.
-  4. The library, on startup, creates its own service endpoint and
-     sends it back to the client with a plain `Send` (no reply cap)
-     carrying the service cap in message cap slot 0.
-  5. The client installs the received cap as the library service
-     cap, deletes the rendezvous cap, and returns the service cap
-     from `Open_Library`.
-- Client closes a library:
-  - `Close_Library` deletes the service cap. The library server may
-    watch the cap close (endpoint teardown wakes any queued or
-    waiting callers with `endpoint gone`) and exit when no clients
-    remain. An explicit `Lib_Close` label may be sent first; the
-    minimal first version uses cap deletion only.
+### Uniform ABI handles
+
+- Handle 5 = elevation service endpoint Send (milestone 45).
+- Handle 6 = shared-library manager endpoint Send.
+- The library rendezvous cap is still granted at Set_Grant slot 4
+  (child handle 5) when a library server is spawned directly.
+
+### Manager protocol
+
+`Akernel_User.Libs` contacts `System/Libman` at handle 5:
+
+- Open request (label 1): words 0..4 carry a NUL-terminated
+  library path (40 chars), word 5 = minimum version.
+  Reply label 1 on success with the service cap in slot 0 and
+  version/revision in words 0/1; reply label 0 on failure.
+- Close request (label 2): words 0..4 carry the library path.
+  Reply label 0/1 is ignored by the client.
+
+### Direct rendezvous (fallback)
+
+When no manager is available, `Open_Library` performs the original
+per-client spawn:
+
+1. Create a fresh endpoint (`EP_Create`). This is the rendezvous cap.
+2. Spawn `Sys:Libs/<Name>` with the rendezvous cap granted at
+   handle 5 with `Send + Receive + Transfer` rights.
+3. Wait on the rendezvous endpoint with `IPC_Recv`.
+4. The library sends back its service cap in slot 0; words 0/1 carry
+   version/revision.
+5. The client installs the received cap as the library service cap,
+   deletes the rendezvous cap, and returns the service cap.
+
+`Close_Library` simply deletes the cap in the fallback path.
 
 ### API
 
 `Akernel_User.Libs` provides:
 
-- `Open_Library (Name)` returns the service cap handle, or
-  `Invalid_Handle` (0) on failure.
+- `Open_Library (Name, Min_Version => N)` returns the service cap
+  handle, or `Invalid_Handle` (0) on failure.
 - `Close_Library (Cap)` releases the service cap.
-
-All name resolution and staging happens inside `Open_Library` using
-the existing fs cap (handle 2) and spawn machinery.
 
 ### Server helper
 
 `Libserv` (a static library crate) handles the boilerplate:
-reading the rendezvous cap from handle 5 (Set_Grant slot 4), creating the service
-endpoint, sending the service cap back, then running a service loop
-on the service endpoint. The actual function dispatch is left to the
-library author.
+reading the rendezvous cap from handle 5 (Set_Grant slot 4), creating
+the service endpoint, sending the service cap back with version/revision
+in words 0/1, then running a service loop on the service endpoint.  The
+library author supplies the dispatch callback and chooses the library's
+`Version` / `Revision` passed to `Libserv.Run`.
 
 ## Deferred
 

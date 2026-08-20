@@ -66,6 +66,11 @@ procedure Init is
    --  introspection authority.
    PROCFS_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  Library manager endpoint (milestone 65).  The Receive side is
+   --  granted to System/Libman via the libman_server token; the Send
+   --  side is granted to every program via the libman token.
+   LIBMAN_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  True once the manifest granted the part_server token, i.e. a
    --  partition manager will serve the partition endpoint.
    Partmgr_Seen : Boolean := False;
@@ -560,6 +565,13 @@ procedure Init is
             --  the uniform ABI handle 5.
             Grant (Device_Manager.Elevated_EP,
                    Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "libman") then
+            --  Shared library manager endpoint (milestone 65):
+            --  Send side granted to every program.
+            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Send, 0);
+         elsif Token_Equals (Token, Length, "libman_server") then
+            --  Library manager server: Receive side.
+            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Length = 5
            and then Token (1 .. 4) = "part"
            and then Token (5) in '0' .. '7'
@@ -684,7 +696,10 @@ begin
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
    PROCFS_EP := Akernel_User.Syscalls.EP_Create;
+   LIBMAN_EP := Akernel_User.Syscalls.EP_Create;
    Device_Manager.Elevated_EP := Akernel_User.Syscalls.EP_Create;
+
+   Device_Manager.Libman_EP := LIBMAN_EP;
 
    --  Device-driven drivers before the static manifest programs:
    --  the console server (Drivers/Serial, class 0) must be serving

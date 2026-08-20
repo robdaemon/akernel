@@ -4,9 +4,9 @@ Trinket is the userspace retained-mode widget toolkit. It renders
 client-side into Bureau window surfaces; Bureau owns the chrome,
 focus, pointer capture, and menu bar.
 
-- `docs/trinket/widgets.md` — widget catalogue and event model
-- `docs/trinket/window.md` — window/event-loop lifecycle
-- `docs/trinket/rendering.md` — canvas, clipping, and damage bands
+- [widgets.md](widgets.md) — widget catalogue and event model
+- [window.md](window.md) — window/event-loop lifecycle
+- [rendering.md](rendering.md) — canvas, clipping, and damage bands
 
 Core packages:
 

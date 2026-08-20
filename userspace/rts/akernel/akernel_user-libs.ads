@@ -12,6 +12,11 @@ package Akernel_User.Libs is
 
    Invalid_Handle : constant U64 := 0;
 
+   --  Bind this process to a shared-library manager cap.  When
+   --  non-zero, Open_Library contacts the manager instead of
+   --  falling back to a private spawn.
+   procedure Bind (Libman_Cap : U64);
+
    --  Open a shared library by name.
    --  Name is the library program path, conventionally
    --  "Sys:Libs/<Name>". Console_Cap, FS_Cap, and Bureau_Cap are the
@@ -19,11 +24,17 @@ package Akernel_User.Libs is
    --  0 for any cap the caller does not hold. On success returns the
    --  library service endpoint cap handle; on failure returns
    --  Invalid_Handle.
+   --
+   --  Min_Version is an Amiga-style version floor: the open fails if
+   --  the library's version is lower.  If Bind was called with a valid
+   --  manager cap, Open_Library contacts it; otherwise it falls back
+   --  to spawning a private copy of the library server.
    function Open_Library
      (Name        : String;
       Console_Cap : U64 := 1;
       FS_Cap      : U64 := 2;
-      Bureau_Cap  : U64 := 3) return U64;
+      Bureau_Cap  : U64 := 3;
+      Min_Version : U64 := 0) return U64;
 
    --  Close a library handle returned by Open_Library.
    procedure Close_Library (Cap : U64);
