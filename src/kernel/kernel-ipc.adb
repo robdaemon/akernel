@@ -1,6 +1,7 @@
 with Ada.Unchecked_Conversion;
 with System.Storage_Elements;
 with Arch;
+with Board.UART;
 with Kernel.Physical_Memory;
 with Kernel.Scheduler;
 
@@ -9,6 +10,7 @@ package body Kernel.IPC is
    use type Kernel.Capabilities.Status;
    use type Kernel.Capabilities.U64;
    use type Kernel.Physical_Memory.Status;
+   use type System.Address;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
@@ -94,13 +96,27 @@ package body Kernel.IPC is
    end Is_Dead;
 
    --  Deliver a syscall result code to a blocked thread and wake it.
+   --  Do NOT touch the saved context of a running/ready thread:
+   --  its saved a0 is from a previous trap and will be restored the
+   --  next time it blocks, corrupting its entry parameters.
    procedure Wake_With_Result
      (Thread : Kernel.Tasks.Thread_Access;
       Value  : U64)
    is
       Wake_Result : Kernel.Scheduler.Status;
+      use type Kernel.Tasks.Thread_State;
    begin
       if Is_Dead (Thread) then
+         return;
+      end if;
+
+      if Kernel.Tasks.State (Thread.all) not in
+           Kernel.Tasks.Blocked_Send
+         | Kernel.Tasks.Blocked_Receive
+         | Kernel.Tasks.Blocked_IRQ
+         | Kernel.Tasks.Blocked_Notification
+         | Kernel.Tasks.Blocked_Sleeping
+      then
          return;
       end if;
 
@@ -547,6 +563,10 @@ package body Kernel.IPC is
 
       if Object.Waiting_Receiver /= null
         and then not Is_Dead (Object.Waiting_Receiver)
+        and then Kernel.Tasks.State (Object.Waiting_Receiver.all) =
+               Kernel.Tasks.Blocked_Receive
+        and then Kernel.Tasks.Recv_Endpoint (Object.Waiting_Receiver.all) =
+               Object.all'Address
       then
          Receiver := Object.Waiting_Receiver;
          Object.Waiting_Receiver := null;
@@ -574,6 +594,17 @@ package body Kernel.IPC is
          Result := Would_Block;
          return;
       end if;
+
+      --  The recorded waiting receiver is not actually blocked in
+      --  Receive (e.g., it woke for a nested Send). Drop the stale
+      --  reference so a later Receive can retake the slot.
+      if Object.Waiting_Receiver /= null
+        and then not Is_Dead (Object.Waiting_Receiver)
+      then
+         Kernel.Tasks.Set_Recv_Endpoint
+           (Object.Waiting_Receiver.all, System.Null_Address);
+      end if;
+      Object.Waiting_Receiver := null;
 
       --  No receiver: enqueue FIFO; badge recorded for the later
       --  transfer.
@@ -619,6 +650,10 @@ package body Kernel.IPC is
 
       if Object.Waiting_Receiver /= null
         and then not Is_Dead (Object.Waiting_Receiver)
+        and then Kernel.Tasks.State (Object.Waiting_Receiver.all) =
+               Kernel.Tasks.Blocked_Receive
+        and then Kernel.Tasks.Recv_Endpoint (Object.Waiting_Receiver.all) =
+               Object.all'Address
       then
          --  Direct handoff: delivered at once, no reply phase, so
          --  the sender returns Ok instead of blocking.
@@ -638,6 +673,17 @@ package body Kernel.IPC is
          Result := Ok;
          return;
       end if;
+
+      --  The recorded waiting receiver is not actually blocked in
+      --  Receive (e.g., it woke for a nested Send). Drop the stale
+      --  reference so a later Receive can retake the slot.
+      if Object.Waiting_Receiver /= null
+        and then not Is_Dead (Object.Waiting_Receiver)
+      then
+         Kernel.Tasks.Set_Recv_Endpoint
+           (Object.Waiting_Receiver.all, System.Null_Address);
+      end if;
+      Object.Waiting_Receiver := null;
 
       --  No receiver: enqueue FIFO; the dequeueing Receive wakes the
       --  sender with Ok (Reply_Wanted is False, so no reply cap).
@@ -686,9 +732,11 @@ package body Kernel.IPC is
 
       if Caller = null then
          if Object.Waiting_Receiver /= null
+           and then Object.Waiting_Receiver /= Receiver
            and then not Is_Dead (Object.Waiting_Receiver)
          then
-            --  Single receiver discipline.
+            --  Single receiver discipline: another live thread is
+            --  already the registered receiver.
             Result := Invalid_Task;
             return;
          end if;

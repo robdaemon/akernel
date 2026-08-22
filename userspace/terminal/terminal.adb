@@ -801,7 +801,9 @@ begin
               (Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
-         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
+         if Reply_H /= 0
+           and then RPC.Reply (Reply_H, Label, Response) /= IPC_Ok
+         then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
@@ -818,7 +820,9 @@ begin
             Input_Char (Character'Val (Natural (Request.Data (I))));
          end loop;
          Response := (Count => Request.Count, Data => (others => 0));
-         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
+         if Reply_H /= 0
+           and then RPC.Reply (Reply_H, Label, Response) /= IPC_Ok
+         then
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
@@ -843,16 +847,24 @@ begin
                  Ada.Streams.Stream_Element (Character'Pos (Ch));
             end loop;
          end;
-         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
-            Debug_Put_Line ("terminal reply failed");
-            Process_Exit;
+         if Reply_H /= 0 then
+            declare
+               Ignore : constant U64 :=
+                 RPC.Reply (Reply_H, Label, Response);
+            begin
+               null;
+            end;
          end if;
       else
          --  Unknown: no data.
          Response := (Count => 0, Data => (others => 0));
-         if RPC.Reply (Reply_H, Label, Response) /= IPC_Ok then
-            Debug_Put_Line ("terminal reply failed");
-            Process_Exit;
+         if Reply_H /= 0 then
+            declare
+               Ignore : constant U64 :=
+                 RPC.Reply (Reply_H, Label, Response);
+            begin
+               null;
+            end;
          end if;
       end if;
    end loop;

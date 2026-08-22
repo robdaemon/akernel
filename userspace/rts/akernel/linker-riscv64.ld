@@ -88,5 +88,34 @@ SECTIONS
     __BSS_END__ = .;
   } :data
 
+  /*  Thread-local storage template: initialized (.tdata) and
+   *  zero (.tbss) sections are laid out contiguously.  The
+   *  .tls_copy region reserves a per-initial-thread private copy
+   *  of the TLS block; crt0 copies .tdata into it and zeros .tbss.
+   *  Secondary threads receive a TLS base from Thread_Create and
+   *  use the same template copy at startup. */
+  .tdata : ALIGN(8)
+  {
+    __tls_init_start = .;
+    *(.tdata .tdata.*)
+    __tls_init_end = .;
+  } :data
+
+  .tbss (NOLOAD) : ALIGN(8)
+  {
+    __tls_bss_start = .;
+    *(.tbss .tbss.*)
+    __tls_bss_end = .;
+  } :data
+
+  .tls_copy (NOLOAD) : ALIGN(8)
+  {
+    __tls_start = .;
+    . += (__tls_init_end - __tls_init_start)
+       + (__tls_bss_end - __tls_bss_start);
+    . = ALIGN(8);
+    __tls_end = .;
+  } :data
+
   _end = .;
 }

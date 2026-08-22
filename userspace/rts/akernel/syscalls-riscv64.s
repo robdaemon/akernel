@@ -341,3 +341,23 @@ akernel_sys_sleep_until:
     ecall
     ret
 .size akernel_sys_sleep_until, . - akernel_sys_sleep_until
+
+/*  Generic secondary-thread entry trampoline.  Userspace sets the
+    Thread_Create entry PC to this address and passes the real thread
+    function address in the argument word.  We establish gp and then
+    tail-call the function; if it returns, we invoke Thread_Exit. */
+.global akernel_thread_entry
+.type akernel_thread_entry, @function
+akernel_thread_entry:
+    .option push
+    .option norelax
+    lla gp, __global_pointer$
+    .option pop
+    mv t0, a0
+    jalr t0
+    /*  Thread_Exit (syscall 37) if the function returns. */
+    li a7, 37
+    ecall
+1:
+    j 1b
+.size akernel_thread_entry, . - akernel_thread_entry

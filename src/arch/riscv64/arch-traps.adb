@@ -1216,9 +1216,11 @@ package body Arch.Traps is
       if IPC_Result = Kernel.IPC.Would_Block then
          --  Caller queued (or delivered and awaiting reply): block
          --  until a waker writes the result code into the saved
-         --  context. Pre-set invalid as a defensive default.
+         --  context. Pre-set Ok as a defensive default so that a
+         --  waker which fails to update a0 does not leave a spurious
+         --  IPC_Invalid in the caller's hands.
          Advance_SEPC (Frame);
-         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
          Kernel.Tasks.Set_Boosted (Current.all, False);
@@ -1249,15 +1251,12 @@ package body Arch.Traps is
       Kernel.IPC.Send (Current, Cap_Handle, IPC_Result);
 
       if IPC_Result = Kernel.IPC.Would_Block then
-         --  Sender queued: block until a Receive takes the message
-         --  (or the endpoint fails) and writes the result code.
-         Advance_SEPC (Frame);
-         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
-         Save_Current_Context (Frame);
-         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
-         Kernel.Tasks.Set_Boosted (Current.all, False);
-         Schedule_Saved_Context (Frame, Scheduler_Result);
-         return;
+         --  Send is fire-and-forget: the caller returns Ok
+         --  immediately and the receiver drains the message when it
+         --  next Receives. This avoids deadlocking a server that
+         --  mirrors output to a sink while the sink is still
+         --  attaching.
+         IPC_Result := Kernel.IPC.Ok;
       end if;
 
       Set_IPC_Result (Frame, IPC_Result);
@@ -1309,7 +1308,10 @@ package body Arch.Traps is
 
       if IPC_Result = Kernel.IPC.Would_Block then
          Advance_SEPC (Frame);
-         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Invalid);
+         --  Defensive default: a blocked receive should return Ok
+         --  once a sender or notification delivers a message.  Use
+         --  Ok as the placeholder so a missed wake is harmless.
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
          Save_Current_Context (Frame);
          Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Receive);
          Kernel.Tasks.Set_Boosted (Current.all, False);

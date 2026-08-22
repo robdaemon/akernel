@@ -143,14 +143,13 @@ procedure Serial is
    Sinks : array (1 .. Max_Sinks) of U64 := (others => 0);
 
    --  Stream-write S to one sink; returns False on any IPC
-   --  failure (caller drops the sink). Nested RPC while serving
-   --  a client write: the sink server replies promptly.
+   --  failure (caller drops the sink). Use Send, not Call: the sink
+   --  is best-effort and a nested blocking RPC while serving a
+   --  client was deleting the writer's reply cap in some schedules.
    function Sink_Write (Sink : U64; S : String) return Boolean is
       First  : Natural := S'First;
       Chunk  : Natural;
-      R_Label : U64;
       Req    : Akernel_User.Streams.Stream_Request;
-      Resp   : Akernel_User.Streams.Stream_Response;
    begin
       while First <= S'Last loop
          Chunk := Natural'Min
@@ -161,8 +160,8 @@ procedure Serial is
             Req.Data (Ada.Streams.Stream_Element_Offset (I)) :=
               Ada.Streams.Stream_Element (Character'Pos (S (First + I - 1)));
          end loop;
-         if RPC.Call (Sink, Akernel_User.Streams.Op_Write, Req,
-                      RPC.No_Caps, R_Label, Resp) /= IPC_Ok
+         if RPC.Send (Sink, Akernel_User.Streams.Op_Write, Req,
+                      RPC.No_Caps) /= IPC_Ok
          then
             return False;
          end if;
@@ -342,10 +341,12 @@ begin
          end if;
 
          Status := RPC.Reply (Reply_H, Label, Response);
-         exit when Status /= IPC_Ok;
+         --  If the caller exited before the reply, drop the request
+         --  and keep serving other clients.  A dead client must not
+         --  take the console server down.
+         null;
       end if;
    end loop;
 
-   Debug_Put_Line ("console server error exit");
    Process_Exit;
 end Serial;

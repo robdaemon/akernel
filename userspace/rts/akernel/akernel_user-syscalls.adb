@@ -495,6 +495,13 @@ package body Akernel_User.Syscalls is
       return Raw_Sleep_Until (Deadline);
    end Sleep_Until;
 
+   function Thread_Entry_Point return U64 is
+   begin
+      return U64
+        (System.Storage_Elements.To_Integer
+           (Thread_Entry_Trampoline'Address));
+   end Thread_Entry_Point;
+
    function Mem_Map_File
      (Address_Space : U64;
       Cap           : U64;

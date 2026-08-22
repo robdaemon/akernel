@@ -73,6 +73,23 @@ package body Akernel_User.IPC is
       return IPC_Ok;
    end Call;
 
+   function Send
+     (Endpoint  : U64;
+      Label     : U64;
+      Request   : Request_Payload;
+      Send_Caps : Cap_Array := No_Caps) return U64
+   is
+   begin
+      if Request_Payload'Size > Max_Payload_Bits then
+         return IPC_Invalid;
+      end if;
+
+      Message.Label := Label;
+      Write_Request (Request);
+      Message.Caps := Send_Caps;
+      return IPC_Send (Endpoint);
+   end Send;
+
    function Receive
      (Endpoint     : U64;
       Label        : out U64;

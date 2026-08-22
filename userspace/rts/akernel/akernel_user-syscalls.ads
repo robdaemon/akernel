@@ -233,6 +233,13 @@ package Akernel_User.Syscalls is
    function Read_Time return U64;
    function Sleep_Until (Deadline : U64) return U64;
 
+   --  Secondary-thread entry trampoline.  Pass its address as the
+   --  Thread_Create entry PC and the real worker function address as
+   --  the argument; the trampoline sets gp and then calls the worker.
+   procedure Thread_Entry_Trampoline
+     with Import, Convention => C, External_Name => "akernel_thread_entry";
+   function Thread_Entry_Point return U64;
+
    --  Cap_Info (syscall 31): one cap-table slot of a process,
    --  64-byte record into a caller-owned memory object. Authority:
    --  Admin must be the admin Admin_Object cap with Manage

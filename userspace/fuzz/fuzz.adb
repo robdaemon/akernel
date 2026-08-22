@@ -68,6 +68,9 @@ procedure Fuzz is
    Sys_Boot_File_Size : constant U64 := 6;
    Sys_Boot_Read_Byte : constant U64 := 7;
    Sys_Spawn          : constant U64 := 8;
+   Sys_Thread_Create  : constant U64 := 36;
+   Sys_Thread_Exit    : constant U64 := 37;
+   Sys_Thread_Self    : constant U64 := 38;
    Sys_Exit           : constant U64 := 9;
    Sys_Reap           : constant U64 := 10;
    Sys_EP_Create      : constant U64 := 11;
@@ -4969,6 +4972,9 @@ begin
         and then Number /= 28
         and then Number /= 29
         and then Number /= 39
+        and then Number /= Sys_Thread_Create
+        and then Number /= Sys_Thread_Exit
+        and then Number /= Sys_Thread_Self
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

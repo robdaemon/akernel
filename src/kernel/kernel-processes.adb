@@ -4,6 +4,7 @@ with Ada.Unchecked_Conversion;
 with Arch;
 with Arch.Context;
 with Arch.MMU;
+with Board.UART;
 with Kernel.ELF;
 with Kernel.Memory;
 with Kernel.Objects;
@@ -943,6 +944,23 @@ package body Kernel.Processes is
          return;
       end if;
 
+      --  Map the kernel stack into the process address space at the
+      --  physmap VA, just like the initial thread in Spawn_Image, so
+      --  the trap handler can push onto it before switching page tables.
+      Arch.MMU.Map_Page
+        (Root     => Kernel.Tasks.Address_Space_Root (Current.all),
+         Virtual  => Arch.Phys_To_Virt (KStack_Frame),
+         Physical => KStack_Frame,
+         Flags    => Arch.MMU.Kernel_RW,
+         Result   => MMU_Result);
+      if MMU_Result /= Arch.MMU.Ok then
+         Kernel.Physical_Memory.Deallocate_Frame
+           (Frame  => KStack_Frame,
+            Result => PMM_Result);
+         Result := Load_Failed;
+         return;
+      end if;
+
       --  Reserve a secondary thread slot.
       if Thread_Free_Head = Thread_Free_None then
          Kernel.Physical_Memory.Deallocate_Frame
@@ -1052,6 +1070,7 @@ package body Kernel.Processes is
       Kernel.Scheduler.Add_Task
         (TCB    => Threads (T_Slot)'Unchecked_Access,
          Result => Sched_Result);
+
       if Sched_Result /= Kernel.Scheduler.Ok then
          Kernel.Tasks.Close_Cap (Current, New_Cap, Cap_Result);
          Arch.MMU.Unmap_Borrowed_Page
@@ -1082,9 +1101,7 @@ package body Kernel.Processes is
       P_Slot     : Process_Index;
       T_Slot     : Thread_Index := Thread_Index'First;
       Found      : Boolean := False;
-      PMM_Result : Kernel.Physical_Memory.Status;
       Ignore     : Kernel.Scheduler.Status;
-      Top        : U64;
    begin
       Result := Invalid_Parent;
       if Thread = null then
@@ -1122,13 +1139,18 @@ package body Kernel.Processes is
       end if;
       Process_Thread_Count (P_Slot) := Process_Thread_Count (P_Slot) - 1;
 
-      Top := Kernel.Tasks.Kernel_Stack_Top (Threads (T_Slot));
-      if Top /= 0 then
-         Kernel.Physical_Memory.Deallocate_Frame
-           (Frame  => Top - Kernel.Physical_Memory.Page_Size,
-            Result => PMM_Result);
-         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
-      end if;
+      --  Do NOT deallocate the kernel stack here: this thread is
+      --  still executing on it and the context switch below needs
+      --  the trap frame to remain intact.  The stack frame will be
+      --  reclaimed when the owning process address space is torn
+      --  down (secondary threads share the process lifetime).
+      --  Top := Kernel.Tasks.Kernel_Stack_Top (Threads (T_Slot));
+      --  if Top /= 0 then
+      --     Kernel.Physical_Memory.Deallocate_Frame
+      --       (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+      --        Result => PMM_Result);
+      --     Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
+      --  end if;
 
       Kernel.Tasks.Set_State (Threads (T_Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (T_Slot), False);

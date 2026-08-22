@@ -27,6 +27,14 @@ package Akernel_User.IPC is
       Response_Label : out U64;
       Response       : out Response_Payload) return U64;
 
+   --  Client side: one-way Send (no reply expected). Returns Ok if
+   --  the message was delivered to a waiting receiver or queued.
+   function Send
+     (Endpoint  : U64;
+      Label     : U64;
+      Request   : Request_Payload;
+      Send_Caps : Cap_Array := No_Caps) return U64;
+
    --  Server side: block until a caller arrives. Request holds the
    --  caller's words, Badge the endpoint badge, Caps the transferred
    --  caps (handles already rewritten into this table, 0 = none).
