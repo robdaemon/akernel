@@ -112,8 +112,15 @@ Other fixes applied:
 Remaining work:
 
 - Figure out why `Tests/Thread_Test` in the auto-spawn manifest
-  hangs the terminal's sink attach, then add it back and gate
-  `make test` at SMP4 with the thread test present.
+  hangs the full suite.  The terminal attach-sink path is fine;
+  the stall happens later, after `PASS thread_test`, when the fuzz
+  suite is waiting for block/FAT volumes that never appear under
+  SMP1/SMP4.  A trap-return serialization flag was tried (skip or
+  do not preempt a thread while its context is being restored after
+  the big kernel lock is released) but did not change the symptom,
+  so the root cause is elsewhere — likely either a secondary-thread
+  lifecycle side effect or another scheduling/IPC race exposed by
+  the extra concurrent thread.
 
 ## Open candidates
 
