@@ -205,6 +205,9 @@ ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 endif
+ifeq ($(INITRD_MODE),thread_test)
+	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
+endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
@@ -235,11 +238,29 @@ run: all $(DISK_IMG)
 
 FORCE:
 
-#  `make test` boots the SAME system with the test manifest
+#  `make full_test` boots the SAME system with the test manifest
 #  (Fuzz + Spin program slots) — the fuzz suite self-runs and
 #  shuts the machine down, exactly like the old `make run`.
-test:
+full_test:
 	$(MAKE) run INITRD_MODE=test
+
+#  Thread test: the full manifest integration still hangs when
+#  Tests/Thread_Test is added to INITRD_MODE=test, so exercise the
+#  thread primitives in a minimal isolated manifest instead.
+thread_test_check: all $(DISK_IMG)
+	@rm -f /tmp/thread_test_check.log /tmp/thread_test_check_run.log
+	@echo "Running thread_test in isolation..."
+	timeout 120 $(MAKE) run INITRD_MODE=thread_test QEMU_ARGS="-display none -serial file:/tmp/thread_test_check.log" > /tmp/thread_test_check_run.log 2>&1 || true
+	@if grep -q "PASS thread_test" /tmp/thread_test_check.log; then \
+	  echo "PASS thread_test"; \
+	else \
+	  echo "FAIL thread_test (log below)"; \
+	  cat /tmp/thread_test_check.log; \
+	  exit 1; \
+	fi
+
+#  Run both the full fuzz suite and the isolated thread test.
+test: full_test thread_test_check
 
 clean: clean-kernel clean-userspace clean-initrd
 

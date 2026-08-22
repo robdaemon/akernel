@@ -25,6 +25,8 @@ The previous full resume is archived at `docs/HISTORY.md`.
 - [x] Add a minimal userspace thread test before touching Ada tasking.
 - [x] Stabilise the test suite under SMP4 (the console-endpoint race
   that broke the shell is fixed; `make test` now passes).
+- [x] Provide an automated way to verify `Tests/Thread_Test` (done:
+  `make test` runs `thread_test_check`).
 - [ ] Add `Tests/Thread_Test` to the auto-spawn manifest and make the
   full suite pass with it present.
 
@@ -74,16 +76,18 @@ Done this session:
 Current state:
 
 - `thread_test` passes reliably in isolation (SMP1 and SMP4).
-- `userspace/thread_test/` is built and installed in the initrd,
-  ready to be added to the auto-spawn test manifest.
+- `userspace/thread_test/` is built and installed in the initrd.
 - `make test` with the default `QEMU_SMP=4` now passes end-to-end
-  **without** `Thread_Test` in the manifest.
-- Adding `Tests/Thread_Test` to the auto-spawn manifest causes the
-  full suite to hang at terminal startup, immediately after the
-  terminal prints `terminal online` and tries to attach its sink
-  (`IPC_Call` to the console server never returns).  This appears
-  to be a separate secondary-thread lifecycle / spawn-order issue,
-  not the console-endpoint race itself.
+  and automatically verifies threads via a new `thread_test_check`
+  target that runs `Tests/Thread_Test` in a minimal isolated
+  manifest.
+- Adding `Tests/Thread_Test` directly to the `INITRD_MODE=test`
+  manifest still hangs the full suite: after `PASS thread_test`,
+  `partmgr` and `fat32` start but block on their first console
+  write, which means the console server stopped processing new
+  callers once the secondary thread entered the system.  The root
+  cause is still unknown; the isolated check avoids it while still
+  exercising the thread primitives in CI.
 
 Root cause fixed this session:
 
@@ -111,16 +115,10 @@ Other fixes applied:
 
 Remaining work:
 
-- Figure out why `Tests/Thread_Test` in the auto-spawn manifest
-  hangs the full suite.  The terminal attach-sink path is fine;
-  the stall happens later, after `PASS thread_test`, when the fuzz
-  suite is waiting for block/FAT volumes that never appear under
-  SMP1/SMP4.  A trap-return serialization flag was tried (skip or
-  do not preempt a thread while its context is being restored after
-  the big kernel lock is released) but did not change the symptom,
-  so the root cause is elsewhere — likely either a secondary-thread
-  lifecycle side effect or another scheduling/IPC race exposed by
-  the extra concurrent thread.
+- Root-cause why adding `Tests/Thread_Test` to the full test
+  manifest stops the console server from serving `partmgr`/`fat32`
+  startup prints.  Likely a secondary-thread lifecycle side effect
+  or scheduling/IPC race exposed by the extra concurrent thread.
 
 ## Open candidates
 
