@@ -145,14 +145,14 @@ package body Kernel.Processes is
       Free_Head := Free_Index (Process_Index'First);
 
       Thread_Used := (others => False);
-      for I in Thread_Index loop
-         if I = Thread_Index'Last then
+      for I in Thread_Index range Max_Process_Slots .. Max_Thread_Slots - 1 loop
+         if I = Thread_Index (Max_Thread_Slots - 1) then
             Thread_Free_Next (I) := Thread_Free_None;
          else
             Thread_Free_Next (I) := Thread_Free_Index (I + 1);
          end if;
       end loop;
-      Thread_Free_Head := Thread_Free_Index (Thread_Index'First);
+      Thread_Free_Head := Thread_Free_Index (Max_Process_Slots);
       Process_Thread_Count := (others => 0);
       Next_Thread_Id := 1024;
    end Initialize;

@@ -25,9 +25,7 @@ The previous full resume is archived at `docs/HISTORY.md`.
 - [x] Add a minimal userspace thread test before touching Ada tasking.
 - [x] Stabilise the test suite under SMP4 (the console-endpoint race
   that broke the shell is fixed; `make test` now passes).
-- [x] Provide an automated way to verify `Tests/Thread_Test` (done:
-  `make test` runs `thread_test_check`).
-- [ ] Add `Tests/Thread_Test` to the auto-spawn manifest and make the
+- [x] Add `Tests/Thread_Test` to the auto-spawn manifest and make the
   full suite pass with it present.
 
 ### M66c/WIP state (thread test)
@@ -76,18 +74,16 @@ Done this session:
 Current state:
 
 - `thread_test` passes reliably in isolation (SMP1 and SMP4).
-- `userspace/thread_test/` is built and installed in the initrd.
-- `make test` with the default `QEMU_SMP=4` now passes end-to-end
-  and automatically verifies threads via a new `thread_test_check`
-  target that runs `Tests/Thread_Test` in a minimal isolated
-  manifest.
-- Adding `Tests/Thread_Test` directly to the `INITRD_MODE=test`
-  manifest still hangs the full suite: after `PASS thread_test`,
-  `partmgr` and `fat32` start but block on their first console
-  write, which means the console server stopped processing new
-  callers once the secondary thread entered the system.  The root
-  cause is still unknown; the isolated check avoids it while still
-  exercising the thread primitives in CI.
+- `userspace/thread_test/` is built and installed in the initrd,
+  and `Tests/Thread_Test` is now part of the default test manifest.
+- `make test` with the default `QEMU_SMP=4` passes end-to-end with
+  `Tests/Thread_Test` present (verified multiple consecutive runs).
+- The full-manifest hang was caused by a thread free-list bug:
+  `Kernel.Processes.Initialize` linked the *initial* thread slots
+  (0..127, one per process slot) into the secondary thread free
+  list, so the first `Thread_Create` reused an in-use initial-slot
+  TCB and corrupted an existing process.  The fix initializes the
+  free list to only contain the secondary slots (128..255).
 
 Root cause fixed this session:
 
@@ -115,10 +111,8 @@ Other fixes applied:
 
 Remaining work:
 
-- Root-cause why adding `Tests/Thread_Test` to the full test
-  manifest stops the console server from serving `partmgr`/`fat32`
-  startup prints.  Likely a secondary-thread lifecycle side effect
-  or scheduling/IPC race exposed by the extra concurrent thread.
+- Revisit proper kernel stack deallocation/reaping to avoid leaks
+  now that secondary threads share the process lifetime.
 
 ## Open candidates
 

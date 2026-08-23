@@ -1,7 +1,6 @@
 with Ada.Unchecked_Conversion;
 with System.Storage_Elements;
 with Arch;
-with Board.UART;
 with Kernel.Physical_Memory;
 with Kernel.Scheduler;
 
