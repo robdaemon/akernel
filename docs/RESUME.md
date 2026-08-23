@@ -132,6 +132,27 @@ Other fixes applied:
 - [x] Fuzz skip list updated for syscall 40.
 - [x] `make test` passes end-to-end under SMP4 and SMP1.
 
+**Milestone 67b — Ravenscar runtime skeleton (in progress)**.
+
+- [x] Vendored the `light-tasking-polarfiresoc` GNARL sources into
+  `userspace/gnat-rts/gnarl_user/` as the starting point.
+- [x] Wrote a minimal `System.OS_Interface` (`gnarl_user/s-osinte.adb`)
+  that sits directly on Akernel syscalls instead of `System.BB`.
+- [x] Wrote a minimal `System.Task_Primitives.Operations`
+  (`gnarl_user/s-taprop.adb`) that creates threads, delays, and
+  exits via the Akernel syscall layer.
+- [x] Provided an Akernel-specific `System.Multiprocessors` that does
+  not depend on `System.BB`.
+- [ ] The skeleton does not compile yet: the vendored GNARL files
+  assume a `System.BB` layer and a matching `System.Soft_Links` /
+  `System.Tasking` record layout. The next step is to either align
+  `System.Tasking` with the existing Akernel runtime records or
+  replace the conflicting GNARL units (Soft_Links, Tasking) with
+  versions that match our OS interface.
+- [ ] `No_Tasking` is still in force, so existing programs keep working
+  while the runtime port is finished. The tasking sources live in
+  `gnarl_user/` and are not linked into the normal runtime build yet.
+
 ## Open candidates
 
 Pick one after M66:
