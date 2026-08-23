@@ -1,0 +1,16 @@
+--  Tasking-enabled variant of the akernel userspace runtime library.
+--  Sources are the same as akernel_rts.gpr; only the GNAT runtime
+--  directory differs so that Ada tasking units compile against the
+--  Ravenscar runtime in userspace/gnat-rts-tasking/.
+
+library project Akernel_RTS_Tasking is
+   for Source_Dirs use ("akernel");
+   for Object_Dir use "../../obj/userspace/rts_tasking";
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "../../lib/userspace/rts_tasking";
+   for Library_Name use "akernel_user";
+   for Library_Kind use "static";
+   for Languages use ("Ada", "Asm");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "../gnat-rts-tasking";
+end Akernel_RTS_Tasking;

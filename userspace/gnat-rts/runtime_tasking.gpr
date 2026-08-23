@@ -1,0 +1,52 @@
+--  Builds the tasking-enabled Akernel GNAT runtime (M67b).
+--  This is a separate project from runtime_build.gpr so that the
+--  non-tasking runtime used by the rest of the system keeps working
+--  while the Ravenscar port is finished.
+--
+--  Source dirs are searched in the listed order; gnarl_user/ supplies
+--  the tasking-only overrides (system.ads without No_Tasking,
+--  System.OS_Interface, System.Task_Primitives.Operations,
+--  System.Multiprocessors, and a tasking System.Soft_Links body),
+--  gnat_user/ keeps the shared runtime sources, and gnat_full/ + gnat/
+--  are the vendored common runtime pool.
+
+project Runtime_Tasking is
+   for Languages use ("Ada", "C");
+   for Runtime ("Ada") use Project'Project_Dir;
+   for Target use "riscv64-elf";
+
+   for Library_Auto_Init use "False";
+   for Library_Name use "gnat";
+   for Library_Kind use "static";
+
+   for Library_Dir use "adalib_tasking";
+   for Object_Dir use "obj_tasking";
+   for Source_Dirs use ("gnarl_user", "gnat_user", "gnat_full", "gnat");
+   for Excluded_Source_Files use ("s-sssita.ads", "s-sssita.adb");
+   for Create_Missing_Dirs use "True";
+
+   COMFLAGS := ("-ffunction-sections", "-fdata-sections", "-O2");
+   ADAFLAGS := ("-gnatg", "-nostdinc", "-fno-delete-null-pointer-checks",
+                "-gnatp", "-gnatn2") & COMFLAGS;
+   CFLAGS   := ("-DIN_RTS", "-DSTANDALONE", "-Dinhibit_libc", "-DAKERNEL_NO_DIRENT", "-DAKERNEL_ENV_FILES", "-DAKERNEL_NO_UTIME",
+                "-Werror", "-Wall")
+               & COMFLAGS;
+
+   package Compiler is
+      for Default_Switches ("C") use CFLAGS;
+      for Default_Switches ("Ada") use ADAFLAGS;
+
+      for Switches ("a-except.adb") use ADAFLAGS
+        & ("-O1", "-fno-inline", "-fno-toplevel-reorder");
+      for Switches ("s-excdeb.adb") use ADAFLAGS & ("-O0");
+      for Switches ("raise-gcc.c") use CFLAGS & ("-fexceptions");
+      for Switches ("adaint.c") use CFLAGS & ("-Wno-error");
+      for Switches ("cstreams.c") use CFLAGS & ("-Wno-error");
+      for Switches ("sysdep.c") use CFLAGS & ("-Wno-error");
+      for Switches ("targext.c") use CFLAGS & ("-Wno-error");
+      for Switches ("errno.c") use CFLAGS & ("-Wno-error");
+      for Switches ("env.c") use CFLAGS & ("-Wno-error");
+      for Switches ("argv.c") use CFLAGS & ("-Wno-error");
+      for Switches ("cal.c") use CFLAGS & ("-Wno-error");
+   end Compiler;
+end Runtime_Tasking;

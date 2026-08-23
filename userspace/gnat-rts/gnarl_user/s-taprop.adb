@@ -39,6 +39,9 @@ package body System.Task_Primitives.Operations is
 
    procedure Initialize (Environment_Task : ST.Task_Id) is
    begin
+      Environment_Task.Common.LL.Thread :=
+        Environment_Task.Common.LL.Thread_Desc'Access;
+
       System.OS_Interface.Initialize
         (Environment_Thread => Environment_Task.Common.LL.Thread,
          Main_Priority      => Environment_Task.Common.Base_Priority);
@@ -71,6 +74,8 @@ package body System.Task_Primitives.Operations is
       Succeeded  : out Boolean)
    is
    begin
+      T.Common.LL.Thread := T.Common.LL.Thread_Desc'Access;
+
       System.OS_Interface.Thread_Create
         (Id            => T.Common.LL.Thread,
          Code          => Wrapper,
@@ -82,6 +87,10 @@ package body System.Task_Primitives.Operations is
            System.Storage_Elements.Storage_Offset (Stack_Size));
 
       Succeeded := T.Common.LL.Thread.Cap /= 0;
+
+      if Succeeded then
+         System.OS_Interface.Set_ATCB (T.Common.LL.Thread, To_Address (T));
+      end if;
    end Create_Task;
 
    ----------------

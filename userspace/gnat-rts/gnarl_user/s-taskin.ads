@@ -44,6 +44,7 @@ pragma Restrictions (No_Elaboration_Code);
 --  implicitly initialized to 0, still. This is achieved by the startup code
 --  clearing the bss section.
 
+with Ada.Exceptions;
 with Ada.Unchecked_Conversion;
 
 with System.Multiprocessors;
@@ -296,6 +297,9 @@ package System.Tasking is
       Sec_Stack_Ptr : System.Secondary_Stack.SS_Stack_Ptr;
       --  Pointer of currently allocated secondary stack
 
+      Current_Excep : aliased Ada.Exceptions.Exception_Occurrence;
+      --  Current exception occurrence for this task
+
    end record;
    pragma Suppress_Initialization (TSD);
 
@@ -322,6 +326,11 @@ package System.Tasking is
       --  field is needed for checking whether potentially blocking operations
       --  are invoked from protected actions. pragma Atomic is used because it
       --  can be read/written from protected interrupt handlers.
+
+      Global_Task_Lock_Nesting : Natural;
+      --  Nesting level for the global task lock managed by System.Soft_Links.
+      --
+      --  Protection: Only accessed by Self
 
       LL : aliased Task_Primitives.Private_Data;
       --  Control block used by underlying low-level tasking service (GNULLI)

@@ -204,6 +204,8 @@ package body System.OS_Interface is
       Next_Stack_VA := 16#6F00_0000#;
       Next_TLS_VA   := 16#6F10_0000#;
       Next_IPC_VA   := 16#6FFE_0000#;
+
+      Environment_Thread.Cap := Id;
       Descriptor_Table (Table_Index (Id)) := Environment_Thread;
       Priority_Table (Table_Index (Id)) := Integer (Main_Priority);
    end Initialize;
@@ -232,9 +234,10 @@ package body System.OS_Interface is
       pragma Unreferenced (Base_CPU, Code, Stack_Address);
       use System.Storage_Elements;
 
-      Stack_Pages : constant U64 :=
+      Raw_Stack_Pages : constant U64 :=
         To_U64 ((Stack_Size + Page_Size - 1) / Page_Size);
-      Stack_Top  : constant U64 := Next_Stack_VA + To_U64 (Stack_Size);
+      Stack_Pages : constant U64 := (if Raw_Stack_Pages = 0 then 1 else Raw_Stack_Pages);
+      Stack_Top  : constant U64 := Next_Stack_VA + U64 (Stack_Pages) * To_U64 (Page_Size);
       TLS_Base   : constant U64 := Next_TLS_VA;
       IPC_VA     : constant U64 := Next_IPC_VA;
 
@@ -262,7 +265,7 @@ package body System.OS_Interface is
    begin
       Stack_Cap := Raw_Mem_Alloc (Stack_Pages);
       IPC_Cap   := Raw_Mem_Alloc (1);
-      TLS_Cap   := Raw_Mem_Alloc (To_U64 (TLS_Size / Page_Size));
+      TLS_Cap   := Raw_Mem_Alloc (To_U64 ((TLS_Size + Page_Size - 1) / Page_Size));
 
       if Stack_Cap = U64'Last or else IPC_Cap = U64'Last
         or else TLS_Cap = U64'Last
@@ -301,10 +304,13 @@ package body System.OS_Interface is
 
       Id.Cap := Thread_Cap;
 
-      Next_Stack_VA :=
-        Next_Stack_VA + Stack_Pages * To_U64 (Page_Size) + To_U64 (Page_Size);
-      Next_TLS_VA   :=
-        Next_TLS_VA + To_U64 (TLS_Size) + To_U64 (Page_Size);
+      Next_Stack_VA := Stack_Top + To_U64 (Page_Size);
+      declare
+         TLS_Map_Len : constant U64 :=
+           To_U64 (((TLS_Size + Page_Size - 1) / Page_Size) * Page_Size);
+      begin
+         Next_TLS_VA := Next_TLS_VA + TLS_Map_Len + To_U64 (Page_Size);
+      end;
       Next_IPC_VA   := Next_IPC_VA - To_U64 (Page_Size);
    end Thread_Create;
 

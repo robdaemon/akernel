@@ -143,15 +143,31 @@ Other fixes applied:
   exits via the Akernel syscall layer.
 - [x] Provided an Akernel-specific `System.Multiprocessors` that does
   not depend on `System.BB`.
-- [ ] The skeleton does not compile yet: the vendored GNARL files
-  assume a `System.BB` layer and a matching `System.Soft_Links` /
-  `System.Tasking` record layout. The next step is to either align
-  `System.Tasking` with the existing Akernel runtime records or
-  replace the conflicting GNARL units (Soft_Links, Tasking) with
-  versions that match our OS interface.
-- [ ] `No_Tasking` is still in force, so existing programs keep working
-  while the runtime port is finished. The tasking sources live in
-  `gnarl_user/` and are not linked into the normal runtime build yet.
+- [x] Added the missing fields to `System.Tasking` records
+  (`Global_Task_Lock_Nesting` in `Common_ATCB`, `Current_Excep` in
+  `TSD`) so the tasking `System.Soft_Links` body can compile.
+- [x] Added a tasking `System.Soft_Links` body and a tasking
+  `System.Init` so `No_Tasking` can be removed for the tasking
+  runtime build.
+- [x] Added `pragma Profile (Jorvik)` to the tasking `system.ads`
+  so the compiler emits Ravenscar tasking calls.
+- [x] Created separate runtime and program projects so the
+  non-tasking runtime keeps working:
+  `userspace/gnat-rts-tasking/runtime_tasking.gpr`,
+  `userspace/rts/akernel_rts_tasking.gpr`,
+  `userspace/rts/akernel_program_tasking.gpr`.
+- [x] Created `userspace/task_test/` crate with a library-level
+  task that delays and prints.
+- [x] The tasking runtime compiles and links; `task_test` builds
+  and the kernel successfully spawns it.
+- [ ] The spawned `task_test` raises `Program_Error` in
+  `System.Tasking.Restricted.Stages` because `Create_Task` reports
+  failure (`Thread_Create` is returning an invalid cap). Next step
+  is to instrument the kernel `Thread_Create` path or the runtime
+  parameter block to find out why the kernel rejects the create
+  request.
+- [ ] `No_Tasking` is still in force for the default runtime, so
+  existing programs keep working while the runtime port is finished.
 
 ## Open candidates
 
