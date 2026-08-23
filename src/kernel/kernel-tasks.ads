@@ -14,6 +14,7 @@ package Kernel.Tasks is
       Blocked_IRQ,
       Blocked_Notification,
       Blocked_Sleeping,
+      Blocked_Thread_Wait,
       Dead);
 
    type Process_State is
@@ -274,6 +275,30 @@ package Kernel.Tasks is
    function Recv_Endpoint
      (TCB : Thread_Control_Block) return System.Address;
 
+   --  Thread wait list: threads blocked in Thread_Wait on this thread.
+   --  Waiters_Next chains waiters; Waiters_Head is the first waiter.
+   --  Waiting_For points from a waiter back to the target thread.
+   procedure Set_Waiting_For
+     (TCB    : in out Thread_Control_Block;
+      Target : Thread_Access);
+
+   function Waiting_For
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   procedure Set_Waiters_Head
+     (TCB    : in out Thread_Control_Block;
+      Waiter : Thread_Access);
+
+   function Waiters_Head
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   procedure Set_Waiters_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access);
+
+   function Waiters_Next
+     (TCB : Thread_Control_Block) return Thread_Access;
+
    --  Overwrite the saved a0 of a blocked thread with a syscall
    --  result status (surfaces when the thread is rescheduled).
    procedure Set_Saved_Result
@@ -382,6 +407,9 @@ private
       Sleep_Deadline   : Kernel.Capabilities.U64;
       Bound_Ntfn       : System.Address;
       Recv_EP          : System.Address;
+      Waiting_For      : Thread_Access;
+      Waiters_Head     : Thread_Access;
+      Waiters_Next     : Thread_Access;
       Debug_Line       : String (1 .. Debug_Line_Max);
       Debug_Len        : Natural;
    end record;

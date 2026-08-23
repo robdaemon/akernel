@@ -113,6 +113,25 @@ Other fixes applied:
   list, and the trap handler / idle loop drain the list once the
   hart is running on a different stack.
 
+## Active
+
+**Milestone 67a — `Thread_Wait` (join)**.
+
+- [x] Kernel wait list per thread (head + next + back-pointer) so a
+  caller can block until the target exits.
+- [x] `Blocked_Thread_Wait` thread state; wake path sets a0 = Ok.
+- [x] `Thread_Wait` syscall (40): validates `Thread_Object` cap with
+  `Wait` right, returns immediately if target is already dead,
+  otherwise blocks and is woken by the target's exit path.
+- [x] Waiter cleanup on process exit (`Mark_Exited` removes each
+  dying thread from any target's list and wakes any waiters of
+  the dying threads).
+- [x] `Akernel_User.Syscalls.Thread_Wait` wrapper and raw asm.
+- [x] `userspace/thread_test/thread_test.adb` now also exercises
+  `Thread_Wait` on the worker cap.
+- [x] Fuzz skip list updated for syscall 40.
+- [x] `make test` passes end-to-end under SMP4 and SMP1.
+
 ## Open candidates
 
 Pick one after M66:

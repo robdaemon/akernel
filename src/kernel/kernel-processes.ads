@@ -14,6 +14,7 @@ package Kernel.Processes is
       Cap_Failed,
       Scheduler_Failed,
       Invalid_Parent,
+      Invalid_Cap,
       Not_Exited);
 
    procedure Initialize;
@@ -70,6 +71,15 @@ package Kernel.Processes is
      (Thread : Kernel.Tasks.Thread_Access;
       Result : out Status);
 
+   --  Thread_Wait: block until the thread named by Thread_Cap has
+   --  exited. Returns Ok if the wait succeeds, Invalid_Cap if the
+   --  handle is not a Thread_Object cap with Wait right, or
+   --  Invalid_Parent if the calling thread is unknown.
+   procedure Thread_Wait
+     (Caller     : Kernel.Tasks.Thread_Access;
+      Thread_Cap : Kernel.Capabilities.Handle;
+      Result     : out Status);
+
    --  Thread_Self: stable kernel thread id for the current thread.
    function Thread_Self
      (Thread : Kernel.Tasks.Thread_Access)
@@ -92,7 +102,8 @@ package Kernel.Processes is
    --      2 dead)
    --    3 thread state (Thread_State'Pos: 0 ready, 1 running,
    --      2 blocked-send, 3 blocked-receive, 4 blocked-irq,
-   --      5 blocked-notification, 6 dead)
+   --      5 blocked-notification, 6 blocked-sleeping,
+   --      7 blocked-thread-wait, 8 dead)
    --    4 open cap count
    --    5 flags: bit0 awaiting reply, bit1 reply wanted,
    --      bit2 wakeup-boosted, bit3 ready-queued

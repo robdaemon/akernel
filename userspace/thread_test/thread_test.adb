@@ -118,6 +118,14 @@ begin
       Die (1);
    end if;
 
+   --  Also exercise Thread_Wait: it should return immediately
+   --  because the worker has already exited.
+   Ignore := SYS.Thread_Wait (Thread_Cap);
+   if Ignore /= 0 then
+      SYS.Debug_Put_Line ("FAIL thread_test: Thread_Wait returned " & Ignore'Image);
+      Die (1);
+   end if;
+
    SYS.Debug_Put_Line ("PASS thread_test");
    Die (0);
 end Thread_Test;

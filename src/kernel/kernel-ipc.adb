@@ -115,6 +115,7 @@ package body Kernel.IPC is
          | Kernel.Tasks.Blocked_IRQ
          | Kernel.Tasks.Blocked_Notification
          | Kernel.Tasks.Blocked_Sleeping
+         | Kernel.Tasks.Blocked_Thread_Wait
       then
          return;
       end if;

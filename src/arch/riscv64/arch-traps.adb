@@ -91,6 +91,7 @@ package body Arch.Traps is
    Sys_Thread_Exit     : constant U64 := 37;
    Sys_Thread_Self       : constant U64 := 38;
    Sys_Sleep_Until       : constant U64 := 39;
+   Sys_Thread_Wait       : constant U64 := 40;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1140,6 +1141,30 @@ package body Arch.Traps is
       Kernel.Scheduler.Sleep_Until (Deadline, Sleep_Result);
       Schedule_Saved_Context (Frame, Sched_Result);
    end Handle_Sleep_Until;
+
+   procedure Handle_Thread_Wait (Frame : System.Address) is
+      Current    : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Thread_Cap : constant Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Handle (Trap_Frame_Get_A0 (Frame));
+      Proc_Result : Kernel.Processes.Status;
+      Sched_Result : Kernel.Scheduler.Status;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 1);
+         return;
+      end if;
+
+      Advance_SEPC (Frame);
+      Trap_Frame_Set_A0 (Frame, 0);
+      Save_Current_Context (Frame);
+      Kernel.Processes.Thread_Wait (Current, Thread_Cap, Proc_Result);
+      if Proc_Result /= Kernel.Processes.Ok then
+         --  Failure paths did not block; restore the error in a0.
+         Trap_Frame_Set_A0 (Frame, 1);
+      end if;
+      Schedule_Saved_Context (Frame, Sched_Result);
+   end Handle_Thread_Wait;
 
    procedure Handle_EP_Create (Frame : System.Address) is
       use type Kernel.Capabilities.Status;
@@ -2525,6 +2550,9 @@ package body Arch.Traps is
          Handle_Thread_Self (Frame);
       elsif Number = Sys_Sleep_Until then
          Handle_Sleep_Until (Frame);
+         return;
+      elsif Number = Sys_Thread_Wait then
+         Handle_Thread_Wait (Frame);
          return;
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);

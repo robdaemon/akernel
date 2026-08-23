@@ -18,6 +18,7 @@ package body Kernel.Processes is
    use type System.Address;
    use type Arch.MMU.Status;
    use type Kernel.Capabilities.Status;
+   use type Kernel.Capabilities.Object_Kind;
    use type Kernel.ELF.Status;
    use type Kernel.Physical_Memory.Status;
    use type Kernel.Scheduler.Status;
@@ -25,6 +26,10 @@ package body Kernel.Processes is
    use type Kernel.Tasks.Process_State;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
+
+   function To_Thread_Access is new Ada.Unchecked_Conversion
+     (Source => System.Address,
+      Target => Kernel.Tasks.Thread_Access);
 
    --  128 process slots, plus a separate thread table for
    --  multi-threaded processes (Milestone 66). Each process has
@@ -717,6 +722,9 @@ package body Kernel.Processes is
       end loop;
    end Cleanup_Cap_Refs;
 
+   procedure Remove_As_Waiter (Waiter : Kernel.Tasks.Thread_Access);
+   procedure Wake_Thread_Waiters (Target : Kernel.Tasks.Thread_Access);
+
    procedure Mark_Exited
      (Thread : Kernel.Tasks.Thread_Access;
       Code   : Kernel.Capabilities.U64) is
@@ -763,6 +771,8 @@ package body Kernel.Processes is
 
             Kernel.Tasks.Set_State (Threads (T), Kernel.Tasks.Dead);
             Kernel.Tasks.Set_Queued (Threads (T), False);
+            Remove_As_Waiter (Threads (T)'Unchecked_Access);
+            Wake_Thread_Waiters (Threads (T)'Unchecked_Access);
 
             if Threads (T)'Address /= Thread.all'Address then
                declare
@@ -1109,6 +1119,53 @@ package body Kernel.Processes is
       Result := Ok;
    end Thread_Create;
 
+   procedure Remove_As_Waiter (Waiter : Kernel.Tasks.Thread_Access) is
+      Target : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Tasks.Waiting_For (Waiter.all);
+      Prev   : Kernel.Tasks.Thread_Access := null;
+      Cur    : Kernel.Tasks.Thread_Access;
+   begin
+      if Target = null then
+         return;
+      end if;
+
+      Cur := Kernel.Tasks.Waiters_Head (Target.all);
+      while Cur /= null loop
+         if Cur = Waiter then
+            if Prev = null then
+               Kernel.Tasks.Set_Waiters_Head
+                 (Target.all, Kernel.Tasks.Waiters_Next (Cur.all));
+            else
+               Kernel.Tasks.Set_Waiters_Next
+                 (Prev.all, Kernel.Tasks.Waiters_Next (Cur.all));
+            end if;
+            exit;
+         end if;
+         Prev := Cur;
+         Cur := Kernel.Tasks.Waiters_Next (Cur.all);
+      end loop;
+
+      Kernel.Tasks.Set_Waiting_For (Waiter.all, null);
+      Kernel.Tasks.Set_Waiters_Next (Waiter.all, null);
+   end Remove_As_Waiter;
+
+   procedure Wake_Thread_Waiters (Target : Kernel.Tasks.Thread_Access) is
+      Waiter : Kernel.Tasks.Thread_Access;
+      Next   : Kernel.Tasks.Thread_Access;
+      Ignore : Kernel.Scheduler.Status;
+   begin
+      Waiter := Kernel.Tasks.Waiters_Head (Target.all);
+      while Waiter /= null loop
+         Next := Kernel.Tasks.Waiters_Next (Waiter.all);
+         Kernel.Tasks.Set_Waiting_For (Waiter.all, null);
+         Kernel.Tasks.Set_Waiters_Next (Waiter.all, null);
+         Kernel.Tasks.Set_Saved_Result (Waiter.all, 0);
+         Kernel.Scheduler.Wake (Waiter, Ignore);
+         Waiter := Next;
+      end loop;
+      Kernel.Tasks.Set_Waiters_Head (Target.all, null);
+   end Wake_Thread_Waiters;
+
    procedure Thread_Exit
      (Thread : Kernel.Tasks.Thread_Access;
       Result : out Status)
@@ -1167,6 +1224,8 @@ package body Kernel.Processes is
 
       Kernel.Tasks.Set_State (Threads (T_Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (T_Slot), False);
+      Remove_As_Waiter (Threads (T_Slot)'Unchecked_Access);
+      Wake_Thread_Waiters (Threads (T_Slot)'Unchecked_Access);
       Kernel.Scheduler.Remove_Thread
         (Threads (T_Slot)'Unchecked_Access, Ignore);
       Thread_Used (T_Slot) := False;
@@ -1176,6 +1235,67 @@ package body Kernel.Processes is
       end if;
       Result := Ok;
    end Thread_Exit;
+
+   procedure Thread_Wait
+     (Caller     : Kernel.Tasks.Thread_Access;
+      Thread_Cap : Kernel.Capabilities.Handle;
+      Result     : out Status)
+   is
+      Cap_Entry    : Kernel.Capabilities.Cap_Entry;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Target       : Kernel.Tasks.Thread_Access;
+      Sched_Result : Kernel.Scheduler.Status;
+      Wait_Right   : constant Kernel.Capabilities.Rights :=
+        (Wait => True, others => False);
+   begin
+      Result := Invalid_Parent;
+      if Caller = null then
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Caller.all,
+         Cap       => Thread_Cap,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Entry);
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else not Cap_Entry.Valid
+        or else Cap_Entry.Kind /= Kernel.Capabilities.Thread_Object
+        or else not Kernel.Capabilities.Has_Rights (Cap_Entry.Rights, Wait_Right)
+      then
+         Result := Invalid_Cap;
+         return;
+      end if;
+
+      Target := To_Thread_Access (Cap_Entry.Object);
+
+      --  Already exited: return immediately.
+      if Kernel.Tasks.State (Target.all) = Kernel.Tasks.Dead then
+         Result := Ok;
+         return;
+      end if;
+
+      --  Waiting on yourself would deadlock.
+      if Target = Caller then
+         Result := Invalid_Cap;
+         return;
+      end if;
+
+      --  Enqueue the caller on the target's waiter list and block.
+      --  The whole sequence is under the big kernel lock, so the
+      --  target cannot exit between the dead check and the enqueue.
+      Kernel.Tasks.Set_Waiting_For (Caller.all, Target);
+      Kernel.Tasks.Set_Waiters_Next
+        (Caller.all, Kernel.Tasks.Waiters_Head (Target.all));
+      Kernel.Tasks.Set_Waiters_Head (Target.all, Caller);
+
+      --  Preset the resume result; the waking path copies 0 into the
+      --  saved a0 before scheduling us again.
+      Kernel.Scheduler.Block_Current
+        (Kernel.Tasks.Blocked_Thread_Wait, Sched_Result);
+
+      Result := Ok;
+   end Thread_Wait;
 
    function Thread_Self
      (Thread : Kernel.Tasks.Thread_Access)

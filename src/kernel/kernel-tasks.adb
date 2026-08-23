@@ -67,6 +67,9 @@ package body Kernel.Tasks is
       TCB.Priority := 0;
       TCB.Bound_Ntfn := System.Null_Address;
       TCB.Recv_EP := System.Null_Address;
+      TCB.Waiting_For := null;
+      TCB.Waiters_Head := null;
+      TCB.Waiters_Next := null;
       TCB.Debug_Len := 0;
    end Initialize_Thread;
 
@@ -447,6 +450,51 @@ package body Kernel.Tasks is
    begin
       return TCB.Recv_EP;
    end Recv_Endpoint;
+
+   procedure Set_Waiting_For
+     (TCB    : in out Thread_Control_Block;
+      Target : Thread_Access)
+   is
+   begin
+      TCB.Waiting_For := Target;
+   end Set_Waiting_For;
+
+   function Waiting_For
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Waiting_For;
+   end Waiting_For;
+
+   procedure Set_Waiters_Head
+     (TCB    : in out Thread_Control_Block;
+      Waiter : Thread_Access)
+   is
+   begin
+      TCB.Waiters_Head := Waiter;
+   end Set_Waiters_Head;
+
+   function Waiters_Head
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Waiters_Head;
+   end Waiters_Head;
+
+   procedure Set_Waiters_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access)
+   is
+   begin
+      TCB.Waiters_Next := Next;
+   end Set_Waiters_Next;
+
+   function Waiters_Next
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Waiters_Next;
+   end Waiters_Next;
 
    procedure Append_Debug_Char
      (TCB   : in out Thread_Control_Block;

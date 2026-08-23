@@ -183,6 +183,10 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_thread_self";
 
+   function Raw_Thread_Wait (Cap : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_wait";
+
    function Raw_Sleep_Until (Deadline : U64) return U64
      with Import, Convention => C,
           External_Name => "akernel_sys_sleep_until";
@@ -484,6 +488,11 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Thread_Self;
    end Thread_Self;
+
+   function Thread_Wait (Cap : U64) return U64 is
+   begin
+      return Raw_Thread_Wait (Cap);
+   end Thread_Wait;
 
    function Read_Time return U64 is
    begin

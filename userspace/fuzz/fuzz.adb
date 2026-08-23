@@ -71,6 +71,7 @@ procedure Fuzz is
    Sys_Thread_Create  : constant U64 := 36;
    Sys_Thread_Exit    : constant U64 := 37;
    Sys_Thread_Self    : constant U64 := 38;
+   Sys_Thread_Wait    : constant U64 := 40;
    Sys_Exit           : constant U64 := 9;
    Sys_Reap           : constant U64 := 10;
    Sys_EP_Create      : constant U64 := 11;
@@ -4975,6 +4976,7 @@ begin
         and then Number /= Sys_Thread_Create
         and then Number /= Sys_Thread_Exit
         and then Number /= Sys_Thread_Self
+        and then Number /= Sys_Thread_Wait
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

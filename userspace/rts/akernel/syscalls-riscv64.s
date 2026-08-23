@@ -342,6 +342,14 @@ akernel_sys_sleep_until:
     ret
 .size akernel_sys_sleep_until, . - akernel_sys_sleep_until
 
+.global akernel_sys_thread_wait
+.type akernel_sys_thread_wait, @function
+akernel_sys_thread_wait:
+    li a7, 40
+    ecall
+    ret
+.size akernel_sys_thread_wait, . - akernel_sys_thread_wait
+
 /*  Generic secondary-thread entry trampoline.  Userspace sets the
     Thread_Create entry PC to this address and passes the real thread
     function address in the argument word.  We establish gp and then
