@@ -108,11 +108,10 @@ Other fixes applied:
 - The console server no longer self-destructs when a reply cap is
   stale or a caller has died.
 - `userspace/fuzz/fuzz.adb` skips syscalls 36-38 in the random phase.
-
-Remaining work:
-
-- Revisit proper kernel stack deallocation/reaping to avoid leaks
-  now that secondary threads share the process lifetime.
+- Secondary-thread kernel stacks are no longer leaked: a thread
+  exiting on its own stack records the frame on a per-CPU deferred
+  list, and the trap handler / idle loop drain the list once the
+  hart is running on a different stack.
 
 ## Open candidates
 

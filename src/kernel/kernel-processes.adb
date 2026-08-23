@@ -5,6 +5,7 @@ with Arch;
 with Arch.Context;
 with Arch.MMU;
 with Board.UART;
+with Kernel.CPUs;
 with Kernel.ELF;
 with Kernel.Memory;
 with Kernel.Objects;
@@ -80,6 +81,17 @@ package body Kernel.Processes is
    --  their historical slot+4 values). Starts above any plausible
    --  process slot id.
    Next_Thread_Id : Kernel.Tasks.Thread_Id := 1024;
+
+   --  Per-CPU deferred kernel-stack free list.  A thread's own stack
+   --  cannot be deallocated while it is still executing on it; the
+   --  frame is recorded here and freed once the hart has switched
+   --  away (drained at every trap entry and in the idle loop).
+   Max_Deferred_Stacks : constant := Max_Thread_Slots;
+   Deferred_Stacks     : array (Kernel.CPUs.CPU_Index,
+                                0 .. Max_Deferred_Stacks - 1) of U64;
+   Deferred_Count      : array (Kernel.CPUs.CPU_Index) of Natural range
+      0 .. Max_Deferred_Stacks :=
+     (others => 0);
 
    --  Pid generations (milestone 51): pid = Generation * 256 +
    --  slot base, where the base (slot + 4 — pids 1..3 are the
@@ -738,9 +750,13 @@ package body Kernel.Processes is
                PMM_Result : Kernel.Physical_Memory.Status;
             begin
                if Top /= 0 then
-                  Kernel.Physical_Memory.Deallocate_Frame
-                    (Frame  => Top - Kernel.Physical_Memory.Page_Size,
-                     Result => PMM_Result);
+                  if Threads (T)'Address /= Thread.all'Address then
+                     Kernel.Physical_Memory.Deallocate_Frame
+                       (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+                        Result => PMM_Result);
+                  else
+                     Free_Kernel_Stack_Later (Top);
+                  end if;
                   Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T), 0);
                end if;
             end;
@@ -1102,6 +1118,7 @@ package body Kernel.Processes is
       T_Slot     : Thread_Index := Thread_Index'First;
       Found      : Boolean := False;
       Ignore     : Kernel.Scheduler.Status;
+      Top        : U64;
    begin
       Result := Invalid_Parent;
       if Thread = null then
@@ -1139,18 +1156,14 @@ package body Kernel.Processes is
       end if;
       Process_Thread_Count (P_Slot) := Process_Thread_Count (P_Slot) - 1;
 
-      --  Do NOT deallocate the kernel stack here: this thread is
-      --  still executing on it and the context switch below needs
-      --  the trap frame to remain intact.  The stack frame will be
-      --  reclaimed when the owning process address space is torn
-      --  down (secondary threads share the process lifetime).
-      --  Top := Kernel.Tasks.Kernel_Stack_Top (Threads (T_Slot));
-      --  if Top /= 0 then
-      --     Kernel.Physical_Memory.Deallocate_Frame
-      --       (Frame  => Top - Kernel.Physical_Memory.Page_Size,
-      --        Result => PMM_Result);
-      --     Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
-      --  end if;
+      --  The kernel stack is still in use for the current trap
+      --  frame and the context switch below.  Record it for
+      --  deferred deallocation once this hart has switched away.
+      Top := Kernel.Tasks.Kernel_Stack_Top (Threads (T_Slot));
+      if Top /= 0 then
+         Free_Kernel_Stack_Later (Top);
+         Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
+      end if;
 
       Kernel.Tasks.Set_State (Threads (T_Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (T_Slot), False);
@@ -1174,6 +1187,35 @@ package body Kernel.Processes is
       end if;
       return Kernel.Tasks.Id (Thread.all);
    end Thread_Self;
+
+   procedure Free_Kernel_Stack_Later (Stack_Top : U64) is
+      CPU : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+   begin
+      if Stack_Top = 0 then
+         return;
+      end if;
+
+      if Deferred_Count (CPU) < Max_Deferred_Stacks then
+         Deferred_Stacks (CPU, Deferred_Count (CPU)) := Stack_Top;
+         Deferred_Count (CPU) := Deferred_Count (CPU) + 1;
+      end if;
+   end Free_Kernel_Stack_Later;
+
+   procedure Drain_Deferred_Kernel_Stacks is
+      CPU    : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+      Top    : U64;
+      Ignore : Kernel.Physical_Memory.Status;
+   begin
+      while Deferred_Count (CPU) > 0 loop
+         Deferred_Count (CPU) := Deferred_Count (CPU) - 1;
+         Top := Deferred_Stacks (CPU, Deferred_Count (CPU));
+         if Top /= 0 then
+            Kernel.Physical_Memory.Deallocate_Frame
+              (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+               Result => Ignore);
+         end if;
+      end loop;
+   end Drain_Deferred_Kernel_Stacks;
 
    procedure Reap_Process
      (Parent      : Kernel.Tasks.Thread_Access;

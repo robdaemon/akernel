@@ -75,6 +75,13 @@ package Kernel.Processes is
      (Thread : Kernel.Tasks.Thread_Access)
       return Kernel.Tasks.Thread_Id;
 
+   --  Kernel stacks cannot be freed by the thread still running on
+   --  them.  Thread_Exit / Mark_Exited push the frame onto a per-CPU
+   --  deferred list; the trap handler / idle loop drains it once the
+   --  CPU is no longer on that stack.
+   procedure Free_Kernel_Stack_Later (Stack_Top : U64);
+   procedure Drain_Deferred_Kernel_Stacks;
+
    --  Process introspection (milestone 37a): fixed-size binary
    --  snapshot of one process for the process_info syscall; the
    --  userspace caller renders it (kernel never formats text).

@@ -293,6 +293,10 @@ package body Arch.Traps is
       Result : Kernel.Scheduler.Status;
    begin
       loop
+         --  The idle loop runs on the per-hart main stack, so it
+         --  is safe to free any thread kernel stacks that were
+         --  deferred while their owning hart was still on them.
+         Kernel.Processes.Drain_Deferred_Kernel_Stacks;
          Kernel.Scheduler.Yield (Result);
          if Result = Kernel.Scheduler.Ok
            and then Kernel.Scheduler.Current /= null
@@ -2643,6 +2647,11 @@ package body Arch.Traps is
    procedure Riscv_Trap_Handler (Frame : System.Address) is
    begin
       Kernel.Lock.Acquire;
+      --  Drain any kernel stacks that exited threads left behind.
+      --  Safe here: the current hart is on its own thread stack,
+      --  and the stacks in the deferred list are owned by dead
+      --  threads that have already switched away.
+      Kernel.Processes.Drain_Deferred_Kernel_Stacks;
       Dispatch_Trap (Frame);
       --  No Release here: the trampoline releases the lock after
       --  this handler returns (see startup.s), so the return path
