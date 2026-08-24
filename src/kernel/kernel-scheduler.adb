@@ -143,8 +143,9 @@ package body Kernel.Scheduler is
    begin
       for I in 0 .. Sleep_Count - 1 loop
          if Sleep_Queue (Sleep_Index (I)) /= null
-           and then Kernel.Tasks.Sleep_Deadline (Sleep_Queue (Sleep_Index (I)).all)
-                      > Deadline
+           and then
+              Kernel.Tasks.Sleep_Deadline (Sleep_Queue (Sleep_Index (I)).all)
+                > Deadline
          then
             Pos := I;
             exit;
@@ -271,6 +272,7 @@ package body Kernel.Scheduler is
       Set_My_Current (TCB);
       Kernel.Tasks.Set_Queued (TCB.all, False);
       Kernel.Tasks.Set_State (TCB.all, Kernel.Tasks.Running);
+
       Result := Ok;
    end Set_Current;
 

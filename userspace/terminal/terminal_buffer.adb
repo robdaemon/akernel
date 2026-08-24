@@ -146,7 +146,8 @@ package body Terminal_Buffer is
       Idx := Line_Index (I);
       Len := Natural'Min (Buffer (Idx).Len, S'Length);
       if Len > 0 then
-         S (1 .. Len) := Buffer (Idx).Text (1 .. Len);
+         S (S'First .. S'First + Len - 1) :=
+           Buffer (Idx).Text (1 .. Len);
       end if;
    end Get_Line;
 

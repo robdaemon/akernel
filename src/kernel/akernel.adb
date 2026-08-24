@@ -563,7 +563,6 @@ begin
       Board.UART.Put_Line ("cap table online");
    end if;
 
-
    Kernel.Tasks.Initialize_Process (Driver_Process, 2);
    Kernel.Tasks.Set_Process_State
      (PCB       => Driver_Process,

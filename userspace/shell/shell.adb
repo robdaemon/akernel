@@ -375,7 +375,7 @@ procedure Shell is
             return;
          end if;
          Buf := (others => Character'Val (0));
-         Buf (1 .. Value'Length) := Value;
+         Buf (Buf'First .. Buf'First + Value'Length - 1) := Value;
          Len := Value'Length;
       end Set_Path;
 

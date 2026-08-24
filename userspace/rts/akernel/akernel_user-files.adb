@@ -31,7 +31,8 @@ package body Akernel_User.Files is
       for C of Name loop
          if C = ':' then
             if Name'Length <= S'Length then
-               S (1 .. Name'Length) := Name;
+               S (S'First .. S'First + Name'Length - 1) :=
+        Name (Name'First .. Name'Last);
                Len := Name'Length;
             end if;
             return;
@@ -39,11 +40,14 @@ package body Akernel_User.Files is
       end loop;
 
       if Default_Volume_Len + 1 + Name'Length <= S'Length then
-         S (1 .. Default_Volume_Len) :=
-           Default_Volume (1 .. Default_Volume_Len);
-         S (Default_Volume_Len + 1) := ':';
-         S (Default_Volume_Len + 2
-            .. Default_Volume_Len + 1 + Name'Length) := Name;
+         S (S'First .. S'First + Default_Volume_Len - 1) :=
+           Default_Volume
+             (Default_Volume'First
+              .. Default_Volume'First + Default_Volume_Len - 1);
+         S (S'First + Default_Volume_Len) := ':';
+         S (S'First + Default_Volume_Len + 1
+            .. S'First + Default_Volume_Len + Name'Length) :=
+           Name (Name'First .. Name'Last);
          Len := Default_Volume_Len + 1 + Name'Length;
       end if;
    end Qualified;

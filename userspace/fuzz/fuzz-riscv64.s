@@ -27,3 +27,5 @@ fuzz_ecall:
 fuzz_last_a1:
     .dword 0
 .size fuzz_last_a1, . - fuzz_last_a1
+
+.section .note.GNU-stack, "", @progbits

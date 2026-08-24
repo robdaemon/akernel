@@ -5,9 +5,9 @@ with System.Address_To_Access_Conversions;
 with System.Storage_Elements;
 
 package body Kernel.Capabilities is
+   use System.Storage_Elements;
    use type Interfaces.Unsigned_64;
    use type System.Address;
-   use type System.Storage_Elements.Storage_Offset;
    use type Kernel.Physical_Memory.Status;
 
    function To_Addr is
@@ -131,16 +131,36 @@ package body Kernel.Capabilities is
    function To_Mask (R : Rights) return U64 is
       Mask : U64 := 0;
    begin
-      if R.Read     then Mask := Mask or 1;   end if;
-      if R.Write    then Mask := Mask or 2;   end if;
-      if R.Execute  then Mask := Mask or 4;   end if;
-      if R.Map      then Mask := Mask or 8;   end if;
-      if R.Send     then Mask := Mask or 16;  end if;
-      if R.Receive  then Mask := Mask or 32;  end if;
-      if R.Wait     then Mask := Mask or 64;  end if;
-      if R.Ack      then Mask := Mask or 128; end if;
-      if R.Transfer then Mask := Mask or 256; end if;
-      if R.Manage   then Mask := Mask or 512; end if;
+      if R.Read then
+         Mask := Mask or 1;
+      end if;
+      if R.Write then
+         Mask := Mask or 2;
+      end if;
+      if R.Execute then
+         Mask := Mask or 4;
+      end if;
+      if R.Map then
+         Mask := Mask or 8;
+      end if;
+      if R.Send then
+         Mask := Mask or 16;
+      end if;
+      if R.Receive then
+         Mask := Mask or 32;
+      end if;
+      if R.Wait then
+         Mask := Mask or 64;
+      end if;
+      if R.Ack then
+         Mask := Mask or 128;
+      end if;
+      if R.Transfer then
+         Mask := Mask or 256;
+      end if;
+      if R.Manage then
+         Mask := Mask or 512;
+      end if;
       return Mask;
    end To_Mask;
 

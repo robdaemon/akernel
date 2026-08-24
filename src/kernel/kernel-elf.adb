@@ -93,7 +93,9 @@ package body Kernel.ELF is
       end if;
 
       for Offset in U64 range 0 .. Count - 1 loop
-         Mmio_Write8 (Destination + Offset, Read_Byte (S, Src_Offset + Offset));
+         Mmio_Write8
+           (Destination + Offset,
+            Read_Byte (S, Src_Offset + Offset));
       end loop;
    end Copy_From;
 

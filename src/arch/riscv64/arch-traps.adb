@@ -189,14 +189,6 @@ package body Arch.Traps is
 
    type MMIO_Region_Access is access all Kernel.Objects.MMIO_Region;
 
-   function To_MMIO_Region is new Ada.Unchecked_Conversion
-     (Source => System.Address,
-      Target => MMIO_Region_Access);
-
-   function To_IRQ_Line is new Ada.Unchecked_Conversion
-     (Source => System.Address,
-      Target => Kernel.Objects.IRQ_Line_Access);
-
    function Is_Page_Aligned (Value : U64) return Boolean is
    begin
       return Value mod Arch.MMU.Page_Size = 0;
@@ -1267,8 +1259,7 @@ package body Arch.Traps is
       Handle_Valid : Boolean;
       Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
-      IPC_Result       : Kernel.IPC.Status;
-      Scheduler_Result : Kernel.Scheduler.Status;
+      IPC_Result : Kernel.IPC.Status;
    begin
       Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
       if not Handle_Valid or else Current = null then
@@ -1943,9 +1934,12 @@ package body Arch.Traps is
                      Result    => Lookup,
                      Out_Entry => Cap_Info_Entry);
                   if Lookup = Kernel.Capabilities.Ok
-                    and then Cap_Info_Entry.Kind = Kernel.Capabilities.MMIO_Object
+                    and then
+                       Cap_Info_Entry.Kind =
+                         Kernel.Capabilities.MMIO_Object
                   then
-                     Dev_Id := Kernel.Devices.Device_Id_Of (Cap_Info_Entry.Object);
+                     Dev_Id :=
+                       Kernel.Devices.Device_Id_Of (Cap_Info_Entry.Object);
                      if Dev_Id /= Kernel.Devices.No_Device then
                         Mapped := Kernel.Memory.Note_DMA_Mapping
                           (Cap_Info.Object, Dev_Id);

@@ -54,3 +54,5 @@ _start:
 1:
     j 1b
 .size _start, . - _start
+
+.section .note.GNU-stack, "", @progbits

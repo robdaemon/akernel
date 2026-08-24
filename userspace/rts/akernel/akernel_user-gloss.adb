@@ -742,15 +742,20 @@ package body Akernel_User.Gloss is
      (S : Stat_Access; Size : U64; Is_TTY : Boolean;
       Is_Dir : Boolean := False) is
    begin
-      S.all := (others => <>);
-      S.Mode   := U32
-        ((if Is_TTY then S_IFCHR
-          elsif Is_Dir then S_IFDIR
-          else S_IFREG) + S_IRWXU);
-      S.NLink  := 1;
-      S.Size   := Size;
-      S.BlkSize := 512;
-      S.Blocks := (Size + 511) / 512;
+      S.all :=
+        (Dev | Ino | UID | GID | RDev => 0,
+         Spare1 | Spare2 => 0,
+         Mode    => U32
+           ((if Is_TTY then S_IFCHR
+             elsif Is_Dir then S_IFDIR
+             else S_IFREG) + S_IRWXU),
+         NLink   => 1,
+         Size    => Size,
+         Atim    => (Sec => 0, NSec => 0),
+         Mtim    => (Sec => 0, NSec => 0),
+         Ctim    => (Sec => 0, NSec => 0),
+         BlkSize => 512,
+         Blocks  => (Size + 511) / 512);
    end Fill_Stat;
 
    function Gloss_Fstat (FD : C_Int; S : Stat_Access) return C_Int;

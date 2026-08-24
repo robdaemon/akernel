@@ -69,7 +69,9 @@ package body Kernel.Devices is
       Result := Ok;
    end Grow_Pool;
 
-   procedure Allocate_Slot (Result : out Status; Object : out System.Address) is
+   procedure Allocate_Slot
+     (Result : out Status;
+      Object : out System.Address) is
       Slot : Device_Slot_Access;
    begin
       if Free_Head = System.Null_Address then

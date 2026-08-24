@@ -498,7 +498,6 @@ package body Trinket.Widgets is
      (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
       return Boolean
    is
-      pragma Unreferenced (PX);
       KT, KB : U64;
       Track_T : constant U64 := W.Y + Arrow;
       Track_B : constant U64 := W.Y + W.H - Arrow;

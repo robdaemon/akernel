@@ -414,7 +414,8 @@ package body Arch.MMU is
       --  Identity gigapage for SMP secondary entry (see above).
       if not Failed then
          Map_Gigapage
-           (Root, Arch.Kernel_Phys_Base - Arch.Kernel_Phys_Base mod Gigapage_Size,
+           (Root,
+            Arch.Kernel_Phys_Base - Arch.Kernel_Phys_Base mod Gigapage_Size,
             Arch.Kernel_Phys_Base - Arch.Kernel_Phys_Base mod Gigapage_Size,
             Kernel_RX, Map_Result);
          Failed := Map_Result /= Ok;

@@ -524,7 +524,8 @@ package body Kernel.Tasks is
 
       TCB.Debug_Len := TCB.Debug_Len + 1;
       TCB.Debug_Line (TCB.Debug_Len) := Char;
-      Flush := Char = Character'Val (10) or else TCB.Debug_Len = Debug_Line_Max;
+      Flush := Char = Character'Val (10)
+        or else TCB.Debug_Len = Debug_Line_Max;
    end Append_Debug_Char;
 
    procedure Take_Debug_Line

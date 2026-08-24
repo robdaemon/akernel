@@ -20,9 +20,7 @@ package body Kernel.Notifications is
       Diff : constant Integer_Address :=
         To_Integer (Object) - To_Integer (Base);
    begin
-      if Diff < 0
-        or else Diff mod (Notification'Max_Size_In_Storage_Elements) /= 0
-      then
+      if Diff mod (Notification'Max_Size_In_Storage_Elements) /= 0 then
          return 0;
       end if;
 

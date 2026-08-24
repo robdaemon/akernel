@@ -369,3 +369,5 @@ akernel_thread_entry:
 1:
     j 1b
 .size akernel_thread_entry, . - akernel_thread_entry
+
+.section .note.GNU-stack, "", @progbits

@@ -1,4 +1,3 @@
-with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
 with Arch;
@@ -162,7 +161,8 @@ package body Kernel.Processes is
       Free_Head := Free_Index (Process_Index'First);
 
       Thread_Used := (others => False);
-      for I in Thread_Index range Max_Process_Slots .. Max_Thread_Slots - 1 loop
+      for I in Thread_Index range Max_Process_Slots .. Max_Thread_Slots - 1
+      loop
          if I = Thread_Index (Max_Thread_Slots - 1) then
             Thread_Free_Next (I) := Thread_Free_None;
          else
@@ -184,7 +184,6 @@ package body Kernel.Processes is
       Grant_Count : U64;
       Result      : out Status)
    is
-      use type Kernel.Capabilities.Object_Kind;
       use System.Storage_Elements;
 
       type Grant_Entry is record
@@ -597,7 +596,6 @@ package body Kernel.Processes is
       Result      : out Status;
       Process_Cap : out Kernel.Capabilities.Handle)
    is
-      use type Kernel.Capabilities.Object_Kind;
 
       type Boot_File_Access is access all Kernel.Objects.Boot_File;
 
@@ -827,7 +825,6 @@ package body Kernel.Processes is
       Thread_Cap  : out Kernel.Capabilities.Handle;
       Result      : out Status)
    is
-      use type Kernel.Capabilities.Object_Kind;
 
       Current       : constant Kernel.Tasks.Thread_Access := Parent;
       Process       : Kernel.Tasks.Process_Access;
@@ -1267,7 +1264,8 @@ package body Kernel.Processes is
       if Cap_Result /= Kernel.Capabilities.Ok
         or else not Cap_Entry.Valid
         or else Cap_Entry.Kind /= Kernel.Capabilities.Thread_Object
-        or else not Kernel.Capabilities.Has_Rights (Cap_Entry.Rights, Wait_Right)
+        or else not Kernel.Capabilities.Has_Rights
+           (Cap_Entry.Rights, Wait_Right)
       then
          Result := Invalid_Cap;
          return;
@@ -1358,7 +1356,6 @@ package body Kernel.Processes is
       Exit_Code   : out U64;
       Result      : out Status)
    is
-      use type Kernel.Capabilities.Object_Kind;
 
       Cap_Result : Kernel.Capabilities.Status;
       Cap_Info   : Kernel.Capabilities.Cap_Entry;
@@ -1526,7 +1523,6 @@ package body Kernel.Processes is
       Words     : out Cap_Info_Words;
       Found     : out Boolean)
    is
-      use type Kernel.Capabilities.Status;
       Result : Kernel.Capabilities.Status;
       Ent    : Kernel.Capabilities.Cap_Entry;
    begin
@@ -1596,7 +1592,6 @@ package body Kernel.Processes is
       Found : out Boolean;
       Busy  : out Boolean)
    is
-      use type Kernel.Tasks.Thread_State;
       Frame : Arch.Context.Context_Word_Array;
       State : Kernel.Tasks.Thread_State;
    begin

@@ -6,10 +6,12 @@ package Kernel.Boot_Files is
    subtype U64 is Interfaces.Unsigned_64;
 
    --  Boot-file image caps (docs/IPC.md): one pinned Boot_File_Object
-   --  per initrd file, enumerated at boot and handed to init. Spawn
+   --  per initrd file, enumerated at boot and handed to init.
+   --  Spawn
    --  consumes them as ELF images; the cap-based byte API lets init
    --  parse the manifest without the kernel ever parsing a path.
-   Max_Files       : constant := 256;  --  was 24: Bad_Image unbootable board at 25
+   Max_Files       : constant := 256;
+   --  was 24: Bad_Image unbootable board at 25
    Max_Name_Length : constant := 48;
 
    type Status is

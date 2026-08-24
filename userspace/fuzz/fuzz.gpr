@@ -1,6 +1,7 @@
 with "../trinket/trinket.gpr";
 
 project Fuzz extends "../rts/akernel_program.gpr" is
+   for Languages use ("Ada", "Asm");
    for Source_Dirs use (".");
    for Exec_Dir use "../../bin/userspace";
    for Object_Dir use "../../obj/userspace/fuzz";

@@ -74,7 +74,8 @@ package body Kernel.CPUs is
 
       for CPU in CPU_Index range 0 .. CPU_Index (Configured - 1) loop
          if CPU /= Self and then Started (CPU) then
-            Mask := Mask or Interfaces.Shift_Left (U64'(1), Natural (IDs (CPU)));
+            Mask := Mask or Interfaces.Shift_Left
+               (U64'(1), Natural (IDs (CPU)));
          end if;
       end loop;
 

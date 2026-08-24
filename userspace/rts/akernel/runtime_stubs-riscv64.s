@@ -25,3 +25,5 @@ putchar:
     ecall
     ret
 .size putchar, . - putchar
+
+.section .note.GNU-stack, "", @progbits

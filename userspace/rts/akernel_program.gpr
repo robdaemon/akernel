@@ -13,7 +13,7 @@
 with "akernel_rts.gpr";
 
 abstract project Akernel_Program is
-   for Languages use ("Ada", "Asm");
+   for Languages use ("Ada");
    for Target use "riscv64-elf";
    for Runtime ("Ada") use "../gnat-rts";
    for Exec_Dir use "../../bin/userspace";
@@ -31,6 +31,7 @@ abstract project Akernel_Program is
       --  stranded its libgnat references.
       for Switches ("Ada") use
         ("-T", Akernel_RTS'Project_Dir & "/akernel/linker-riscv64.ld",
-         "-Wl,-u,_sbrk");
+         "-Wl,-u,_sbrk",
+         "-Wl,-z,noexecstack");
    end Linker;
 end Akernel_Program;
