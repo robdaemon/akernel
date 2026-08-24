@@ -132,7 +132,7 @@ Other fixes applied:
 - [x] Fuzz skip list updated for syscall 40.
 - [x] `make test` passes end-to-end under SMP4 and SMP1.
 
-**Milestone 67b — Ravenscar runtime skeleton (in progress)**.
+**Milestone 67b — Ravenscar runtime skeleton (done)**.
 
 - [x] Vendored the `light-tasking-polarfiresoc` GNARL sources into
   `userspace/gnat-rts/gnarl_user/` as the starting point.
@@ -151,42 +151,133 @@ Other fixes applied:
   runtime build.
 - [x] Added `pragma Profile (Jorvik)` to the tasking `system.ads`
   so the compiler emits Ravenscar tasking calls.
-- [x] Created separate runtime and program projects so the
-  non-tasking runtime keeps working:
-  `userspace/gnat-rts-tasking/runtime_tasking.gpr`,
-  `userspace/rts/akernel_rts_tasking.gpr`,
-  `userspace/rts/akernel_program_tasking.gpr`.
+- [x] Merged the tasking runtime into the single Akernel GNAT
+  runtime: `userspace/gnat-rts/runtime_build.gpr` now uses
+  `gnarl_user/` before `gnat_user/` and excludes the
+  non-tasking units, and the separate tasking-only project and
+  `No_Tasking` runtime have been removed.
 - [x] Created `userspace/task_test/` crate with a library-level
   task that delays and prints.
-- [x] The tasking runtime compiles and links; `task_test` builds
-  and the kernel successfully spawns it.
-- [ ] The spawned `task_test` raises `Program_Error` in
-  `System.Tasking.Restricted.Stages` because `Create_Task` reports
-  failure (`Thread_Create` is returning an invalid cap). Next step
-  is to instrument the kernel `Thread_Create` path or the runtime
-  parameter block to find out why the kernel rejects the create
-  request.
-- [ ] `No_Tasking` is still in force for the default runtime, so
-  existing programs keep working while the runtime port is finished.
+- [x] The runtime compiles and links; `task_test` builds and the
+  kernel successfully spawns it.
+- [x] Fixed the runtime `Create_Task` success check, reduced the
+  tasking `Default_Stack_Size` to 1 MiB (the kernel object limit is
+  256 pages), and skipped TLS allocation when `TLS_Size` is 0.
+- [x] Added a `User_Thread_Cap` field to the kernel TCB and made
+  `Thread_Self` return the thread cap handle, fixing the worker's
+  `Self`/`Get_ATCB` lookup.
+- [x] `task_test` now passes: the worker schedules, prints, delays,
+  sets the done flag, and exits; the main thread wakes and prints
+  `task_test: main done`.
+- [x] `make test` passes end-to-end with `Tests/Thread_Test`
+  present.
+- [x] The non-tasking runtime (`gnat_user/system.ads` with
+  `No_Tasking`, plus `s-init`/`s-soflin` non-tasking bodies and the
+  separate `gnat-rts-tasking` project) has been deleted. All
+  userspace Ada programs now build against the unified Ravenscar
+  tasking runtime.
+- [x] Fixed `gnarl_user/s-init.adb` so `Runtime_Initialize` calls
+  `System.Tasking.Initialize`; this makes the tasking soft links
+  (global locks via `Self`/`Get_ATCB`) work for programs that do
+  not declare any Ada tasks.
+- [x] Updated the Makefile to regenerate the runtime
+  `ada_source_path`/`ada_object_path` files and to provide a
+  `libgnarl.a` placeholder so gprbuild recognizes the tasking runtime.
+
+**Cleanup pass (done).**
+
+- [x] Replaced the empty `libgnarl.a` placeholder with a real
+  GNAT/GNARL split: after `gprbuild` produces `libgnat.a`, the
+  Makefile moves the GNARL objects (`s-taprop`, `s-taskin`,
+  `s-osinte`, `a-reatim`, etc.) into `libgnarl.a` and deletes them
+  from `libgnat.a`.
+- [x] Dropped `Asm` from `userspace/rts/akernel_program.gpr`'s
+  base language list and added a per-crate `Asm` override in
+  `userspace/fuzz/fuzz.gpr` so only crates with assembly sources
+  compile `Asm` (eliminates the "no sources of language Asm" warnings).
+- [x] Added `.note.GNU-stack` to all `.s` files and
+  `-Wl,-z,noexecstack` to the program linker switches; this removes
+  the `requires executable stack` linker warning.
+- [x] Added `-Wno-deprecated-declarations` and
+  `-Wno-unused-variable` to the runtime C flags so the vendored
+  `adaint.c` / `sysdep.c` files build silently.
+- [x] Fixed every kernel Ada warning/style diagnostic:
+  redundant `with`/`use type` clauses, unreferenced constants and
+  local functions, unused variables, line-too-long style errors,
+  multiple blank lines, and the always-false `Diff < 0` check in
+  `Kernel.Notifications.Slot_Of`.
+- [x] Fixed every userspace Ada warning diagnostic:
+  lower-bound assumptions on string slices, the uninitialized
+  aggregate in `Akernel_User.Gloss.Fill_Stat`, and the incorrect
+  `pragma Unreferenced (PX)` in `Trinket.Widgets`.
+- [x] Full `make clean && rm -rf userspace/gnat-rts/adalib
+  userspace/gnat-rts/obj && make all` now builds the whole system
+  with **zero compiler/linker warnings**, and `make test` passes
+  end-to-end.
+- [x] Fixed the SMP1 test-suite slowdown caused by the unified
+  tasking runtime: `System.Soft_Links.Task_Lock_Soft`/
+  `Task_Unlock_Soft` now short-circuit (no `Self`/priority
+  syscalls) for programs that never create secondary threads.
+  This restores the previous single-thread performance while
+  keeping full locking once `Create_Task` has run. `make test
+  QEMU_SMP=1` now completes in normal time again; `make test`
+  (SMP4) and interactive boot remain passing.
+
+**Milestone 41b — `Proc:self` / VFS client identity (done).**
+
+- [x] Added an endpoint-level identity-stamp flag in `Kernel.IPC`.
+  When set on an endpoint, a zero-badged capability call through it
+  gets the caller's process id as `Message.Badge` instead of badge
+  zero.
+- [x] Added syscall `EP_Set_Stamp_Identity` (41); init marks the
+  fileserver endpoint with it after creation.
+- [x] `userspace/fileserver/fileserver.adb` forwards `Proc:` driver
+  requests through a per-caller cached, minted cap carrying the
+  original caller pid; other fs-driver volumes keep using the
+  unminted endpoint cap to avoid per-request overhead.
+- [x] `userspace/procfs/procfs.adb` resolves `Proc:self` and
+  `Proc:self/status|caps|regs` from the forwarded badge.
+- [x] `Process_Info(Self_Slot)` no longer requires the
+  `device_resource` authority; a process can read its own pid.
+- [x] `userspace/fuzz/fuzz.adb` checks its own pid against
+  `Proc:self/status`.
+- [x] Stabilised the suite under SMP4 after the identity plumbing:
+  switched `Run_Command`'s reap poll and the teardown test's
+  caller/receiver sequencing from fixed-yield counts to short
+  wall-clock waits, so SMP4 scheduling does not outrun the peers.
+- [x] `make all` builds with zero warnings; `make test QEMU_SMP=1`
+  and `make test QEMU_SMP=4` pass end-to-end.
+
+**Milestone 67 — MSI-X for virtio PCI (done).**
+
+- [x] Implemented a software MSI controller on top of the RISC-V IOMMU:
+  MSI/MSI-X writes are detected by address pattern, forced to fault on an
+  invalid flat MSI page table, and converted into virtual kernel IRQ
+  source deliveries by the fault-queue handler.
+- [x] Added virtual IRQ sources (1024..2047) alongside real PLIC sources
+  (0..1023); `IRQ_Ack` skips PLIC completion for virtual sources.
+- [x] Added syscall `IRQ_MSI_Create` (42): returns an IRQ cap and the
+  MSI address/data to program into the PCI MSI/MSI-X table entry.
+- [x] Device manager parses the PCI MSI-X capability, maps the table,
+  allocates one shared vector per PCI function, programs all table
+  entries, and hands the MSI IRQ cap to drivers in the config message.
+- [x] `Virtio.PCI` learned `Enable_MSIX`; all PCI virtio drivers
+  (`virtio_blk`, `virtio_rng`, `virtio_input`, `virtio_gpu`) use the MSI
+  vector when offered and fall back to INTx otherwise.
+- [x] `make all` builds with zero warnings; `make test QEMU_SMP=1` and
+  `make test QEMU_SMP=4` pass end-to-end.
 
 ## Open candidates
 
-Pick one after M66:
-
-1. **Proc:self / client identity through the VFS** — let a filesystem
-   server know which process is calling (badge or process id on every
-   request) so `Proc:` self-references and per-process views work.
-2. **Register fast path** — measure IPC call/recv cost, then decide
+1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
-3. **virtio-net driver + socket-like protocol** — network stack
+2. **virtio-net driver + socket-like protocol** — network stack
    starting with a raw virtio-net device and a simple packet channel.
-4. **MSI-X support** — move virtio PCI devices off shared INTx onto
-   per-vector MSI-X.
-5. **Script interpreter** — a small AmigaDOS/ARexx-style shell script
+3. **Script interpreter** — a small AmigaDOS/ARexx-style shell script
    engine.
-6. **Background pipelines** — extend shell `run` to chains with `|`
+4. **Background pipelines** — extend shell `run` to chains with `|`
    and `PIPE:`.
-7. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
+5. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
 
 ## Working rules
 
