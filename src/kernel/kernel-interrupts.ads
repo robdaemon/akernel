@@ -5,6 +5,7 @@ with Kernel.Tasks;
 
 package Kernel.Interrupts is
    subtype U64 is Interfaces.Unsigned_64;
+   use type Interfaces.Unsigned_64;
 
    type Status is
      (Ok,
@@ -12,6 +13,17 @@ package Kernel.Interrupts is
       Would_Block,
       Already_Registered,
       Already_Waiting);
+
+   --  PLIC wired sources are 0 .. 1023.  Sources above that are
+   --  software-delivered MSI vectors (created by the arch-specific
+   --  MSI controller).  Board code only claims/completes real PLIC
+   --  sources; virtual ones are delivered by direct Kernel.Interrupts.Deliver
+   --  calls (e.g., from the IOMMU fault-queue handler).
+   Max_Sources       : constant := 2048;
+   MSI_Vector_Base   : constant := 1024;
+
+   function Is_MSI_Vector (Source : U64) return Boolean is
+     (Source >= MSI_Vector_Base and then Source < U64 (Max_Sources));
 
    procedure Initialize;
 

@@ -17,6 +17,13 @@ with Interfaces;
 --  Encodings follow the spec (chapter 5 registers, chapter 2 data
 --  structures, chapter 3 command/fault queues), cross-checked
 --  against Linux drivers/iommu/riscv/bits.h.
+--
+--  When Caps_MSI_Flat is set, the IOMMU is also used as a software
+--  MSI controller: MSI/MSI-X writes are detected by address pattern,
+--  forced to fault on an invalid flat MSI page table, and converted
+--  into virtual kernel IRQ source deliveries by the fault handler.
+--  This is a qemu-virt-specific stop-gap until AIA/APLIC/IMSIC is
+--  available.
 
 package Arch.IOMMU is
    subtype U64 is Interfaces.Unsigned_64;
@@ -33,6 +40,11 @@ package Arch.IOMMU is
 
    function Available return Boolean;
 
+   --  True when the IOMMU supports the flat-MSI page-table format and
+   --  the kernel allocated the shared (invalid) MSI page table.  When
+   --  False, callers must fall back to INTx-style wired interrupts.
+   function MSI_Available return Boolean;
+
    --  Create the device context for Device_Id on first use and map
    --  Frame_PA (IOVA = Frame_PA, R+W) into its IO page table,
    --  IOTLB-invalidated and fenced before return.
@@ -42,7 +54,20 @@ package Arch.IOMMU is
    --  (no-op when the device or mapping does not exist).
    procedure Unmap_DMA (Device_Id : U32; Frame_PA : U64);
 
+   --  Allocate a virtual MSI vector for Device_Id.  On success the
+   --  kernel reserves a virtual IRQ source, configures the IOMMU to
+   --  trap MSI writes from this device, and returns the Address/Data
+   --  the caller must program into the PCI MSI/MSI-X table entry.
+   --  Returns False if the IOMMU has no MSI support or allocation
+   --  fails.
+   function MSI_Vector_Create
+     (Device_Id : U32;
+      Vector    : Natural;
+      Source    : out U64;
+      Address   : out U64;
+      Data      : out U32) return Boolean;
+
    --  PLIC-wired fault-queue interrupt (vector 0): drain and log
-   --  fault records, clear ipsr.
+   --  fault records, clear ipsr, and deliver software MSI vectors.
    procedure Handle_Fault_Interrupt;
 end Arch.IOMMU;

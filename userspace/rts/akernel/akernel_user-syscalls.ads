@@ -128,6 +128,16 @@ package Akernel_User.Syscalls is
       Length    : U64;
       Device_Id : U64 := U64'Last) return U64;
    function IRQ_Create (Resource : U64; Source : U64) return U64;
+   --  IRQ_MSI_Create (syscall 42): allocate a virtual MSI/MSI-X
+   --  vector for the PCI requester id Device_Id.  On success returns
+   --  the IRQ cap handle and, via Address and Data, the values the
+   --  caller must write into the PCI MSI/MSI-X table entry.
+   function IRQ_MSI_Create
+     (Resource    : U64;
+      Device_Id   : U64;
+      Vector      : U64;
+      Address     : out U64;
+      Data        : out U64) return U64;
    function Mem_Object_PA (Cap : U64; Index : U64) return U64;
 
    --  Cap_Delete (syscall 26) closes one of the caller's own

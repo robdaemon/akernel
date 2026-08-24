@@ -8,8 +8,6 @@ package body Kernel.Interrupts is
    use type Kernel.Tasks.Thread_State;
    use type System.Address;
 
-   Max_Sources : constant := 1024;
-
    type IRQ_Array is array (Natural range 0 .. Max_Sources - 1)
      of Kernel.Objects.IRQ_Line_Access;
 

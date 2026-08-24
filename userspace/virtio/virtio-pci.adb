@@ -4,6 +4,9 @@ package body Virtio.PCI is
    use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_64;
 
+   MSIX_Enabled : Boolean := False;
+   MSIX_Vector  : U16 := MSIX_None;
+
    procedure Reset is
    begin
       Common_Write8 (Cfg_Device_Status, 0);
@@ -63,7 +66,8 @@ package body Virtio.PCI is
    is
    begin
       Common_Write16 (Cfg_Queue_Size, U16 (Num and 16#FFFF#));
-      Common_Write16 (Cfg_Queue_MSIX_Vector, MSIX_None);
+      Common_Write16 (Cfg_Queue_MSIX_Vector,
+                     (if MSIX_Enabled then MSIX_Vector else MSIX_None));
       Common_Write32 (Cfg_Queue_Desc_Low,  U32 (Desc_PA and 16#FFFF_FFFF#));
       Common_Write32 (Cfg_Queue_Desc_High, U32 (Interfaces.Shift_Right (Desc_PA, 32)));
       Common_Write32 (Cfg_Queue_Avail_Low, U32 (Avail_PA and 16#FFFF_FFFF#));
@@ -72,6 +76,14 @@ package body Virtio.PCI is
       Common_Write32 (Cfg_Queue_Used_High, U32 (Interfaces.Shift_Right (Used_PA, 32)));
       Common_Write16 (Cfg_Queue_Enable, 1);
    end Queue_Setup;
+
+   procedure Enable_MSIX (Vector : U16) is
+   begin
+      MSIX_Enabled := True;
+      MSIX_Vector := Vector;
+   end Enable_MSIX;
+
+   function MSI_Enabled return Boolean is (MSIX_Enabled);
 
    procedure Notify (Queue : U32) is
       Notify_Off : U16;
@@ -85,6 +97,9 @@ package body Virtio.PCI is
 
    function Interrupt_Status return U32 is
    begin
+      if MSIX_Enabled then
+         return 1;
+      end if;
       return ISR_Read;
    end Interrupt_Status;
 

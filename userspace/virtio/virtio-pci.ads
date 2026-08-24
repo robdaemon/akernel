@@ -79,8 +79,17 @@ package Virtio.PCI is
    --  the field is per-queue) handed to the driver's Notify_Write.
    procedure Notify (Queue : U32);
 
-   --  Interrupt status: reads (and clears) the ISR register.
-   --  ACK is a no-op kept for MMIO-API symmetry.
+   --  MSI-X: when enabled, Queue_Setup writes the chosen vector into
+   --  each queue's cfg_Queue_MSIX_Vector field and Interrupt_Status
+   --  reports a synthetic pending interrupt (the real notification
+   --  arrives on the IRQ cap).  Call after the driver has received
+   --  the vector from the kernel and before Queue_Setup/Queue_Enable.
+   procedure Enable_MSIX (Vector : U16);
+   function MSI_Enabled return Boolean;
+
+   --  Interrupt status: reads (and clears) the ISR register when using
+   --  INTx; under MSI-X it reports a synthetic pending interrupt.
+   --  ACK is a no-op in both modes.
    function Interrupt_Status return U32;
    procedure ACK_Interrupt (Bits : U32);
 end Virtio.PCI;

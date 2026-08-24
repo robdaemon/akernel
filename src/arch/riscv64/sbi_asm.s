@@ -264,6 +264,13 @@ trap_frame_set_a1:
     ret
 .size trap_frame_set_a1, . - trap_frame_set_a1
 
+.global trap_frame_set_a2
+.type trap_frame_set_a2, @function
+trap_frame_set_a2:
+    sd a1, 88(a0)
+    ret
+.size trap_frame_set_a2, . - trap_frame_set_a2
+
 .global trap_frame_save_context
 .type trap_frame_save_context, @function
 trap_frame_save_context:

@@ -93,6 +93,7 @@ package body Arch.Traps is
    Sys_Sleep_Until       : constant U64 := 39;
    Sys_Thread_Wait       : constant U64 := 40;
    Sys_EP_Set_Stamp_Identity : constant U64 := 41;
+   Sys_IRQ_MSI_Create        : constant U64 := 42;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -125,6 +126,9 @@ package body Arch.Traps is
 
    procedure Trap_Frame_Set_A1 (Frame : System.Address; Value : U64)
      with Import, Convention => C, External_Name => "trap_frame_set_a1";
+
+   procedure Trap_Frame_Set_A2 (Frame : System.Address; Value : U64)
+     with Import, Convention => C, External_Name => "trap_frame_set_a2";
 
    procedure Raw_Set_Trap_Stack (Stack_Top : U64)
      with Import, Convention => C, External_Name => "riscv_set_trap_stack";
@@ -590,7 +594,10 @@ package body Arch.Traps is
 
       Kernel.Interrupts.Ack (Line, IRQ_Result, Complete_Source);
       if IRQ_Result = Kernel.Interrupts.Ok then
-         Board.PLIC.Complete (Board.PLIC.Source_Id (Complete_Source));
+         --  Virtual MSI vectors have no PLIC source to complete.
+         if not Kernel.Interrupts.Is_MSI_Vector (Complete_Source) then
+            Board.PLIC.Complete (Board.PLIC.Source_Id (Complete_Source));
+         end if;
          Trap_Frame_Set_A0 (Frame, 0);
       elsif IRQ_Result = Kernel.Interrupts.Would_Block then
          Trap_Frame_Set_A0 (Frame, 2);
@@ -1923,6 +1930,87 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
    end Handle_IRQ_Create;
 
+   procedure Handle_IRQ_MSI_Create (Frame : System.Address) is
+      use type Kernel.Capabilities.Status;
+      use type Kernel.Devices.Status;
+      use type Kernel.Interrupts.Status;
+
+      Current      : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Device_Id    : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Vector       : constant U64 := Trap_Frame_Get_A2 (Frame);
+      Dev_Result   : Kernel.Devices.Status;
+      IRQ_Result   : Kernel.Interrupts.Status;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Object       : System.Address;
+      Line         : Kernel.Objects.IRQ_Line_Access;
+      Source       : U64;
+      MSI_Address  : U64;
+      MSI_Data     : Arch.IOMMU.U32;
+      New_Cap      : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+   begin
+      Source := 0;
+      MSI_Address := 0;
+      MSI_Data := 0;
+
+      if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
+        or else Device_Id > U64 (Arch.IOMMU.U32'Last)
+        or else Vector > U64 (Natural'Last)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      if not Arch.IOMMU.MSI_Vector_Create
+        (Device_Id => Arch.IOMMU.U32 (Device_Id),
+         Vector    => Natural (Vector),
+         Source    => Source,
+         Address   => MSI_Address,
+         Data      => MSI_Data)
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Devices.Create_IRQ (Source, Dev_Result, Object);
+      if Dev_Result /= Kernel.Devices.Ok then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Line := Kernel.Devices.Line_Of (Object);
+      Kernel.Interrupts.Register (Line, IRQ_Result);
+      if IRQ_Result /= Kernel.Interrupts.Ok then
+         if Kernel.Devices.Release (Object) then
+            null;
+         end if;
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Insert_Cap
+        (TCB    => Current.all,
+         Kind   => Kernel.Capabilities.IRQ_Object,
+         Object => Object,
+         Rights => IRQ_Device_Rights,
+         Badge  => 0,
+         Result => Cap_Result,
+         Cap    => New_Cap);
+
+      if Cap_Result /= Kernel.Capabilities.Ok then
+         if Kernel.Devices.Release (Object) then
+            null;
+         end if;
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
+      Trap_Frame_Set_A1 (Frame, MSI_Address);
+      Trap_Frame_Set_A2 (Frame, U64 (MSI_Data));
+   end Handle_IRQ_MSI_Create;
+
    procedure Handle_Mem_Object_PA (Frame : System.Address) is
       use type Kernel.Capabilities.Object_Kind;
       use type Kernel.Capabilities.Status;
@@ -2553,6 +2641,8 @@ package body Arch.Traps is
          Handle_IO_Map (Frame);
       elsif Number = Sys_IRQ_Create then
          Handle_IRQ_Create (Frame);
+      elsif Number = Sys_IRQ_MSI_Create then
+         Handle_IRQ_MSI_Create (Frame);
       elsif Number = Sys_Mem_Object_PA then
          Handle_Mem_Object_PA (Frame);
       elsif Number = Sys_Cap_Delete then

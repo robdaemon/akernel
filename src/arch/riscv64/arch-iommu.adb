@@ -7,7 +7,6 @@ with Kernel.Physical_Memory;
 
 package body Arch.IOMMU is
    use type U32;
-   use type U64;
    use type Kernel.Device_Tree.Status;
    use type Kernel.Physical_Memory.Status;
 
@@ -40,6 +39,24 @@ package body Arch.IOMMU is
    Caps_DBG      : constant U64 := 16#8000_0000#;           --  bit 31
    Caps_IGS_Mask : constant U64 := 16#3000_0000#;           --  bits 29:28
    IGS_WSI_Only  : constant U64 := 16#1000_0000#;
+   pragma Unreferenced (IGS_WSI_Only);
+
+   --  64-byte device-context offsets when Caps_MSI_Flat is set.
+   --  Layout: tc(0), iohgatp(8), ta(16), fsc(24), msiptp(32),
+   --  msi_addr_mask(40), msi_addr_pattern(48), custom(56).
+   DC_Off_Msiptp   : constant U64 := 32;
+   DC_Off_Mask     : constant U64 := 40;
+   DC_Off_Pattern  : constant U64 := 48;
+   Msiptp_Mode_Flat : constant U64 := 1;
+
+   --  Reserved IOVA page for software MSI delivery.  The IOMMU is
+   --  configured to treat any write inside this page as an MSI; an
+   --  invalid flat MSI page table forces a fault, and the fault
+   --  handler converts the (device_id, data) pair into a virtual IRQ
+   --  source delivery.  This page is far above any identity-mapped
+   --  DMA region on qemu-virt.
+   MSI_IOVA_Base   : constant U64 := 16#0000_0003_FFFF_0000#;
+   MSI_IOVA_Mask   : constant U64 := 16#FFFF_FFFF_FFFF_F000#;
 
    --  fctl.
    Fctl_WSI : constant U32 := 2;
@@ -109,6 +126,22 @@ package body Arch.IOMMU is
       DC_VA      : U64 := 0;         --  VA of the DC in its DDT leaf
       IO_Root_PA : U64 := 0;         --  Sv39 IO page table root
    end record;
+
+   --  MSI controller: one flat (invalid) page table shared by all
+   --  devices, plus a small vector table that maps (device_id, data)
+   --  to a virtual kernel IRQ source.
+   Max_MSI_Vectors : constant := 64;
+
+   type MSI_Record is record
+      Device_Id : U32 := No_Device;
+      Data      : U32 := 0;
+      Source    : U64 := 0;
+   end record;
+
+   MSI_PT_PA      : U64 := 0;
+   MSI_Next_Index : Natural := 0;
+   MSI_Vectors    : array (1 .. Max_MSI_Vectors) of MSI_Record;
+   MSI_Supported  : Boolean := False;
 
    Devices      : array (1 .. Max_Devices) of Device_Record;
    Device_Count : Natural := 0;
@@ -217,15 +250,17 @@ package body Arch.IOMMU is
          Board.UART.Put ("iommu command error csr ");
          Board.UART.Put_Hex (U64 (CSR));
          Board.UART.Put_Line ("");
-         Set_Reg32 (Reg_Cqcsr,
-                    CSR and (Queue_Mem_Fault or Cqcsr_Cmd_To or Cqcsr_Cmd_Ill));
+         Set_Reg32
+           (Reg_Cqcsr,
+            CSR and (Queue_Mem_Fault or Cqcsr_Cmd_To or Cqcsr_Cmd_Ill));
       end if;
    end Submit_Command;
 
    procedure Invalidate_DDT (Device_Id : U32) is
    begin
       Submit_Command
-        (Cmd_Iodir or Cmd0_Iodir_DV or Interfaces.Shift_Left (U64 (Device_Id), 40),
+        (Cmd_Iodir or Cmd0_Iodir_DV
+           or Interfaces.Shift_Left (U64 (Device_Id), 40),
          0);
    end Invalidate_DDT;
 
@@ -350,6 +385,92 @@ package body Arch.IOMMU is
       return Device_Count;
    end Ensure_Device;
 
+   function MSI_Address_For (Device_Id : U32) return U64 is
+   begin
+      return MSI_IOVA_Base + U64 (Device_Id) * 16;
+   end MSI_Address_For;
+
+   function MSI_Data_For (Vector : Natural) return U32 is
+   begin
+      return U32 (Vector);
+   end MSI_Data_For;
+
+   ------------------------------------------------------------------
+   --  MSI controller (software delivery through the IOMMU fault queue)
+   ------------------------------------------------------------------
+
+   function MSI_Vector_Create
+     (Device_Id : U32;
+      Vector    : Natural;
+      Source    : out U64;
+      Address   : out U64;
+      Data      : out U32) return Boolean
+   is
+      Idx      : Natural;
+      Dev_Idx  : Natural;
+      DC_VA    : U64;
+      Msiptp   : U64;
+   begin
+      Source  := 0;
+      Address := 0;
+      Data    := 0;
+
+      if not Is_Available
+        or else not MSI_Supported
+        or else Device_Id = No_Device
+        or else Vector > Natural'Last / 2
+      then
+         return False;
+      end if;
+
+      Dev_Idx := Ensure_Device (Device_Id);
+      if Dev_Idx = 0 then
+         return False;
+      end if;
+
+      DC_VA := Devices (Dev_Idx).DC_VA;
+
+      if MSI_Next_Index >= Max_MSI_Vectors then
+         Board.UART.Put_Line ("iommu msi vector table full");
+         return False;
+      end if;
+
+      MSI_Next_Index := MSI_Next_Index + 1;
+      Idx := MSI_Next_Index;
+
+      Source := Kernel.Interrupts.MSI_Vector_Base + U64 (Idx) - 1;
+      if Source >= U64 (Kernel.Interrupts.Max_Sources) then
+         MSI_Next_Index := MSI_Next_Index - 1;
+         Board.UART.Put_Line ("iommu msi source exhausted");
+         return False;
+      end if;
+
+      Address := MSI_Address_For (Device_Id);
+      Data    := MSI_Data_For (Vector);
+
+      MSI_Vectors (Idx) :=
+        (Device_Id => Device_Id,
+         Data      => Data,
+         Source    => Source);
+
+      --  Enable MSI detection for this device.  Rewriting the same
+      --  values is harmless; we do it lazily on the first vector.
+      Msiptp := PPN_Field (MSI_PT_PA) or Msiptp_Mode_Flat;
+      Write64 (DC_VA + DC_Off_Msiptp,   Msiptp);
+      Write64 (DC_VA + DC_Off_Mask,     MSI_IOVA_Mask);
+      Write64 (DC_VA + DC_Off_Pattern,  MSI_IOVA_Base);
+      Invalidate_DDT (Device_Id);
+      Fence_Commands;
+
+      Board.UART.Put ("iommu msi vector ");
+      Board.UART.Put_Hex (U64 (Vector));
+      Board.UART.Put (" source ");
+      Board.UART.Put_Hex (Source);
+      Board.UART.Put_Line ("");
+
+      return True;
+   end MSI_Vector_Create;
+
    ------------------------------------------------------------------
    --  IO page tables (Sv39, 4 KiB pages, IOVA = PA)
    ------------------------------------------------------------------
@@ -451,11 +572,15 @@ package body Arch.IOMMU is
    ------------------------------------------------------------------
 
    procedure Handle_Fault_Interrupt is
-      Head : U32;
-      Tail : U32;
-      Rec  : U64;
-      Hdr  : U64;
-      CSR  : U32;
+      Head      : U32;
+      Tail      : U32;
+      Rec       : U64;
+      Hdr       : U64;
+      IOVA      : U64;
+      Data      : U32;
+      Device_Id : U32;
+      CSR       : U32;
+      Claimed   : Boolean;
    begin
       loop
          Head := Reg32 (Reg_Fqh);
@@ -464,19 +589,39 @@ package body Arch.IOMMU is
 
          Rec := Arch.Phys_To_Virt (FQ_PA) + U64 (Head) * 32;
          Hdr := Read64 (Rec);
+         IOVA := Read64 (Rec + 16);
          Faults_Seen := Faults_Seen + 1;
 
-         Board.UART.Put ("iommu fault cause ");
-         Board.UART.Put_Hex (Hdr and 16#FFF#);
-         Board.UART.Put (" did ");
-         Board.UART.Put_Hex
-           (Interfaces.Shift_Right (Hdr, 40) and 16#FF_FFFF#);
-         Board.UART.Put (" ttyp ");
-         Board.UART.Put_Hex
-           (Interfaces.Shift_Right (Hdr, 34) and 16#3F#);
-         Board.UART.Put (" iova ");
-         Board.UART.Put_Hex (Read64 (Rec + 16));
-         Board.UART.Put_Line ("");
+         --  Software MSI delivery: an MSI write to the reserved page
+         --  faults on the invalid flat MSI page table.  Convert the
+         --  (device_id, data) pair into a virtual IRQ source delivery.
+         if MSI_Supported
+           and then (IOVA and MSI_IOVA_Mask) = MSI_IOVA_Base
+         then
+            Device_Id := U32 ((IOVA - MSI_IOVA_Base) / 16);
+            Data := U32 (Read64 (Rec + 8) and 16#FFFF_FFFF#);
+            for I in 1 .. MSI_Next_Index loop
+               if MSI_Vectors (I).Device_Id = Device_Id
+                 and then MSI_Vectors (I).Data = Data
+               then
+                  Kernel.Interrupts.Deliver
+                    (MSI_Vectors (I).Source, Claimed);
+                  exit;
+               end if;
+            end loop;
+         else
+            Board.UART.Put ("iommu fault cause ");
+            Board.UART.Put_Hex (Hdr and 16#FFF#);
+            Board.UART.Put (" did ");
+            Board.UART.Put_Hex
+              (Interfaces.Shift_Right (Hdr, 40) and 16#FF_FFFF#);
+            Board.UART.Put (" ttyp ");
+            Board.UART.Put_Hex
+              (Interfaces.Shift_Right (Hdr, 34) and 16#3F#);
+            Board.UART.Put (" iova ");
+            Board.UART.Put_Hex (IOVA);
+            Board.UART.Put_Line ("");
+         end if;
 
          Set_Reg32 (Reg_Fqh, (Head + 1) mod Queue_Entries);
       end loop;
@@ -497,6 +642,11 @@ package body Arch.IOMMU is
    ------------------------------------------------------------------
 
    function Available return Boolean is (Is_Available);
+
+   function MSI_Available return Boolean is
+   begin
+      return Is_Available and then MSI_Supported;
+   end MSI_Available;
 
    ------------------------------------------------------------------
    --  Boot self-test through the debug translation-probe registers:
@@ -556,7 +706,8 @@ package body Arch.IOMMU is
       Unmap_DMA (Test_Dev, Frame);
       Resp := Probe (Test_Dev, Frame);
       if (Resp and Tr_Resp_Fault) = 0 then
-         Board.UART.Put_Line ("iommu selftest: unmapped-again probe did not fault");
+         Board.UART.Put_Line
+            ("iommu selftest: unmapped-again probe did not fault");
          Passed := False;
       end if;
 
@@ -612,6 +763,10 @@ package body Arch.IOMMU is
 
       if (Caps and Caps_MSI_Flat) /= 0 then
          DC_Stride := 64;
+         MSI_Supported := Alloc_Page (MSI_PT_PA);
+         if not MSI_Supported then
+            Board.UART.Put_Line ("iommu msi page table alloc failed");
+         end if;
       end if;
 
       --  Queues: one page each (16 commands = 256 B, 16 fault

@@ -53,7 +53,7 @@ procedure Virtio_Input is
    Notify_Cap : constant U64 := 3;
    ISR_Cap    : constant U64 := 4;
    Cfg_Cap    : constant U64 := 5;
-   IRQ_Cap    : constant U64 := 6;
+   IRQ_Cap    : U64 := 6;
    Svc_EP     : constant U64 := 7;
 
    Common_VA : constant U64 := 16#5000_0000#;
@@ -524,6 +524,13 @@ begin
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
+
+   if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
+      IRQ_Cap := Message.Caps (0);
+      Dev.Enable_MSIX (0);
+      Akernel_User.Console.Put_Line ("PASS virtio-input msix enabled");
+   end if;
+
    Message.Words := (others => 0);
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-input config reply failed");

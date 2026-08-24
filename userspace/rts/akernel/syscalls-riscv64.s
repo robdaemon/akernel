@@ -215,6 +215,22 @@ akernel_sys_irq_create:
     ret
 .size akernel_sys_irq_create, . - akernel_sys_irq_create
 
+.global akernel_sys_irq_msi_create
+.type akernel_sys_irq_msi_create, @function
+# a0 = resource cap, a1 = device id, a2 = vector index,
+# a3 = address out pointer, a4 = data out pointer.
+# Returns the IRQ cap in a0; address/data are returned in a1/a2
+# and stored through the caller's out pointers.
+akernel_sys_irq_msi_create:
+    mv t0, a3
+    mv t1, a4
+    li a7, 42
+    ecall
+    sd a1, 0(t0)
+    sd a2, 0(t1)
+    ret
+.size akernel_sys_irq_msi_create, . - akernel_sys_irq_msi_create
+
 .global akernel_sys_mem_object_pa
 .type akernel_sys_mem_object_pa, @function
 akernel_sys_mem_object_pa:

@@ -150,7 +150,7 @@ package body Device_Manager is
    is
    begin
       return Length = Value'Length
-        and then Token (1 .. Length) = Value;
+        and then Token (Token'First .. Token'First + Length - 1) = Value;
    end Token_Equals;
 
    function Parse_U32
@@ -401,6 +401,16 @@ package body Device_Manager is
    type Bar_Array is array (0 .. 5) of U64;
    type Bar_Flags is array (0 .. 5) of Boolean;
 
+   --  MSI-X capability constants.
+   MSIX_Cap_Id    : constant U8 := 16#11#;
+   MSIX_Enable    : constant U16 := 16#8000#;
+   MSIX_Function_Mask : constant U16 := 16#4000#;
+   MSIX_Table_Mask    : constant U16 := 16#07FF#;
+
+   --  Temporary VA for programming the MSI-X table in init; unmapped
+   --  as soon as the device has been configured.
+   MSIX_Table_VA : constant U64 := 16#5C00_0000#;
+
    Notify_Mult : U32 := 0;
 
    --  Config accessors address the function currently mapped at
@@ -437,8 +447,11 @@ package body Device_Manager is
 
    --  Assign every unassigned MMIO BAR of Dev an address (IO BARs
    --  are left alone; the drivers use the modern MMIO caps only),
-   --  then enable memory space + bus mastering.
-   procedure Assign_BARs (Bar_Base : in out Bar_Array) is
+   --  then enable memory space + bus mastering.  Bar_Seen records
+   --  which slots are real BARs after size probing.
+   procedure Assign_BARs
+     (Bar_Base : in out Bar_Array;
+      Bar_Seen : out Bar_Flags) is
       Reg     : U64;
       Orig    : U32;
       Mask_Lo : U32;
@@ -453,36 +466,46 @@ package body Device_Manager is
          Reg := 16#10# + 4 * U64 (Index);
          Orig := Cfg_Read32 (Reg);
 
-         if Orig = 0 or else Orig = 16#FFFF_FFFF#
-           or else (Orig and 1) = 1
-         then
-            --  Absent or IO BAR.
+         --  IO BARs are left alone; the probe should not touch them.
+         if (Orig and 1) = 1 then
+            Bar_Seen (Index) := False;
             Index := Index + 1;
-         elsif ((Orig / 2) and 3) = 2 then
-            --  64-bit MMIO BAR (consumes two slots).
-            Cfg_Write32 (Reg, 16#FFFF_FFFF#);
-            Cfg_Write32 (Reg + 4, 16#FFFF_FFFF#);
-            Mask_Lo := Cfg_Read32 (Reg);
-            Mask_Hi := Cfg_Read32 (Reg + 4);
-            Mask64 := Shl (U64 (Mask_Hi), 32)
-              or U64 (Mask_Lo and 16#FFFF_FFF0#);
-            Size := (not Mask64) + 1;
-            Addr := (Cursor64 + Size - 1) and not (Size - 1);
-            Cursor64 := Addr + Size;
-            Cfg_Write32 (Reg, U32 (Addr and 16#FFFF_FFFF#));
-            Cfg_Write32 (Reg + 4, U32 (Addr / 16#1_0000_0000#));
-            Bar_Base (Index) := Addr;
-            Index := Index + 2;
          else
-            --  32-bit MMIO BAR.
+            --  Probe by writing all-1s; a returned mask of 0 means the
+            --  slot is absent (including the high word of a 64-bit BAR
+            --  whose low word we have already processed).
             Cfg_Write32 (Reg, 16#FFFF_FFFF#);
             Mask_Lo := Cfg_Read32 (Reg);
-            Size := U64 ((not (Mask_Lo and 16#FFFF_FFF0#)) + 1);
-            Addr := (Cursor32 + Size - 1) and not (Size - 1);
-            Cursor32 := Addr + Size;
-            Cfg_Write32 (Reg, U32 (Addr and 16#FFFF_FFFF#));
-            Bar_Base (Index) := Addr;
-            Index := Index + 1;
+
+            if Mask_Lo = 0 then
+               Bar_Seen (Index) := False;
+               Index := Index + 1;
+            elsif ((Mask_Lo / 2) and 3) = 2 then
+               --  64-bit MMIO BAR (consumes two slots).
+               Cfg_Write32 (Reg + 4, 16#FFFF_FFFF#);
+               Mask_Hi := Cfg_Read32 (Reg + 4);
+               Mask64 := Shl (U64 (Mask_Hi), 32)
+                 or U64 (Mask_Lo and 16#FFFF_FFF0#);
+               Size := (not Mask64) + 1;
+               Addr := (Cursor64 + Size - 1) and not (Size - 1);
+               Cursor64 := Addr + Size;
+               Cfg_Write32 (Reg, U32 (Addr and 16#FFFF_FFFF#));
+               Cfg_Write32 (Reg + 4, U32 (Addr / 16#1_0000_0000#));
+               Bar_Base (Index) := Addr;
+               Bar_Base (Index + 1) := Addr;
+               Bar_Seen (Index) := True;
+               Bar_Seen (Index + 1) := True;
+               Index := Index + 2;
+            else
+               --  32-bit MMIO BAR.
+               Size := U64 ((not (Mask_Lo and 16#FFFF_FFF0#)) + 1);
+               Addr := (Cursor32 + Size - 1) and not (Size - 1);
+               Cursor32 := Addr + Size;
+               Cfg_Write32 (Reg, U32 (Addr and 16#FFFF_FFFF#));
+               Bar_Base (Index) := Addr;
+               Bar_Seen (Index) := True;
+               Index := Index + 1;
+            end if;
          end if;
       end loop;
 
@@ -544,6 +567,150 @@ package body Device_Manager is
         and then Notify_Mult /= 0;
    end Find_Virtio_Regions;
 
+   type MSIX_Info is record
+      Found        : Boolean := False;
+      Table_Bar    : Natural range 0 .. 5 := 0;
+      Table_Offset : U32 := 0;
+      Table_Size   : U16 := 0;
+      Cap_Offset   : U64 := 0;
+   end record;
+
+   --  Walk the PCI capability list looking for the MSI-X capability.
+   --  Returns Table_Bar, the byte offset of the table in that BAR,
+   --  the number of entries (Table_Size is N-1 from the message
+   --  control register, so add one), and the ECAM offset of the cap.
+   procedure Find_MSIX_Capability (Info : out MSIX_Info) is
+      Ptr    : U8 := Cfg_Read8 (16#34#);
+      Cap_Id : U8;
+      Ctrl   : U16;
+      Tbl    : U32;
+      Guard  : Natural := 0;
+   begin
+      Info := (Found => False, others => <>);
+
+      while Ptr /= 0 and then Guard < 48 loop
+         Guard := Guard + 1;
+         Cap_Id := Cfg_Read8 (U64 (Ptr));
+
+         if Cap_Id = MSIX_Cap_Id then
+            Ctrl := Interfaces.Unsigned_16
+              (Cfg_Read32 (U64 (Ptr) / 4 * 4) / 16#1_0000#);
+            Tbl := Cfg_Read32 (U64 (Ptr) + 4);
+
+            Info.Table_Bar    := Natural (Tbl and 16#7#);
+            Info.Table_Offset := Tbl and 16#FFFF_FFF8#;
+            Info.Table_Size   := (Ctrl and MSIX_Table_Mask) + 1;
+            Info.Cap_Offset   := U64 (Ptr);
+            Info.Found        := True;
+            return;
+         end if;
+
+         Ptr := Cfg_Read8 (U64 (Ptr) + 1);
+      end loop;
+   end Find_MSIX_Capability;
+
+   --  Try to set up a single shared MSI-X vector for the device.
+   --  On success the kernel allocates a virtual IRQ source and returns
+   --  the address/data to program into every MSI-X table entry.  The
+   --  table region is mapped temporarily, then unmapped before return.
+   function Setup_MSIX
+     (Bar_Base : Bar_Array;
+      Bar_Seen : Bar_Flags;
+      Info     : MSIX_Info;
+      Dev      : U64;
+      IRQ_Cap  : out U64) return Boolean
+   is
+      Table_PA   : U64;
+      Table_Len  : U64;
+      Table_Cap  : U64;
+      MSI_Addr   : U64;
+      MSI_Data   : U64;
+      Ctrl       : U16;
+      Result     : U64;
+      Map_Len    : U64;
+      VA         : U64;
+      type U32_Array is array (U64 range 0 .. 1023) of U32
+        with Volatile_Components;
+      Table      : U32_Array
+        with Address => System.Storage_Elements.To_Address
+          (System.Storage_Elements.Integer_Address (MSIX_Table_VA));
+      Entry_Off  : U64;
+   begin
+      IRQ_Cap := Syscall_Failed;
+
+      if not Info.Found then
+         Log ("devmgr: no msix capability");
+         return False;
+      end if;
+
+      if not Bar_Seen (Info.Table_Bar) then
+         Log ("devmgr: msix table bar unseen");
+         return False;
+      end if;
+
+      Table_PA  := Bar_Base (Info.Table_Bar) + U64 (Info.Table_Offset);
+      Table_Len := U64 (Info.Table_Size) * 16;
+      Map_Len   := (Table_Len + 4095) / 4096 * 4096;
+      if Map_Len = 0 then
+         Map_Len := 4096;
+      end if;
+
+      Table_Cap := IO_Map
+        (Resource_Handle, Table_PA, Map_Len,
+         Device_Id => Dev * 8);
+      if Table_Cap = Syscall_Failed then
+         Log ("devmgr: msix table io_map failed");
+         return False;
+      end if;
+
+      Result := Map_MMIO
+        (Address_Space => Address_Space_Cap,
+         Cap           => Table_Cap,
+         VA            => MSIX_Table_VA,
+         Offset        => 0,
+         Length        => Map_Len,
+         Flags         => 3);
+      if Result /= 0 then
+         Log ("devmgr: msix table map failed");
+         Result := Cap_Delete (Table_Cap);
+         return False;
+      end if;
+
+      IRQ_Cap := IRQ_MSI_Create
+        (Resource_Handle, Dev * 8, 0, MSI_Addr, MSI_Data);
+      if IRQ_Cap = Syscall_Failed then
+         Log ("devmgr: msi vector create failed");
+         Result := Mem_Unmap (Address_Space_Cap, MSIX_Table_VA, Map_Len);
+         Result := Cap_Delete (Table_Cap);
+         return False;
+      end if;
+
+      --  Program every table entry with the same vector (single
+      --  shared MSI-X vector for now).  Mask bits stay clear.
+      for I in 0 .. U64 (Info.Table_Size) - 1 loop
+         Entry_Off := I * 4;
+         Table (Entry_Off)     := U32 (MSI_Addr and 16#FFFF_FFFF#);
+         Table (Entry_Off + 1) :=
+           U32 (Interfaces.Shift_Right (MSI_Addr, 32));
+         Table (Entry_Off + 2) := U32 (MSI_Data);
+         Table (Entry_Off + 3) := 0;
+      end loop;
+
+      --  Enable MSI-X in the message-control register.
+      Ctrl := Interfaces.Unsigned_16
+        (Cfg_Read32 (Info.Cap_Offset / 4 * 4) / 16#1_0000#);
+      Ctrl := Ctrl or MSIX_Enable;
+      Cfg_Write32
+        (Info.Cap_Offset,
+         (Cfg_Read32 (Info.Cap_Offset / 4 * 4) and 16#0000_FFFF#)
+           or U32 (Ctrl) * 16#1_0000#);
+
+      Result := Mem_Unmap (Address_Space_Cap, MSIX_Table_VA, Map_Len);
+      Result := Cap_Delete (Table_Cap);
+      Log ("devmgr: msix enabled for device" & U64'Image (Dev));
+      return True;
+   end Setup_MSIX;
+
    --  Spawn a PCI driver with the fixed 7-handle ABI, then push the
    --  driver config message (notify multiplier, IRQ source, PCI
    --  device id) as the first traffic on its service endpoint.
@@ -551,6 +718,8 @@ package body Device_Manager is
      (Line_Index : Positive;
       Dev        : U64;
       Regions    : Region_Array;
+      Bar_Base   : Bar_Array;
+      Bar_Seen   : Bar_Flags;
       IRQ_Source : U64)
    is
       L : Driver_Line renames Lines (Line_Index);
@@ -559,6 +728,9 @@ package body Device_Manager is
       Region_Cap  : U64;
       Map_Len     : U64;
       IRQ_Cap     : U64;
+      MSI_IRQ_Cap : U64 := 0;
+      MSI_Enabled : Boolean := False;
+      MSIX        : MSIX_Info;
       Svc_EP      : U64;
       Process_Cap : U64;
       Result      : U64;
@@ -634,13 +806,25 @@ package body Device_Manager is
       end if;
       Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
 
+      --  If the function has an MSI-X capability, try to move it off
+      --  the shared INTx line.  On success the config message carries
+      --  the MSI IRQ cap in slot 0 and Word 3 = 1.
+      Find_MSIX_Capability (MSIX);
+      if Setup_MSIX (Bar_Base, Bar_Seen, MSIX, Dev, MSI_IRQ_Cap) then
+         MSI_Enabled := True;
+      end if;
+
       --  Driver config message: the driver replies with status 0.
       Message.Label := Driver_Config_Label;
       Message.Words := (others => 0);
       Message.Words (0) := U64 (Notify_Mult);
       Message.Words (1) := IRQ_Source;
       Message.Words (2) := Dev * 8;  --  PCI device id (bus 0)
+      Message.Words (3) := (if MSI_Enabled then 1 else 0);
       Message.Caps := (others => 0);
+      if MSI_Enabled then
+         Message.Caps (0) := MSI_IRQ_Cap;
+      end if;
       if IPC_Call (Svc_EP) /= IPC_Ok or else Message.Words (0) /= 0 then
          Log ("devmgr: driver config push failed");
       end if;
@@ -972,22 +1156,12 @@ package body Device_Manager is
    procedure Setup_PCI_Device (Line_Index : Positive; Dev : U64) is
       Bar_Base   : Bar_Array := (others => 0);
       Bar_Seen   : Bar_Flags := (others => False);
-      Orig       : U32;
       Regions    : Region_Array;
       Found      : Boolean;
       Pin        : U8;
       IRQ_Source : U64 := 0;
    begin
-      --  Snapshot which BARs exist before assignment (Bar_Seen),
-      --  then assign addresses.
-      for Index in 0 .. 5 loop
-         Orig := Cfg_Read32 (16#10# + 4 * U64 (Index));
-         Bar_Seen (Index) := Orig /= 0
-           and then Orig /= 16#FFFF_FFFF#
-           and then (Orig and 1) = 0;
-      end loop;
-
-      Assign_BARs (Bar_Base);
+      Assign_BARs (Bar_Base, Bar_Seen);
 
       Find_Virtio_Regions (Bar_Base, Bar_Seen, Regions, Found);
       if not Found then
@@ -1009,7 +1183,8 @@ package body Device_Manager is
          IRQ_Source := 32 + (Dev + U64 (Pin) - 1) mod 4;
       end if;
 
-      Spawn_PCI_Driver (Line_Index, Dev, Regions, IRQ_Source);
+      Spawn_PCI_Driver (Line_Index, Dev, Regions,
+                        Bar_Base, Bar_Seen, IRQ_Source);
    end Setup_PCI_Device;
 
    --  Normalize a PCI device id to the virtio device id: modern

@@ -117,6 +117,15 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_irq_create";
 
+   function Raw_IRQ_MSI_Create
+     (Resource  : U64;
+      Device_Id : U64;
+      Vector    : U64;
+      Address   : System.Address;
+      Data      : System.Address) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_irq_msi_create";
+
    function Raw_Mem_Object_PA (Cap : U64; Index : U64) return U64
      with Import, Convention => C,
           External_Name => "akernel_sys_mem_object_pa";
@@ -374,6 +383,29 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_IRQ_Create (Resource, Source);
    end IRQ_Create;
+
+   function IRQ_MSI_Create
+     (Resource    : U64;
+      Device_Id   : U64;
+      Vector      : U64;
+      Address     : out U64;
+      Data        : out U64) return U64
+   is
+      Addr_Word : aliased U64 := 0;
+      Data_Word : aliased U64 := 0;
+      Result    : U64;
+   begin
+      Address := 0;
+      Data := 0;
+      Result := Raw_IRQ_MSI_Create
+        (Resource, Device_Id, Vector,
+         Addr_Word'Address, Data_Word'Address);
+      if Result /= Syscall_Failed then
+         Address := Addr_Word;
+         Data := Data_Word;
+      end if;
+      return Result;
+   end IRQ_MSI_Create;
 
    function Mem_Object_PA (Cap : U64; Index : U64) return U64 is
    begin

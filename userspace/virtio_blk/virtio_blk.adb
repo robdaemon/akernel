@@ -69,7 +69,7 @@ procedure Virtio_Blk is
    Notify_Cap : constant U64 := 3;
    ISR_Cap    : constant U64 := 4;
    Cfg_Cap    : constant U64 := 5;
-   IRQ_Cap    : constant U64 := 6;
+   IRQ_Cap    : U64 := 6;
    Svc_EP     : constant U64 := 7;
 
    Common_VA : constant U64 := 16#5000_0000#;
@@ -490,6 +490,15 @@ begin
       Process_Exit;
    end if;
    Notify_Mult := Message.Words (0);
+
+   --  MSI-X hand-off from the device manager: Words(3) non-zero and
+   --  Caps(0) carries the dedicated vector IRQ cap.
+   if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
+      IRQ_Cap := Message.Caps (0);
+      Dev.Enable_MSIX (0);
+      Akernel_User.Console.Put_Line ("PASS virtio-blk msix enabled");
+   end if;
+
    Message.Words := (others => 0);
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-blk config reply failed");
