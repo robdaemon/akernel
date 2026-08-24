@@ -3,7 +3,6 @@ with Ada.Unchecked_Conversion;
 with Arch;
 with Arch.Context;
 with Arch.MMU;
-with Board.UART;
 with Kernel.CPUs;
 with Kernel.ELF;
 with Kernel.Memory;
