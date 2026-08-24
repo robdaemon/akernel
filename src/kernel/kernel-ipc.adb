@@ -103,7 +103,6 @@ package body Kernel.IPC is
       Value  : U64)
    is
       Wake_Result : Kernel.Scheduler.Status;
-      use type Kernel.Tasks.Thread_State;
    begin
       if Is_Dead (Thread) then
          return;
@@ -173,7 +172,6 @@ package body Kernel.IPC is
      (Result : out Status;
       Object : out System.Address)
    is
-      use type System.Address;
       Slot : Endpoint_Access;
    begin
       Object := System.Null_Address;
@@ -329,6 +327,30 @@ package body Kernel.IPC is
    --  Endpoint resolution
    ------------------------------------------------------------------
 
+   procedure Set_Stamp_Identity
+     (Object : in out Endpoint;
+      Stamp  : Boolean)
+   is
+   begin
+      Object.Stamp_Identity := Stamp;
+   end Set_Stamp_Identity;
+
+   function Stamp_Identity (Object : Endpoint) return Boolean is
+   begin
+      return Object.Stamp_Identity;
+   end Stamp_Identity;
+
+   procedure Set_Stamp_Identity
+     (Object_Address : System.Address;
+      Stamp          : Boolean)
+   is
+      EP : constant Endpoint_Access := To_Endpoint (Object_Address);
+   begin
+      if EP /= null then
+         EP.Stamp_Identity := Stamp;
+      end if;
+   end Set_Stamp_Identity;
+
    procedure Resolve_Endpoint
      (Caller       : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
@@ -376,6 +398,19 @@ package body Kernel.IPC is
       end if;
 
       Badge := Cap_Info.Badge;
+      --  Milestone 41b/Proc:self: when an endpoint is marked as an
+      --  identity endpoint, a zero cap badge is treated as "anonymous
+      --  caller" and stamped with the caller's process id.  This lets
+      --  the VFS forward the real client identity to filesystem
+      --  servers without forcing every client to hold a unique,
+      --  pre-minted capability, and without breaking other endpoints
+      --  that legitimately use badge zero.
+      if Badge = 0 and then Object.Stamp_Identity then
+         Badge :=
+           Kernel.Capabilities.U64
+             (Kernel.Tasks.Process_Id_Of
+                (Kernel.Tasks.Owning_Process (Caller.all).all));
+      end if;
       Result := Ok;
    end Resolve_Endpoint;
 
@@ -856,8 +891,6 @@ package body Kernel.IPC is
    end Write_Notification_Message;
 
    procedure Cancel_Receive (Thread : Kernel.Tasks.Thread_Access) is
-      use type System.Address;
-
       Endpoint_Addr  : System.Address;
       Endpoint_Object : Endpoint_Access;
    begin

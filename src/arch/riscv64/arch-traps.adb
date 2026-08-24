@@ -92,6 +92,7 @@ package body Arch.Traps is
    Sys_Thread_Self       : constant U64 := 38;
    Sys_Sleep_Until       : constant U64 := 39;
    Sys_Thread_Wait       : constant U64 := 40;
+   Sys_EP_Set_Stamp_Identity : constant U64 := 41;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1199,6 +1200,51 @@ package body Arch.Traps is
       Trap_Frame_Set_A0 (Frame, U64 (New_Cap));
    end Handle_EP_Create;
 
+   --  Milestone 41b/Proc:self: mark an endpoint so that zero-
+   --  badged calls through it surface the caller's process id as
+   --  the message badge. Requires Manage on the endpoint cap.
+   procedure Handle_EP_Set_Stamp_Identity (Frame : System.Address) is
+      use type Kernel.Capabilities.Object_Kind;
+      use type Kernel.Capabilities.Status;
+
+      Current      : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+      Cap_Handle   : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
+      Handle_Valid : Boolean;
+      Cap_Result   : Kernel.Capabilities.Status;
+      Cap_Info     : Kernel.Capabilities.Cap_Entry;
+      Stamp        : constant Boolean := Trap_Frame_Get_A1 (Frame) /= 0;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
+      if not Handle_Valid then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.Tasks.Lookup_Cap
+        (TCB       => Current.all,
+         Cap       => Cap_Handle,
+         Result    => Cap_Result,
+         Out_Entry => Cap_Info);
+
+      if Cap_Result /= Kernel.Capabilities.Ok
+        or else Cap_Info.Kind /= Kernel.Capabilities.Endpoint_Object
+        or else not Cap_Info.Rights.Manage
+      then
+         Trap_Frame_Set_A0 (Frame, U64'Last);
+         return;
+      end if;
+
+      Kernel.IPC.Set_Stamp_Identity (Cap_Info.Object, Stamp);
+      Trap_Frame_Set_A0 (Frame, 0);
+   end Handle_EP_Set_Stamp_Identity;
+
    --  Map an IPC kernel status to the userspace result code.
    procedure Set_IPC_Result
      (Frame  : System.Address;
@@ -1983,7 +2029,7 @@ package body Arch.Traps is
       Cap_Info     : Kernel.Capabilities.Cap_Entry;
       Words        : Kernel.Processes.Process_Info_Words;
       Found        : Boolean;
-      Slot_Arg     : constant U64 := Trap_Frame_Get_A1 (Frame);
+      Slot_Arg     : U64;
       Offset       : constant U64 := Trap_Frame_Get_A3 (Frame);
       Total_Bytes  : U64;
    begin
@@ -1992,7 +2038,14 @@ package body Arch.Traps is
          return;
       end if;
 
-      if not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
+      Slot_Arg := Trap_Frame_Get_A1 (Frame);
+
+      --  Self-introspection needs no device_resource authority; a
+      --  process is always allowed to read its own Process_Info.
+      --  Enumerating other slots still requires the device_resource
+      --  Kernel_Object cap with Manage.
+      if Slot_Arg /= U64'Last
+        and then not Has_Device_Resource (Current, Trap_Frame_Get_A0 (Frame))
       then
          Trap_Frame_Set_A0 (Frame, U64'Last);
          return;
@@ -2548,6 +2601,8 @@ package body Arch.Traps is
       elsif Number = Sys_Thread_Wait then
          Handle_Thread_Wait (Frame);
          return;
+      elsif Number = Sys_EP_Set_Stamp_Identity then
+         Handle_EP_Set_Stamp_Identity (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

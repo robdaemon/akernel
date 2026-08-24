@@ -274,7 +274,8 @@ procedure Fileserver is
          return;
       end if;
       Exp_Len := Len;
-      Expanded (1 .. Len) := Name (Name'First .. Name'First + Len - 1);
+      Expanded (Expanded'First .. Expanded'First + Len - 1) :=
+        Name (Name'First .. Name'First + Len - 1);
 
       for Depth in 1 .. 4 loop
          Volume := Resolve_Volume (Expanded, Exp_Len, Path_Pos);
@@ -291,7 +292,8 @@ procedure Fileserver is
          end loop;
          exit when Colon = 0;  --  unqualified: Volume stays 0
 
-         A := Find_Assign (Expanded (1 .. Colon - 1));
+         A := Find_Assign
+           (Expanded (Expanded'First .. Expanded'First + Colon - 2));
          exit when A = 0;
 
          Rest_First := Colon + 1;
@@ -731,6 +733,106 @@ procedure Fileserver is
       end loop;
    end Pack_Path;
 
+   --  Milestone 41b/Proc:self: forward a client request to an
+   --  fs-driver volume using a cap minted with the original
+   --  caller's badge (now the caller's process id). The fs driver
+   --  sees the real client identity in Message.Badge.
+   Max_Forward_Caps : constant := 1024;
+   type Forward_Cap_Entry is record
+      Valid  : Boolean := False;
+      Volume : Natural := 0;
+      Badge  : U64 := 0;
+      Cap    : U64 := 0;
+   end record;
+   Forward_Caps : array (1 .. Max_Forward_Caps) of Forward_Cap_Entry;
+
+   --  Reuse a previously-minted forward cap when the same caller
+   --  (badge = process id) hits the same fs-driver volume. This
+   --  keeps the VFS forward path from paying for a cap_mint+delete
+   --  on every fs operation. Bounded leak: at most one cap per
+   --  live caller/volume pair.
+   function Cached_FS_Cap (Volume : Natural; Badge : U64) return U64 is
+   begin
+      for E of Forward_Caps loop
+         if E.Valid and then E.Volume = Volume and then E.Badge = Badge then
+            return E.Cap;
+         end if;
+      end loop;
+      return Syscalls.Syscall_Failed;
+   end Cached_FS_Cap;
+
+   procedure Store_FS_Cap
+     (Volume : Natural;
+      Badge  : U64;
+      Cap    : U64;
+      Stored : out Boolean)
+   is
+   begin
+      Stored := False;
+      for E of Forward_Caps loop
+         if not E.Valid then
+            E.Valid  := True;
+            E.Volume := Volume;
+            E.Badge  := Badge;
+            E.Cap    := Cap;
+            Stored   := True;
+            return;
+         end if;
+      end loop;
+   end Store_FS_Cap;
+
+   function Is_Proc_Volume (Volume : Natural) return Boolean is
+   begin
+      return Volumes (Volume).Lab_Len = 4
+        and then Match ("Proc", 4,
+                        Volumes (Volume).Label (1 .. 4),
+                        True);
+   end Is_Proc_Volume;
+
+   function Forward_To_FS (Volume : Natural; Caller_Badge : U64)
+                            return Boolean
+   is
+      FS_EP  : U64 := Syscalls.Syscall_Failed;
+      Stored : Boolean := False;
+      Ok     : Boolean := False;
+   begin
+      --  Milestone 41b/Proc:self: caller identity is needed only
+      --  for the Proc: introspection volume. For all other fs-driver
+      --  volumes (Sys:, BD0:, etc.) use the unminted endpoint cap
+      --  and avoid the cap_mint cost on every first access.
+      if Is_Proc_Volume (Volume) then
+         FS_EP := Cached_FS_Cap (Volume, Caller_Badge);
+         if FS_EP = Syscalls.Syscall_Failed then
+            FS_EP := Syscalls.Cap_Mint
+              (Source      => Volumes (Volume).FS_EP,
+               Rights_Mask =>
+                 Syscalls.Right_Send + Syscalls.Right_Transfer,
+               Badge       => Caller_Badge);
+            if FS_EP /= Syscalls.Syscall_Failed then
+               Store_FS_Cap (Volume, Caller_Badge, FS_EP, Stored);
+               if not Stored then
+                  --  Cache is full: don't leak the minted cap.
+                  declare
+                     Unused : U64;
+                  begin
+                     Unused := Syscalls.Cap_Delete (FS_EP);
+                  end;
+                  return False;
+               end if;
+            end if;
+         end if;
+      else
+         FS_EP := Volumes (Volume).FS_EP;
+      end if;
+
+      if FS_EP = Syscalls.Syscall_Failed then
+         return False;
+      end if;
+
+      Ok := Syscalls.IPC_Call (FS_EP) = Syscalls.IPC_Ok;
+      return Ok;
+   end Forward_To_FS;
+
    --  Op_ReadDir (milestone 32): words 0..3 = volume-qualified
    --  path, word 4 = entry index; FS-driver volumes only (the
    --  wire format matches the fs driver's: path portion repacked
@@ -762,7 +864,7 @@ procedure Fileserver is
       Pack_Path (Exp, Pos, E_Len, 0, 3);
       Syscalls.Message.Words (4) := Idx;
       Syscalls.Message.Caps := (others => 0);
-      if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+      if Forward_To_FS (V, Syscalls.Message.Badge) then
          --  Relay the fs driver's reply words untouched.
          Syscalls.Message.Caps := (others => 0);
          if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
@@ -846,10 +948,12 @@ procedure Fileserver is
 
       if Volumes (V).Is_FS then
          --  VFS forwarding: the fs driver speaks the same client
-         --  protocol; the path portion rides words 0..5.
+         --  protocol; the path portion rides words 0..5. The
+         --  caller identity is delivered through the minted cap
+         --  badge (Forward_To_FS preserves Message contents).
          Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Caps := (others => 0);
-         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+         if Forward_To_FS (V, Syscalls.Message.Badge) then
             Reply2 (Syscalls.Message.Words (0),
                     Syscalls.Message.Words (1));
          else
@@ -1282,7 +1386,7 @@ procedure Fileserver is
             Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
             else
@@ -1447,7 +1551,7 @@ procedure Fileserver is
             Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Read;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
             else
@@ -1756,7 +1860,7 @@ procedure Fileserver is
          Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Op;
          Syscalls.Message.Caps := (others => 0);
-         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+         if Forward_To_FS (V, Syscalls.Message.Badge) then
             Reply2 (Syscalls.Message.Words (0),
                     Syscalls.Message.Words (1));
          else
@@ -1863,7 +1967,7 @@ procedure Fileserver is
          Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Files.Op_Rename;
          Syscalls.Message.Caps := (0 => Buf, others => 0);
-         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok then
+         if Forward_To_FS (V, Syscalls.Message.Badge) then
             Status := Syscalls.Message.Words (0);
          else
             Status := Files.Status_Not_Found;
@@ -1929,7 +2033,7 @@ procedure Fileserver is
          Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Files.Op_Volume_Info;
          Syscalls.Message.Caps := (others => 0);
-         if Syscalls.IPC_Call (Volumes (V).FS_EP) = Syscalls.IPC_Ok
+         if Forward_To_FS (V, Syscalls.Message.Badge)
            and then Syscalls.Message.Words (0) = Files.Status_Ok
          then
             Syscalls.Message.Caps := (others => 0);

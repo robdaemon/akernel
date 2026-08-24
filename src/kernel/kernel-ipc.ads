@@ -169,6 +169,20 @@ package Kernel.IPC is
    --  endpoint (Send caps elsewhere keep it referenced).
    procedure Fail_Endpoint (Object : System.Address);
 
+   --  Milestone 41b/Proc:self: when True, an endpoint call whose
+   --  cap badge is zero surfaces the caller's process id as the
+   --  message badge. This lets a VFS file server learn the real
+   --  client identity without breaking other endpoints that use
+   --  zero as a legitimate anonymous badge.
+   procedure Set_Stamp_Identity (Object : in out Endpoint;
+                                 Stamp  : Boolean);
+   function Stamp_Identity (Object : Endpoint) return Boolean;
+
+   --  Address-based variant for use from the syscall layer, where
+   --  the endpoint object is known only by its system address.
+   procedure Set_Stamp_Identity (Object_Address : System.Address;
+                                 Stamp          : Boolean);
+
 private
    type Endpoint is record
       Header           : Kernel.Objects.Object_Header;
@@ -176,6 +190,7 @@ private
       Queue_Tail       : Kernel.Tasks.Thread_Access;
       Waiting_Receiver : Kernel.Tasks.Thread_Access;
       Failed           : Boolean;
+      Stamp_Identity   : Boolean := False;
       Next_Free        : System.Address;
    end record;
 end Kernel.IPC;

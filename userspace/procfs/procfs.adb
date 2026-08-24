@@ -535,6 +535,10 @@ procedure Procfs is
    --  found, 1 = root dir, 2 = tree file, 3 = process dir,
    --  4 = status file, 5 = caps file, 6 = regs file; Idx is the
    --  snapshot index (= process slot) for 3/4/5/6.
+   Caller_Pid : U64 := 0;
+   --  Filled after IPC_Recv from Message.Badge; the fileserver
+   --  forwards this as the original caller's process id.
+
    procedure Resolve
      (Path : String;
       Kind : out Natural;
@@ -556,6 +560,20 @@ procedure Procfs is
          return;
       end if;
 
+      --  Milestone 41b/Proc:self: "self" resolves to the caller's
+      --  own process directory. A zero caller pid means identity
+      --  was not delivered (e.g. a legacy unbadged cap); treat as
+      --  not found.
+      if Match (Path, "self") then
+         if Caller_Pid /= 0 then
+            Idx := Find_Pid (Caller_Pid);
+            if Idx < Max_Slots then
+               Kind := 3;
+            end if;
+         end if;
+         return;
+      end if;
+
       for I in Path'Range loop
          if Path (I) = '/' then
             Slash := I;
@@ -569,6 +587,24 @@ procedure Procfs is
             Kind := 3;
          end if;
       else
+         --  First path component may be "self"; the rest is the
+         --  file inside the caller's process directory.
+         if Match (Path (Path'First .. Slash - 1), "self") then
+            if Caller_Pid /= 0 then
+               Idx := Find_Pid (Caller_Pid);
+               if Idx < Max_Slots then
+                  if Match (Path (Slash + 1 .. Path'Last), "status") then
+                     Kind := 4;
+                  elsif Match (Path (Slash + 1 .. Path'Last), "caps") then
+                     Kind := 5;
+                  elsif Match (Path (Slash + 1 .. Path'Last), "regs") then
+                     Kind := 6;
+                  end if;
+               end if;
+            end if;
+            return;
+         end if;
+
          Idx := Pid_Component (Path (Path'First .. Slash - 1));
          if Idx < Max_Slots then
             if Match (Path (Slash + 1 .. Path'Last), "status") then
@@ -833,6 +869,8 @@ begin
          Akernel_User.Console.Put_Line ("procfs recv failed");
          Syscalls.Process_Exit;
       end if;
+
+      Caller_Pid := Syscalls.Message.Badge;
 
       if Syscalls.Message.Label = Op_Stat
         or else Syscalls.Message.Label = Op_Open

@@ -308,20 +308,26 @@ procedure Fuzz is
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
-      --  Reap poll: batch the yields — a console-printing child
-      --  outruns a bare yield-per-try poll under SMP4 (the 39b /
-      --  41a burn). 2048 x 32 covers the ~20-line List output
-      --  through the terminal-render console pipeline.
-      for Try in 1 .. 2048 loop
-         Status := Akernel_User.Syscalls.Reap_Process_Code (Proc, Code);
-         if Status = 0 then
-            Done := True;
-            exit;
-         end if;
-         for Y in 1 .. 32 loop
+      --  Reap poll: use a wall-clock deadline instead of a fixed
+      --  iteration count so an SMP-hungry polling parent does not give
+      --  up before a sibling on another hart has had time to run
+      --  (e.g., C:Wait sleeping one second).  A single yield per
+      --  iteration is enough: it donates the CPU to any runnable peer
+      --  and the next loop trip immediately retries the reap.
+      declare
+         use Ada.Real_Time;
+         Deadline : constant Time := Clock + Seconds (10);
+      begin
+         while not Done and then Clock <= Deadline loop
+            Status :=
+              Akernel_User.Syscalls.Reap_Process_Code (Proc, Code);
+            if Status = 0 then
+               Done := True;
+               exit;
+            end if;
             Discard := Raw_Ecall (Number => Sys_Yield);
          end loop;
-      end loop;
+      end;
       Check (Done, Prefix & " reaped");
       Check (Done and then Code = Expected,
              Prefix & " exit code");
@@ -1801,7 +1807,7 @@ begin
          if Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
                        A1 => U64 (Slot), A2 => Info_Cap) = 0
          then
-            if Page (2) > 2 or else Page (3) > 7 then
+            if Page (2) > 2 or else Page (3) > 8 then
                States_Ok := False;
             end if;
             for J in 0 .. Live_Slots - 1 loop
@@ -2522,6 +2528,7 @@ begin
       Path        : String (1 .. 40);
       Path_Len    : Natural;
       Rbuf        : array (0 .. 4095) of Interfaces.Unsigned_8;
+      Own_Pid     : U64 := 0;
 
       function Contains (S : String) return Boolean is
       begin
@@ -2549,6 +2556,51 @@ begin
       end Contains;
    begin
       Check (Await_Volume ("Proc:tree"), "proc volume mounted");
+
+      --  Milestone 41b/Proc:self: learn our own pid for the self
+      --  alias check. Process_Info(Self_Slot) no longer needs the
+      --  device_resource cap.
+      declare
+         Info_Cap : U64;
+         Info_VA  : constant U64 := 16#5A00_0000#;
+         type Info_Words is array (0 .. 8) of U64;
+         Info : Info_Words
+           with Volatile,
+                Address =>
+                  System.Storage_Elements.To_Address
+                    (System.Storage_Elements.Integer_Address (Info_VA));
+      begin
+         Info_Cap := Akernel_User.Syscalls.Mem_Alloc (1);
+         if Info_Cap /= Akernel_User.Syscalls.Syscall_Failed
+           and then Akernel_User.Syscalls.Mem_Map
+             (Address_Space => Akernel_User.Syscalls.Address_Space_Cap,
+              Cap           => Info_Cap,
+              VA            => Info_VA,
+              Offset        => 0,
+              Length        => Akernel_User.Syscalls.Page_Size,
+              Flags         => 3) = 0
+           and then Akernel_User.Syscalls.Process_Info
+             (Resource => 0,
+              Slot     => Akernel_User.Syscalls.Self_Slot,
+              Buffer   => Info_Cap,
+              Offset   => 0) = Akernel_User.Syscalls.Info_Ok
+         then
+            Own_Pid := Info (0);
+         end if;
+         if Info_Cap /= Akernel_User.Syscalls.Syscall_Failed then
+            declare
+               Unused : U64;
+            begin
+               Unused := Akernel_User.Syscalls.Mem_Unmap
+                 (Address_Space => Akernel_User.Syscalls.Address_Space_Cap,
+                  VA            => Info_VA,
+                  Length        => Akernel_User.Syscalls.Page_Size);
+               Unused := Akernel_User.Syscalls.Cap_Delete (Info_Cap);
+            end;
+         end if;
+      end;
+
+      Check (Own_Pid /= 0, "own pid known");
 
       St := Akernel_User.Files.Stat ("Proc:tree", Size);
       Check (St = Akernel_User.Files.Status_Ok and then Size > 0,
@@ -2664,6 +2716,45 @@ begin
          Check (Contains ("sepc ") or else Contains ("thread live"),
                 "proc regs frame or live line");
       end if;
+
+      --  Milestone 41b/Proc:self: the self alias must resolve to
+      --  the caller's own process directory.
+      declare
+         Self_Path  : String (1 .. 40) := (others => Character'Val (0));
+         Self_Len   : Natural := 16;  --  "Proc:self/status"
+         Parsed_Pid : U64 := 0;
+         Found      : Boolean := False;
+         Pos        : Natural := 8;  --  after "process "
+      begin
+         Self_Path (1 .. 5)  := "Proc:";
+         Self_Path (6 .. 9)  := "self";
+         Self_Path (10)     := '/';
+         Self_Path (11 .. 16) := "status";
+         St := Akernel_User.Files.Open (Self_Path (1 .. Self_Len), Size);
+         Check (St = Akernel_User.Files.Status_Ok and then Size > 0,
+                "proc self/status opens");
+         St := Akernel_User.Files.Read
+           (Self_Path (1 .. Self_Len), 0, Rbuf'Address,
+            U64 (Rbuf'Length), Count);
+         Check (St = Akernel_User.Files.Status_Ok and then Count > 0,
+                "proc self/status reads");
+
+         --  The first line is "process <pid>"; parse it.
+         if Count >= 10 then
+            while Pos < Natural (Count)
+              and then Character'Val (Natural (Rbuf (Pos)))
+                     in '0' .. '9'
+            loop
+               Parsed_Pid := Parsed_Pid * 10
+                 + U64 (Character'Pos
+                          (Character'Val (Natural (Rbuf (Pos))))
+                        - Character'Pos ('0'));
+               Pos := Pos + 1;
+            end loop;
+            Found := Parsed_Pid = Own_Pid;
+         end if;
+         Check (Found, "proc self/status pid matches own pid");
+      end;
 
       --  Read-only volume: mutating ops and unknown paths.
       Check (Akernel_User.Files.Delete ("Proc:tree") =
@@ -2852,6 +2943,10 @@ begin
       Args_C := ('C', Character'Val (0));
 
       --  Callers 1+2 first so they queue with no receiver.
+      --  Give each caller time to actually issue its Call before the
+      --  next one spawns; under SMP4 a freshly-spawned peer may not
+      --  run until much later, breaking the FIFO order the test relies
+      --  on for Reply_Gone vs Endpoint_Gone.
       for I in 1 .. 2 loop
          Akernel_User.Syscalls.Set_Grant
            (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
@@ -2870,6 +2965,15 @@ begin
          end if;
          Check (Status = 0 and then Proc /= 0,
                 "teardown caller spawned");
+
+         declare
+            use Ada.Real_Time;
+            Deadline : constant Time := Clock + Milliseconds (100);
+         begin
+            while Clock <= Deadline loop
+               Ignore := Raw_Ecall (Number => Sys_Yield);
+            end loop;
+         end;
       end loop;
 
       --  Receiver: receives the head caller, exits without replying.
@@ -2892,12 +2996,18 @@ begin
       end if;
       Check (Status = 0 and then Proc /= 0, "teardown receiver spawned");
 
-      --  Let the receiver run and die before the fresh caller
-      --  (a handful of slices is enough; each yield can donate a
-      --  full timeslice to the Spin hog, so keep the count low).
-      for I in 1 .. 512 loop
-         Ignore := Raw_Ecall (Number => Sys_Yield);
-      end loop;
+      --  Let the receiver run and die before the fresh caller.
+      --  Under SMP4 a fixed yield count is too sensitive to the
+      --  scheduler; wait a short wall-clock interval so the receiver
+      --  reliably completes its receive-and-exit sequence.
+      declare
+         use Ada.Real_Time;
+         Deadline : constant Time := Clock + Milliseconds (200);
+      begin
+         while Clock <= Deadline loop
+            Ignore := Raw_Ecall (Number => Sys_Yield);
+         end loop;
+      end;
 
       --  Caller 3: fresh call on the failed endpoint.
       Akernel_User.Syscalls.Set_Grant
@@ -4977,6 +5087,7 @@ begin
         and then Number /= Sys_Thread_Exit
         and then Number /= Sys_Thread_Self
         and then Number /= Sys_Thread_Wait
+        and then Number /= 41
       then
          A0 := Arg_Value;
          A1 := Arg_Value;

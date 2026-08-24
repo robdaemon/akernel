@@ -57,6 +57,12 @@ package body Akernel_User.Syscalls is
    function Raw_EP_Create return U64
      with Import, Convention => C, External_Name => "akernel_sys_ep_create";
 
+   function Raw_EP_Set_Stamp_Identity
+     (Cap   : U64;
+      Stamp : U64) return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_ep_set_stamp_identity";
+
    function Raw_Mem_Alloc (Pages : U64) return U64
      with Import, Convention => C, External_Name => "akernel_sys_mem_alloc";
 
@@ -293,6 +299,12 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_EP_Create;
    end EP_Create;
+
+   function EP_Set_Stamp_Identity (Cap : U64; Stamp : Boolean)
+                                  return U64 is
+   begin
+      return Raw_EP_Set_Stamp_Identity (Cap, (if Stamp then 1 else 0));
+   end EP_Set_Stamp_Identity;
 
    function Mem_Alloc (Pages : U64) return U64 is
    begin

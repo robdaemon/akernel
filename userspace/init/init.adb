@@ -693,6 +693,10 @@ begin
    IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
    Console_EP := Akernel_User.Syscalls.EP_Create;
    FS_EP := Akernel_User.Syscalls.EP_Create;
+   if Akernel_User.Syscalls.EP_Set_Stamp_Identity (FS_EP, True) /= 0 then
+      Akernel_User.Syscalls.Debug_Put_Line
+        ("init: FS endpoint identity stamp failed");
+   end if;
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
    PROCFS_EP := Akernel_User.Syscalls.EP_Create;

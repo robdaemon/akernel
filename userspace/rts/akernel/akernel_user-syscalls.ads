@@ -206,6 +206,14 @@ package Akernel_User.Syscalls is
       New_Priority : Integer;
       Old_Priority : out Integer) return U64;
 
+   --  Endpoint identity stamp (milestone 41b/Proc:self): when
+   --  Stamp is True, calls through this endpoint with a zero badge
+   --  surface the caller's process id as Message.Badge.  The file
+   --  server uses this to learn the real client identity without
+   --  requiring every client to hold a per-process capability.
+   function EP_Set_Stamp_Identity (Cap : U64; Stamp : Boolean)
+                                   return U64;
+
    --  Threading primitives (Milestone 66).
    --  Thread_Create: caller fills Thread_Create_Params and writes it
    --  to the IPC buffer with Thread_Create_Write_Params; then calls

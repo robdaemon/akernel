@@ -93,6 +93,14 @@ akernel_sys_ep_create:
     ret
 .size akernel_sys_ep_create, . - akernel_sys_ep_create
 
+.global akernel_sys_ep_set_stamp_identity
+.type akernel_sys_ep_set_stamp_identity, @function
+akernel_sys_ep_set_stamp_identity:
+    li a7, 41
+    ecall
+    ret
+.size akernel_sys_ep_set_stamp_identity, . - akernel_sys_ep_set_stamp_identity
+
 .global akernel_sys_ipc_call
 .type akernel_sys_ipc_call, @function
 akernel_sys_ipc_call:
