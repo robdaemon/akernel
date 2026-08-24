@@ -422,6 +422,21 @@ package body Kernel.Tasks is
       return TCB.Call_Badge;
    end IPC_Badge;
 
+   procedure Set_User_Thread_Cap
+     (TCB : in out Thread_Control_Block;
+      Cap : Kernel.Capabilities.Handle)
+   is
+   begin
+      TCB.User_Thread_Cap := Cap;
+   end Set_User_Thread_Cap;
+
+   function User_Thread_Cap
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.Handle
+   is
+   begin
+      return TCB.User_Thread_Cap;
+   end User_Thread_Cap;
+
    procedure Set_Bound_Ntfn
      (TCB   : in out Thread_Control_Block;
       Ntfn  : System.Address)

@@ -17,12 +17,14 @@ pragma Restrictions (No_Elaboration_Code);
 
 with Ada.Unchecked_Conversion;
 with Interfaces;
+with System.Soft_Links;
 with System.Storage_Elements;
 with System.Tasking.Debug;
 
 package body System.Task_Primitives.Operations is
 
    use System.OS_Interface;
+   use System.Soft_Links;
    use System.Tasking;
 
    use type Interfaces.Unsigned_64;
@@ -74,19 +76,24 @@ package body System.Task_Primitives.Operations is
       Succeeded  : out Boolean)
    is
    begin
+      Any_Tasks_Created := True;
+
       T.Common.LL.Thread := T.Common.LL.Thread_Desc'Access;
 
-      System.OS_Interface.Thread_Create
-        (Id            => T.Common.LL.Thread,
-         Code          => Wrapper,
-         Arg           => To_Address (T),
-         Priority      => Integer (Priority),
-         Base_CPU      => Base_CPU,
-         Stack_Address => T.Common.Compiler_Data.Pri_Stack_Info.Start_Address,
-         Stack_Size    =>
-           System.Storage_Elements.Storage_Offset (Stack_Size));
+      T.Common.LL.Thread.Cap :=
+        System.OS_Interface.Thread_Create
+          (Id            => T.Common.LL.Thread,
+           Code          => Wrapper,
+           Arg           => To_Address (T),
+           Priority      => Integer (Priority),
+           Base_CPU      => Base_CPU,
+           Stack_Address =>
+             T.Common.Compiler_Data.Pri_Stack_Info.Start_Address,
+           Stack_Size    =>
+             System.Storage_Elements.Storage_Offset (Stack_Size));
 
-      Succeeded := T.Common.LL.Thread.Cap /= 0;
+      Succeeded :=
+        T.Common.LL.Thread.Cap /= Interfaces.Unsigned_64'Last;
 
       if Succeeded then
          System.OS_Interface.Set_ATCB (T.Common.LL.Thread, To_Address (T));

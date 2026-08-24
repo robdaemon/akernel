@@ -54,6 +54,9 @@ package System.OS_Interface is
    function Clock return Time;
    procedure Delay_Until (T : Time);
 
+   Thread_Entry_Point : constant System.Address;
+   pragma Import (C, Thread_Entry_Point, "akernel_thread_entry");
+
    -------------
    -- Threads --
    -------------
@@ -79,14 +82,15 @@ package System.OS_Interface is
       Stack_Address : System.Address;
       Stack_Size    : System.Storage_Elements.Storage_Offset);
 
-   procedure Thread_Create
+   function Thread_Create
      (Id            : Thread_Id;
       Code          : System.Address;
       Arg           : System.Address;
       Priority      : Integer;
       Base_CPU      : System.Multiprocessors.CPU_Range;
       Stack_Address : System.Address;
-      Stack_Size    : System.Storage_Elements.Storage_Offset);
+      Stack_Size    : System.Storage_Elements.Storage_Offset)
+      return Interfaces.Unsigned_64;
 
    function Thread_Self return Thread_Id;
 

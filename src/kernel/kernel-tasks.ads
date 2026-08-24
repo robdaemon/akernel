@@ -237,6 +237,13 @@ package Kernel.Tasks is
    function IPC_Badge
      (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
 
+   procedure Set_User_Thread_Cap
+     (TCB : in out Thread_Control_Block;
+      Cap : Kernel.Capabilities.Handle);
+
+   function User_Thread_Cap
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.Handle;
+
    --  Per-thread debug_putchar line buffer (line-atomic debug
    --  output: bytes accumulate per thread, the trap handler flushes
    --  to the UART only on newline or a full buffer, so concurrent
@@ -390,7 +397,9 @@ private
    end record;
 
    type Thread_Control_Block is record
-      Identifier : Thread_Id;
+      Identifier      : Thread_Id;
+      User_Thread_Cap : Kernel.Capabilities.Handle :=
+        Kernel.Capabilities.Invalid_Handle;
       Status     : Thread_State;
       Process          : Process_Access;
       Kernel_Stack_Top : Kernel.Capabilities.U64;

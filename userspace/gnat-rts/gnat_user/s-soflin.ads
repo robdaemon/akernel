@@ -226,4 +226,10 @@ package System.Soft_Links is
    --  When invoked, this routine saves an exception occurrence into a hidden
    --  reference. Subsequent calls will have no effect.
 
+   Any_Tasks_Created : Boolean := False;
+   pragma Atomic (Any_Tasks_Created);
+   --  Set to True by System.Task_Primitives.Operations.Create_Task.
+   --  System.Soft_Links uses it to keep the global task lock cheap for
+   --  programs that never create secondary threads.
+
 end System.Soft_Links;

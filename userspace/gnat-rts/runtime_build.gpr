@@ -1,26 +1,20 @@
---  Builds the akernel userspace GNAT runtime (milestone 53a):
---  a near-native libgnat for riscv64-elf — full ZCX exception
+--  Builds the Akernel userspace GNAT runtime (milestones 53a + 67b):
+--  a near-native libgnat for riscv64-elf with full ZCX exception
 --  propagation (raise-gcc.c + __gnat_personality_v0 + crt0
 --  __register_frame of .eh_frame, milestone 53a), finalization,
---  secondary stack, containers, numerics. Tasking is excluded by
---  gnat_user/system.ads (No_Tasking) until the kernel grows
---  userspace thread-spawn + TLS (the s-taprop milestone).
+--  secondary stack, containers, numerics and Ravenscar tasking.
 --
 --  Sources: gnat/ is the embedded-polarfiresoc pool of the
 --  gnat_riscv64_elf 15.3.1 Alire toolchain (the full gcc-15.3.1
 --  libgnat common set) minus board files (i-fe310*, newlib-bb.c,
---  start-ram.S) and minus the units gnat_user/ shadows
---  (system.ads, s-memory.adb — the akernel memobj heap).
---  gnat_full/ (milestone 53b) vendors the FULL file-I/O stack
---  from the gcc-15.3.0 tarball — Text_IO (+Integer/Float/Modular/
---  Enumeration_IO children), Stream_IO, Sequential_IO, Direct_IO
---  over System.File_IO + System.CRTL — which the embedded pool
---  only ships as a stub. These resolve C stdio against the
---  toolchain newlib (-lc), whose syscalls Akernel_User.Gloss
---  implements over the fs/console endpoints.
+--  start-ram.S) and minus units gnat_user/ shadows
+--  (s-memory.adb -- the akernel memobj heap). gnat_full/ (milestone
+--  53b) vendors the FULL file-I/O stack from the gcc-15.3.0 tarball.
+--  gnarl_user/ supplies the tasking/Ravenscar overrides (system.ads,
+--  s-osinte.adb, s-taprop.adb, s-multip.adb, System.Soft_Links).
 --
---  Layout mirrors a shipped bb runtime: gnat_user/ first in
---  ada_source_path (override dir), adalib/ holds libgnat.a + ALIs,
+--  Layout mirrors a shipped bb runtime: gnat_user/ + gnarl_user/ first
+--  in ada_source_path (override dirs), adalib/ holds libgnat.a + ALIs,
 --  runtime.xml carries the target switches. Programs reference the
 --  runtime by path (for Runtime ("Ada") use "../gnat-rts").
 
@@ -35,14 +29,15 @@ project Runtime_Build is
 
    for Library_Dir use "adalib";
    for Object_Dir use "obj";
-   for Source_Dirs use ("gnat_user", "gnat_full", "gnat");
+   for Source_Dirs use ("gnarl_user", "gnat_user", "gnat_full", "gnat");
+   for Excluded_Source_Files use ("s-sssita.ads", "s-sssita.adb");
    for Create_Missing_Dirs use "True";
 
    COMFLAGS := ("-ffunction-sections", "-fdata-sections", "-O2");
    ADAFLAGS := ("-gnatg", "-nostdinc", "-fno-delete-null-pointer-checks",
                 "-gnatp", "-gnatn2") & COMFLAGS;
    CFLAGS   := ("-DIN_RTS", "-DSTANDALONE", "-Dinhibit_libc", "-DAKERNEL_NO_DIRENT", "-DAKERNEL_ENV_FILES", "-DAKERNEL_NO_UTIME",
-                "-Werror", "-Wall")
+                "-Werror", "-Wall", "-Wno-deprecated-declarations", "-Wno-unused-variable")
                & COMFLAGS;
 
    package Compiler is

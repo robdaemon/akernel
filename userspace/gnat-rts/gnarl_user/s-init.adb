@@ -32,6 +32,8 @@
 --  Tasking-enabled body for System.Init: no signal handlers, no process
 --  finalization beyond the runtime's normal path.
 
+with System.Tasking;
+
 package body System.Init is
 
    procedure Initialize is null;
@@ -56,7 +58,10 @@ package body System.Init is
    procedure Runtime_Initialize (Install_Handler : Integer) is
       pragma Unreferenced (Install_Handler);
    begin
-      null;
+      --  Set up the environment task's ATCB so that tasking-aware soft
+      --  links (e.g. global locks via Self/Get_ATCB) work even for programs
+      --  that do not declare any Ada tasks.
+      System.Tasking.Initialize;
    end Runtime_Initialize;
 
    ----------------------

@@ -40,6 +40,8 @@ pragma Style_Checks (All_Checks);
 --  also separate off subprograms for restricted GNARLI.
 
 with System.Task_Primitives.Operations;
+with System.Machine_Code;
+with Interfaces;
 
 package body System.Tasking.Restricted.Stages is
 
@@ -93,10 +95,34 @@ package body System.Tasking.Restricted.Stages is
 
    procedure Task_Wrapper (Self_ID : Task_Id) is
       TH : Termination_Handler := null;
+      Dummy : Interfaces.Unsigned_64;
 
    begin
       --  Initialize low-level TCB components, that cannot be initialized by
       --  the creator.
+
+      declare
+         use System.Machine_Code;
+      begin
+         Asm ("li a7, 1" & ASCII.LF & "li a0, 87" & ASCII.LF & "ecall",
+              Outputs => Interfaces.Unsigned_64'Asm_Output ("=r", Dummy),
+              Clobber => "a0, a7",
+              Volatile => True);
+      end;
+
+      --  Secondary threads enter with tp set by the kernel but no
+      --  global pointer; establish gp before touching any global
+      --  data in Enter_Task / the task body.
+      declare
+         use System.Machine_Code;
+      begin
+         Asm (".option push" & ASCII.LF &
+              ".option norelax" & ASCII.LF &
+              "lla gp, __global_pointer$" & ASCII.LF &
+              ".option pop",
+              Clobber => "gp",
+              Volatile => True);
+      end;
 
       Enter_Task (Self_ID);
 

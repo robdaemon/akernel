@@ -87,8 +87,6 @@ package body System.OS_Interface is
    procedure Raw_Debug_Putchar (C : U64)
      with Import, Convention => C, External_Name => "akernel_sys_debug_putchar";
 
-   function Thread_Entry_Point return U64
-     with Import, Convention => C, External_Name => "akernel_thread_entry";
 
    --  Fixed VA windows for secondary-thread resources. The initial thread
    --  keeps the legacy IPC buffer at 0x6FFF_0000 mapped by the kernel at
@@ -222,7 +220,7 @@ package body System.OS_Interface is
       null;
    end Initialize_Slave;
 
-   procedure Thread_Create
+   function Thread_Create
      (Id            : Thread_Id;
       Code          : System.Address;
       Arg           : System.Address;
@@ -230,6 +228,7 @@ package body System.OS_Interface is
       Base_CPU      : System.Multiprocessors.CPU_Range;
       Stack_Address : System.Address;
       Stack_Size    : System.Storage_Elements.Storage_Offset)
+      return U64
    is
       pragma Unreferenced (Base_CPU, Code, Stack_Address);
       use System.Storage_Elements;
@@ -265,31 +264,37 @@ package body System.OS_Interface is
    begin
       Stack_Cap := Raw_Mem_Alloc (Stack_Pages);
       IPC_Cap   := Raw_Mem_Alloc (1);
-      TLS_Cap   := Raw_Mem_Alloc (To_U64 ((TLS_Size + Page_Size - 1) / Page_Size));
 
-      if Stack_Cap = U64'Last or else IPC_Cap = U64'Last
-        or else TLS_Cap = U64'Last
-      then
-         Raw_Debug_Putchar (Character'Pos ('E'));
-         return;
+      if TLS_Size > 0 then
+         TLS_Cap := Raw_Mem_Alloc (To_U64 ((TLS_Size + Page_Size - 1) / Page_Size));
+      else
+         TLS_Cap := 0;
       end if;
 
-      Ignore := Raw_Mem_Map
-        (Address_Space => 0,
-         Cap           => TLS_Cap,
-         VA            => TLS_Base,
-         Offset        => 0,
-         Length        => To_U64 (TLS_Size),
-         Flags         => 3);
+      if Stack_Cap = U64'Last or else IPC_Cap = U64'Last
+        or else (TLS_Size > 0 and then TLS_Cap = U64'Last)
+      then
+         return U64'Last;
+      end if;
 
-      Copy_TLS (U64_To_Address (TLS_Base));
+      if TLS_Size > 0 then
+         Ignore := Raw_Mem_Map
+           (Address_Space => 0,
+            Cap           => TLS_Cap,
+            VA            => TLS_Base,
+            Offset        => 0,
+            Length        => To_U64 (TLS_Size),
+            Flags         => 3);
+
+         Copy_TLS (U64_To_Address (TLS_Base));
+      end if;
 
       P :=
         (Stack_VA      => Stack_Top,
          Stack_Pages   => Stack_Pages,
-         Entry_PC      => Thread_Entry_Point,
+         Entry_PC      => To_U64 (System.Storage_Elements.Storage_Offset (To_Integer (Code))),
          Arg           => To_U64 (System.Storage_Elements.Storage_Offset (To_Integer (Arg))),
-         TLS_Base      => TLS_Base,
+         TLS_Base      => (if TLS_Size > 0 then TLS_Base else 0),
          Priority_Bits => To_U64 (System.Storage_Elements.Storage_Offset (Priority)),
          Stack_Cap     => Stack_Cap,
          IPC_Cap       => IPC_Cap,
@@ -298,20 +303,21 @@ package body System.OS_Interface is
       Thread_Cap := Raw_Thread_Create;
 
       if Thread_Cap = U64'Last then
-         Raw_Debug_Putchar (Character'Pos ('C'));
-         return;
+         return U64'Last;
       end if;
 
-      Id.Cap := Thread_Cap;
-
       Next_Stack_VA := Stack_Top + To_U64 (Page_Size);
-      declare
-         TLS_Map_Len : constant U64 :=
-           To_U64 (((TLS_Size + Page_Size - 1) / Page_Size) * Page_Size);
-      begin
-         Next_TLS_VA := Next_TLS_VA + TLS_Map_Len + To_U64 (Page_Size);
-      end;
+      if TLS_Size > 0 then
+         declare
+            TLS_Map_Len : constant U64 :=
+              To_U64 (((TLS_Size + Page_Size - 1) / Page_Size) * Page_Size);
+         begin
+            Next_TLS_VA := Next_TLS_VA + TLS_Map_Len + To_U64 (Page_Size);
+         end;
+      end if;
       Next_IPC_VA   := Next_IPC_VA - To_U64 (Page_Size);
+
+      return Thread_Cap;
    end Thread_Create;
 
    function Thread_Self return Thread_Id is

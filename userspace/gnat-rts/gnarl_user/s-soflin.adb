@@ -116,9 +116,15 @@ package body System.Soft_Links is
    --------------------
 
    procedure Task_Lock_Soft is
-      Self_Id : constant System.Tasking.Task_Id := Self;
+      Self_Id : System.Tasking.Task_Id;
 
    begin
+      if not Any_Tasks_Created then
+         return;
+      end if;
+
+      Self_Id := Self;
+
       Self_Id.Common.Global_Task_Lock_Nesting :=
         Self_Id.Common.Global_Task_Lock_Nesting + 1;
 
@@ -146,10 +152,16 @@ package body System.Soft_Links is
    procedure Task_Termination_Soft (Except : EO) is
       pragma Unreferenced (Except);
 
-      Self_Id : constant System.Tasking.Task_Id := Self;
+      Self_Id : System.Tasking.Task_Id;
       TH      : System.Tasking.Termination_Handler := null;
 
    begin
+      if not Any_Tasks_Created then
+         return;
+      end if;
+
+      Self_Id := Self;
+
       --  Raise the priority to prevent race conditions when using
       --  System.Tasking.Fall_Back_Handler.
 
@@ -173,9 +185,15 @@ package body System.Soft_Links is
    ----------------------
 
    procedure Task_Unlock_Soft is
-      Self_Id : constant System.Tasking.Task_Id := Self;
+      Self_Id : System.Tasking.Task_Id;
 
    begin
+      if not Any_Tasks_Created then
+         return;
+      end if;
+
+      Self_Id := Self;
+
       pragma Assert (Self_Id.Common.Global_Task_Lock_Nesting > 0);
 
       Self_Id.Common.Global_Task_Lock_Nesting :=

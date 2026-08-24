@@ -4,5 +4,5 @@ all:
 	alr exec -- gprbuild -P task_test.gpr
 
 clean:
-	rm -rf ../../obj/userspace/task_test ../../lib/userspace/rts_tasking
+	rm -rf ../../obj/userspace/task_test
 	rm -f ../../bin/userspace/task_test.elf

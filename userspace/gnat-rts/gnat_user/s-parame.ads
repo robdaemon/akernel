@@ -63,7 +63,7 @@ package System.Parameters is
    Unspecified_Size : constant Size_Type := Size_Type'First;
    --  Value used to indicate that no size type is set
 
-   Default_Stack_Size : constant Size_Type := 2 * 1024 * 1024;
+   Default_Stack_Size : constant Size_Type := 1 * 1024 * 1024;
    --  Default task stack size used if none is specified
 
    Minimum_Stack_Size : constant Size_Type := 8 * 1024;

@@ -24,6 +24,7 @@ SERIAL_ELF := bin/userspace/serial.elf
 FUZZ_ELF := bin/userspace/fuzz.elf
 SPIN_ELF := bin/userspace/spin.elf
 THREAD_TEST_ELF := bin/userspace/thread_test.elf
+TASK_TEST_ELF := bin/userspace/task_test.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
 ECHO_SERVER_ELF := bin/userspace/echo_server.elf
 TEARDOWN_ELF := bin/userspace/teardown.elf
@@ -52,7 +53,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait
 DISK_CRATES_LIBS := testlib
@@ -68,9 +69,9 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  The library must track its SOURCES too: depending on the gpr
 #  alone left adalib/ stale after vendored-runtime edits (the m64
 #  adaint.c __gnat_rename patch silently never linked).
-RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
+RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
-.PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-userspace clean-initrd new-crate FORCE
+.PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-rts clean-userspace clean-initrd new-crate FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
@@ -80,7 +81,23 @@ kernel:
 userspace: $(CRATES)
 
 $(RTS_LIB): $(RTS_GPR) $(RTS_SRCS)
+	printf '%s\n' gnarl_user gnat_user gnat_full gnat > userspace/gnat-rts/ada_source_path
+	printf '%s\n' adalib > userspace/gnat-rts/ada_object_path
 	alr exec -- gprbuild -P $(RTS_GPR)
+	set -e; \
+	RTS_OBJ=userspace/gnat-rts/obj; \
+	RTS_LIBDIR=userspace/gnat-rts/adalib; \
+	CORE_KEEP="system s-init s-soflin s-multip s-rident"; \
+	rm -f $$RTS_LIBDIR/libgnarl.a; \
+	alr exec -- riscv64-elf-ar rcs $$RTS_LIBDIR/libgnarl.a; \
+	for src in userspace/gnat-rts/gnarl_user/*.adb userspace/gnat-rts/gnarl_user/*.ads; do \
+	   base=$$(basename "$$src" .adb); base=$${base%.ads}; \
+	   obj="$$RTS_OBJ/$${base}.o"; \
+	   [ -f "$$obj" ] || continue; \
+	   case " $$CORE_KEEP " in *" $$base "*) continue;; esac; \
+	   alr exec -- riscv64-elf-ar rcs $$RTS_LIBDIR/libgnarl.a "$$obj"; \
+	   alr exec -- riscv64-elf-ar d $$RTS_LIBDIR/libgnat.a "$${base}.o"; \
+	done
 
 $(CRATES): | $(RTS_LIB)
 	$(MAKE) -C userspace/$@
@@ -189,6 +206,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Fuzz $(FUZZ_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Spin $(SPIN_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Thread_Test $(THREAD_TEST_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Task_Test $(TASK_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Memstage $(MEMSTAGE_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Echo_Server $(ECHO_SERVER_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Teardown $(TEARDOWN_ELF)
@@ -201,6 +219,9 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	printf '%s\n' "$$(date +%s)" > $(INITRD_ROOT)/System/Epoch
 	printf '%s\n' 'program 2 System/Fileserver fs_server console boot_files' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 8 System/Libman console fs libman_server' >> $(INITRD_ROOT)/System/Manifest
+ifeq ($(INITRD_MODE),task_test)
+	printf '%s\n' 'program 3 Tests/Task_Test console' >> $(INITRD_ROOT)/System/Manifest
+endif
 ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
@@ -242,10 +263,13 @@ FORCE:
 test:
 	$(MAKE) run INITRD_MODE=test
 
-clean: clean-kernel clean-userspace clean-initrd
+clean: clean-kernel clean-rts clean-userspace clean-initrd
 
 clean-kernel:
 	alr clean
+
+clean-rts:
+	rm -rf userspace/gnat-rts/adalib userspace/gnat-rts/obj
 
 clean-userspace:
 	for c in $(CRATES); do $(MAKE) -C userspace/$$c clean; done

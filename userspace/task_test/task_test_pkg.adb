@@ -1,6 +1,8 @@
 with Akernel_User.Console;
 with Akernel_User.Syscalls;
 
+with Akernel_User.Syscalls;
+
 package body Task_Test_Pkg is
    Done : Boolean := False;
 
@@ -27,4 +29,6 @@ package body Task_Test_Pkg is
       end if;
       Akernel_User.Syscalls.Debug_Put_Line ("task_test: wait end");
    end Wait_For_Worker;
+begin
+   Akernel_User.Syscalls.Debug_Put_Line ("task_test_pkg: body begin");
 end Task_Test_Pkg;

@@ -1068,7 +1068,9 @@ package body Kernel.Processes is
          TLS_Base  => TLS_Base,
          Arg       => Arg);
 
-      --  Hand back a thread cap.
+      --  Hand back a thread cap.  The badge is the kernel's opaque
+      --  thread id; the cap handle itself is recorded in the TCB
+      --  so Thread_Self returns the same value for consistent indexing.
       Kernel.Tasks.Insert_Cap
         (TCB    => Current.all,
          Kind   => Kernel.Capabilities.Thread_Object,
@@ -1077,6 +1079,10 @@ package body Kernel.Processes is
          Badge  => U64 (New_Thread_Id),
          Result => Cap_Result,
          Cap    => New_Cap);
+
+      Kernel.Tasks.Set_User_Thread_Cap
+        (TCB => Threads (T_Slot),
+         Cap => New_Cap);
       if Cap_Result /= Kernel.Capabilities.Ok then
          Arch.MMU.Unmap_Borrowed_Page
            (Root    => Kernel.Tasks.Address_Space_Root (Current.all),
@@ -1301,10 +1307,19 @@ package body Kernel.Processes is
      (Thread : Kernel.Tasks.Thread_Access)
       return Kernel.Tasks.Thread_Id
    is
+      use type Kernel.Capabilities.Handle;
    begin
       if Thread = null then
          return 0;
       end if;
+
+      if Kernel.Tasks.User_Thread_Cap (Thread.all) /=
+        Kernel.Capabilities.Invalid_Handle
+      then
+         return Kernel.Tasks.Thread_Id
+           (Kernel.Tasks.User_Thread_Cap (Thread.all));
+      end if;
+
       return Kernel.Tasks.Id (Thread.all);
    end Thread_Self;
 
