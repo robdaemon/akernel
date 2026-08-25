@@ -3905,9 +3905,9 @@ begin
       --  cwd always ends back at BD0: (idempotent).
       declare
          --  Buf doubles as Write_File's staging buffer; the
-         --  milestone-69 background-pipeline scripts run past
-         --  64 bytes (Write_File guards the bound).
-         Buf   : array (0 .. 127) of Interfaces.Unsigned_8;
+         --  milestone-70 control-flow scripts run past 128
+         --  bytes (Write_File guards the bound).
+         Buf   : array (0 .. 255) of Interfaces.Unsigned_8;
          Size  : U64;
          Count : U64;
          Match : Boolean;
@@ -4046,6 +4046,112 @@ begin
             & "set FZNEST=<x>" & ASCII.LF;
           Script14 : constant String :=
             "execute BD0:FZINNER.TXT inner-arg" & ASCII.LF;
+          --  Control flow (milestone 70 chunk 3): if/else/endif
+          --  (exists, eq case-insensitive, val numeric, command
+          --  form with the condition RC consumed), lab/skip
+          --  forward and the skip-back loop idiom, quit, failat
+          --  composition across nested scripts, echo with
+          --  redirection (falls through to C:Echo), and the
+          --  malformed-script errors.
+          Script15 : constant String :=
+            "if exists BD0:README.TXT" & ASCII.LF
+            & "set FZIF1=yes" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZIF1=no" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if not exists BD0:NOSUCH.TXT" & ASCII.LF
+            & "set FZIF2=yes" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if alpha eq ALPHA" & ASCII.LF
+            & "set FZIF3=yes" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if not alpha eq beta" & ASCII.LF
+            & "set FZIF4=yes" & ASCII.LF
+            & "endif" & ASCII.LF;
+          Script16 : constant String :=
+            "if 7 gt 3 val" & ASCII.LF
+            & "set FZIF5=yes" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if 7 lt 3 val" & ASCII.LF
+            & "set FZIF6=no" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZIF6=yes" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if list BD0:NOSUCHDIR" & ASCII.LF
+            & "set FZIF7=no" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZIF7=yes" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "set FZIFD=done" & ASCII.LF;
+          Script17 : constant String :=
+            "skip done" & ASCII.LF
+            & "set FZSK1=unreached" & ASCII.LF
+            & "lab done" & ASCII.LF
+            & "set FZSK1=alive" & ASCII.LF;
+          --  The Amiga loop idiom: one pass creates one file,
+          --  skip back retries from the top; the final pass
+          --  finds all three and falls through. skip abandons
+          --  the open if frame it jumps out of.
+          Script18 : constant String :=
+            "lab top" & ASCII.LF
+            & "if exists BD0:FZL1" & ASCII.LF
+            & "else" & ASCII.LF
+            & "echo one > BD0:FZL1" & ASCII.LF
+            & "skip top back" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if exists BD0:FZL2" & ASCII.LF
+            & "else" & ASCII.LF
+            & "echo two > BD0:FZL2" & ASCII.LF
+            & "skip top back" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if exists BD0:FZL3" & ASCII.LF
+            & "else" & ASCII.LF
+            & "echo three > BD0:FZL3" & ASCII.LF
+            & "skip top back" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "set FZLOOP=done" & ASCII.LF;
+          Script19 : constant String :=
+            "quit 7" & ASCII.LF
+            & "set FZQT=unreached" & ASCII.LF;
+          Script20I : constant String :=
+            "quit 20" & ASCII.LF;
+          Script20 : constant String :=
+            "execute BD0:FZIN2.TXT" & ASCII.LF
+            & "set FZQT2=unreached" & ASCII.LF;
+          Script21 : constant String :=
+            "failat 21" & ASCII.LF
+            & "Sys:C/Elevate Sys:C/NoSuch" & ASCII.LF
+            & "set FZFT=alive" & ASCII.LF;
+          Script22 : constant String :=
+            "echo hello there > BD0:FZECHO.TXT" & ASCII.LF
+            & "echo plain line" & ASCII.LF
+            & "echo no newline noline" & ASCII.LF;
+          --  A skipped block is never expanded: the <NOSUCHFZ2>
+          --  in the not-taken branch must not abort the script.
+          Script23 : constant String :=
+            "if exists BD0:README.TXT" & ASCII.LF
+            & "if not exists BD0:NOSUCH.TXT" & ASCII.LF
+            & "set FZNST=inner" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZNST=bad1" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZNST=bad2" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "if exists BD0:NOSUCH.TXT" & ASCII.LF
+            & "echo <NOSUCHFZ2>" & ASCII.LF
+            & "endif" & ASCII.LF
+            & "set FZSKIPOK=alive" & ASCII.LF;
+          Script24 : constant String :=
+            "else" & ASCII.LF;
+          Script25 : constant String :=
+            "endif" & ASCII.LF;
+          Script26 : constant String :=
+            "if exists BD0:README.TXT" & ASCII.LF
+            & "set FZME=x" & ASCII.LF;
+          Script27 : constant String :=
+            "skip nowhere" & ASCII.LF
+            & "set FZNL=unreached" & ASCII.LF;
       begin
          --  A tiny source file first: a mutating FAT op costs
          --  ~0.4 s write-through, so the copy under test must be
@@ -4222,6 +4328,134 @@ begin
                        0, "nested execute passes args");
           Check_Env ("FZNEST", "inner-arg",
                      "nested script's <x> bound from outer args");
+
+          --  Control flow end to end (milestone 70 chunk 3).
+          Write_File ("BD0:FZIF1.TXT", Script15,
+                      "if/else script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZIF1.TXT",
+                       0, "if exists/eq/else script runs");
+          Check_Env ("FZIF1", "yes", "if exists took the true arm");
+          Check_Env ("FZIF2", "yes", "if not exists took its arm");
+          Check_Env ("FZIF3", "yes", "if eq is case-insensitive");
+          Check_Env ("FZIF4", "yes", "if not eq took its arm");
+
+          Write_File ("BD0:FZIF2.TXT", Script16,
+                      "if val/command script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZIF2.TXT",
+                       0, "if val/command script runs");
+          Check_Env ("FZIF5", "yes", "if val gt compared numerically");
+          Check_Env ("FZIF6", "yes", "if val lt fell to else");
+          Check_Env ("FZIF7", "yes",
+                     "if <command> false on RC 10");
+          Check_Env ("FZIFD", "done",
+                     "if <command> consumed the RC (no failat)");
+
+          Write_File ("BD0:FZSKIP.TXT", Script17,
+                      "skip script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZSKIP.TXT",
+                       0, "skip script runs");
+          Check_Env ("FZSK1", "alive",
+                     "skip jumped forward over the marker");
+
+          --  The loop files must start absent even on a reused
+          --  disk image (the suite is idempotent).
+          declare
+             St : U64;
+          begin
+             St := Akernel_User.Files.Delete ("BD0:FZL1");
+             St := Akernel_User.Files.Delete ("BD0:FZL2");
+             St := Akernel_User.Files.Delete ("BD0:FZL3");
+          end;
+          Write_File ("BD0:FZLOOP.TXT", Script18,
+                      "skip-back loop script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZLOOP.TXT",
+                       0, "skip-back loop terminates");
+          Check_Env ("FZLOOP", "done", "loop fell through at FZL3");
+          Check_File ("BD0:FZL1", "one" & ASCII.LF,
+                      "loop pass 1 created FZL1");
+          Check_File ("BD0:FZL2", "two" & ASCII.LF,
+                      "loop pass 2 created FZL2");
+          Check_File ("BD0:FZL3", "three" & ASCII.LF,
+                      "loop pass 3 created FZL3");
+
+          Write_File ("BD0:FZQT.TXT", Script19, "quit script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZQT.TXT",
+                       7, "quit 7 sets the script RC");
+          declare
+             St   : U64;
+             Size : U64;
+          begin
+             St := Akernel_User.Files.Stat ("ENV:FZQT", Size);
+             Check (St /= Akernel_User.Files.Status_Ok,
+                    "quit stops the script");
+          end;
+
+          Write_File ("BD0:FZIN2.TXT", Script20I,
+                      "inner quit-20 script written");
+          Write_File ("BD0:FZQT2.TXT", Script20,
+                      "outer script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZQT2.TXT",
+                       20, "inner quit 20 propagates");
+          declare
+             St   : U64;
+             Size : U64;
+          begin
+             St := Akernel_User.Files.Stat ("ENV:FZQT2", Size);
+             Check (St /= Akernel_User.Files.Status_Ok,
+                    "inner RC 20 tripped the outer failat");
+          end;
+
+          Write_File ("BD0:FZFT.TXT", Script21,
+                      "failat script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZFT.TXT",
+                       0, "failat 21 lets RC 20 pass");
+          Check_Env ("FZFT", "alive", "script continued past RC 20");
+
+          Write_File ("BD0:FZECHOS.TXT", Script22,
+                      "echo script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZECHOS.TXT",
+                       0, "echo script runs");
+          Check_File ("BD0:FZECHO.TXT", "hello there" & ASCII.LF,
+                      "echo with > fell through to C:Echo");
+
+          Write_File ("BD0:FZNST.TXT", Script23,
+                      "nested if script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZNST.TXT",
+                       0, "nested if/else script runs");
+          Check_Env ("FZNST", "inner", "nested ifs took inner arm");
+          Check_Env ("FZSKIPOK", "alive",
+                     "skipped block never expanded <NOSUCHFZ2>");
+
+          Write_File ("BD0:FZE1.TXT", Script24,
+                      "else-without-if script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZE1.TXT",
+                       10, "else without if fails");
+          Write_File ("BD0:FZE2.TXT", Script25,
+                      "endif-without-if script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZE2.TXT",
+                       10, "endif without if fails");
+          Write_File ("BD0:FZE3.TXT", Script26,
+                      "missing-endif script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZE3.TXT",
+                       10, "missing endif fails");
+          Check_Env ("FZME", "x",
+                     "missing endif still ran the body");
+
+          Write_File ("BD0:FZE4.TXT", Script27,
+                      "unknown-label script written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZE4.TXT",
+                       10, "skip to an unknown label fails");
+          declare
+             St   : U64;
+             Size : U64;
+          begin
+             St := Akernel_User.Files.Stat ("ENV:FZNL", Size);
+             Check (St /= Akernel_User.Files.Status_Ok,
+                    "unknown label stops the script");
+          end;
 
          --  Pipelines + redirection end to end (milestone 46b):
          --  the shell splits `A | B`, wires a PIPE: name

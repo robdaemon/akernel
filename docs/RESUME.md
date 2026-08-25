@@ -382,7 +382,7 @@ timeout-wrapped with log verification, desktop boot smoke):
   in scripts). Fuzz: args+substitution byte-verified, ENV:
   fallback, `<$>`, `.set` set/copy/clear, bad-subst abort; old
   script tests pass unchanged.
-- [ ] **Chunk 3 — Control flow.** `if [not] <cmd>` (RC consumed,
+- [x] **Chunk 3 — Control flow.** `if [not] <cmd>` (RC consumed,
   true iff RC < failat), `if [not] <a> eq|ne|gt|ge|lt|le <b>`
   (case-insensitive; `val` = numeric), `if [not] exists <path>`,
   `else`, `endif` (8-deep stack; skip mode tracks nesting),

@@ -3,6 +3,7 @@ with Ada.Unchecked_Deallocation;
 with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.CLI;
+with Scripting.Exec;
 
 package body Scripting.Interp is
    use Akernel_User.Syscalls;
@@ -30,6 +31,22 @@ package body Scripting.Interp is
       return True;
    end Same_Word;
 
+   --  Case-insensitive lexicographic compare (for if gt/lt).
+   function Lower_Less (A : String; B : String) return Boolean is
+   begin
+      for I in 0 .. Natural'Min (A'Length, B'Length) - 1 loop
+         declare
+            Ca : constant Character := Lower (A (A'First + I));
+            Cb : constant Character := Lower (B (B'First + I));
+         begin
+            if Ca /= Cb then
+               return Ca < Cb;
+            end if;
+         end;
+      end loop;
+      return A'Length < B'Length;
+   end Lower_Less;
+
    function Is_Ident_Start (C : Character) return Boolean is
      ((C in 'a' .. 'z') or else (C in 'A' .. 'Z') or else C = '_');
 
@@ -49,6 +66,24 @@ package body Scripting.Interp is
          Last := Last - 1;
       end loop;
    end Trim;
+
+   --  Digits-only parse for failat/quit/if-val.
+   function Parse_Nat (S : String; Ok : out Boolean) return Natural is
+      N : Natural := 0;
+   begin
+      Ok := False;
+      if S'Length = 0 then
+         return 0;
+      end if;
+      for C of S loop
+         if C not in '0' .. '9' or else N > 100_000 then
+            return 0;
+         end if;
+         N := N * 10 + (Character'Pos (C) - Character'Pos ('0'));
+      end loop;
+      Ok := True;
+      return N;
+   end Parse_Nat;
 
    function Run
      (Path  : String;
@@ -87,6 +122,24 @@ package body Scripting.Interp is
       Order    : array (1 .. Max_Locals) of Natural := (others => 0);
       Template : Natural := 0;
       Bound    : Boolean := False;
+
+      --  Control-flow state (chunk 3). If_Stack records whether
+      --  each open if's CURRENT branch executes; Skip_Count is
+      --  the number of frames currently skipping (executing iff
+      --  zero). Cond is the Amiga condition flag (set by every
+      --  if evaluation; ask joins it in chunk 4). Abort is an
+      --  interpreter-level error that bypasses Fail_Max (a
+      --  raised failat must not excuse a malformed script).
+      Max_If     : constant := 8;
+      If_Stack   : array (1 .. Max_If) of Boolean := (others => True);
+      If_Depth   : Natural := 0;
+      Skip_Count : Natural := 0;
+      Cond       : Boolean := False;
+      Fail_Max   : U64 := Akernel_User.CLI.RC_Error;
+      Done       : Boolean := False;
+      Abort_Run  : Boolean := False;
+      Jumped     : Boolean := False;
+      Jump_To    : U64 := 0;
 
       --  Case-insensitive local lookup; 0 when undefined.
       function Find_Local (Name : String) return Natural is
@@ -427,6 +480,324 @@ package body Scripting.Interp is
          end;
       end Handle_Set;
 
+      --  Push an if frame; Bad (+ message) past 8 deep.
+      procedure Push_If (Taken : Boolean; Bad : out Boolean) is
+      begin
+         Bad := False;
+         if If_Depth = Max_If then
+            Akernel_User.Console.Put_Line ("if nested too deep (8)");
+            Bad := True;
+            return;
+         end if;
+         If_Depth := If_Depth + 1;
+         If_Stack (If_Depth) := Taken;
+         if not Taken then
+            Skip_Count := Skip_Count + 1;
+         end if;
+      end Push_If;
+
+      --  if [not] ... — Rest is the EXPANDED remainder after
+      --  the if keyword. Forms: bare (test the condition flag),
+      --  exists <path>, <a> <op> <b> [val], or a command line
+      --  (true iff its RC < failat; the RC is consumed). Every
+      --  evaluation stores into the condition flag.
+      procedure Handle_If (Rest : String; Bad : out Boolean) is
+         Invert  : Boolean := False;
+         Result  : Boolean := False;
+         S_First : Natural := Rest'First;
+         WL      : Natural;
+         RF      : Natural;
+      begin
+         Bad := False;
+         if Rest'Length > 0 then
+            Split_Cmd (Rest, WL, RF);
+            if Same_Word (Rest (Rest'First .. WL), "not") then
+               Invert := True;
+               S_First := RF;
+            end if;
+         end if;
+         if Rest'Length = 0 or else S_First > Rest'Last then
+            --  Bare if / if not: the stored condition flag.
+            Result := Cond;
+         else
+            declare
+               S : constant String := Rest (S_First .. Rest'Last);
+            begin
+               Split_Cmd (S, WL, RF);
+               declare
+                  W1 : constant String := S (S'First .. WL);
+                  R1 : constant String :=
+                    (if RF > S'Last then "" else S (RF .. S'Last));
+               begin
+                  if Same_Word (W1, "exists") then
+                     if R1'Length = 0 then
+                        Akernel_User.Console.Put_Line
+                          ("if exists what?");
+                        Bad := True;
+                        return;
+                     end if;
+                     declare
+                        PF  : Natural;
+                        PL  : Natural;
+                        Sz  : U64 := 0;
+                     begin
+                        Trim (R1, PF, PL);
+                        --  Stat answers directories too
+                        --  (milestone 64), so exists is
+                        --  Amiga-true for drawers.
+                        Result := Akernel_User.Files.Stat
+                          (Akernel_User.CLI.Resolve_Path
+                             (R1 (PF .. PL)), Sz) =
+                          Akernel_User.Files.Status_Ok;
+                     end;
+                  elsif R1'Length > 0 then
+                     declare
+                        WL2 : Natural;
+                        RF2 : Natural;
+                     begin
+                        Split_Cmd (R1, WL2, RF2);
+                        declare
+                           Op : constant String :=
+                             R1 (R1'First .. WL2);
+                           R2 : constant String :=
+                             (if RF2 > R1'Last then ""
+                              else R1 (RF2 .. R1'Last));
+                        begin
+                           if Same_Word (Op, "eq")
+                             or else Same_Word (Op, "ne")
+                             or else Same_Word (Op, "gt")
+                             or else Same_Word (Op, "ge")
+                             or else Same_Word (Op, "lt")
+                             or else Same_Word (Op, "le")
+                           then
+                              --  <a> <op> <b> [val]: b is the
+                              --  trimmed remainder; a trailing
+                              --  "val" keyword forces numeric.
+                              declare
+                                 BF : Natural;
+                                 BL : Natural;
+                                 WF : Natural;
+                                 Numeric : Boolean := False;
+                              begin
+                                 Trim (R2, BF, BL);
+                                 if BL < BF then
+                                    Akernel_User.Console.Put_Line
+                                      ("if: missing value after "
+                                       & Op);
+                                    Bad := True;
+                                    return;
+                                 end if;
+                                 WF := BL;
+                                 while WF > BF
+                                   and then R2 (WF - 1) /= ' '
+                                 loop
+                                    WF := WF - 1;
+                                 end loop;
+                                 if WF > BF
+                                   and then Same_Word
+                                     (R2 (WF .. BL), "val")
+                                 then
+                                    Numeric := True;
+                                    BL := WF - 1;
+                                    while BL >= BF
+                                      and then R2 (BL) = ' '
+                                    loop
+                                       BL := BL - 1;
+                                    end loop;
+                                    if BL < BF then
+                                       Akernel_User.Console
+                                         .Put_Line
+                                         ("if: missing value after "
+                                          & Op);
+                                       Bad := True;
+                                       return;
+                                    end if;
+                                 end if;
+                                 if Numeric then
+                                    declare
+                                       OkA : Boolean;
+                                       OkB : Boolean;
+                                       NA  : constant Natural :=
+                                         Parse_Nat (W1, OkA);
+                                       NB  : constant Natural :=
+                                         Parse_Nat
+                                           (R2 (BF .. BL), OkB);
+                                    begin
+                                       if not OkA
+                                         or else not OkB
+                                       then
+                                          Akernel_User.Console
+                                            .Put_Line
+                                            ("if: val needs"
+                                             & " numbers");
+                                          Bad := True;
+                                          return;
+                                       end if;
+                                       if Same_Word (Op, "eq") then
+                                          Result := NA = NB;
+                                       elsif Same_Word (Op, "ne")
+                                       then
+                                          Result := NA /= NB;
+                                       elsif Same_Word (Op, "gt")
+                                       then
+                                          Result := NA > NB;
+                                       elsif Same_Word (Op, "ge")
+                                       then
+                                          Result := NA >= NB;
+                                       elsif Same_Word (Op, "lt")
+                                       then
+                                          Result := NA < NB;
+                                       else
+                                          Result := NA <= NB;
+                                       end if;
+                                    end;
+                                 else
+                                    declare
+                                       B : constant String :=
+                                         R2 (BF .. BL);
+                                    begin
+                                       if Same_Word (Op, "eq") then
+                                          Result :=
+                                            Same_Word (W1, B);
+                                       elsif Same_Word (Op, "ne")
+                                       then
+                                          Result :=
+                                            not Same_Word (W1, B);
+                                       elsif Same_Word (Op, "gt")
+                                       then
+                                          Result :=
+                                            Lower_Less (B, W1);
+                                       elsif Same_Word (Op, "ge")
+                                       then
+                                          Result :=
+                                            not Lower_Less (W1, B);
+                                       elsif Same_Word (Op, "lt")
+                                       then
+                                          Result :=
+                                            Lower_Less (W1, B);
+                                       else
+                                          Result :=
+                                            not Lower_Less (B, W1);
+                                       end if;
+                                    end;
+                                 end if;
+                              end;
+                           else
+                              --  Command form: run the subject
+                              --  line; true iff RC < failat.
+                              Result := Run_Line (S) < Fail_Max;
+                           end if;
+                        end;
+                     end;
+                  else
+                     --  Single-word command form.
+                     Result := Run_Line (S) < Fail_Max;
+                  end if;
+               end;
+            end;
+         end if;
+         Result := Result xor Invert;
+         Cond := Result;
+         Push_If (Result, Bad);
+      end Handle_If;
+
+      procedure Handle_Else (Bad : out Boolean) is
+      begin
+         Bad := False;
+         if If_Depth = 0 then
+            Akernel_User.Console.Put_Line ("else without if");
+            Bad := True;
+            return;
+         end if;
+         if If_Stack (If_Depth) then
+            If_Stack (If_Depth) := False;
+            Skip_Count := Skip_Count + 1;
+         else
+            If_Stack (If_Depth) := True;
+            Skip_Count := Skip_Count - 1;
+         end if;
+      end Handle_Else;
+
+      procedure Handle_Endif (Bad : out Boolean) is
+      begin
+         Bad := False;
+         if If_Depth = 0 then
+            Akernel_User.Console.Put_Line ("endif without if");
+            Bad := True;
+            return;
+         end if;
+         if not If_Stack (If_Depth) then
+            Skip_Count := Skip_Count - 1;
+         end if;
+         If_Depth := If_Depth - 1;
+      end Handle_Endif;
+
+      --  Scan the buffer line by line for `lab <Label>`
+      --  (case-insensitive, comments ignored). Back searches
+      --  [0, Cur_Lo), forward [Next_Lo, Size). Target returns
+      --  the lab line's start (the lab itself runs as a no-op).
+      procedure Find_Label
+        (Label   : String;
+         Back    : Boolean;
+         Cur_Lo  : U64;
+         Next_Lo : U64;
+         Target  : out U64;
+         Found   : out Boolean)
+      is
+         LF : constant Byte := Byte (Character'Pos (ASCII.LF));
+         CR : constant Byte := Byte (Character'Pos (ASCII.CR));
+         P : U64 := (if Back then 0 else Next_Lo);
+         H : U64;
+         Limit : constant U64 := (if Back then Cur_Lo else Size);
+      begin
+         Found := False;
+         Target := 0;
+         while P < Limit loop
+            H := P;
+            while H < Size and then Buf (H) /= LF loop
+               H := H + 1;
+            end loop;
+            declare
+               Last : U64 := H;
+               Line : String (1 .. 256);
+               Len  : Natural;
+            begin
+               if Last > P and then Buf (Last - 1) = CR then
+                  Last := Last - 1;
+               end if;
+               Len := Natural (Last - P);
+               if Len > 0 and then Len <= Line'Length then
+                  for I in 0 .. Len - 1 loop
+                     Line (I + 1) :=
+                       Character'Val (Natural (Buf (P + U64 (I))));
+                  end loop;
+                  if Line (1) /= ';' then
+                     declare
+                        WL : Natural;
+                        RF : Natural;
+                        LL : Natural;
+                        XF : Natural;
+                     begin
+                        Split_Cmd (Line (1 .. Len), WL, RF);
+                        if Same_Word (Line (1 .. WL), "lab")
+                          and then RF <= Len
+                        then
+                           Split_Cmd (Line (RF .. Len), LL, XF);
+                           if Same_Word (Line (RF .. LL), Label)
+                           then
+                              Found := True;
+                              Target := P;
+                              return;
+                           end if;
+                        end if;
+                     end;
+                  end if;
+               end if;
+            end;
+            P := H + 1;
+         end loop;
+      end Find_Label;
+
    begin
       if Depth > Max_Nest then
          Akernel_User.Console.Put_Line ("scripts nested too deep");
@@ -457,7 +828,8 @@ package body Scripting.Interp is
          CR : constant Byte := Byte (Character'Pos (ASCII.CR));
          In_Header : Boolean := True;
       begin
-         while Lo < Size loop
+         while Lo < Size and then not Done and then not Abort_Run
+         loop
             Hi := Lo;
             while Hi < Size and then Buf (Hi) /= LF loop
                Hi := Hi + 1;
@@ -484,7 +856,7 @@ package body Scripting.Interp is
                      declare
                         W_Last  : Natural;
                         R_First : Natural;
-                        Bad     : Boolean;
+                        Bad     : Boolean := False;
                      begin
                         Split_Cmd (Line (1 .. Len), W_Last, R_First);
                         if In_Header
@@ -498,9 +870,6 @@ package body Scripting.Interp is
                            Parse_Key
                              ((if R_First > Len then ""
                                else Line (R_First .. Len)), Bad);
-                           if Bad then
-                              RC := Akernel_User.CLI.RC_Error;
-                           end if;
                         elsif In_Header
                           and then Line (1) = '.'
                           and then Same_Word (Line (1 .. W_Last),
@@ -509,60 +878,355 @@ package body Scripting.Interp is
                            Parse_Def
                              ((if R_First > Len then ""
                                else Line (R_First .. Len)), Bad);
-                           if Bad then
-                              RC := Akernel_User.CLI.RC_Error;
+                        elsif Same_Word (Line (1 .. W_Last), "if")
+                          or else Same_Word (Line (1 .. W_Last),
+                                             "else")
+                          or else Same_Word (Line (1 .. W_Last),
+                                             "endif")
+                        then
+                           --  if/else/endif are recognized on the
+                           --  RAW first word even while skipping
+                           --  (a skipped block's nested ifs must
+                           --  still balance, and its lines are
+                           --  never expanded).
+                           if In_Header and then not Bound then
+                              Bind_Args (Bad);
+                           end if;
+                           In_Header := False;
+                           if not Bad then
+                              if Same_Word (Line (1 .. W_Last),
+                                            "else")
+                              then
+                                 Handle_Else (Bad);
+                              elsif Same_Word (Line (1 .. W_Last),
+                                               "endif")
+                              then
+                                 Handle_Endif (Bad);
+                              elsif Skip_Count > 0 then
+                                 --  Nested if inside a skipped
+                                 --  block: push a dead frame, no
+                                 --  evaluation, no expansion.
+                                 Push_If (False, Bad);
+                              else
+                                 declare
+                                    XBuf : String (1 .. 512);
+                                    XLen : Natural;
+                                    XW   : Natural;
+                                    XR   : Natural;
+                                 begin
+                                    Expand (Line (1 .. Len),
+                                            XBuf, XLen, Bad);
+                                    if not Bad then
+                                       Split_Cmd (XBuf (1 .. XLen),
+                                                  XW, XR);
+                                       Handle_If
+                                         ((if XR > XLen then ""
+                                           else XBuf (XR .. XLen)),
+                                          Bad);
+                                       if not Bad then
+                                          --  The condition RC is
+                                          --  consumed by if.
+                                          RC := 0;
+                                       end if;
+                                    end if;
+                                 end;
+                              end if;
                            end if;
                         else
                            if In_Header and then not Bound then
                               Bind_Args (Bad);
-                              if Bad then
-                                 RC := Akernel_User.CLI.RC_Error;
-                              end if;
                            end if;
                            In_Header := False;
-                           if RC < Akernel_User.CLI.RC_Error then
+                           if not Bad and then Skip_Count = 0 then
                               declare
                                  XBuf : String (1 .. 512);
                                  XLen : Natural;
                               begin
                                  Expand (Line (1 .. Len),
                                          XBuf, XLen, Bad);
-                                 if Bad then
-                                    RC := Akernel_User.CLI.RC_Error;
-                                 elsif XLen > 0 then
-                                    Split_Cmd (XBuf (1 .. XLen),
-                                               W_Last, R_First);
-                                    if XBuf (1) = '.'
-                                      and then Same_Word
-                                        (XBuf (1 .. W_Last), ".set")
-                                    then
-                                       Handle_Set
-                                         ((if R_First > XLen
-                                           then ""
-                                           else XBuf (R_First
-                                                        .. XLen)),
-                                          Bad);
-                                       RC :=
-                                         (if Bad
-                                          then Akernel_User.CLI
-                                            .RC_Error
-                                          else 0);
-                                    else
-                                       RC := Run_Line
-                                         (XBuf (1 .. XLen));
-                                    end if;
+                                 if not Bad and then XLen > 0 then
+                                    declare
+                                       XW : Natural;
+                                       XR : Natural;
+                                       XRest : Natural;
+                                    begin
+                                       Split_Cmd (XBuf (1 .. XLen),
+                                                  XW, XR);
+                                       XRest :=
+                                         (if XR > XLen
+                                          then XLen + 1 else XR);
+                                       if XBuf (1) = '.'
+                                         and then Same_Word
+                                           (XBuf (1 .. XW), ".set")
+                                       then
+                                          Handle_Set
+                                            ((if XRest > XLen
+                                              then ""
+                                              else XBuf (XRest
+                                                           .. XLen)),
+                                             Bad);
+                                          if not Bad then
+                                             RC := 0;
+                                          end if;
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "lab")
+                                       then
+                                          RC := 0;  --  no-op
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "skip")
+                                       then
+                                          declare
+                                             SRest : constant
+                                               String :=
+                                               (if XRest > XLen
+                                                then ""
+                                                else XBuf (XRest
+                                                             .. XLen));
+                                             SL    : Natural;
+                                             SF    : Natural;
+                                             BL    : Natural := 0;
+                                             BF    : Natural := 0;
+                                             Back  : Boolean :=
+                                               False;
+                                             Found : Boolean;
+                                          begin
+                                             if SRest'Length = 0
+                                             then
+                                                Akernel_User
+                                                  .Console.Put_Line
+                                                  ("usage: skip"
+                                                   & " <label>"
+                                                   & " [back]");
+                                                Bad := True;
+                                             else
+                                                Split_Cmd
+                                                  (SRest, SL, SF);
+                                                if SF
+                                                  <= SRest'Last
+                                                then
+                                                   Split_Cmd
+                                                     (SRest
+                                                        (SF ..
+                                                         SRest'Last),
+                                                      BL, BF);
+                                                   if Same_Word
+                                                     (SRest
+                                                        (SF .. BL),
+                                                      "back")
+                                                   then
+                                                      Back := True;
+                                                   else
+                                                      Akernel_User
+                                                        .Console
+                                                        .Put_Line
+                                                        ("usage:"
+                                                         & " skip"
+                                                         & " <label>"
+                                                         & " [back]");
+                                                      Bad := True;
+                                                   end if;
+                                                end if;
+                                                if not Bad then
+                                                   Find_Label
+                                                     (SRest
+                                                        (SRest'First
+                                                         .. SL),
+                                                      Back,
+                                                      Lo, Hi + 1,
+                                                      Jump_To,
+                                                      Found);
+                                                   if Found then
+                                                      --  Abandon
+                                                      --  any open
+                                                      --  if frames:
+                                                      --  the loop
+                                                      --  idiom
+                                                      --  leaks one
+                                                      --  per pass.
+                                                      If_Depth := 0;
+                                                      Skip_Count :=
+                                                        0;
+                                                      Jumped := True;
+                                                      RC := 0;
+                                                   else
+                                                      Akernel_User
+                                                        .Console
+                                                        .Put_Line
+                                                        ("label not"
+                                                         & " found: "
+                                                         & SRest
+                                                           (SRest
+                                                              'First
+                                                            .. SL));
+                                                      Bad := True;
+                                                   end if;
+                                                end if;
+                                             end if;
+                                          end;
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "quit")
+                                       then
+                                          declare
+                                             QRest : constant
+                                               String :=
+                                               (if XRest > XLen
+                                                then ""
+                                                else XBuf (XRest
+                                                             .. XLen));
+                                             Ok : Boolean;
+                                             N  : Natural;
+                                          begin
+                                             if QRest'Length = 0
+                                             then
+                                                RC := 0;
+                                                Done := True;
+                                             else
+                                                N := Parse_Nat
+                                                  (QRest, Ok);
+                                                if not Ok then
+                                                   Akernel_User
+                                                     .Console
+                                                     .Put_Line
+                                                     ("quit: bad"
+                                                      & " return"
+                                                      & " code");
+                                                   Bad := True;
+                                                else
+                                                   RC := U64 (N);
+                                                   Done := True;
+                                                end if;
+                                             end if;
+                                          end;
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "failat")
+                                       then
+                                          declare
+                                             FRest : constant
+                                               String :=
+                                               (if XRest > XLen
+                                                then ""
+                                                else XBuf (XRest
+                                                             .. XLen));
+                                             Ok : Boolean;
+                                             N  : Natural;
+                                          begin
+                                             N := Parse_Nat
+                                               (FRest, Ok);
+                                             if not Ok then
+                                                Akernel_User
+                                                  .Console.Put_Line
+                                                  ("usage: failat"
+                                                   & " <n>");
+                                                Bad := True;
+                                             else
+                                                Fail_Max :=
+                                                  U64 (N);
+                                                RC := 0;
+                                             end if;
+                                          end;
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "echo")
+                                         and then not Scripting
+                                           .Exec.Has_Metachar
+                                             (XBuf (1 .. XLen))
+                                       then
+                                          declare
+                                             Txt : constant
+                                               String :=
+                                               (if XRest > XLen
+                                                then ""
+                                                else XBuf (XRest
+                                                             .. XLen));
+                                             TL : Natural :=
+                                               Txt'Last;
+                                             WF : Natural;
+                                             Noline : Boolean :=
+                                               False;
+                                          begin
+                                             while TL >= Txt'First
+                                               and then Txt (TL)
+                                                 = ' '
+                                             loop
+                                                TL := TL - 1;
+                                             end loop;
+                                             WF := TL;
+                                             while WF > Txt'First
+                                               and then Txt (WF - 1)
+                                                 /= ' '
+                                             loop
+                                                WF := WF - 1;
+                                             end loop;
+                                             if TL >= Txt'First
+                                               and then WF
+                                                 > Txt'First
+                                               and then Same_Word
+                                                 (Txt (WF .. TL),
+                                                  "noline")
+                                             then
+                                                Noline := True;
+                                                TL := WF - 1;
+                                                while TL
+                                                  >= Txt'First
+                                                  and then Txt (TL)
+                                                    = ' '
+                                                loop
+                                                   TL := TL - 1;
+                                                end loop;
+                                             end if;
+                                             if Noline then
+                                                Akernel_User.Console
+                                                  .Put
+                                                  (Txt
+                                                     (Txt'First
+                                                      .. TL));
+                                             elsif TL
+                                               >= Txt'First
+                                             then
+                                                Akernel_User.Console
+                                                  .Put_Line
+                                                  (Txt
+                                                     (Txt'First
+                                                      .. TL));
+                                             else
+                                                Akernel_User.Console
+                                                  .Put_Line ("");
+                                             end if;
+                                             RC := 0;
+                                          end;
+                                       else
+                                          RC := Run_Line
+                                            (XBuf (1 .. XLen));
+                                       end if;
+                                    end;
                                  end if;
                               end;
                            end if;
+                        end if;
+                        if Bad then
+                           RC := Akernel_User.CLI.RC_Error;
+                           Abort_Run := True;
                         end if;
                      end;
                   end if;
                end if;
             end;
-            exit when RC >= Akernel_User.CLI.RC_Error;
-            Lo := Hi + 1;
+            if Jumped then
+               Lo := Jump_To;
+               Jumped := False;
+            else
+               Lo := Hi + 1;
+            end if;
+            exit when Done or else Abort_Run
+              or else RC >= Fail_Max;
          end loop;
       end;
+      --  An open if at end of script is a malformed script —
+      --  AmigaDOS reports "ENDIF expected". A quit overrides
+      --  (its RC is the script's answer).
+      if not Abort_Run and then not Done and then If_Depth > 0 then
+         Akernel_User.Console.Put_Line ("missing endif");
+         RC := Akernel_User.CLI.RC_Error;
+      end if;
       Free (Buf);
       return RC;
    end Run;

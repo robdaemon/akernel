@@ -28,8 +28,28 @@ with Akernel_User.Syscalls;
 --  substitution" style. .key/.k/.def are header directives:
 --  they are only recognised before the first command line.
 --
---  Control flow (if/else/endif, lab/skip, quit, failat, echo)
---  lands in chunk 3; `ask` in chunk 4.
+--  Control flow (chunk 3), keywords case-insensitive:
+--    if [not] <cmd>        true iff the command's RC < failat
+--                          (the condition RC is CONSUMED — it
+--                          does not trip failat itself)
+--    if [not] <a> eq|ne|gt|ge|lt|le <b> [val]
+--                          case-insensitive strings; val = numeric
+--    if [not] exists <path>
+--    if / if not           tests the stored condition flag
+--    else / endif          8-deep if stack; skipped blocks still
+--                          track nested if/endif
+--    lab <name> / skip <name> [back]
+--                          skip abandons any open if frames —
+--                          the classic loop idiom `if cond /
+--                          skip loop back / endif` relies on it;
+--                          an unknown label is RC 10
+--    quit [rc]             stop the script, RC = rc (default 0)
+--    failat <n>            abort threshold (default 10)
+--    echo <text> [noline]  internal fast path; a line holding
+--                          |, > or < falls through to C:Echo so
+--                          redirection composes (noline is then
+--                          unsupported)
+--  `ask` lands in chunk 4.
 generic
    --  Command dispatch: how the host runs one expanded command
    --  line. Nested subprograms are legal actuals (a formal
