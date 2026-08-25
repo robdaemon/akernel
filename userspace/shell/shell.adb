@@ -30,10 +30,10 @@ with Scripting.Console_IO;
 --
 --  Builtins: "help", "exit", "execute <script> [args]"
 --  (milestones 42 + 70: the script runner — LF-separated command
---  lines, ';' starts a comment, the run stops at the first
---  RC >= 10 Amiga-failat style, nesting capped at 4; milestone
---  70's Scripting.Interp adds .key args, .def defaults, .set
---  locals and <name>/<$name> substitution). Everything else is
+--  lines, ';' starts a comment, Amiga-failat stop, nesting capped
+--  at 4; Scripting.Interp is the AmigaDOS subset: .key args, .def
+--  defaults, .set locals, <name>/<$name> substitution, if/else/
+--  endif, lab/skip, quit, failat, echo, ask). Everything else is
 --  resolved as a
 --  command via the Path variable and the C: search path
 --  (milestone 41b) — staged through the file server into a memory
@@ -412,8 +412,14 @@ procedure Shell is
             Akernel_User.Console.Put_Line ("akernel shell — builtins:");
             Akernel_User.Console.Put_Line ("  help            this text");
             Akernel_User.Console.Put_Line ("  exit            leave the shell");
-            Akernel_User.Console.Put_Line
-              ("  execute <file>  run a script (';' comments, stop at RC 10)");
+             Akernel_User.Console.Put_Line
+               ("  execute <f> [a] run a script; args bind via .key");
+             Akernel_User.Console.Put_Line
+               ("                  scripts: if/else/endif, lab/skip, quit,");
+             Akernel_User.Console.Put_Line
+               ("                  failat, echo, ask, <var>, .def/.set");
+             Akernel_User.Console.Put_Line
+               ("                  (C:Execute runs scripts for programs)");
             Akernel_User.Console.Put_Line
               ("  <cmd> [args]    run a C: or Sys: command");
             Akernel_User.Console.Put_Line

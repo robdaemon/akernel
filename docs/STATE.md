@@ -260,11 +260,36 @@ QEMU virt RAM base:     0x80000000
   stamps (Op_Stat reply words 2/3, surfaced by
   List) and Ada.Calendar all carry real wall time.
   The shell
-  prompt shows the cwd and "execute <script>"
-  runs scripts (';' comments, failat stop at
-  RC >= 10, nesting cap 4; "Shell execute
-  <script>" args = batch mode exiting with the
-  last RC). C:Path (43) manages the command
+  prompt shows the cwd and "execute <script>
+  [args]" runs scripts (';' comments, failat
+  stop at RC >= 10, nesting cap 4; "Shell
+  execute <script>" args = batch mode exiting
+  with the last RC). Milestone 70 grew the
+  runner into an AmigaDOS subset
+  (Scripting.Interp, userspace/scripting —
+  shared with the execution engine,
+  Scripting.Exec, which the shell and
+  C:Execute both link): .key/.k positional
+  args with .def defaults, .set script locals
+  (defined-empty vs undefined), <name>
+  substitution resolving locals then ENV:
+  (<$name> forces ENV:; undefined is a hard
+  "bad substitution" error), if [not] with
+  exists / eq|ne|gt|ge|lt|le [val] / command
+  forms (the condition RC is consumed), bare
+  if testing the condition flag, else/endif
+  (8 deep, skipped blocks never expanded),
+  lab/skip [back] (skip abandons open if
+  frames — the loop idiom relies on it),
+  quit [rc], failat <n>, echo [noline]
+  (metachar lines fall through to C:Echo so
+  redirection composes), and ask (condition
+  flag from y/Y; RC_Warn 5 on "no" — below
+  failat). C:Execute is the command form:
+  programs run scripts without a shell, and
+  "run Sys:C/Execute s" backgrounds a script
+  as a reapable job; its ask reads stdin, so
+  "echo y | Execute s" composes. C:Path (43) manages the command
   search list — ENV:Path, global (Amiga is
   per-process; no session identity here) —
   with Resolve_Command searching cwd FIRST,

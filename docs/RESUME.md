@@ -341,72 +341,50 @@ Other fixes applied:
 
 ## Active
 
-**Milestone 70 — AmigaDOS-style script interpreter (planned,
-chunked; work starts after this entry).**
+**Milestone 70 — AmigaDOS-style script interpreter (done).**
 
-Decisions taken: AmigaDOS subset (if/else/endif, lab/skip, quit,
-failat, echo, `<var>` substitution, `.key` args, `.set` locals);
-shared interpreter package used by BOTH the shell's `execute`
-builtin and a new `Sys:C/Execute` binary; script-local variables
-with ENV: fallback; `ask` included. Locals resolve before ENV:;
-`<$name>` forces ENV:. Undefined `<name>` is a hard error (RC 10,
-aborts the script). Substitution only fires on `<name>` with no
-space after `<` — pipeline operators are standalone tokens, so
-`< file` redirection is untouched. `set`/`get`/`unset` externals
-keep their ENV: semantics (existing fuzz scripts depend on it).
+- [x] New library crate `userspace/scripting/`: the root package
+  holds the uniform-ABI handle constants + Split_Cmd (no U64
+  subtype, so `use Scripting` is safe next to Syscalls);
+  `Scripting.Exec` is the shell's stage/spawn/reap + pipeline
+  engine extracted unchanged (chunk 1); `Scripting.Interp` is the
+  interpreter core as a generic child — the host instantiates it
+  with its own dispatcher and ask reader (formal subprograms, no
+  accessibility trap), so script lines run builtins and nested
+  `execute` re-enters with Depth + 1.
+- [x] Language: .key/.k positional args + .def defaults, .set
+  locals (defined-empty vs undefined — undefined <name> is a hard
+  RC 10 "bad substitution"), <name> resolves locals then ENV:
+  (<$name> forces ENV:; '<' only opens a reference when closed by
+  '>' on the same line, so `< file` redirection and `a<b` stay
+  literal); if [not] with exists / eq|ne|gt|ge|lt|le [val] /
+  command forms (condition RC consumed), bare if tests the
+  condition flag; else/endif 8 deep, skipped blocks never
+  expanded; lab/skip [back] (skip abandons open if frames — the
+  loop idiom relies on it); quit [rc]; failat <n>; echo [noline]
+  (metachar lines fall through to C:Echo so > file composes);
+  ask (condition flag from y/Y, RC_Warn 5 on "no").
+- [x] New `Sys:C/Execute` binary (chunk 4): scripts without a
+  shell, `run Sys:C/Execute s` backgrounds a script as a reapable
+  job; its ask reads stdin via CLI.Get_Line so
+  `echo y | Execute s` composes. The shell's ask reads the raw
+  console stream (`Scripting.Console_IO.Read_Line`).
+- [x] Stack fix: per-level line buffers + the locals table moved
+  to the heap — five nested scripts over ~4 KiB frames each
+  page-faulted the 48 KiB process stack before the depth cap
+  fired. Run_Script owns the nesting counter (top-level batch
+  script = Depth 1).
+- [x] Fuzz e2e: byte-exact .key/.def/.set/substitution checks,
+  ENV: shadowing + <$>, literal '<', bad-subst abort, nested
+  execute args, every if arm, skip forward + skip-back loop
+  (FZL1..3 one per pass), quit 7, inner quit 20 tripping the
+  outer failat, failat 21 passing RC 20, echo > file, skipped-
+  block substitution safety, the four malformed-script errors,
+  C:Execute direct/piped/backgrounded, depth cap.
+- [x] `make all` builds with zero warnings; `make test
+  QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
+  desktop boot smoke clean.
 
-`.set` directive: `.set <name> <value...>` sets a script local
-(substitution applied first — `.set b <a>` copies; value trimmed,
-<= 128 chars); `.set <name>` with no value clears it to empty
-(distinct from undefined, which errors). Interpreter directive:
-always RC 0, never trips failat, not executed inside skipped
-blocks. Locals also come from `.key`/`.k` positional args and
-`.def name=value` defaults (16 slots, names <= 32).
-
-Chunk plan (each chunk = one commit, full gates:
-zero-warning `make all`, `make test` SMP4 + `QEMU_SMP=1`
-timeout-wrapped with log verification, desktop boot smoke):
-
-- [x] **Chunk 1 — `Scripting.Exec` extraction (pure refactor).**
-  New crate `userspace/scripting/`; move Stage/Spawn_Cmd/Reap/Exec,
-  Has_Metachar, Spawn_Pipeline/Reap_Pipeline/Delete_Pipes/
-  Run_Pipeline, Proc_Set/Pipe_Set/Pipe_Name_Str, Stage_VA,
-  Max_Stages out of shell.adb. Shell `with`s it; job control keeps
-  the shared types. No behavior change; suite proves parity.
-- [x] **Chunk 2 — `Scripting.Interp` core: parity + substitution
-  + locals.** Slurp/line-scan/comments/failat-stop/nesting-cap
-  parity with old Run_Script; `execute` splits path from args;
-  `.key`/`.k`/`.def`/`.set`; `<name>`/`<$name>` substitution with
-  bad-substitution abort. Shell's `execute` switches to
-  `Interp.Run` (Run callback = shell `Execute`, so builtins work
-  in scripts). Fuzz: args+substitution byte-verified, ENV:
-  fallback, `<$>`, `.set` set/copy/clear, bad-subst abort; old
-  script tests pass unchanged.
-- [x] **Chunk 3 — Control flow.** `if [not] <cmd>` (RC consumed,
-  true iff RC < failat), `if [not] <a> eq|ne|gt|ge|lt|le <b>`
-  (case-insensitive; `val` = numeric), `if [not] exists <path>`,
-  `else`, `endif` (8-deep stack; skip mode tracks nesting),
-  `lab`/`skip [back]`, `quit [rc]`, `failat <n>`,
-  `echo [noline]`. Fuzz: taken/not-taken markers, nested if/else,
-  if-command doesn't abort on RC, skip forward, skip-back loop
-  bounded by if-exists chain, `quit 7`, inner `quit 20` trips the
-  outer failat, `failat 21` lets RC 20 pass (Elevate NoSuch
-  trick).
-- [x] **Chunk 4 — C:Execute + ask.** Shared `Read_Line` console
-  helper (Op_Read poll + yield, bounded 120). `ask <prompt>` sets
-  the condition flag (y/Y), RC 0/5 (5 < failat: no abort); bare
-  `if`/`if not` tests the flag. New `userspace/execute/` crate ->
-  `Sys:C/Execute` (thin: args -> Interp.Run with Scripting.Exec
-  dispatch + nested `execute` special-case); Makefile
-  INITRD_CRATES/manifest. Fuzz: `echo y | Sys:C/Execute
-  askscript` -> "yes" marker (and `n` -> "no"), `run C:Execute
-  script` + `wait` RC composition, depth-cap abort. If ask-over-
-  pipe fights us: ask ships interactive-only (boot smoke) and the
-  piped test becomes a follow-up.
-- [ ] **Chunk 5 — Docs + sweep.** `help` text, shell.adb header
-  comment, `docs/USERSPACE.md`, this RESUME entry finalized,
-  remove "Script interpreter" from Open candidates, any test gaps
-  found in chunks 2-4.
 
 ## Open candidates
 
@@ -414,9 +392,7 @@ timeout-wrapped with log verification, desktop boot smoke):
    whether a kernel-level register read/write primitive is worthwhile.
 2. **virtio-net driver + socket-like protocol** — network stack
    starting with a raw virtio-net device and a simple packet channel.
-3. **Script interpreter** — a small AmigaDOS/ARexx-style shell script
-   engine.
-4. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
+3. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
 
 ## Working rules
 
