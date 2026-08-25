@@ -383,8 +383,8 @@ Other fixes applied:
   C:Execute direct/piped/backgrounded, depth cap.
 - [x] `make all` builds with zero warnings; `make test
   QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
-  desktop boot smoke clean.
-
+  desktop boot smoke clean. Language reference:
+  `docs/shell/scripting.md`.
 
 ## Open candidates
 

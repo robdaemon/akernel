@@ -289,7 +289,9 @@ QEMU virt RAM base:     0x80000000
   programs run scripts without a shell, and
   "run Sys:C/Execute s" backgrounds a script
   as a reapable job; its ask reads stdin, so
-  "echo y | Execute s" composes. C:Path (43) manages the command
+  "echo y | Execute s" composes. The full
+  language reference is docs/shell/scripting.md.
+  C:Path (43) manages the command
   search list — ENV:Path, global (Amiga is
   per-process; no session identity here) —
   with Resolve_Command searching cwd FIRST,
