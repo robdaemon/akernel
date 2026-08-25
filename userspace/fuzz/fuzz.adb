@@ -3904,7 +3904,10 @@ begin
       --  ENV reads happen through the same 64-byte buffer; the
       --  cwd always ends back at BD0: (idempotent).
       declare
-         Buf   : array (0 .. 63) of Interfaces.Unsigned_8;
+         --  Buf doubles as Write_File's staging buffer; the
+         --  milestone-69 background-pipeline scripts run past
+         --  64 bytes (Write_File guards the bound).
+         Buf   : array (0 .. 127) of Interfaces.Unsigned_8;
          Size  : U64;
          Count : U64;
          Match : Boolean;
@@ -3939,6 +3942,10 @@ begin
          is
             St : U64;
          begin
+            if Content'Length > Buf'Length then
+               Check (False, Label_Text & " (script overruns Buf)");
+               return;
+            end if;
             for I in Content'Range loop
                Buf (I - 1) :=
                  Interfaces.Unsigned_8 (Character'Pos (Content (I)));
@@ -4148,6 +4155,86 @@ begin
                    and then Cnt = U64 (Expected'Length)
                    and then Out_Buf (1 .. Expected'Length) = Expected,
                    "sort < in > out matches the pipeline");
+
+            --  Background pipelines (milestone 69): `run` accepts
+            --  the full pipeline syntax; the job's RC is the LAST
+            --  stage's exit code, and the slot-scoped
+            --  PIPE:BG<j><s> pipes are deleted when the job is
+            --  reaped (Stat on a pipe never creates it, so the
+            --  absence checks below are real).
+            Write_File ("BD0:FZBG1.TXT",
+                        "run Type BD0:FZPIN.TXT | Sort > BD0:FZBG1O.TXT"
+                        & ASCII.LF
+                        & "wait 1" & ASCII.LF
+                        & "set FZBG1=alive" & ASCII.LF,
+                        "bg pipeline script 1 written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZBG1.TXT",
+                         0, "shell backgrounds a pipeline");
+            Check_Env ("FZBG1", "alive",
+                       "script continues after the bg pipeline");
+            St := Akernel_User.Files.Read
+              ("BD0:FZBG1O.TXT", 0, Out_Buf'Address,
+               U64 (Expected'Length), Cnt);
+            Check (St = Akernel_User.Files.Status_Ok
+                   and then Cnt = U64 (Expected'Length)
+                   and then Out_Buf (1 .. Expected'Length) = Expected,
+                   "background pipeline output landed sorted");
+            St := Akernel_User.Files.Stat ("PIPE:BG11", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "wait deleted the job's BG pipe");
+
+            Write_File ("BD0:FZBG2.TXT",
+                        "run Tests/Teardown X 3 | Tests/Teardown X 20"
+                        & ASCII.LF
+                        & "wait 1" & ASCII.LF
+                        & "set FZBG2=unreached" & ASCII.LF,
+                        "bg pipeline script 2 written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZBG2.TXT",
+                         20, "bg pipeline RC is the last stage's");
+            declare
+               S2  : U64;
+               Sz2 : U64;
+            begin
+               S2 := Akernel_User.Files.Stat ("ENV:FZBG2", Sz2);
+               Check (S2 /= Akernel_User.Files.Status_Ok,
+                      "bg pipeline RC 20 stops the script at failat");
+            end;
+
+            Write_File ("BD0:FZBG3.TXT",
+                        "run Tests/Teardown X 3 | Tests/Teardown X 5"
+                        & ASCII.LF
+                        & "run Tests/Teardown X 4 | Tests/Teardown X 6"
+                        & ASCII.LF
+                        & "jobs" & ASCII.LF
+                        & "wait" & ASCII.LF
+                        & "set FZBG3=alive" & ASCII.LF,
+                        "bg pipeline script 3 written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZBG3.TXT",
+                         0, "two bg pipelines, jobs, bare wait");
+            Check_Env ("FZBG3", "alive",
+                       "bare wait reaped both bg pipelines");
+            St := Akernel_User.Files.Stat ("PIPE:BG21", Size);
+            Check (St /= Akernel_User.Files.Status_Ok,
+                   "both jobs' BG pipes deleted");
+
+            Write_File ("BD0:FZBG4.TXT",
+                        "run | Sort" & ASCII.LF
+                        & "set FZBG4=unreached" & ASCII.LF,
+                        "bg pipeline script 4 written");
+            Run_Command ("Sys:System/Shell",
+                         "execute BD0:FZBG4.TXT",
+                         10, "bad bg pipeline rejected, RC 10");
+            declare
+               S3  : U64;
+               Sz3 : U64;
+            begin
+               S3 := Akernel_User.Files.Stat ("ENV:FZBG4", Sz3);
+               Check (S3 /= Akernel_User.Files.Status_Ok,
+                      "bad bg pipeline stops the script at failat");
+            end;
 
             Run_Command ("Sys:C/Copy", "BD0:FZPIN.TXT NIL:", 0,
                          "copy to NIL: discards");

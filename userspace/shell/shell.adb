@@ -318,8 +318,20 @@ procedure Shell is
    --  last stage's RC. Shell pipes come from a small
    --  PIPE:SH<n> pool, created + reset up front (Truncate
    --  clears stale data/EOF) and deleted after the reap.
+   --  Milestone 69: `run` backgrounds a whole pipeline; its
+   --  pipes are slot-scoped PIPE:BG<j><s> names, deleted when
+   --  the job is reaped (see Spawn_Pipeline's Bg_Slot).
    Max_Stages : constant := 4;
    Pipe_Seq   : Natural := 0;
+
+   --  Shared pipeline bookkeeping (milestone 69): the spawn phase
+   --  hands the stage process caps and owned pipe names to the
+   --  caller — the foreground path reaps immediately, `run` parks
+   --  them in a job slot until harvest/wait.
+   type Proc_Set is array (1 .. Max_Stages) of U64;
+   subtype Pipe_Name_Str is String (1 .. 16);
+   type Pipe_Set is array (1 .. Max_Stages - 1) of Pipe_Name_Str;
+   type Pipe_Len_Set is array (1 .. Max_Stages - 1) of Natural;
 
    function Has_Metachar (Cmd : String) return Boolean is
    begin
@@ -331,7 +343,23 @@ procedure Shell is
       return False;
    end Has_Metachar;
 
-   function Run_Pipeline (Cmd : String) return U64 is
+   --  Spawn every stage of a pipeline CONCURRENTLY (the m46b
+   --  parser/wiring, split out in milestone 69 so `run` can
+   --  background the group). Bg_Slot = 0 is the foreground:
+   --  pipes come from the rotating PIPE:SH<n> pool. Bg_Slot > 0
+   --  names pipes PIPE:BG<slot><stage> — slot-scoped, so the
+   --  foreground pool's name recycling can never truncate a live
+   --  background job's pipe. On failure everything spawned and
+   --  created is reaped and deleted before return (Ok = False).
+   procedure Spawn_Pipeline
+     (Cmd     : String;
+      Bg_Slot : Natural;
+      Procs   : out Proc_Set;
+      Pipes   : out Pipe_Set;
+      PLens   : out Pipe_Len_Set;
+      NStage  : out Natural;
+      Ok      : out Boolean)
+   is
       package Files renames Akernel_User.Files;
       Max_Tok : constant := 32;
       type Tok is record
@@ -353,18 +381,11 @@ procedure Shell is
         (others => (others => Character'Val (0)));
       Stage_Ol  : array (1 .. Max_Stages) of Natural :=
         (others => 0);
-      Procs     : array (1 .. Max_Stages) of U64 := (others => 0);
-      Pipe_Name : array (1 .. Max_Stages - 1) of String (1 .. 16) :=
-        (others => (others => Character'Val (0)));
-      Pipe_Len  : array (1 .. Max_Stages - 1) of Natural :=
-        (others => 0);
-      NStage : Natural := 1;
-      I      : Natural;
-      T      : Natural;
-      RC     : U64 := 0;
-      St     : U64;
-      Size   : U64;
-      Bad    : Boolean := False;
+      I    : Natural;
+      T    : Natural;
+      St   : U64;
+      Size : U64;
+      Bad  : Boolean := False;
 
       procedure Set_Path
         (Buf : out String; Len : in out Natural; Value : String)
@@ -394,6 +415,11 @@ procedure Shell is
          S := S + Text'Length;
       end Append_Word;
    begin
+      Procs  := (others => 0);
+      Pipes  := (others => (others => Character'Val (0)));
+      PLens  := (others => 0);
+      NStage := 1;
+      Ok     := False;
       --  Tokenize.
       I := Cmd'First;
       while I <= Cmd'Last loop
@@ -473,18 +499,25 @@ procedure Shell is
       if Bad then
          Akernel_User.Console.Put_Line
            ("bad pipeline (usage: A | B, > file, < file)");
-         return Akernel_User.CLI.RC_Error;
+         return;
       end if;
 
       --  Wire the pipes between stages.
       for S in 1 .. NStage - 1 loop
          declare
             Img  : constant String := Natural'Image (Pipe_Seq);
+            JIm  : constant String := Natural'Image (Bg_Slot);
+            SIm  : constant String := Natural'Image (S);
             Name : constant String :=
-              "PIPE:SH" & Img (Img'First + 1 .. Img'Last);
+              (if Bg_Slot = 0
+               then "PIPE:SH" & Img (Img'First + 1 .. Img'Last)
+               else "PIPE:BG" & JIm (JIm'First + 1 .. JIm'Last)
+                    & SIm (SIm'First + 1 .. SIm'Last));
          begin
-            Pipe_Seq := (Pipe_Seq + 1) mod 100;
-            Set_Path (Pipe_Name (S), Pipe_Len (S), Name);
+            if Bg_Slot = 0 then
+               Pipe_Seq := (Pipe_Seq + 1) mod 100;
+            end if;
+            Set_Path (Pipes (S), PLens (S), Name);
             Set_Path (Stage_Out (S), Stage_Ol (S), Name);
             Set_Path (Stage_In (S + 1), Stage_Il (S + 1), Name);
             --  Create-or-reset: a recycled name can hold stale
@@ -496,7 +529,7 @@ procedure Shell is
             if St /= Files.Status_Ok then
                Akernel_User.Console.Put_Line
                  ("cannot create " & Name);
-               return Akernel_User.CLI.RC_Error;
+               return;
             end if;
          end;
       end loop;
@@ -513,7 +546,7 @@ procedure Shell is
             if St /= Files.Status_Ok then
                Akernel_User.Console.Put_Line
                  ("cannot truncate redirect target");
-               return Akernel_User.CLI.RC_Error;
+               return;
             end if;
          end if;
       end if;
@@ -539,40 +572,86 @@ procedure Shell is
             --  Unblock any stage already waiting on a pipe,
             --  then reap what got spawned.
             for P in 1 .. NStage - 1 loop
-               if Pipe_Len (P) > 0 then
-                  St := Files.Close (Pipe_Name (P)(1 .. Pipe_Len (P)));
+               if PLens (P) > 0 then
+                  St := Files.Close (Pipes (P)(1 .. PLens (P)));
                end if;
             end loop;
             for Q in 1 .. S - 1 loop
                if Procs (Q) /= 0 then
-                  RC := Reap (Procs (Q));
+                  St := Reap (Procs (Q));
+                  St := Cap_Delete (Procs (Q));
+                  Procs (Q) := 0;
                end if;
             end loop;
             for P in 1 .. NStage - 1 loop
-               if Pipe_Len (P) > 0 then
-                  St := Files.Delete (Pipe_Name (P)(1 .. Pipe_Len (P)));
+               if PLens (P) > 0 then
+                  St := Files.Delete (Pipes (P)(1 .. PLens (P)));
                end if;
             end loop;
-            return Akernel_User.CLI.RC_Error;
+            return;
          end if;
       end loop;
 
-      --  Reap all; the pipeline RC is the last stage's RC.
+      Ok := True;
+   end Spawn_Pipeline;
+
+   procedure Delete_Pipes (Pipes : Pipe_Set; PLens : Pipe_Len_Set) is
+      St : U64;
+   begin
+      for P in Pipes'Range loop
+         if PLens (P) > 0 then
+            St := Akernel_User.Files.Delete
+              (Pipes (P)(1 .. PLens (P)));
+         end if;
+      end loop;
+   end Delete_Pipes;
+
+   --  Blocking reap of a whole pipeline group (milestone 69):
+   --  stages in order, RC = the LAST stage's exit code, proc
+   --  caps deleted as they are reaped, owned pipes deleted once
+   --  every stage is dead. Foreground pipelines and `wait` on a
+   --  background job both funnel through here.
+   procedure Reap_Pipeline
+     (Procs  : in out Proc_Set;
+      Pipes  : Pipe_Set;
+      PLens  : Pipe_Len_Set;
+      NStage : Natural;
+      RC     : out U64)
+   is
+      Dead : U64;
+   begin
+      RC := 0;
       for S in 1 .. NStage loop
-         declare
-            Code : constant U64 := Reap (Procs (S));
-         begin
-            if S = NStage then
-               RC := Code;
-            end if;
-         end;
-      end loop;
-
-      for P in 1 .. NStage - 1 loop
-         if Pipe_Len (P) > 0 then
-            St := Files.Delete (Pipe_Name (P)(1 .. Pipe_Len (P)));
+         if Procs (S) /= 0 then
+            declare
+               Code : constant U64 := Reap (Procs (S));
+            begin
+               if S = NStage then
+                  RC := Code;
+               end if;
+            end;
+            Dead := Cap_Delete (Procs (S));
+            Procs (S) := 0;
          end if;
       end loop;
+      Delete_Pipes (Pipes, PLens);
+   end Reap_Pipeline;
+
+   --  Foreground pipeline (milestone 46b): spawn all stages,
+   --  block until every stage exits, RC = the last stage's RC.
+   function Run_Pipeline (Cmd : String) return U64 is
+      Procs  : Proc_Set := (others => 0);
+      Pipes  : Pipe_Set := (others => (others => Character'Val (0)));
+      PLens  : Pipe_Len_Set := (others => 0);
+      NStage : Natural := 0;
+      Ok     : Boolean;
+      RC     : U64;
+   begin
+      Spawn_Pipeline (Cmd, 0, Procs, Pipes, PLens, NStage, Ok);
+      if not Ok then
+         return Akernel_User.CLI.RC_Error;
+      end if;
+      Reap_Pipeline (Procs, Pipes, PLens, NStage, RC);
       return RC;
    end Run_Pipeline;
 
@@ -660,10 +739,13 @@ procedure Shell is
       return RC;
    end Run_Script;
 
-   --  Job control (milestone 52), Amiga RUN lineage: `run`
-   --  backgrounds a single command (no pipelines/redirection
-   --  yet — Spawn_Cmd's single-command path only); the shell
-   --  owns the process caps, so only the shell can reap them.
+   --  Job control (milestones 52 + 69), Amiga RUN lineage: `run`
+   --  backgrounds a single command OR a whole pipeline; the shell
+   --  owns the stage process caps, so only the shell can reap
+   --  them. A job's RC is its LAST stage's exit code; a pipeline
+   --  job's slot-scoped PIPE:BG<j><s> pipes are deleted when the
+   --  job is reaped (harvest or wait), so the foreground
+   --  PIPE:SH<n> pool can never recycle a live job's pipe.
    --  Job numbers are shell-local slot indices (the pid is not
    --  readable from a proc cap without admin introspection —
    --  Proc:self would fix display). A COMPLETED job keeps its
@@ -679,11 +761,14 @@ procedure Shell is
    Max_Jobs : constant := 8;
    type Job_State is (Job_Free, Job_Active, Job_Done);
    type Job_Rec is record
-      State : Job_State := Job_Free;
-      Proc  : U64 := 0;
-      Code  : U64 := 0;
-      Cmd   : String (1 .. 64) := (others => ' ');
-      Len   : Natural := 0;
+      State  : Job_State := Job_Free;
+      Procs  : Proc_Set := (others => 0);
+      NStage : Natural := 0;
+      Pipes  : Pipe_Set := (others => (others => Character'Val (0)));
+      PLens  : Pipe_Len_Set := (others => 0);
+      Code   : U64 := 0;
+      Cmd    : String (1 .. 64) := (others => ' ');
+      Len    : Natural := 0;
    end record;
    Jobs        : array (1 .. Max_Jobs) of Job_Rec;
    Exit_Warned : Boolean := False;
@@ -691,15 +776,32 @@ procedure Shell is
    procedure Harvest (Loud : Boolean) is
       Code : U64 := 0;
       Dead : U64;
+      Done : Boolean;
    begin
       for J in Jobs'Range loop
-         if Jobs (J).State = Job_Active
-           and then Reap_Process_Code (Jobs (J).Proc, Code) = 0
-         then
-            Jobs (J).State := Job_Done;
-            Jobs (J).Code  := Code;
-            Dead := Cap_Delete (Jobs (J).Proc);
-            Jobs (J).Proc  := 0;
+         if Jobs (J).State = Job_Active then
+            --  Poll every stage; stages exit in any order. The
+            --  job's RC is the LAST stage's code, captured
+            --  whenever that stage happens to be reaped.
+            Done := True;
+            for S in 1 .. Jobs (J).NStage loop
+               if Jobs (J).Procs (S) /= 0 then
+                  if Reap_Process_Code (Jobs (J).Procs (S), Code) = 0
+                  then
+                     if S = Jobs (J).NStage then
+                        Jobs (J).Code := Code;
+                     end if;
+                     Dead := Cap_Delete (Jobs (J).Procs (S));
+                     Jobs (J).Procs (S) := 0;
+                  else
+                     Done := False;
+                  end if;
+               end if;
+            end loop;
+            if Done then
+               Delete_Pipes (Jobs (J).Pipes, Jobs (J).PLens);
+               Jobs (J).State := Job_Done;
+            end if;
          end if;
          if Loud then
             if Jobs (J).State = Job_Active then
@@ -767,17 +869,11 @@ procedure Shell is
       return (if Neg then -N else N);
    end Parse_Int;
 
-   function Run_Background (Word : String; Args : String) return U64
-   is
-      Proc : U64;
+   function Run_Background (Rest : String) return U64 is
    begin
-      if Word'Length = 0 then
-         Akernel_User.Console.Put_Line ("usage: run <cmd> [args]");
-         return Akernel_User.CLI.RC_Error;
-      end if;
-      if Has_Metachar (Word) or else Has_Metachar (Args) then
+      if Rest'Length = 0 then
          Akernel_User.Console.Put_Line
-           ("run: pipelines and redirection are foreground-only");
+           ("usage: run <cmd> [args] [| <cmd> ...]");
          return Akernel_User.CLI.RC_Error;
       end if;
       Harvest (Loud => False);
@@ -804,20 +900,48 @@ procedure Shell is
             Akernel_User.Console.Put_Line ("run: job table full (8)");
             return Akernel_User.CLI.RC_Error;
          end if;
-         Proc := Spawn_Cmd (Word, Args, "", "");
-         if Proc = 0 then
-            return Akernel_User.CLI.RC_Error;
-         end if;
-         Jobs (Slot).State := Job_Active;
-         Jobs (Slot).Proc  := Proc;
-         Jobs (Slot).Len := Natural'Min (64, Word'Length + 1 +
-                                         Args'Length);
-         Jobs (Slot).Cmd (1 .. Jobs (Slot).Len) := (others => ' ');
+         --  Spawn into LOCAL stage bookkeeping; the slot is only
+         --  committed once every stage is live, so a mid-spawn
+         --  failure (Spawn_Pipeline cleans up after itself) never
+         --  leaves a half-registered job behind.
          declare
-            Full : constant String := Word & " " & Args;
+            Procs  : Proc_Set := (others => 0);
+            Pipes  : Pipe_Set :=
+              (others => (others => Character'Val (0)));
+            PLens  : Pipe_Len_Set := (others => 0);
+            NStage : Natural := 0;
+            Ok     : Boolean;
          begin
+            if Has_Metachar (Rest) then
+               Spawn_Pipeline
+                 (Rest, Slot, Procs, Pipes, PLens, NStage, Ok);
+               if not Ok then
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+            else
+               declare
+                  RW_Last  : Natural;
+                  RA_First : Natural;
+               begin
+                  Split_Cmd (Rest, RW_Last, RA_First);
+                  Procs (1) := Spawn_Cmd
+                    (Rest (Rest'First .. RW_Last),
+                     (if RA_First > Rest'Last then ""
+                      else Rest (RA_First .. Rest'Last)), "", "");
+               end;
+               if Procs (1) = 0 then
+                  return Akernel_User.CLI.RC_Error;
+               end if;
+               NStage := 1;
+            end if;
+            Jobs (Slot).State  := Job_Active;
+            Jobs (Slot).Procs  := Procs;
+            Jobs (Slot).NStage := NStage;
+            Jobs (Slot).Pipes  := Pipes;
+            Jobs (Slot).PLens  := PLens;
+            Jobs (Slot).Len := Natural'Min (64, Rest'Length);
             Jobs (Slot).Cmd (1 .. Jobs (Slot).Len) :=
-              Full (Full'First .. Full'First + Jobs (Slot).Len - 1);
+              Rest (Rest'First .. Rest'First + Jobs (Slot).Len - 1);
          end;
          Akernel_User.Console.Put_Line
            ("started job" & Natural'Image (Slot) & ": " &
@@ -829,7 +953,20 @@ procedure Shell is
    function Wait_Job (Args : String) return U64 is
       N    : Natural;
       RC   : U64 := 0;
-      Dead : U64;
+
+      --  Claim one job: blocking-reap its stages (Active) or
+      --  take the harvested code (Done), then free the slot.
+      procedure Reap_Job (J : Natural; Code : out U64) is
+      begin
+         if Jobs (J).State = Job_Active then
+            Reap_Pipeline
+              (Jobs (J).Procs, Jobs (J).Pipes, Jobs (J).PLens,
+               Jobs (J).NStage, Code);
+         else
+            Code := Jobs (J).Code;
+         end if;
+         Jobs (J).State := Job_Free;
+      end Reap_Job;
    begin
       --  NO pre-harvest here: a completed-but-unreaped job
       --  still holds its slot (and its exit code) until
@@ -852,14 +989,8 @@ procedure Shell is
          --  last job's exit code. Done jobs hand their code
          --  over without blocking.
          for J in Jobs'Range loop
-            if Jobs (J).State = Job_Active then
-               RC := Reap (Jobs (J).Proc);
-               Dead := Cap_Delete (Jobs (J).Proc);
-               Jobs (J).Proc := 0;
-               Jobs (J).State := Job_Free;
-            elsif Jobs (J).State = Job_Done then
-               RC := Jobs (J).Code;
-               Jobs (J).State := Job_Free;
+            if Jobs (J).State /= Job_Free then
+               Reap_Job (J, RC);
             end if;
          end loop;
          return RC;
@@ -872,14 +1003,7 @@ procedure Shell is
          --  "wait 1" with no jobs sleeps one second.
          return Exec ("Wait", Args);
       end if;
-      if Jobs (N).State = Job_Active then
-         RC := Reap (Jobs (N).Proc);
-         Dead := Cap_Delete (Jobs (N).Proc);
-         Jobs (N).Proc := 0;
-      else
-         RC := Jobs (N).Code;
-      end if;
-      Jobs (N).State := Job_Free;
+      Reap_Job (N, RC);
       return RC;
    end Wait_Job;
 
@@ -912,7 +1036,7 @@ procedure Shell is
             Akernel_User.Console.Put_Line
               ("  A > file        redirect output ('<' reads stdin)");
             Akernel_User.Console.Put_Line
-              ("  run <cmd> ...   background a command (job)");
+              ("  run <cmd> ...   background a command or pipeline");
             Akernel_User.Console.Put_Line
               ("  jobs            list/harvest background jobs");
             Akernel_User.Console.Put_Line
@@ -932,28 +1056,16 @@ procedure Shell is
             Process_Exit;
             return 0;  --  unreachable; Process_Exit does not return
          elsif Word = "run" then
-            if Rest'Length = 0 then
-               Akernel_User.Console.Put_Line ("usage: run <cmd> [args]");
-               return Akernel_User.CLI.RC_Error;
-            end if;
-            declare
-               RW_Last  : Natural;
-               RA_First : Natural;
-            begin
-               Split_Cmd (Rest, RW_Last, RA_First);
-               return Run_Background
-                 (Rest (Rest'First .. RW_Last),
-                  (if RA_First > Rest'Last then ""
-                   else Rest (RA_First .. Rest'Last)));
-            end;
+            return Run_Background (Rest);
          elsif Word = "jobs" then
             Harvest (Loud => True);
             return 0;
          elsif Word = "pri" then
-            --  Amiga ChangeTaskPri lineage: `pri <job> <n>` sets a
-            --  live background job's scheduling priority
-            --  (-128..127) through its process cap (Manage right
-            --  — the shell owns its children's caps).
+            --  Amiga ChangeTaskPri lineage: `pri <job> <n>` sets
+            --  the scheduling priority of every live stage of a
+            --  background job (-128..127) through its process
+            --  caps (Manage right — the shell owns its
+            --  children's caps).
             declare
                J_Last  : Natural;
                P_First : Natural;
@@ -961,6 +1073,7 @@ procedure Shell is
                Pri     : Integer;
                Old     : Integer := 0;
                Ok      : Boolean;
+               Bad     : Boolean := False;
             begin
                Split_Cmd (Rest, J_Last, P_First);
                if P_First > Rest'Last then
@@ -983,11 +1096,17 @@ procedure Shell is
                     ("pri: no active job " & Rest (Rest'First .. J_Last));
                   return Akernel_User.CLI.RC_Error;
                end if;
-               if Set_Priority
-                    (Target       => Jobs (N).Proc,
-                     New_Priority => Pri,
-                     Old_Priority => Old) /= 0
-               then
+               for S in 1 .. Jobs (N).NStage loop
+                  if Jobs (N).Procs (S) /= 0
+                    and then Set_Priority
+                      (Target       => Jobs (N).Procs (S),
+                       New_Priority => Pri,
+                       Old_Priority => Old) /= 0
+                  then
+                     Bad := True;
+                  end if;
+               end loop;
+               if Bad then
                   Akernel_User.Console.Put_Line ("pri: set failed");
                   return Akernel_User.CLI.RC_Error;
                end if;

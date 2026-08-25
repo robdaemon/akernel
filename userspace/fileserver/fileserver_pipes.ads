@@ -23,7 +23,11 @@ with Interfaces;
 package Fileserver_Pipes is
    subtype U64 is Akernel_User.Syscalls.U64;
 
-   Max_Pipes     : constant := 8;
+   --  Milestone 69 headroom: `run` can background a pipeline, and
+   --  a background job holds its pipes until reaped — up to 8
+   --  jobs x 3 pipes = 24 live PIPE: entries, plus foreground
+   --  shells. 8 slots would silently fill.
+   Max_Pipes     : constant := 32;
    Pipe_Bytes    : constant := 16384;
    Max_Pipe_Name : constant := 40;
 

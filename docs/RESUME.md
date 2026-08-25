@@ -307,6 +307,38 @@ Other fixes applied:
 - [x] `make all` builds with zero warnings; `make test QEMU_SMP=1`
   (2/2) and `make test QEMU_SMP=4` pass end-to-end.
 
+**Milestone 69 — shell background pipelines (done).**
+
+- [x] `run` accepts the full pipeline/redirection syntax
+  (`run A | B > file`): the m46b `Run_Pipeline` split into
+  `Spawn_Pipeline` (parse/wire/spawn, out-params for stage caps +
+  pipe names) and `Reap_Pipeline` (blocking reap-all, RC = last
+  stage, caps + pipes deleted); the foreground path is unchanged.
+- [x] Jobs are process groups: `Job_Rec` carries up to 4 stage
+  proc caps + owned pipe names; `Harvest` polls every stage (a
+  job is done when all stages exit; the code is captured from the
+  last stage whenever it happens to finish); `wait`
+  blocking-reaps a whole group; `pri` applies to every live
+  stage.
+- [x] Background pipes are slot-scoped `PIPE:BG<j><s>` names so
+  the rotating foreground `PIPE:SH<n>` pool can never truncate a
+  live job's pipe; deleted when the job is reaped. A spawn
+  commits to a job slot only after every stage is live (mid-spawn
+  failure cleans up locally — no half-registered jobs).
+- [x] `Fileserver_Pipes.Max_Pipes` 8 -> 32: background jobs hold
+  their pipes until reaped (8 jobs x 3 pipes = 24, plus
+  foreground shells).
+- [x] Fuzz e2e via batch scripts: background
+  `Type | Sort > file` verified byte-for-byte, last-stage RC
+  composes with failat, two concurrent background pipelines +
+  bare `wait`, BG pipes deleted on reap (Stat never creates a
+  pipe, so absence is observable), bad background pipeline
+  rejected with RC 10. (Write_File's staging Buf grew to 128
+  bytes for the longer script texts, with a bound guard.)
+- [x] `make all` builds with zero warnings; `make test
+  QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
+  desktop boot smoke clean.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide
@@ -315,9 +347,7 @@ Other fixes applied:
    starting with a raw virtio-net device and a simple packet channel.
 3. **Script interpreter** — a small AmigaDOS/ARexx-style shell script
    engine.
-4. **Background pipelines** — extend shell `run` to chains with `|`
-   and `PIPE:`.
-5. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
+4. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
 
 ## Working rules
 
