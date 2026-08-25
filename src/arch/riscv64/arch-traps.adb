@@ -1312,7 +1312,8 @@ package body Arch.Traps is
       Handle_Valid : Boolean;
       Current     : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;
-      IPC_Result : Kernel.IPC.Status;
+      IPC_Result       : Kernel.IPC.Status;
+      Scheduler_Result : Kernel.Scheduler.Status;
    begin
       Decode_Handle (Trap_Frame_Get_A0 (Frame), Cap_Handle, Handle_Valid);
       if not Handle_Valid or else Current = null then
@@ -1324,14 +1325,25 @@ package body Arch.Traps is
       Kernel.IPC.Send (Current, Cap_Handle, IPC_Result);
 
       if IPC_Result = Kernel.IPC.Would_Block then
-         --  Send is fire-and-forget: the caller returns Ok
-         --  immediately and the receiver drains the message when it
-         --  next Receives. This avoids deadlocking a server that
-         --  mirrors output to a sink while the sink is still
-         --  attaching.
-         IPC_Result := Kernel.IPC.Ok;
+         --  Blocking fallback (cap-carrying send with no waiting
+         --  receiver, or the queued-send pool is full): the caller
+         --  sits on the endpoint's caller queue and must suspend —
+         --  the queue references its live buffer and badge. The
+         --  dequeueing Receive wakes it with Ok. Pre-set Ok like
+         --  Handle_IPC_Call so a missed wake cannot surface a
+         --  spurious IPC_Invalid.
+         Advance_SEPC (Frame);
+         Trap_Frame_Set_A0 (Frame, Kernel.IPC.Result_Ok);
+         Save_Current_Context (Frame);
+         Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Send);
+         Kernel.Tasks.Set_Boosted (Current.all, False);
+         Schedule_Saved_Context (Frame, Scheduler_Result);
+         return;
       end if;
 
+      --  The common path: the message was copied into a kernel-side
+      --  queued-send slot (or delivered directly) and Send returned
+      --  Ok — fire-and-forget, the caller runs on immediately.
       Set_IPC_Result (Frame, IPC_Result);
       Advance_SEPC (Frame);
    end Handle_IPC_Send;

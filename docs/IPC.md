@@ -69,16 +69,25 @@ per endpoint (single-receiver discipline, same as IRQ lines). Endpoint
 finalization fails every queued caller and the waiting receiver with
 `endpoint gone` (3).
 
-Plain send (milestone 35) shares the queue and transfer machinery
-but ends the rendezvous at delivery: the sender blocks only until a
-receive takes its message, no reply cap is minted, and the sender
-wakes with `ok`. A receiver cannot tell a call from a send by
-inspection — it learns it only if it tries to reply, which fails
-with `invalid` (1, the no-reply-cap code). Callers record
-`Reply_Wanted` on the TCB at Call/Send time; the dequeueing receive
-reads it to decide between minting a reply cap (call) and waking
-the sender immediately (send). Direct handoff to a waiting receiver
-returns `ok` to the sender at once, without blocking.
+Plain send (milestone 35) ends the rendezvous at delivery: no
+reply cap is minted, and a receiver cannot tell a call from a send
+by inspection — it learns only if it tries to reply, which fails
+with `invalid` (1, the no-reply-cap code). Since milestone 68 the
+no-waiting-receiver path is fire-and-forget: the kernel COPIES the
+message (label, six words, badge) into a fixed pool of queued-send
+slots chained FIFO off the endpoint, and the sender returns `ok`
+immediately. The copy is load-bearing: the sender keeps running, so
+queueing its TCB would let its next IPC op clobber the buffer,
+badge, and queue links the endpoint still references (the M66c
+design; a send followed by a report call cross-delivered the call
+to the send's receiver). A receive drains blocked callers first,
+then queued send copies. Two cases fall back to the blocking
+rendezvous (sender enqueues and blocks until delivery, as in
+milestone 35): a send whose message carries caps — a queued copy
+cannot hold a live cap-table reference — and a full slot pool
+(64 entries system-wide), which degrades to back-pressure instead
+of message loss. Direct handoff to a waiting receiver still
+transfers caps normally and returns `ok` at once, without blocking.
 
 Wake-with-status: the waker writes the result code into the blocked
 thread's saved trap-frame a0 in its TCB context

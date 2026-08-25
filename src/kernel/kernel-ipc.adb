@@ -125,6 +125,62 @@ package body Kernel.IPC is
    end Wake_With_Result;
 
    ------------------------------------------------------------------
+   --  Queued-send pool (fire-and-forget message copies)
+   ------------------------------------------------------------------
+
+   --  Fixed pool; a send that finds no slot falls back to blocking
+   --  the caller (classic rendezvous), so a full pool degrades to
+   --  back-pressure rather than message loss.
+   Max_Queued_Sends : constant := 64;
+
+   Send_Pool : array (1 .. Max_Queued_Sends) of aliased Queued_Send :=
+     (others =>
+        (Label  => 0,
+         Words  => (others => 0),
+         Badge  => 0,
+         Next   => null,
+         In_Use => False));
+
+   function Alloc_Queued_Send return Queued_Send_Access is
+   begin
+      for Slot of Send_Pool loop
+         if not Slot.In_Use then
+            Slot.In_Use := True;
+            Slot.Next   := null;
+            return Slot'Access;
+         end if;
+      end loop;
+      return null;
+   end Alloc_Queued_Send;
+
+   procedure Free_Queued_Send (Slot : Queued_Send_Access) is
+   begin
+      Slot.In_Use := False;
+      Slot.Next   := null;
+   end Free_Queued_Send;
+
+   --  Copy the caller's message words/label/badge into a pool slot.
+   function Queue_Send_Copy
+     (Caller : Kernel.Tasks.Thread_Access;
+      Badge  : U64) return Queued_Send_Access
+   is
+      Buf  : constant Buffer_Message_Access := Buffer_Of (Caller);
+      Slot : Queued_Send_Access;
+   begin
+      Slot := Alloc_Queued_Send;
+      if Slot = null then
+         return null;
+      end if;
+
+      Slot.Label := Buf.Label;
+      for I in Buf.Words'Range loop
+         Slot.Words (I) := Buf.Words (I);
+      end loop;
+      Slot.Badge := Badge;
+      return Slot;
+   end Queue_Send_Copy;
+
+   ------------------------------------------------------------------
    --  Dynamic endpoint slab (PMM-backed)
    ------------------------------------------------------------------
 
@@ -212,6 +268,8 @@ package body Kernel.IPC is
       Object.Queue_Head := null;
       Object.Queue_Tail := null;
       Object.Waiting_Receiver := null;
+      Object.Send_Queue_Head := null;
+      Object.Send_Queue_Tail := null;
       Object.Failed := False;
       Object.Next_Free := System.Null_Address;
    end Initialize;
@@ -276,6 +334,21 @@ package body Kernel.IPC is
          Wake_With_Result (Caller, Result_Endpoint_Gone);
       end loop;
       Endpoint_Object.Queue_Tail := null;
+
+      --  Queued fire-and-forget sends are ownerless once the
+      --  endpoint dies: drop the copies back into the pool.
+      declare
+         Slot : Queued_Send_Access := Endpoint_Object.Send_Queue_Head;
+         Next : Queued_Send_Access;
+      begin
+         while Slot /= null loop
+            Next := Slot.Next;
+            Free_Queued_Send (Slot);
+            Slot := Next;
+         end loop;
+         Endpoint_Object.Send_Queue_Head := null;
+         Endpoint_Object.Send_Queue_Tail := null;
+      end;
 
       Wake_With_Result (Endpoint_Object.Waiting_Receiver,
                         Result_Endpoint_Gone);
@@ -720,8 +793,47 @@ package body Kernel.IPC is
       end if;
       Object.Waiting_Receiver := null;
 
-      --  No receiver: enqueue FIFO; the dequeueing Receive wakes the
-      --  sender with Ok (Reply_Wanted is False, so no reply cap).
+      --  No receiver: fire-and-forget means the sender KEEPS
+      --  RUNNING, so the queued state cannot reference its live
+      --  buffer/badge/queue links — its next IPC op would clobber
+      --  them while the endpoint still points at the thread (the
+      --  M68 plain-send corruption: a send followed by a report
+      --  call cross-delivered the call to the send's receiver).
+      --  Copy the message into a kernel-side slot; the next Receive
+      --  drains the copy. Cap-carrying sends (a queued copy cannot
+      --  hold caps) and a full pool fall back to the blocking
+      --  rendezvous, which is safe because the caller is suspended
+      --  for the whole time it sits on the caller queue.
+      declare
+         Buf : constant Buffer_Message_Access := Buffer_Of (Caller);
+         Has_Caps : Boolean := False;
+         Slot : Queued_Send_Access;
+      begin
+         for Raw of Buf.Caps loop
+            if Raw /= 0 then
+               Has_Caps := True;
+               exit;
+            end if;
+         end loop;
+
+         if not Has_Caps then
+            Slot := Queue_Send_Copy (Caller, Badge);
+            if Slot /= null then
+               if Object.Send_Queue_Tail = null then
+                  Object.Send_Queue_Head := Slot;
+               else
+                  Object.Send_Queue_Tail.Next := Slot;
+               end if;
+               Object.Send_Queue_Tail := Slot;
+               Result := Ok;
+               return;
+            end if;
+         end if;
+      end;
+
+      --  Blocking fallback: enqueue FIFO; the dequeueing Receive
+      --  wakes the sender with Ok (Reply_Wanted is False, so no
+      --  reply cap).
       Kernel.Tasks.Set_IPC_Badge (Caller.all, Badge);
       Enqueue_Caller (Object.all, Caller);
       Result := Would_Block;
@@ -766,6 +878,33 @@ package body Kernel.IPC is
       Dequeue_Caller (Object.all, Caller);
 
       if Caller = null then
+         --  No blocked caller: drain a queued fire-and-forget send
+         --  copy (payload only; these never carry caps or a reply
+         --  phase, so a1 stays 0).
+         if Object.Send_Queue_Head /= null then
+            declare
+               Slot     : constant Queued_Send_Access :=
+                 Object.Send_Queue_Head;
+               Recv_Buf : constant Buffer_Message_Access :=
+                 Buffer_Of (Receiver);
+            begin
+               Object.Send_Queue_Head := Slot.Next;
+               if Object.Send_Queue_Head = null then
+                  Object.Send_Queue_Tail := null;
+               end if;
+
+               Recv_Buf.Label := Slot.Label;
+               for I in Recv_Buf.Words'Range loop
+                  Recv_Buf.Words (I) := Slot.Words (I);
+               end loop;
+               Recv_Buf.Badge := Slot.Badge;
+               Recv_Buf.Caps  := (others => 0);
+               Free_Queued_Send (Slot);
+            end;
+            Result := Ok;
+            return;
+         end if;
+
          if Object.Waiting_Receiver /= null
            and then Object.Waiting_Receiver /= Receiver
            and then not Is_Dead (Object.Waiting_Receiver)

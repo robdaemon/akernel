@@ -109,19 +109,26 @@ package Kernel.IPC is
    --  Send: like Call, but the rendezvous ends at delivery — no
    --  reply cap is minted and the sender never waits for a reply.
    --  A waiting receiver takes the message immediately and Send
-   --  returns Ok; otherwise the sender queues and wakes with Ok
-   --  when a later Receive takes the message. A receiver that
-   --  replies to a sent message gets Reply_Missing.
+   --  returns Ok; otherwise the message is COPIED into a
+   --  kernel-side queued-send slot and Send returns Ok at once
+   --  (fire-and-forget). The copy is load-bearing: the sender keeps
+   --  running and would otherwise overwrite its live buffer, badge,
+   --  and queue links with its next IPC op while still queued
+   --  (the M66c/M68 plain-send corruption). A Send whose message
+   --  carries caps with no waiting receiver falls back to blocking
+   --  (queued copies cannot hold caps); so does a full slot pool.
+   --  A receiver that replies to a sent message gets Reply_Missing.
    procedure Send
      (Caller       : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
       Result       : out Status);
 
    --  Receive: takes the head queued caller's message (transfer +
-   --  reply cap mint), or blocks the receiver when the queue is
-   --  empty. On Ok with a call (Reply_Wanted) Reply_Handle is the
-   --  freshly minted reply cap; a plain send completes at delivery
-   --  and Reply_Handle is Invalid_Handle.
+   --  reply cap mint), else the head queued fire-and-forget send
+   --  copy, or blocks the receiver when both queues are empty. On
+   --  Ok with a call (Reply_Wanted) Reply_Handle is the freshly
+   --  minted reply cap; a plain send completes at delivery and
+   --  Reply_Handle is Invalid_Handle.
    procedure Receive
      (Receiver     : Kernel.Tasks.Thread_Access;
       Endpoint_Cap : Kernel.Capabilities.Handle;
@@ -184,11 +191,30 @@ package Kernel.IPC is
                                  Stamp          : Boolean);
 
 private
+   type Queued_Send_Word_Array is array (0 .. Max_Words - 1) of U64;
+
+   --  Kernel-side copy of a fire-and-forget Send (see Send above).
+   --  Lives in a fixed pool in the body; an endpoint chains pending
+   --  copies FIFO through Next. No caps: a queued copy cannot hold
+   --  a live cap-table reference.
+   type Queued_Send;
+   type Queued_Send_Access is access all Queued_Send;
+
+   type Queued_Send is record
+      Label  : U64;
+      Words  : Queued_Send_Word_Array;
+      Badge  : U64;
+      Next   : Queued_Send_Access;
+      In_Use : Boolean;
+   end record;
+
    type Endpoint is record
       Header           : Kernel.Objects.Object_Header;
       Queue_Head       : Kernel.Tasks.Thread_Access;
       Queue_Tail       : Kernel.Tasks.Thread_Access;
       Waiting_Receiver : Kernel.Tasks.Thread_Access;
+      Send_Queue_Head  : Queued_Send_Access;
+      Send_Queue_Tail  : Queued_Send_Access;
       Failed           : Boolean;
       Stamp_Identity   : Boolean := False;
       Next_Free        : System.Address;
