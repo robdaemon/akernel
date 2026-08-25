@@ -173,6 +173,8 @@ installed handler. `Request_Quit` is now just `Post` of the
 reserved code 0, safe from any thread; quit codes are intercepted
 by the drain and never reach the app handler. See
 `userspace/tdemo` (Work button: click kicks a background worker
-that Posts progress; the handler updates a label on the dispatch
-thread) and the headless port test `userspace/fuzz/fuzz_port`.
+that loads/decodes an image off the event thread and Posts the
+result; the handler swaps it into the widget tree with
+`Widgets.Set_Image`) and the headless port test
+`userspace/fuzz/fuzz_port`.
 

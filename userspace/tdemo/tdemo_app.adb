@@ -12,6 +12,7 @@ package body Tdemo_App is
    package Images renames Trinket.Images;
    package Files renames Akernel_User.Files;
    use type Images.Status;
+   use type Widgets.Any_Widget;
 
    Win : Trinket.Window.Window;
 
@@ -45,12 +46,16 @@ package body Tdemo_App is
 
     ----------------------------------------------------------------------
     --  Milestone 68 showcase: the Work button kicks a background
-    --  worker task; only the event-dispatch thread (Run's caller)
-    --  touches the widget tree, the worker Posts progress messages
-    --  to the window's app port (the Swing invokeLater shape).
+    --  worker task that loads and decodes an image off the event
+    --  thread (file IO + BMP decode), then Posts the result to the
+    --  window's app port; the dispatch thread swaps the decoded
+    --  image into the widget tree. Only the event-dispatch thread
+    --  touches widgets (the Swing invokeLater shape, design item 5
+    --  of docs/runtime/tasking.md).
     ----------------------------------------------------------------------
 
     Status_Lbl : Widgets.Any_Widget;
+    Img_Widget : Widgets.Any_Widget;
 
     --  Worker gate: the worker task creates its own gate
     --  notification, publishes the handle, then blocks in
@@ -59,43 +64,63 @@ package body Tdemo_App is
     --  fuzz_port pattern).
     Work_Gate : U64 := 0 with Volatile;
 
+    --  Image handoff: the worker loads into Worker_Img; the
+    --  dispatch thread swaps it into Img_Widget and frees the
+    --  previously borrowed image (Swap_Img). Worker_Img's stale
+    --  pointer after a swap aliases Swap_Img — never freed by the
+    --  worker, overwritten (not freed) by the next Load. Busy is
+    --  dispatch-thread-only: clicks during a job are dropped.
+    Worker_Img : Images.Image;
+    Swap_Img   : Images.Image;
+    Busy       : Boolean := False;
+
     task Worker;
 
     task body Worker is
        Bits   : U64;
+       St     : Images.Status;
        Ignore : U64;
     begin
        Work_Gate := Ntfn_Create;
        loop
           Bits := Ntfn_Wait (Work_Gate);
           exit when Bits = Syscall_Failed;
-          for I in 1 .. 10 loop
-             Ignore := Sleep_Until (Read_Time + 150_000_000);
-             Ignore := Boolean'Pos
-               (Trinket.Window.Post (Win, 1, U64 (I), 10, 0));
-          end loop;
-          Ignore := Boolean'Pos (Trinket.Window.Post (Win, 2, 0, 0, 0));
+          Images.Load ("BD0:Tests/Img/bars.bmp", Worker_Img, St);
+          Ignore := Boolean'Pos
+            (Trinket.Window.Post
+               (Win, 1,
+                U64 (Images.Status'Pos (St)), Worker_Img.W, Worker_Img.H));
        end loop;
     end Worker;
 
     procedure Work_Clicked is
        Ignore : U64;
     begin
-       Widgets.Label (Status_Lbl.all).Set_Text ("working...");
-       if Work_Gate /= 0 then
-          Ignore := Ntfn_Signal (Work_Gate, 1);
+       if Busy or else Work_Gate = 0 then
+          return;
        end if;
+       Busy := True;
+       Widgets.Label (Status_Lbl.all).Set_Text ("loading...");
+       Ignore := Ntfn_Signal (Work_Gate, 1);
     end Work_Clicked;
 
     --  App-port messages, dispatched on the event-dispatch thread.
     procedure App_Message (Code, A0, A1, A2 : U64) is
-       pragma Unreferenced (A2);
     begin
        if Code = 1 then
-          Widgets.Label (Status_Lbl.all).Set_Text
-            ("working" & A0'Image & " of" & A1'Image);
-       elsif Code = 2 then
-          Widgets.Label (Status_Lbl.all).Set_Text ("done");
+          Busy := False;
+          if A0 = U64 (Images.Status'Pos (Images.Ok))
+            and then Img_Widget /= null
+          then
+             Widgets.Image_Widget (Img_Widget.all).Set_Image (Worker_Img);
+             Images.Free (Swap_Img);
+             Swap_Img := Worker_Img;
+             Widgets.Label (Status_Lbl.all).Set_Text
+               ("decoded" & A1'Image & " x" & A2'Image);
+          elsif A0 /= U64 (Images.Status'Pos (Images.Ok)) then
+             Widgets.Label (Status_Lbl.all).Set_Text
+               ("load failed:" & A0'Image);
+          end if;
        end if;
     end App_Message;
 
@@ -179,9 +204,11 @@ package body Tdemo_App is
       Widgets.Group (Text_Grp.all).Add
         (Widgets.New_Label ("keeps the chrome."));
 
-      if Bars_St = Images.Ok then
-         Widgets.Group (Img_Grp.all).Add (Widgets.New_Image (Bars_Img));
-      end if;
+       if Bars_St = Images.Ok then
+          Img_Widget := Widgets.New_Image (Bars_Img);
+          Swap_Img := Bars_Img;
+          Widgets.Group (Img_Grp.all).Add (Img_Widget);
+       end if;
       if Keyed_St = Images.Ok then
          Widgets.Group (Img_Grp.all).Add (Widgets.New_Image (Keyed_Img));
       end if;

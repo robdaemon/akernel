@@ -300,8 +300,10 @@ Other fixes applied:
 - [x] Headless port test `userspace/fuzz/fuzz_port` (worker tasks
   gated on per-worker notifications, watchdog task, 24 checks:
   single/two-producer FIFO, overflow, quit interception) and the
-  tdemo Work button (worker task Posts progress; the label updates on
-  the event-dispatch thread — see `docs/trinket/window.md`).
+  tdemo Work button (a worker task loads/decodes an image off the
+  event thread and Posts the result; the dispatch thread swaps it
+  into the widget tree via the new `Widgets.Set_Image` — see
+  `docs/trinket/window.md`).
 - [x] `make all` builds with zero warnings; `make test QEMU_SMP=1`
   (2/2) and `make test QEMU_SMP=4` pass end-to-end.
 

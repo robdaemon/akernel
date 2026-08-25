@@ -38,6 +38,13 @@ package body Trinket.Widgets is
       Trinket.Images.Blit (C, W.Img, DX, DY);
    end Draw;
 
+   procedure Set_Image
+     (W : in out Image_Widget; Img : Trinket.Images.Image) is
+   begin
+      W.Img := Img;
+      W.Dirty := True;
+   end Set_Image;
+
    function Max (A, B : U64) return U64 is (if A > B then A else B);
    function Min (A, B : U64) return U64 is (if A < B then A else B);
 

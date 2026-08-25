@@ -188,7 +188,14 @@ widget **borrows** the image; the app owns `Load`/`Free`.
 
 ```ada
 function New_Image (Img : Trinket.Images.Image) return Any_Widget;
+procedure Set_Image (W : in out Image_Widget; Img : Trinket.Images.Image);
 ```
+
+`Set_Image` swaps the borrowed image and marks the widget dirty —
+the handoff point for worker-decoded images arriving via the window
+app port (milestone 68; see tdemo's Work button). Free the previous
+image only after the swap, so the widget never references freed
+pixels.
 
 See also `Trinket.Images` (Bmp/Xpm loaders) and `Trinket.Paint.Blit`.
 

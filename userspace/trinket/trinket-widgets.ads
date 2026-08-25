@@ -55,6 +55,12 @@ package Trinket.Widgets is
    end record;
    function New_Image (Img : Trinket.Images.Image) return Any_Widget;
    overriding procedure Draw (W : Image_Widget; C : Canvas);
+   procedure Set_Image (W : in out Image_Widget; Img : Trinket.Images.Image);
+   --  Swap the borrowed image and mark dirty (milestone 68: worker
+   --  tasks decode images off the event thread and hand them over
+   --  via the window app port). The app still owns Load/Free — free
+   --  the PREVIOUS image only after the swap, so the widget never
+   --  references freed pixels.
 
    Max_Text : constant := 48;
    subtype Text_Len is Natural range 0 .. Max_Text;
