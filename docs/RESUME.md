@@ -339,6 +339,75 @@ Other fixes applied:
   QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
   desktop boot smoke clean.
 
+## Active
+
+**Milestone 70 — AmigaDOS-style script interpreter (planned,
+chunked; work starts after this entry).**
+
+Decisions taken: AmigaDOS subset (if/else/endif, lab/skip, quit,
+failat, echo, `<var>` substitution, `.key` args, `.set` locals);
+shared interpreter package used by BOTH the shell's `execute`
+builtin and a new `Sys:C/Execute` binary; script-local variables
+with ENV: fallback; `ask` included. Locals resolve before ENV:;
+`<$name>` forces ENV:. Undefined `<name>` is a hard error (RC 10,
+aborts the script). Substitution only fires on `<name>` with no
+space after `<` — pipeline operators are standalone tokens, so
+`< file` redirection is untouched. `set`/`get`/`unset` externals
+keep their ENV: semantics (existing fuzz scripts depend on it).
+
+`.set` directive: `.set <name> <value...>` sets a script local
+(substitution applied first — `.set b <a>` copies; value trimmed,
+<= 128 chars); `.set <name>` with no value clears it to empty
+(distinct from undefined, which errors). Interpreter directive:
+always RC 0, never trips failat, not executed inside skipped
+blocks. Locals also come from `.key`/`.k` positional args and
+`.def name=value` defaults (16 slots, names <= 32).
+
+Chunk plan (each chunk = one commit, full gates:
+zero-warning `make all`, `make test` SMP4 + `QEMU_SMP=1`
+timeout-wrapped with log verification, desktop boot smoke):
+
+- [ ] **Chunk 1 — `Scripting.Exec` extraction (pure refactor).**
+  New crate `userspace/scripting/`; move Stage/Spawn_Cmd/Reap/Exec,
+  Has_Metachar, Spawn_Pipeline/Reap_Pipeline/Delete_Pipes/
+  Run_Pipeline, Proc_Set/Pipe_Set/Pipe_Name_Str, Stage_VA,
+  Max_Stages out of shell.adb. Shell `with`s it; job control keeps
+  the shared types. No behavior change; suite proves parity.
+- [ ] **Chunk 2 — `Scripting.Interp` core: parity + substitution
+  + locals.** Slurp/line-scan/comments/failat-stop/nesting-cap
+  parity with old Run_Script; `execute` splits path from args;
+  `.key`/`.k`/`.def`/`.set`; `<name>`/`<$name>` substitution with
+  bad-substitution abort. Shell's `execute` switches to
+  `Interp.Run` (Run callback = shell `Execute`, so builtins work
+  in scripts). Fuzz: args+substitution byte-verified, ENV:
+  fallback, `<$>`, `.set` set/copy/clear, bad-subst abort; old
+  script tests pass unchanged.
+- [ ] **Chunk 3 — Control flow.** `if [not] <cmd>` (RC consumed,
+  true iff RC < failat), `if [not] <a> eq|ne|gt|ge|lt|le <b>`
+  (case-insensitive; `val` = numeric), `if [not] exists <path>`,
+  `else`, `endif` (8-deep stack; skip mode tracks nesting),
+  `lab`/`skip [back]`, `quit [rc]`, `failat <n>`,
+  `echo [noline]`. Fuzz: taken/not-taken markers, nested if/else,
+  if-command doesn't abort on RC, skip forward, skip-back loop
+  bounded by if-exists chain, `quit 7`, inner `quit 20` trips the
+  outer failat, `failat 21` lets RC 20 pass (Elevate NoSuch
+  trick).
+- [ ] **Chunk 4 — C:Execute + ask.** Shared `Read_Line` console
+  helper (Op_Read poll + yield, bounded 120). `ask <prompt>` sets
+  the condition flag (y/Y), RC 0/5 (5 < failat: no abort); bare
+  `if`/`if not` tests the flag. New `userspace/execute/` crate ->
+  `Sys:C/Execute` (thin: args -> Interp.Run with Scripting.Exec
+  dispatch + nested `execute` special-case); Makefile
+  INITRD_CRATES/manifest. Fuzz: `echo y | Sys:C/Execute
+  askscript` -> "yes" marker (and `n` -> "no"), `run C:Execute
+  script` + `wait` RC composition, depth-cap abort. If ask-over-
+  pipe fights us: ask ships interactive-only (boot smoke) and the
+  piped test becomes a follow-up.
+- [ ] **Chunk 5 — Docs + sweep.** `help` text, shell.adb header
+  comment, `docs/USERSPACE.md`, this RESUME entry finalized,
+  remove "Script interpreter" from Open candidates, any test gaps
+  found in chunks 2-4.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide
