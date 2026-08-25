@@ -49,7 +49,11 @@ with Akernel_User.Syscalls;
 --                          |, > or < falls through to C:Echo so
 --                          redirection composes (noline is then
 --                          unsupported)
---  `ask` lands in chunk 4.
+--  `ask` (chunk 4): `ask <prompt>` prints the prompt through
+--  the host's Ask_Line callback and sets the condition flag
+--  from the reply (y/Y = true); RC is 0 on yes, 5 (RC_Warn) on
+--  anything else — below the default failat, so a "no" does
+--  not abort the script. Bare `if`/`if not` test the flag.
 generic
    --  Command dispatch: how the host runs one expanded command
    --  line. Nested subprograms are legal actuals (a formal
@@ -57,6 +61,14 @@ generic
    --  access-to-subprogram type would).
    with function Run_Line
      (Cmd : String) return Akernel_User.Syscalls.U64;
+   --  Interactive line read for `ask`: the shell reads the raw
+   --  console stream (Scripting.Console_IO), C:Execute reads
+   --  stdin (Akernel_User.CLI.Get_Line — trailer-aware, so
+   --  `echo y | Execute script` composes).
+   with procedure Ask_Line
+     (Prompt    : String;
+      Reply     : out String;
+      Reply_Len : out Natural);
 package Scripting.Interp is
    subtype U64 is Akernel_User.Syscalls.U64;
 

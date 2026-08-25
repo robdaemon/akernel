@@ -392,7 +392,7 @@ timeout-wrapped with log verification, desktop boot smoke):
   bounded by if-exists chain, `quit 7`, inner `quit 20` trips the
   outer failat, `failat 21` lets RC 20 pass (Elevate NoSuch
   trick).
-- [ ] **Chunk 4 — C:Execute + ask.** Shared `Read_Line` console
+- [x] **Chunk 4 — C:Execute + ask.** Shared `Read_Line` console
   helper (Op_Read poll + yield, bounded 120). `ask <prompt>` sets
   the condition flag (y/Y), RC 0/5 (5 < failat: no abort); bare
   `if`/`if not` tests the flag. New `userspace/execute/` crate ->

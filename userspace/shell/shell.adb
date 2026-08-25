@@ -9,6 +9,7 @@ with Akernel_User.CLI;
 with Scripting;
 with Scripting.Exec;
 with Scripting.Interp;
+with Scripting.Console_IO;
 
 --  Shell: interactive command line (milestone 31 / 41b). A plain CLI
 --  program — it opens no window; its console channel decides where
@@ -86,24 +87,41 @@ procedure Shell is
 
    function Execute (Cmd : String) return U64;
 
+   --  ask (milestone 70 chunk 4): the shell owns the raw
+   --  console stream, so the reply is a blocking Op_Read line
+   --  read — the prompt loop's discipline.
+   procedure Ask_Line
+     (Prompt : String; Reply : out String; Reply_Len : out Natural)
+   is
+   begin
+      Akernel_User.Console.Put (Prompt);
+      Scripting.Console_IO.Read_Line (Reply, Reply_Len);
+   end Ask_Line;
+
    --  The dispatcher a script line runs through IS this shell's
    --  Execute — builtins (run/jobs/wait/execute itself) work in
    --  scripts, and `execute` re-enters Interp with Depth + 1.
-   package SI is new Scripting.Interp (Run_Line => Execute);
+   package SI is new Scripting.Interp
+     (Run_Line => Execute, Ask_Line => Ask_Line);
 
    --  Rest is "<script> [args...]" — the args bind through the
-   --  script's .key template. Depth is the caller-maintained
-   --  nesting level (execute adds one; batch mode passes 1).
-   function Run_Script (Rest : String; Depth : Natural) return U64 is
+   --  script's .key template. Owns the nesting counter: Depth
+   --  handed to Interp is the level AFTER incrementing, so the
+   --  top-level script (prompt or batch) runs at Depth 1.
+   function Run_Script (Rest : String) return U64 is
       W_Last  : Natural;
       R_First : Natural;
+      RC      : U64;
    begin
       Split_Cmd (Rest, W_Last, R_First);
-      return SI.Run
+      Nesting := Nesting + 1;
+      RC := SI.Run
         (Rest (Rest'First .. W_Last),
          (if R_First > Rest'Last then ""
           else Rest (R_First .. Rest'Last)),
-         Depth);
+         Nesting);
+      Nesting := Nesting - 1;
+      return RC;
    end Run_Script;
 
    --  Job control (milestones 52 + 69), Amiga RUN lineage: `run`
@@ -487,13 +505,7 @@ procedure Shell is
                   ("usage: execute <script> [args]");
                 return Akernel_User.CLI.RC_Error;
              end if;
-             Nesting := Nesting + 1;
-             declare
-                RC : constant U64 := Run_Script (Rest, Nesting);
-             begin
-                Nesting := Nesting - 1;
-                return RC;
-             end;
+             return Run_Script (Rest);
          else
             if SE.Has_Metachar (Cmd) then
                return SE.Run_Pipeline (Cmd);
@@ -571,7 +583,7 @@ begin
                 RL := RL + A'Length;
              end;
           end loop;
-          Akernel_User.CLI.Exit_With (Run_Script (Rest (1 .. RL), 1));
+          Akernel_User.CLI.Exit_With (Run_Script (Rest (1 .. RL)));
        end;
     end if;
 

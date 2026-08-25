@@ -1,0 +1,12 @@
+with "../scripting/scripting.gpr";
+
+project Execute extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/execute";
+   for Main use ("execute.adb");
+
+   package Builder is
+      for Executable ("execute.adb") use "execute.elf";
+   end Builder;
+end Execute;

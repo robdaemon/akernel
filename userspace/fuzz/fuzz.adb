@@ -4152,6 +4152,31 @@ begin
           Script27 : constant String :=
             "skip nowhere" & ASCII.LF
             & "set FZNL=unreached" & ASCII.LF;
+          --  C:Execute + ask (milestone 70 chunk 4): the binary
+          --  runs a script (with a pipeline inside — the same
+          --  Scripting.Exec engine), ask reads the reply from
+          --  stdin so `echo y | Execute script` composes, `run`
+          --  backgrounds a script as a reapable job, and a
+          --  self-executing script hits the nesting cap.
+          Script28 : constant String :=
+            "Type BD0:FZCXIN.TXT | Sort > BD0:FZCXOUT.TXT"
+            & ASCII.LF
+            & "set FZCX1=done" & ASCII.LF;
+          Script29 : constant String :=
+            "ask proceed?" & ASCII.LF
+            & "if" & ASCII.LF
+            & "set FZASK=yes" & ASCII.LF
+            & "else" & ASCII.LF
+            & "set FZASK=no" & ASCII.LF
+            & "endif" & ASCII.LF;
+          Script30I : constant String :=
+            "set FZBGS=ran" & ASCII.LF;
+          Script30 : constant String :=
+            "run Sys:C/Execute BD0:FZBGI.TXT" & ASCII.LF
+            & "wait 1" & ASCII.LF
+            & "set FZCX2=alive" & ASCII.LF;
+          Script31 : constant String :=
+            "execute BD0:FZSELF.TXT" & ASCII.LF;
       begin
          --  A tiny source file first: a mutating FAT op costs
          --  ~0.4 s write-through, so the copy under test must be
@@ -4456,6 +4481,55 @@ begin
              Check (St /= Akernel_User.Files.Status_Ok,
                     "unknown label stops the script");
           end;
+
+          --  C:Execute + ask end to end (milestone 70 chunk 4).
+          Write_File ("BD0:FZCXIN.TXT", "delta" & ASCII.LF
+                      & "alpha" & ASCII.LF,
+                      "C:Execute pipeline input written");
+          Write_File ("BD0:FZCX.TXT", Script28,
+                      "C:Execute script written");
+          Run_Command ("Sys:C/Execute", "BD0:FZCX.TXT",
+                       0, "C:Execute runs a script");
+          Check_File ("BD0:FZCXOUT.TXT",
+                      "alpha" & ASCII.LF & "delta" & ASCII.LF,
+                      "pipeline inside C:Execute sorted");
+          Check_Env ("FZCX1", "done", "C:Execute script completed");
+
+          Write_File ("BD0:FZASK.TXT", Script29,
+                      "ask script written");
+          Write_File ("BD0:FZASKY.TXT",
+                      "echo y | Sys:C/Execute BD0:FZASK.TXT"
+                      & ASCII.LF,
+                      "ask-yes pipeline script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZASKY.TXT",
+                       0, "ask piped a 'y'");
+          Check_Env ("FZASK", "yes", "ask read 'y' from the pipe");
+          Write_File ("BD0:FZASKN.TXT",
+                      "echo n | Sys:C/Execute BD0:FZASK.TXT"
+                      & ASCII.LF,
+                      "ask-no pipeline script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZASKN.TXT",
+                       0, "ask piped an 'n'");
+          Check_Env ("FZASK", "no", "ask read 'n' from the pipe");
+
+          Write_File ("BD0:FZBGI.TXT", Script30I,
+                      "backgrounded script written");
+          Write_File ("BD0:FZBGS.TXT", Script30,
+                      "run-Execute script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZBGS.TXT",
+                       0, "run Sys:C/Execute backgrounds a script");
+          Check_Env ("FZBGS", "ran",
+                     "backgrounded script ran to completion");
+          Check_Env ("FZCX2", "alive",
+                     "wait reaped the script job, RC composed");
+
+          Write_File ("BD0:FZSELF.TXT", Script31,
+                      "self-executing script written");
+          Run_Command ("Sys:C/Execute", "BD0:FZSELF.TXT",
+                       10, "self-execute hits the depth cap");
 
          --  Pipelines + redirection end to end (milestone 46b):
          --  the shell splits `A | B`, wires a PIPE: name

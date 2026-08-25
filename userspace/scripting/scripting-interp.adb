@@ -117,11 +117,32 @@ package body Scripting.Interp is
          Val  : String (1 .. Max_Value) := (others => ' ');
          VLen : Natural := 0;
       end record;
-      Locals   : array (1 .. Max_Locals) of Local_Rec;
+      type Local_Array is array (1 .. Max_Locals) of Local_Rec;
+      type Locals_Access is access Local_Array;
+      type Str_Access is access String;
+      procedure Free_Locals is new Ada.Unchecked_Deallocation
+        (Local_Array, Locals_Access);
+      procedure Free_Str is new Ada.Unchecked_Deallocation
+        (String, Str_Access);
+
+      Locals   : Locals_Access;
       NLoc     : Natural := 0;
       Order    : array (1 .. Max_Locals) of Natural := (others => 0);
       Template : Natural := 0;
       Bound    : Boolean := False;
+
+      --  Heap-resident line buffers (milestone 70 chunk 4): a
+      --  nesting level's on-stack frame must stay small — five
+      --  nested scripts times ~4 KiB of line buffers (plus the
+      --  locals table) blew the 48 KiB process stack before the
+      --  depth cap fired (store page fault at 0x6FFF_3FF8).
+      --  Allocated after the slurp, freed on the way out;
+      --  references use implicit dereference throughout.
+      Line  : Str_Access;  --  raw scan line (256)
+      XBuf  : Str_Access;  --  expanded line (512)
+      LLine : Str_Access;  --  Find_Label's scan line (256)
+      VBuf  : Str_Access;  --  Expand's lookup value (256)
+      RBuf  : Str_Access;  --  ask reply (120)
 
       --  Control-flow state (chunk 3). If_Stack records whether
       --  each open if's CURRENT branch executes; Skip_Count is
@@ -401,19 +422,18 @@ package body Scripting.Interp is
                      end loop;
                      if K <= Line'Last and then Line (K) = '>' then
                         declare
-                           Val : String (1 .. 256);
                            VL  : Natural;
                            Def : Boolean;
                         begin
                            Lookup (Line (J .. K - 1), Env_Only,
-                                   Val, VL, Def);
+                                   VBuf.all, VL, Def);
                            if not Def then
                               Akernel_User.Console.Put_Line
                                 ("bad substitution: <"
                                  & Line (J .. K - 1) & ">");
                               Bad := True;
                            else
-                              Put_Str (Val (1 .. VL));
+                              Put_Str (VBuf (1 .. VL));
                            end if;
                         end;
                         I := K + 1;
@@ -759,31 +779,30 @@ package body Scripting.Interp is
             end loop;
             declare
                Last : U64 := H;
-               Line : String (1 .. 256);
                Len  : Natural;
             begin
                if Last > P and then Buf (Last - 1) = CR then
                   Last := Last - 1;
                end if;
                Len := Natural (Last - P);
-               if Len > 0 and then Len <= Line'Length then
+               if Len > 0 and then Len <= LLine.all'Length then
                   for I in 0 .. Len - 1 loop
-                     Line (I + 1) :=
+                     LLine (I + 1) :=
                        Character'Val (Natural (Buf (P + U64 (I))));
                   end loop;
-                  if Line (1) /= ';' then
+                  if LLine (1) /= ';' then
                      declare
                         WL : Natural;
                         RF : Natural;
                         LL : Natural;
                         XF : Natural;
                      begin
-                        Split_Cmd (Line (1 .. Len), WL, RF);
-                        if Same_Word (Line (1 .. WL), "lab")
+                        Split_Cmd (LLine (1 .. Len), WL, RF);
+                        if Same_Word (LLine (1 .. WL), "lab")
                           and then RF <= Len
                         then
-                           Split_Cmd (Line (RF .. Len), LL, XF);
-                           if Same_Word (Line (RF .. LL), Label)
+                           Split_Cmd (LLine (RF .. Len), LL, XF);
+                           if Same_Word (LLine (RF .. LL), Label)
                            then
                               Found := True;
                               Target := P;
@@ -821,6 +840,16 @@ package body Scripting.Interp is
          return Akernel_User.CLI.RC_Error;
       end if;
 
+      --  Everything big lives on the heap from here on (see the
+      --  declarations); no early returns beyond this point so
+      --  the frees at the end always run.
+      Locals := new Local_Array;
+      Line   := new String (1 .. 256);
+      XBuf   := new String (1 .. 512);
+      LLine  := new String (1 .. 256);
+      VBuf   := new String (1 .. 256);
+      RBuf   := new String (1 .. 120);
+
       declare
          Lo : U64 := 0;
          Hi : U64;
@@ -836,7 +865,6 @@ package body Scripting.Interp is
             end loop;
             declare
                Last : U64 := Hi;
-               Line : String (1 .. 256);
                Len  : Natural;
             begin
                if Last > Lo and then Buf (Last - 1) = CR then
@@ -845,7 +873,7 @@ package body Scripting.Interp is
                Len := Natural (Last - Lo);
                --  Parity with the milestone-42 runner: a raw
                --  line over 256 bytes is silently skipped.
-               if Len > 0 and then Len <= Line'Length then
+               if Len > 0 and then Len <= Line.all'Length then
                   for I in 0 .. Len - 1 loop
                      Line (I + 1) :=
                        Character'Val (Natural (Buf (Lo + U64 (I))));
@@ -909,13 +937,12 @@ package body Scripting.Interp is
                                  Push_If (False, Bad);
                               else
                                  declare
-                                    XBuf : String (1 .. 512);
                                     XLen : Natural;
                                     XW   : Natural;
                                     XR   : Natural;
                                  begin
                                     Expand (Line (1 .. Len),
-                                            XBuf, XLen, Bad);
+                                            XBuf.all, XLen, Bad);
                                     if not Bad then
                                        Split_Cmd (XBuf (1 .. XLen),
                                                   XW, XR);
@@ -939,11 +966,10 @@ package body Scripting.Interp is
                            In_Header := False;
                            if not Bad and then Skip_Count = 0 then
                               declare
-                                 XBuf : String (1 .. 512);
                                  XLen : Natural;
                               begin
                                  Expand (Line (1 .. Len),
-                                         XBuf, XLen, Bad);
+                                         XBuf.all, XLen, Bad);
                                  if not Bad and then XLen > 0 then
                                     declare
                                        XW : Natural;
@@ -1193,6 +1219,35 @@ package body Scripting.Interp is
                                              end if;
                                              RC := 0;
                                           end;
+                                       elsif Same_Word
+                                         (XBuf (1 .. XW), "ask")
+                                       then
+                                          declare
+                                             PText : constant
+                                               String :=
+                                               (if XRest > XLen
+                                                then ""
+                                                else XBuf (XRest
+                                                             .. XLen));
+                                             RL    : Natural;
+                                          begin
+                                             Ask_Line
+                                               (PText, RBuf.all,
+                                                RL);
+                                             Cond := RL > 0
+                                               and then
+                                                 (RBuf (1) = 'y'
+                                                  or else
+                                                  RBuf (1) = 'Y');
+                                             --  RC_Warn on "no":
+                                             --  below the default
+                                             --  failat, so the
+                                             --  script continues.
+                                             RC :=
+                                               (if Cond then 0
+                                                else Akernel_User
+                                                  .CLI.RC_Warn);
+                                          end;
                                        else
                                           RC := Run_Line
                                             (XBuf (1 .. XLen));
@@ -1228,6 +1283,12 @@ package body Scripting.Interp is
          RC := Akernel_User.CLI.RC_Error;
       end if;
       Free (Buf);
+      Free_Locals (Locals);
+      Free_Str (Line);
+      Free_Str (XBuf);
+      Free_Str (LLine);
+      Free_Str (VBuf);
+      Free_Str (RBuf);
       return RC;
    end Run;
 
