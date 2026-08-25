@@ -8,6 +8,7 @@ with Akernel_User.Files;
 with Akernel_User.CLI;
 with Scripting;
 with Scripting.Exec;
+with Scripting.Interp;
 
 --  Shell: interactive command line (milestone 31 / 41b). A plain CLI
 --  program — it opens no window; its console channel decides where
@@ -26,10 +27,13 @@ with Scripting.Exec;
 --  Op_Read cannot block (the terminal is a single-threaded
 --  receiver), so the shell polls with yields between drains.
 --
---  Builtins: "help", "exit", "execute <script>" (milestone 42:
---  the script runner — LF-separated command lines, ';' starts a
---  comment, the run stops at the first RC >= 10 Amiga-failat
---  style, nesting capped at 4). Everything else is resolved as a
+--  Builtins: "help", "exit", "execute <script> [args]"
+--  (milestones 42 + 70: the script runner — LF-separated command
+--  lines, ';' starts a comment, the run stops at the first
+--  RC >= 10 Amiga-failat style, nesting capped at 4; milestone
+--  70's Scripting.Interp adds .key args, .def defaults, .set
+--  locals and <name>/<$name> substitution). Everything else is
+--  resolved as a
 --  command via the Path variable and the C: search path
 --  (milestone 41b) — staged through the file server into a memory
 --  object (memstage pattern), spawned with this shell's own
@@ -71,88 +75,35 @@ procedure Shell is
       Akernel_User.Console.Put (Akernel_User.CLI.Get_Cwd & "> ");
    end Prompt;
 
-   --  Script runner (milestone 42): LF-separated command lines,
-   --  ';' starts a comment, stop at the first RC >= RC_Error
-   --  (the Amiga default failat). Nesting (a script executing a
-   --  script) is capped. Returns the last RC. Scripts slurp
-   --  through the heap — the buffer never rides the user stack.
-   Max_Script : constant := 16 * 1024;
-   Max_Nest   : constant := 4;
-   Nesting    : Natural := 0;
+   --  Script runner: the milestone-42 linear semantics plus the
+   --  milestone-70 interpreter core (Scripting.Interp — `.key`
+   --  args, `.def` defaults, `.set` locals, `<name>`/`<$name>`
+   --  substitution; if/else/endif, lab/skip, quit, failat and
+   --  echo land in chunk 3). Nesting (a script executing a
+   --  script) is capped; this shell's count feeds Interp's
+   --  Depth. Returns the last RC.
+   Nesting : Natural := 0;
 
    function Execute (Cmd : String) return U64;
 
-   function Run_Script (Path : String) return U64 is
-      subtype Byte is Interfaces.Unsigned_8;
-      type Byte_Array is array (U64 range <>) of Byte;
-      type Buf_Access is access Byte_Array;
+   --  The dispatcher a script line runs through IS this shell's
+   --  Execute — builtins (run/jobs/wait/execute itself) work in
+   --  scripts, and `execute` re-enters Interp with Depth + 1.
+   package SI is new Scripting.Interp (Run_Line => Execute);
 
-      Full  : constant String := Akernel_User.CLI.Resolve_Path (Path);
-      Size  : U64 := 0;
-      Count : U64 := 0;
-      St    : U64;
-      Buf   : Buf_Access;
-      RC    : U64 := 0;
+   --  Rest is "<script> [args...]" — the args bind through the
+   --  script's .key template. Depth is the caller-maintained
+   --  nesting level (execute adds one; batch mode passes 1).
+   function Run_Script (Rest : String; Depth : Natural) return U64 is
+      W_Last  : Natural;
+      R_First : Natural;
    begin
-      if Nesting >= Max_Nest then
-         Akernel_User.Console.Put_Line ("scripts nested too deep");
-         return Akernel_User.CLI.RC_Error;
-      end if;
-      St := Akernel_User.Files.Open (Full, Size);
-      if St /= Akernel_User.Files.Status_Ok then
-         Akernel_User.Console.Put_Line ("can't open script " & Full);
-         return Akernel_User.CLI.RC_Error;
-      end if;
-      if Size > Max_Script then
-         Akernel_User.Console.Put_Line ("script too big " & Full);
-         return Akernel_User.CLI.RC_Error;
-      end if;
-      Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
-      St := Akernel_User.Files.Read
-        (Full, 0, Buf.all'Address, Size, Count);
-      if St /= Akernel_User.Files.Status_Ok or else Count /= Size then
-         Akernel_User.Console.Put_Line ("can't read script " & Full);
-         return Akernel_User.CLI.RC_Error;
-      end if;
-
-      Nesting := Nesting + 1;
-      declare
-         Lo : U64 := 0;
-         Hi : U64;
-         LF : constant Byte := Byte (Character'Pos (ASCII.LF));
-         CR : constant Byte := Byte (Character'Pos (ASCII.CR));
-         use type Interfaces.Unsigned_8;
-      begin
-         while Lo < Size loop
-            Hi := Lo;
-            while Hi < Size and then Buf (Hi) /= LF loop
-               Hi := Hi + 1;
-            end loop;
-            declare
-               Last : U64 := Hi;
-               Line : String (1 .. 256);
-               Len  : Natural;
-            begin
-               if Last > Lo and then Buf (Last - 1) = CR then
-                  Last := Last - 1;
-               end if;
-               Len := Natural (Last - Lo);
-               if Len > 0 and then Len <= Line'Length then
-                  for I in 0 .. Len - 1 loop
-                     Line (I + 1) :=
-                       Character'Val (Natural (Buf (Lo + U64 (I))));
-                  end loop;
-                  if Line (1) /= ';' then
-                     RC := Execute (Line (1 .. Len));
-                  end if;
-               end if;
-            end;
-            exit when RC >= Akernel_User.CLI.RC_Error;
-            Lo := Hi + 1;
-         end loop;
-      end;
-      Nesting := Nesting - 1;
-      return RC;
+      Split_Cmd (Rest, W_Last, R_First);
+      return SI.Run
+        (Rest (Rest'First .. W_Last),
+         (if R_First > Rest'Last then ""
+          else Rest (R_First .. Rest'Last)),
+         Depth);
    end Run_Script;
 
    --  Job control (milestones 52 + 69), Amiga RUN lineage: `run`
@@ -530,12 +481,19 @@ procedure Shell is
             end;
          elsif Word = "wait" then
             return Wait_Job (Rest);
-         elsif Word = "execute" then
-            if Rest'Length = 0 then
-               Akernel_User.Console.Put_Line ("usage: execute <script>");
-               return Akernel_User.CLI.RC_Error;
-            end if;
-            return Run_Script (Rest);
+          elsif Word = "execute" then
+             if Rest'Length = 0 then
+                Akernel_User.Console.Put_Line
+                  ("usage: execute <script> [args]");
+                return Akernel_User.CLI.RC_Error;
+             end if;
+             Nesting := Nesting + 1;
+             declare
+                RC : constant U64 := Run_Script (Rest, Nesting);
+             begin
+                Nesting := Nesting - 1;
+                return RC;
+             end;
          else
             if SE.Has_Metachar (Cmd) then
                return SE.Run_Pipeline (Cmd);
@@ -584,19 +542,38 @@ begin
                                          Boot_Size);
    end;
 
-   --  Batch mode (milestone 42): "Shell execute <script>" runs
-   --  the script and exits with its last RC — no prompt, no
-   --  console read loop. The fuzz end-to-end path for scripts.
-   if Akernel_User.CLI.Arg_Count >= 1
-     and then Akernel_User.CLI.Argument (1) = "execute"
-   then
-      if Akernel_User.CLI.Arg_Count < 2 then
-         Akernel_User.CLI.Fail_With ("usage: Shell execute <script>",
-                                     Akernel_User.CLI.RC_Error);
-      end if;
-      Akernel_User.CLI.Exit_With
-        (Run_Script (Akernel_User.CLI.Argument (2)));
-   end if;
+    --  Batch mode (milestone 42): "Shell execute <script>" runs
+    --  the script and exits with its last RC — no prompt, no
+    --  console read loop. The fuzz end-to-end path for scripts.
+    --  Milestone 70: further arguments are the script's .key
+    --  args ("Shell execute s a b" binds a,b positionally).
+    if Akernel_User.CLI.Arg_Count >= 1
+      and then Akernel_User.CLI.Argument (1) = "execute"
+    then
+       if Akernel_User.CLI.Arg_Count < 2 then
+          Akernel_User.CLI.Fail_With ("usage: Shell execute <script>",
+                                      Akernel_User.CLI.RC_Error);
+       end if;
+       declare
+          Rest : String (1 .. 160);
+          RL   : Natural := 0;
+       begin
+          for I in 2 .. Akernel_User.CLI.Arg_Count loop
+             declare
+                A : constant String := Akernel_User.CLI.Argument (I);
+             begin
+                exit when RL + A'Length + 1 > Rest'Length;
+                if RL > 0 then
+                   RL := RL + 1;
+                   Rest (RL) := ' ';
+                end if;
+                Rest (RL + 1 .. RL + A'Length) := A;
+                RL := RL + A'Length;
+             end;
+          end loop;
+          Akernel_User.CLI.Exit_With (Run_Script (Rest (1 .. RL), 1));
+       end;
+    end if;
 
    Debug_Put_Line ("shell online");
    Akernel_User.Console.Put_Line ("akernel shell — 'help' for commands");

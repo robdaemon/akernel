@@ -367,13 +367,13 @@ Chunk plan (each chunk = one commit, full gates:
 zero-warning `make all`, `make test` SMP4 + `QEMU_SMP=1`
 timeout-wrapped with log verification, desktop boot smoke):
 
-- [ ] **Chunk 1 — `Scripting.Exec` extraction (pure refactor).**
+- [x] **Chunk 1 — `Scripting.Exec` extraction (pure refactor).**
   New crate `userspace/scripting/`; move Stage/Spawn_Cmd/Reap/Exec,
   Has_Metachar, Spawn_Pipeline/Reap_Pipeline/Delete_Pipes/
   Run_Pipeline, Proc_Set/Pipe_Set/Pipe_Name_Str, Stage_VA,
   Max_Stages out of shell.adb. Shell `with`s it; job control keeps
   the shared types. No behavior change; suite proves parity.
-- [ ] **Chunk 2 — `Scripting.Interp` core: parity + substitution
+- [x] **Chunk 2 — `Scripting.Interp` core: parity + substitution
   + locals.** Slurp/line-scan/comments/failat-stop/nesting-cap
   parity with old Run_Script; `execute` splits path from args;
   `.key`/`.k`/`.def`/`.set`; `<name>`/`<$name>` substitution with

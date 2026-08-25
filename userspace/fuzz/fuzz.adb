@@ -3950,12 +3950,39 @@ begin
                Buf (I - 1) :=
                  Interfaces.Unsigned_8 (Character'Pos (Content (I)));
             end loop;
-            St := Akernel_User.Files.Write
-              (Path, 0, Buf'Address, U64 (Content'Length), Count);
-            Check (St = Akernel_User.Files.Status_Ok
-                   and then Count = U64 (Content'Length),
-                   Label_Text);
-         end Write_File;
+             St := Akernel_User.Files.Write
+               (Path, 0, Buf'Address, U64 (Content'Length), Count);
+             Check (St = Akernel_User.Files.Status_Ok
+                    and then Count = U64 (Content'Length),
+                    Label_Text);
+          end Write_File;
+
+          --  Byte-exact file content check (milestone 70): the
+          --  script-substitution tests verify what a script's
+          --  redirected echo actually wrote.
+          procedure Check_File (Path, Want : String; Label_Text : String)
+          is
+             St : U64;
+          begin
+             for I in Buf'Range loop
+                Buf (I) := 0;
+             end loop;
+             St := Akernel_User.Files.Open (Path, Size);
+             Match := St = Akernel_User.Files.Status_Ok
+               and then Size = U64 (Want'Length);
+             if Match then
+                St := Akernel_User.Files.Read
+                  (Path, 0, Buf'Address, U64 (Want'Length), Count);
+                Match := St = Akernel_User.Files.Status_Ok
+                  and then Count = U64 (Want'Length);
+                for I in Want'Range loop
+                   Match := Match
+                     and then Buf (I - 1) =
+                       Interfaces.Unsigned_8 (Character'Pos (Want (I)));
+                end loop;
+             end if;
+             Check (Match, Label_Text);
+          end Check_File;
 
          Script1 : constant String :=
            "; a comment" & ASCII.LF
@@ -3988,8 +4015,37 @@ begin
          Script6 : constant String :=
            "wait 2" & ASCII.LF
            & "set FZJ4=alive" & ASCII.LF;
-         Script7 : constant String :=
-           "run Tests/Teardown X 9" & ASCII.LF;
+          Script7 : constant String :=
+            "run Tests/Teardown X 9" & ASCII.LF;
+          --  Script locals + substitution (milestone 70 chunk 2):
+          --  .key positional args, .def defaults, locals
+          --  shadowing ENV: (with <$name> forcing ENV:), .set
+          --  set/copy/clear, a literal '<' without an immediate
+          --  closing '>', and bad-substitution abort. Nested
+          --  execute passes args through the template.
+          Script8 : constant String :=
+            ".key a,b" & ASCII.LF
+            & ".def b=DEF" & ASCII.LF
+            & "echo <a> <b> > BD0:FZSUBO.TXT" & ASCII.LF;
+          Script9 : constant String :=
+            ".key FZENV" & ASCII.LF
+            & "set FZENV=world" & ASCII.LF
+            & "echo <FZENV> <$FZENV> > BD0:FZENVO.TXT" & ASCII.LF;
+          Script10 : constant String :=
+            ".set x one" & ASCII.LF
+            & ".set y <x> two" & ASCII.LF
+            & ".set x" & ASCII.LF
+            & "echo <y>!<x>! > BD0:FZSETO.TXT" & ASCII.LF;
+          Script11 : constant String :=
+            "echo <NOSUCHFZ>" & ASCII.LF
+            & "set FZBAD=unreached" & ASCII.LF;
+          Script12 : constant String :=
+            "echo a<b > BD0:FZLITO.TXT" & ASCII.LF;
+          Script13 : constant String :=
+            ".key x" & ASCII.LF
+            & "set FZNEST=<x>" & ASCII.LF;
+          Script14 : constant String :=
+            "execute BD0:FZINNER.TXT inner-arg" & ASCII.LF;
       begin
          --  A tiny source file first: a mutating FAT op costs
          --  ~0.4 s write-through, so the copy under test must be
@@ -4095,10 +4151,77 @@ begin
                    "C:Wait fallthrough lets the script continue");
          end;
 
-         Write_File ("BD0:FZJOBS5.TXT", Script7,
-                     "jobs script 5 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS5.TXT",
-                      0, "shell exits with a live job (orphan)");
+          Write_File ("BD0:FZJOBS5.TXT", Script7,
+                      "jobs script 5 written");
+          Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS5.TXT",
+                       0, "shell exits with a live job (orphan)");
+
+          --  Script locals + substitution end to end (milestone
+          --  70 chunk 2). Every byte-checked output comes from a
+          --  script line of the form `echo ... > file`, so the
+          --  expanded text must survive BOTH substitution and
+          --  the pipeline/redirection parser.
+          Write_File ("BD0:FZSUB.TXT", Script8,
+                      "substitution script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZSUB.TXT hello",
+                       0, "script runs with a .key arg");
+          Check_File ("BD0:FZSUBO.TXT", "hello DEF" & ASCII.LF,
+                      ".key arg and .def default substituted");
+
+          Write_File ("BD0:FZENV.TXT", Script9,
+                      "env fallback script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZENV.TXT local",
+                       0, "script with a local shadowing ENV:");
+          Check_File ("BD0:FZENVO.TXT", "local world" & ASCII.LF,
+                      "local shadows ENV:, <$> forces ENV:");
+
+          Write_File ("BD0:FZSET.TXT", Script10,
+                      ".set script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZSET.TXT",
+                       0, "script runs .set directives");
+          Check_File ("BD0:FZSETO.TXT", "one two!!" & ASCII.LF,
+                      ".set set/copy/clear all substituted");
+
+          Write_File ("BD0:FZBADS.TXT", Script11,
+                      "bad-substitution script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZBADS.TXT",
+                       10, "undefined <name> aborts the script");
+          declare
+             St   : U64;
+             Size : U64;
+          begin
+             St := Akernel_User.Files.Stat ("ENV:FZBAD", Size);
+             Check (St /= Akernel_User.Files.Status_Ok,
+                    "bad substitution stops before the next line");
+          end;
+
+          --  `a<b` has no closing '>' right after the name, so
+          --  the '<' stays literal even though the line has a
+          --  '>' redirection later.
+          Write_File ("BD0:FZLIT.TXT", Script12,
+                      "literal-'<' script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZLIT.TXT",
+                       0, "script with a literal '<' runs");
+          Check_File ("BD0:FZLITO.TXT", "a<b" & ASCII.LF,
+                      "'<' without a closing '>' stays literal");
+
+          --  Nested execute: the outer script's line re-enters
+          --  the interpreter through the shell's dispatcher and
+          --  binds the inner template arg.
+          Write_File ("BD0:FZINNER.TXT", Script13,
+                      "inner script written");
+          Write_File ("BD0:FZOUTER.TXT", Script14,
+                      "outer script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZOUTER.TXT",
+                       0, "nested execute passes args");
+          Check_Env ("FZNEST", "inner-arg",
+                     "nested script's <x> bound from outer args");
 
          --  Pipelines + redirection end to end (milestone 46b):
          --  the shell splits `A | B`, wires a PIPE: name
