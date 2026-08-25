@@ -198,6 +198,8 @@ package body System.OS_Interface is
       Main_Priority      : System.Any_Priority)
    is
       Id : constant U64 := Kernel_Id;
+      Old    : aliased U64 := 0;
+      Ignore : U64;
    begin
       Next_Stack_VA := 16#6F00_0000#;
       Next_TLS_VA   := 16#6F10_0000#;
@@ -205,7 +207,26 @@ package body System.OS_Interface is
 
       Environment_Thread.Cap := Id;
       Descriptor_Table (Table_Index (Id)) := Environment_Thread;
-      Priority_Table (Table_Index (Id)) := Integer (Main_Priority);
+
+      --  Sync the runtime's priority bookkeeping with the kernel:
+      --  threads spawn at kernel priority 0 whatever the ATCB's
+      --  Base_Priority claims (124 here). Setting 0 returns the
+      --  real old value; without this the first global-lock
+      --  boost/restore pair would leave the kernel priority
+      --  elevated for the rest of the process's life. Restore a
+      --  deliberately assigned non-zero spawn priority.
+      Ignore := Raw_Set_Priority
+        (Target       => U64'Last,
+         New_Priority => 0,
+         Old_Priority => Old'Address);
+      if Old /= 0 then
+         Ignore := Raw_Set_Priority
+           (Target       => U64'Last,
+            New_Priority => Old,
+            Old_Priority => Old'Address);
+      end if;
+      Priority_Table (Table_Index (Id)) := Integer (Old);
+      pragma Unreferenced (Main_Priority);
    end Initialize;
 
    procedure Initialize_Slave
@@ -306,6 +327,13 @@ package body System.OS_Interface is
          return U64'Last;
       end if;
 
+      --  The kernel applied Priority_Bits (clamped at 127) to the
+      --  new thread; keep the runtime's bookkeeping in sync or the
+      --  first lock boost/restore on the new thread would leave
+      --  its kernel priority at the clamped ceiling.
+      Priority_Table (Table_Index (Thread_Cap)) :=
+        Integer'Min (Priority, 127);
+
       Next_Stack_VA := Stack_Top + To_U64 (Page_Size);
       if TLS_Size > 0 then
          declare
@@ -358,6 +386,11 @@ package body System.OS_Interface is
    begin
       Raw_Thread_Exit;
    end Sleep;
+
+   procedure Yield is
+   begin
+      Raw_Yield;
+   end Yield;
 
    procedure Wakeup (Id : Thread_Id) is
       pragma Unreferenced (Id);

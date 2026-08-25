@@ -33,6 +33,8 @@
 --  low-level tasking primitives provided by System.OS_Interface and
 --  System.Task_Primitives.Operations.
 
+with System.Multiprocessors.Spin_Locks;
+with System.OS_Interface;
 with System.Tasking;
 with System.Task_Primitives.Operations;
 
@@ -41,13 +43,19 @@ package body System.Soft_Links is
    use System.Task_Primitives.Operations;
    use type System.Tasking.Termination_Handler;
 
-   ----------------
-   -- Local data --
-   ----------------
+   ----------------------------
+   -- Global lock (Akernel)  --
+   ----------------------------
 
-   Caller_Priority : Any_Priority;
-   --  Task's active priority when the global lock is seized. This priority is
-   --  restored when the task releases the global lock.
+   --  Akernel M68: the vendored body relied on the priority ceiling
+   --  alone for mutual exclusion, which only works on uniprocessor,
+   --  and saved the caller's priority in one global variable, which
+   --  races when two threads lock concurrently. The ceiling boost is
+   --  kept (it bounds same-hart preemption), and a test-and-set spin
+   --  lock with Yield backoff provides real cross-hart exclusion.
+   --  The saved priority moved into the ATCB (per task).
+
+   Global_Lock : System.Multiprocessors.Spin_Locks.Spin_Lock;
 
    ----------------------------
    -- Get_Current_Excep_Soft --
@@ -133,14 +141,28 @@ package body System.Soft_Links is
             Prio : constant System.Any_Priority := Get_Priority (Self_Id);
 
          begin
+            --  Store caller's active priority so that it can be later
+            --  restored when releasing the global lock (per task).
+
+            Self_Id.Common.Global_Task_Lock_Priority := Prio;
+
             --  Increase priority to ceiling level
 
             Set_Priority (Self_Id, System.Any_Priority'Last);
 
-            --  Store caller's active priority so that it can be later restored
-            --  when releasing the global lock.
+            --  Cross-hart mutual exclusion: spin with Yield backoff
+            --  so a same-priority holder on this hart gets to run.
 
-            Caller_Priority := Prio;
+            declare
+               Succeeded : Boolean;
+            begin
+               loop
+                  System.Multiprocessors.Spin_Locks.Try_Lock
+                    (Global_Lock, Succeeded);
+                  exit when Succeeded;
+                  System.OS_Interface.Yield;
+               end loop;
+            end;
          end;
       end if;
    end Task_Lock_Soft;
@@ -201,9 +223,11 @@ package body System.Soft_Links is
 
       if Self_Id.Common.Global_Task_Lock_Nesting = 0 then
 
-         --  Restore the task's active priority
+         --  Release the cross-hart lock, then restore the task's
+         --  active priority.
 
-         Set_Priority (Self_Id, Caller_Priority);
+         System.Multiprocessors.Spin_Locks.Unlock (Global_Lock);
+         Set_Priority (Self_Id, Self_Id.Common.Global_Task_Lock_Priority);
       end if;
    end Task_Unlock_Soft;
 

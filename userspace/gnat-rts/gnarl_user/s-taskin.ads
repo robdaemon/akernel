@@ -332,6 +332,14 @@ package System.Tasking is
       --
       --  Protection: Only accessed by Self
 
+      Global_Task_Lock_Priority : System.Any_Priority;
+      --  Active priority saved when this task seized the global task
+      --  lock, restored on release. Per-task (Akernel M68 fix: the
+      --  vendored body used one global variable, which races as soon
+      --  as two threads take the lock on different harts).
+      --
+      --  Protection: Only accessed by Self
+
       LL : aliased Task_Primitives.Private_Data;
       --  Control block used by underlying low-level tasking service (GNULLI)
       --

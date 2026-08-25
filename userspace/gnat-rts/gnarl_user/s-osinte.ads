@@ -103,6 +103,9 @@ package System.OS_Interface is
    procedure Sleep;
    procedure Wakeup (Id : Thread_Id);
 
+   procedure Yield;
+   --  Donate the rest of the current timeslice (spin-lock backoff).
+
    function Get_Affinity (Id : Thread_Id) return Multiprocessors.CPU_Range;
    function Get_CPU (Id : Thread_Id) return Multiprocessors.CPU;
 
