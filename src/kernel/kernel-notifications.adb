@@ -48,6 +48,7 @@ package body Kernel.Notifications is
             Pool (I).Header.Count := 0;
             Pool (I).Bits := 0;
             Pool (I).Bound_Thread := null;
+            Pool (I).Waiting := null;
             Object := Pool (I)'Address;
             Result := Ok;
             return;
@@ -62,6 +63,7 @@ package body Kernel.Notifications is
    begin
       if Slot /= 0 then
          Pool (Slot).In_Use := False;
+         Pool (Slot).Waiting := null;
       end if;
    end Discard;
 
@@ -75,6 +77,7 @@ package body Kernel.Notifications is
 
    function Release (Object : System.Address) return Boolean is
       Slot : constant Natural := Slot_Of (Object);
+      Wake : Kernel.Scheduler.Status;
    begin
       if Slot = 0 then
          return False;
@@ -88,6 +91,14 @@ package body Kernel.Notifications is
          Pool (Slot).In_Use := False;
          Pool (Slot).Bound_Thread := null;
          Pool (Slot).Bits := 0;
+         --  Never strand a blocked waiter: the object is gone, so
+         --  wake it with the failure result (Syscall_Failed).
+         if Pool (Slot).Waiting /= null then
+            Kernel.Tasks.Set_Saved_Result
+              (Pool (Slot).Waiting.all, U64'Last);
+            Kernel.Scheduler.Wake (Pool (Slot).Waiting, Wake);
+            Pool (Slot).Waiting := null;
+         end if;
          return True;
       end if;
 
@@ -115,6 +126,17 @@ package body Kernel.Notifications is
       end if;
 
       Pool (Slot).Bits := Pool (Slot).Bits or Bits;
+
+      --  A blocked ntfn_wait waiter comes first: it is explicitly
+      --  parked on THIS object, bound or not.
+      Thread := Pool (Slot).Waiting;
+      if Thread /= null then
+         Pool (Slot).Waiting := null;
+         Kernel.Tasks.Set_Saved_Result (Thread.all, Take (Object));
+         Kernel.Scheduler.Wake (Thread, Wake);
+         return;
+      end if;
+
       Thread := Pool (Slot).Bound_Thread;
 
       if Thread = null then
@@ -140,6 +162,40 @@ package body Kernel.Notifications is
          Kernel.Scheduler.Wake (Thread, Wake);
       end if;
    end Signal;
+
+   procedure Record_Waiter
+     (Object : System.Address;
+      Thread : Kernel.Tasks.Thread_Access;
+      Result : out Status)
+   is
+      Slot : constant Natural := Slot_Of (Object);
+   begin
+      if Slot = 0 or else Thread = null then
+         Result := No_Slot;
+         return;
+      end if;
+
+      if Pool (Slot).Waiting /= null
+        and then Pool (Slot).Waiting /= Thread
+      then
+         Result := Already_Waiting;
+         return;
+      end if;
+
+      Pool (Slot).Waiting := Thread;
+      Result := Ok;
+   end Record_Waiter;
+
+   procedure Clear_Waiter
+     (Object : System.Address;
+      Thread : Kernel.Tasks.Thread_Access)
+   is
+      Slot : constant Natural := Slot_Of (Object);
+   begin
+      if Slot /= 0 and then Pool (Slot).Waiting = Thread then
+         Pool (Slot).Waiting := null;
+      end if;
+   end Clear_Waiter;
 
    procedure Bind_Thread
      (Object : System.Address;
@@ -177,6 +233,9 @@ package body Kernel.Notifications is
       end if;
       if Slot /= 0 and then Pool (Slot).Bound_Thread = Thread then
          Pool (Slot).Bound_Thread := null;
+      end if;
+      if Slot /= 0 and then Pool (Slot).Waiting = Thread then
+         Pool (Slot).Waiting := null;
       end if;
 
       if Thread /= null

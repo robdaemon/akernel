@@ -928,8 +928,23 @@ package body Arch.Traps is
       end if;
 
       --  Block: Signal writes the consumed bits into saved a0.
+      --  Register as the object's waiter first so Signal can find
+      --  this thread (only the bound-thread path existed before
+      --  milestone 68; an unbound wait was a one-way trip).
       Advance_SEPC (Frame);
       Save_Current_Context (Frame);
+      declare
+         Wait_Result : Kernel.Notifications.Status;
+      begin
+         Kernel.Notifications.Record_Waiter
+           (Object, Current, Wait_Result);
+         if Wait_Result /= Kernel.Notifications.Ok then
+            --  Another live thread already waits on this object:
+            --  refuse rather than lose this thread forever.
+            Trap_Frame_Set_A0 (Frame, U64'Last);
+            return;
+         end if;
+      end;
       Kernel.Tasks.Set_State (Current.all, Kernel.Tasks.Blocked_Notification);
       Kernel.Tasks.Set_Boosted (Current.all, False);
       Schedule_Saved_Context (Frame, Scheduler_Result);

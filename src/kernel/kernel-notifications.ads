@@ -28,7 +28,8 @@ package Kernel.Notifications is
    type Status is
      (Ok,
       No_Slot,
-      Already_Bound);
+      Already_Bound,
+      Already_Waiting);
 
    --  Rights granted to the creator of a notification object.
    --  Wait = ntfn_wait, Write = ntfn_signal (writing bits into the
@@ -64,12 +65,28 @@ package Kernel.Notifications is
    --  Fetch pending bits, clearing them. 0 = nothing pending.
    function Take (Object : System.Address) return U64;
 
-   --  OR Bits into the pending word. If a thread is bound and
-   --  blocked on this notification (ntfn_wait) it wakes with the
-   --  consumed bits; if it is blocked in Receive, the endpoint wait
-   --  is cancelled and a synthetic message is delivered instead.
-   --  Otherwise the bits stay pending for the next wait/recv.
+   --  OR Bits into the pending word. A blocked waiter (registered
+   --  with Record_Waiter) is woken with the consumed bits first;
+   --  otherwise, if a thread is bound and blocked on this
+   --  notification (ntfn_wait) it wakes with the consumed bits; if
+   --  it is blocked in Receive, the endpoint wait is cancelled and
+   --  a synthetic message is delivered instead. Otherwise the bits
+   --  stay pending for the next wait/recv.
    procedure Signal (Object : System.Address; Bits : U64);
+
+   --  Register Thread as the blocked waiter on this notification
+   --  (ntfn_wait with no bits pending). Single waiter per object:
+   --  Already_Waiting if another live thread is registered. The
+   --  next Signal consumes the bits into the waiter's saved a0 and
+   --  wakes it. Clear_Waiter (wake path / thread teardown) drops
+   --  the registration.
+   procedure Record_Waiter
+     (Object : System.Address;
+      Thread : Kernel.Tasks.Thread_Access;
+      Result : out Status);
+   procedure Clear_Waiter
+     (Object : System.Address;
+      Thread : Kernel.Tasks.Thread_Access);
 
    --  Bind Thread to this notification (one binding per object and
    --  per thread; Already_Bound on conflict). The cap-close hook
@@ -94,6 +111,7 @@ private
       Header       : Kernel.Objects.Object_Header;
       Bits         : U64;
       Bound_Thread : Kernel.Tasks.Thread_Access;
+      Waiting      : Kernel.Tasks.Thread_Access;
       In_Use       : Boolean;
    end record;
 end Kernel.Notifications;
