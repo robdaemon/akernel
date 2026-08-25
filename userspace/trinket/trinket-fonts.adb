@@ -25,6 +25,7 @@ package body Trinket.Fonts is
    F_Ascent      : U64 := 6;
    F_Descent     : U64 := 2;
    F_From_Disk   : Boolean := False;
+   Initialized   : Boolean := False;
 
    function Hex_Nibble (Ch : Character) return U8 is
    begin
@@ -201,6 +202,13 @@ package body Trinket.Fonts is
       Count : U64;
       St    : U64;
    begin
+      --  Idempotent (milestone 68): the glyph cache is library-global;
+      --  loading once keeps later Init calls (and any concurrent
+      --  callers) from racing a re-parse.
+      if Initialized then
+         return;
+      end if;
+      Initialized := True;
       St := Files.Open (Path, Size);
       if St = Files.Status_Ok and then Size > 0
         and then Size <= 64 * 1024

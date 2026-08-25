@@ -18,6 +18,7 @@ package body Trinket.Window is
    Queue_VA : constant U64 := 16#5F00_0000#;
    Surf_VA  : constant U64 := 16#5F80_0000#;  --  8 MiB window
    Menu_VA  : constant U64 := 16#5F10_0000#;  --  m61 menu page
+   AppQ_VA  : constant U64 := 16#5F20_0000#;  --  m68 app port page
 
    Chunk_Pages : constant U64 := 64;  --  per Mem_Alloc chunk
    Max_Chunks  : constant U64 := 4;
@@ -75,6 +76,28 @@ package body Trinket.Window is
       then
          return False;
       end if;
+
+      --  m68 app port: one-page ring, signalled with bit 2 on the
+      --  same thread-bound notification (worker tasks wake the
+      --  loop thread's blocking IPC_Recv).
+      W.AppQ_Cap := Mem_Alloc (1);
+      if W.AppQ_Cap = Syscall_Failed then
+         return False;
+      end if;
+      Result := Mem_Map
+        (Address_Space => Address_Space_Cap,
+         Cap           => W.AppQ_Cap,
+         VA            => AppQ_VA,
+         Offset        => 0,
+         Length        => 4096,
+         Flags         => 3);
+      if Result /= 0 then
+         return False;
+      end if;
+      App_Port.Setup
+        (W.App_Port,
+         SSE.To_Address (SSE.Integer_Address (AppQ_VA)),
+         W.Ntfn_Cap);
 
       Q_Mint := Cap_Mint
         (W.Queue_Cap, Right_Map + Right_Read + Right_Write +
@@ -246,17 +269,45 @@ package body Trinket.Window is
                   end if;
                   Tail := Tail + 1;
                end loop;
-               Queue (Win.Input_Queue_Tail) := Tail;
-            end;
-         end if;
+                Queue (Win.Input_Queue_Tail) := Tail;
+             end;
+             --  m68: drain app messages posted by worker tasks
+             --  (and same-thread posts). The quit message ends
+             --  the loop after this batch is dispatched.
+             declare
+                Quit_Seen : Boolean;
+             begin
+                App_Port.Drain (W.App_Port, W.On_App, Quit_Seen);
+                Done := Done or Quit_Seen;
+             end;
+          end if;
       end loop;
       Flush_Dirty (W);
    end Run;
 
    procedure Request_Quit (W : in out Window) is
+      Posted : constant Boolean :=
+        Post (W, App_Port.App_Code_Quit, 0, 0, 0);
    begin
-      W.Quit_Wanted := True;
+      if not Posted then
+         --  Ring full: a wake is already pending, so the loop
+         --  will drain and re-check this flag before blocking.
+         W.Quit_Wanted := True;
+      end if;
    end Request_Quit;
+
+   function Post
+     (W             : in out Window;
+      Code, A0, A1, A2 : U64) return Boolean is
+   begin
+      return App_Port.Post (W.App_Port, Code, A0, A1, A2);
+   end Post;
+
+   procedure Set_App_Handler
+     (W : in out Window; Cb : App_Port.Msg_Callback) is
+   begin
+      W.On_App := Cb;
+   end Set_App_Handler;
 
    --  Milestone 61: serialize the tree into a one-page memobj
    --  (layout in akernel_user-window.ads) and hand Bureau a

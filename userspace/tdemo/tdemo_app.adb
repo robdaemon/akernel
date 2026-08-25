@@ -38,10 +38,67 @@ package body Tdemo_App is
       Debug_Put_Line ("tdemo: Cancel clicked");
    end Cancel_Clicked;
 
-   procedure Quit_Clicked is
-   begin
-      Trinket.Window.Request_Quit (Win);
-   end Quit_Clicked;
+    procedure Quit_Clicked is
+    begin
+       Trinket.Window.Request_Quit (Win);
+    end Quit_Clicked;
+
+    ----------------------------------------------------------------------
+    --  Milestone 68 showcase: the Work button kicks a background
+    --  worker task; only the event-dispatch thread (Run's caller)
+    --  touches the widget tree, the worker Posts progress messages
+    --  to the window's app port (the Swing invokeLater shape).
+    ----------------------------------------------------------------------
+
+    Status_Lbl : Widgets.Any_Widget;
+
+    --  Worker gate: the worker task creates its own gate
+    --  notification, publishes the handle, then blocks in
+    --  Ntfn_Wait — no CPU burned while idle (protected entries are
+    --  not in the user runtime profile, so the gate follows the
+    --  fuzz_port pattern).
+    Work_Gate : U64 := 0 with Volatile;
+
+    task Worker;
+
+    task body Worker is
+       Bits   : U64;
+       Ignore : U64;
+    begin
+       Work_Gate := Ntfn_Create;
+       loop
+          Bits := Ntfn_Wait (Work_Gate);
+          exit when Bits = Syscall_Failed;
+          for I in 1 .. 10 loop
+             Ignore := Sleep_Until (Read_Time + 150_000_000);
+             Ignore := Boolean'Pos
+               (Trinket.Window.Post (Win, 1, U64 (I), 10, 0));
+          end loop;
+          Ignore := Boolean'Pos (Trinket.Window.Post (Win, 2, 0, 0, 0));
+       end loop;
+    end Worker;
+
+    procedure Work_Clicked is
+       Ignore : U64;
+    begin
+       Widgets.Label (Status_Lbl.all).Set_Text ("working...");
+       if Work_Gate /= 0 then
+          Ignore := Ntfn_Signal (Work_Gate, 1);
+       end if;
+    end Work_Clicked;
+
+    --  App-port messages, dispatched on the event-dispatch thread.
+    procedure App_Message (Code, A0, A1, A2 : U64) is
+       pragma Unreferenced (A2);
+    begin
+       if Code = 1 then
+          Widgets.Label (Status_Lbl.all).Set_Text
+            ("working" & A0'Image & " of" & A1'Image);
+       elsif Code = 2 then
+          Widgets.Label (Status_Lbl.all).Set_Text ("done");
+       end if;
+    end App_Message;
+
 
    --  Screen-bar menu (milestone 61): File mirrors the button
    --  row, plus Quit (the close-gadget path).
@@ -65,10 +122,12 @@ package body Tdemo_App is
         Widgets.New_Group (Widgets.Horizontal, "File");
       Text_Grp : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Vertical, "Text", Inset => True);
-      Img_Grp  : constant Widgets.Any_Widget :=
-        Widgets.New_Group (Widgets.Horizontal, "Images");
-      Btn_Row  : constant Widgets.Any_Widget :=
-        Widgets.New_Group (Widgets.Horizontal);
+       Img_Grp  : constant Widgets.Any_Widget :=
+         Widgets.New_Group (Widgets.Horizontal, "Images");
+       Work_Grp : constant Widgets.Any_Widget :=
+         Widgets.New_Group (Widgets.Horizontal, "Worker");
+       Btn_Row  : constant Widgets.Any_Widget :=
+         Widgets.New_Group (Widgets.Horizontal);
       Sz       : U64;
       T0, T1   : U64;
       NS       : U64;
@@ -89,12 +148,23 @@ package body Tdemo_App is
          Yield;
       end loop;
 
-      Images.Load ("BD0:Tests/Img/bars.bmp", Bars_Img, Bars_St);
-      Images.Load ("BD0:Tests/Img/keyed.bmp", Keyed_Img, Keyed_St);
-      if Keyed_St = Images.Ok then
-         Keyed_Img.Has_Key := True;
-         Keyed_Img.Key := 16#FFFF_00FF#;  --  generator magenta
-      end if;
+       Images.Load ("BD0:Tests/Img/bars.bmp", Bars_Img, Bars_St);
+       Images.Load ("BD0:Tests/Img/keyed.bmp", Keyed_Img, Keyed_St);
+       if Keyed_St = Images.Ok then
+          Keyed_Img.Has_Key := True;
+          Keyed_Img.Key := 16#FFFF_00FF#;  --  generator magenta
+       end if;
+
+       --  The worker task publishes its gate handle at start; on
+       --  SMP it may not have run yet (bounded wait — the Work
+       --  button simply no-ops until the gate exists).
+       Read_Clock (T0, NS);
+       while Work_Gate = 0 loop
+          Read_Clock (T1, NS);
+          exit when T1 >= T0 + 5;
+          Yield;
+       end loop;
+
 
       Widgets.Group (File_Grp.all).Add
         (Widgets.New_Label ("BD0:README.TXT", Inset => True));
@@ -120,21 +190,28 @@ package body Tdemo_App is
            (Widgets.New_Label ("Images unavailable"));
       end if;
 
-      Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Save", Save_Clicked'Access));
+       Status_Lbl := Widgets.New_Label ("idle", Inset => True);
+       Widgets.Group (Work_Grp.all).Add
+         (Widgets.New_Button ("Work", Work_Clicked'Access));
+       Widgets.Group (Work_Grp.all).Add (Status_Lbl);
+
+       Widgets.Group (Btn_Row.all).Add
+         (Widgets.New_Button ("Save", Save_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
         (Widgets.New_Button ("Revert", Revert_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
         (Widgets.New_Button ("Cancel", Cancel_Clicked'Access));
 
-      Widgets.Group (Root.all).Add (File_Grp);
-      Widgets.Group (Root.all).Add (Text_Grp);
-      Widgets.Group (Root.all).Add (Img_Grp);
-      Widgets.Group (Root.all).Add (Btn_Row);
+       Widgets.Group (Root.all).Add (File_Grp);
+       Widgets.Group (Root.all).Add (Text_Grp);
+       Widgets.Group (Root.all).Add (Img_Grp);
+       Widgets.Group (Root.all).Add (Work_Grp);
+       Widgets.Group (Root.all).Add (Btn_Row);
 
-      if Trinket.Window.Open
-        (Win, 3, 400, 380, "Trinket Demo", Root)
-      then
+       if Trinket.Window.Open
+         (Win, 3, 400, 420, "Trinket Demo", Root)
+       then
+          Trinket.Window.Set_App_Handler (Win, App_Message'Access);
          Trinket.Window.Set_Menus
            (Win,
             (1 => Trinket.Menus.M

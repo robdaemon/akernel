@@ -146,3 +146,33 @@ Trinket.Window.Set_Menu_Handler (Win, My_Handler'Access);
 `Close` calls `Op_Surface_Destroy` (24) and marks the window record
 closed. Process teardown reclaims the remaining memory objects and
 endpoints.
+
+## Threading (milestone 68)
+
+Trinket follows the Swing/Amiga rule: only the event-dispatch
+thread — the one running `Run` — touches the widget tree. Worker
+tasks communicate with the UI through the window's **app port**, a
+one-page kernel-free ring of 127 four-word messages
+(`Code, A0, A1, A2`) in a process-shared memory object:
+
+```ada
+--  any thread:
+Ok := Trinket.Window.Post (Win, Code, A0, A1, A2);   --  drop-new when full
+
+--  before Run, on the loop thread:
+Trinket.Window.Set_App_Handler (Win, My_Handler'Access);
+--  My_Handler (Code, A0, A1, A2 : U64) runs ON THE LOOP THREAD,
+--  once per queued message, FIFO.
+```
+
+`Post` is multi-producer safe (protected-object lock around the
+ring), copies the message, and signals the loop thread's bound
+notification (bit 2; Bureau input uses bit 1). `Run` drains the
+port on every notification wake and dispatches each message to the
+installed handler. `Request_Quit` is now just `Post` of the
+reserved code 0, safe from any thread; quit codes are intercepted
+by the drain and never reach the app handler. See
+`userspace/tdemo` (Work button: click kicks a background worker
+that Posts progress; the handler updates a label on the dispatch
+thread) and the headless port test `userspace/fuzz/fuzz_port`.
+

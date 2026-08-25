@@ -267,6 +267,44 @@ Other fixes applied:
 - [x] `make all` builds with zero warnings; `make test QEMU_SMP=1` and
   `make test QEMU_SMP=4` pass end-to-end.
 
+**Milestone 68 — Trinket app port: Swing-style worker messaging (done).**
+
+- [x] `Trinket.App_Port`: one-page process-shared ring (127 four-word
+  messages `Code, A0, A1, A2`), multi-producer `Post` (PO-locked,
+  drop-new) and single-consumer `Drain`; code 0 reserved for quit;
+  signals bit 2 on the loop thread's bound notification.
+- [x] `Trinket.Window` integrates the port: `Post`/`Set_App_Handler`,
+  `Request_Quit` re-implemented as a posted quit message (safe from
+  any thread), `Run` drains the port on every notification wake.
+  Public API source-compatible.
+- [x] Ravenscar runtime SMP-safety fixes (`userspace/gnat-rts/
+  gnarl_user`): runtime task lock is a spin-lock with `Yield` backoff
+  plus a per-task priority-ceiling boost recorded in a new per-ATCB
+  field (the single global saved-priority slot raced across harts);
+  task creation initializes the kernel-visible priority table; task
+  activation restores the saved ACTIVE priority (was permanently
+  raising the activator's kernel priority); runtime initialize syncs
+  its priority bookkeeping with the kernel instead of trusting
+  `Main_Priority`.
+- [x] Kernel: unbound `Ntfn_Wait` blocking was a one-way trip —
+  `Signal` only woke the bound thread. Notifications now record a
+  single waiting thread (`Record_Waiter`/`Clear_Waiter`); `Signal`,
+  `Release`, `Discard`, and cap cleanup wake/clear the waiter.
+- [x] Kernel: fire-and-forget `Send` no longer queues the live caller
+  thread (its next IPC op clobbered the buffer, badge, and queue
+  links — a send followed by a report call cross-delivered the call
+  to the send's receiver; deterministic SMP1 failure). The message is
+  now copied into a fixed pool of queued-send slots (64, system-wide)
+  chained off the endpoint; cap-carrying sends and a full pool fall
+  back to the blocking rendezvous. See `docs/IPC.md`.
+- [x] Headless port test `userspace/fuzz/fuzz_port` (worker tasks
+  gated on per-worker notifications, watchdog task, 24 checks:
+  single/two-producer FIFO, overflow, quit interception) and the
+  tdemo Work button (worker task Posts progress; the label updates on
+  the event-dispatch thread — see `docs/trinket/window.md`).
+- [x] `make all` builds with zero warnings; `make test QEMU_SMP=1`
+  (2/2) and `make test QEMU_SMP=4` pass end-to-end.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide

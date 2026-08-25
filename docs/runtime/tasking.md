@@ -6,6 +6,18 @@ objects, `delay until`, and ceiling priorities. Full Ada tasking
 (task entries, `select`, abort, dynamic tasks) is intentionally left
 for a later milestone.
 
+> **Status (milestone 68):** Ravenscar tasking is LIVE (milestones
+> 67b+): tasks, protected objects (mutual exclusion — entries are
+> still out of the profile), and delays work; see
+> `userspace/fuzz/fuzz_port` (worker tasks + watchdog) and the
+> tdemo Work button. SMP-safety fixes landed in M68: the runtime
+> task lock is a spin-lock with `Yield` backoff plus a per-task
+> priority-ceiling boost recorded in a new per-ATCB field (the
+> single global saved-priority slot raced across harts), task
+> creation initializes the kernel-visible priority table, and task
+> activation restores the saved ACTIVE priority instead of
+> base priority.
+
 ## Current state
 
 `userspace/gnat-rts/gnat_user/system.ads` has:

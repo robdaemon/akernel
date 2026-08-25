@@ -17,6 +17,7 @@ with Akernel_User.Streams;
 with Akernel_User.Libs;
 with Trinket;
 with Trinket.Images;
+with Fuzz_Port;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
@@ -59,6 +60,11 @@ procedure Fuzz is
    Pids : array
      (0 .. Akernel_User.Syscalls.Process_Table_Slots - 1)
      of U64 := (others => 0);
+
+   --  M68: the ntfn section binds the fuzz main thread to N2
+   --  (a thread binds one notification for life); the app-port
+   --  section later reuses that bound cap to signal its posts.
+   Bound_Ntfn : U64 := 0;
 
    Sys_Yield          : constant U64 := 0;
    Sys_Debug_Putchar  : constant U64 := 1;
@@ -4845,6 +4851,7 @@ begin
       --  before the endpoint wait).
       Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N2) = 0,
              "ntfn bind thread ok");
+      Bound_Ntfn := N2;
       Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N1) /= 0,
              "ntfn second bind rejected");
       Check (Akernel_User.Syscalls.Ntfn_Signal (N2, 16#AB#) = 0,
@@ -4861,6 +4868,13 @@ begin
       Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (1, N1, 1) /= 0,
              "irq bind wrong-kind cap rejected");
    end;
+
+   --  68: Trinket.App_Port — worker tasks post to a headless port;
+   --  the main thread plays event loop (IPC_Recv woken by the
+   --  thread-bound notification, Drain dispatches). Must run after
+   --  the ntfn section: it reuses that section's bound N2 cap (a
+   --  thread binds one notification for its whole life).
+   Fuzz_Port.Run_Tests (Bound_Ntfn);
 
    --  Shared-library lifecycle (milestone 58 Tier-1).
    declare

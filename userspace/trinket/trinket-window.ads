@@ -1,5 +1,6 @@
 with Trinket.Widgets;
 with Trinket.Menus;
+with Trinket.App_Port;
 
 --  Trinket window (milestone 56): wraps the Bureau window
 --  protocol v3 dance — input queue memobj, thread-bound
@@ -16,6 +17,14 @@ with Trinket.Menus;
 --     end if;
 --
 --  (3 = Bureau service handle under the uniform ABI.)
+--
+--  Tasking (milestone 68): the thread that calls Open and Run is
+--  the event-dispatch thread — the ONLY thread allowed to touch
+--  the widget tree and canvas (Swing's EDT rule). Worker tasks
+--  report through Post; Run dispatches posted messages to the
+--  app handler on the loop thread. Request_Quit is Post-based
+--  and safe from any thread. Open and Run must run on the same
+--  thread (the input notification is bound to Open's caller).
 package Trinket.Window is
 
    type Window is limited private;
@@ -37,6 +46,19 @@ package Trinket.Window is
    --  Draws pending damage before each blocking receive.
 
    procedure Request_Quit (W : in out Window);
+   --  Posts the reserved quit message; safe from any thread.
+
+   --  Milestone 68: app messages from worker tasks. Post queues a
+   --  (Code, A0, A1, A2) message (codes >= 1; 0 is the reserved
+   --  quit code) and wakes the loop thread; Run dispatches each
+   --  message to the handler installed with Set_App_Handler.
+   --  Post is callable from ANY thread of the process (multi-
+   --  producer safe, drop-new when the ring is full => False).
+   function Post
+     (W             : in out Window;
+      Code, A0, A1, A2 : U64) return Boolean;
+   procedure Set_App_Handler
+     (W : in out Window; Cb : App_Port.Msg_Callback);
 
    --  Milestone 61: Amiga screen-bar menus. Set_Menus declares
    --  the tree (chrome — Bureau renders/operates it; RMB opens
@@ -65,6 +87,7 @@ private
       Sink_EP      : U64 := 0;
       Ntfn_Cap     : U64 := 0;
       Queue_Cap    : U64 := 0;
+      AppQ_Cap     : U64 := 0;
       Chunk_Caps   : Syscall_Handle_Array;
       Root         : Widgets.Any_Widget := null;
       Cnv          : Canvas;
@@ -72,6 +95,8 @@ private
       Quit_Wanted  : Boolean := False;
       Prev_Buttons : U64 := 0;
       On_Menu      : Menu_Callback := null;
+      On_App       : App_Port.Msg_Callback := null;
+      App_Port     : Trinket.App_Port.Port;
    end record;
 
 end Trinket.Window;
