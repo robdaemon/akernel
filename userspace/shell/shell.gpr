@@ -1,3 +1,5 @@
+with "../scripting/scripting.gpr";
+
 project Shell extends "../rts/akernel_program.gpr" is
    for Source_Dirs use (".");
    for Exec_Dir use "../../bin/userspace";

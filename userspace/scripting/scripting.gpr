@@ -1,0 +1,16 @@
+with "../rts/akernel_rts.gpr";
+
+--  Scripting (milestone 70): the shared shell-script machinery.
+--  Programs that run commands or scripts link libscripting.a IN
+--  ADDITION TO the RTS; the runtime itself never touches it.
+library project Scripting is
+   for Source_Dirs use (".");
+   for Object_Dir use "../../obj/userspace/scripting";
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "../../lib/userspace/scripting";
+   for Library_Name use "scripting";
+   for Library_Kind use "static";
+   for Languages use ("Ada");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "../gnat-rts";
+end Scripting;
