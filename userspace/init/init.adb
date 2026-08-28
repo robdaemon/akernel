@@ -71,6 +71,14 @@ procedure Init is
    --  side is granted to every program via the libman token.
    LIBMAN_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  Network stack endpoint (milestone 71): Receive side granted
+   --  (net_server token) to System/Netserv, Send side (net token)
+   --  to network clients. Netserv talks the frame protocol to the
+   --  class-1 driver through the netdev token (the device manager's
+   --  Net_Service Send side); init mounts its Net: volume on the
+   --  VFS via Op_Add_FS after spawn.
+   NETSRV_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  True once the manifest granted the part_server token, i.e. a
    --  partition manager will serve the partition endpoint.
    Partmgr_Seen : Boolean := False;
@@ -370,7 +378,15 @@ procedure Init is
       end if;
    end Push_Procfs_Mount;
 
-   --  Push the file server's boot-file table as Op_Set_Name
+   --  Send Op_Add_FS (device "Net", label "Net") with the
+   --  netserv server's service endpoint (Send side, transferred
+   --  in cap slot 0) so the VFS mounts the network volume.
+   --  REMOVED (m72a): netserv self-registers at the END of its
+   --  bring-up. An init-time push let the fs synchronously forward
+   --  Net: ops to a netserv still blocked on its own fs env reads
+   --  — a circular fs<->netserv deadlock under SMP timing.
+
+    --  Push the file server's boot-file table as Op_Set_Name
    --  messages, one per boot file, then a zero-handle
    --  terminator. Since milestone 38b each message TRANSFERS a
    --  minted copy of the boot-file cap in slot 0 (deleted here
@@ -439,10 +455,11 @@ procedure Init is
       Image_Cap   : Akernel_User.Syscalls.U64;
       Process_Cap : Akernel_User.Syscalls.U64;
       Result      : Akernel_User.Syscalls.U64;
-      Is_FS       : Boolean := False;
-      Is_Fat32    : Boolean := False;
-      Is_Procfs   : Boolean := False;
-      Wants_Names : Boolean := False;
+       Is_FS       : Boolean := False;
+       Is_Fat32    : Boolean := False;
+       Is_Procfs   : Boolean := False;
+       Is_Netserv  : Boolean := False;
+       Wants_Names : Boolean := False;
 
       procedure Grant
         (Source_Cap  : Akernel_User.Syscalls.U64;
@@ -555,9 +572,30 @@ procedure Init is
          elsif Token_Equals (Token, Length, "part_server") then
             Partmgr_Seen := True;
             Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
-         elsif Token_Equals (Token, Length, "procfs_server") then
-            Is_Procfs := True;
-            Grant (PROCFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+          elsif Token_Equals (Token, Length, "procfs_server") then
+             Is_Procfs := True;
+             Grant (PROCFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+          elsif Token_Equals (Token, Length, "netdev") then
+             --  The virtio-net frame service endpoint (Send), kept
+             --  by the device manager; netserv speaks the frame
+             --  protocol (Op_Info/Op_Tx/Op_Set_Rx) to it.
+             Grant (Device_Manager.Net_Service,
+                    Akernel_User.Syscalls.Right_Send, 0);
+          elsif Token_Equals (Token, Length, "net_server") then
+             Is_Netserv := True;
+             Grant (NETSRV_EP, Akernel_User.Syscalls.Right_Receive, 0);
+          elsif Token_Equals (Token, Length, "net_register") then
+             --  Netserv self-registers its Net: volume at the end
+             --  of bring-up (the fs<->netserv deadlock fix, m72a);
+             --  that Op_Add_FS call must carry a Send+Transfer cap
+             --  on its own endpoint, which its Receive-only server
+             --  handle cannot mint — the creator grants it here.
+             Grant (NETSRV_EP,
+                    Akernel_User.Syscalls.Right_Send
+                      + Akernel_User.Syscalls.Right_Transfer, 0);
+          elsif Token_Equals (Token, Length, "net") then
+             --  Network client: Send side of the netserv endpoint.
+             Grant (NETSRV_EP, Akernel_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "elevated_svc") then
             --  The elevation service (milestone 45): Send side of
             --  the init-owned Elevated endpoint. Servers that run
@@ -627,9 +665,13 @@ procedure Init is
             Push_Fat32_Mount;
          end if;
 
-         if Is_Procfs then
-            Push_Procfs_Mount;
-         end if;
+          if Is_Procfs then
+             Push_Procfs_Mount;
+          end if;
+
+          --  netserv's Net: volume is registered by netserv itself
+          --  once its bring-up completes (see the removed
+          --  Push_Netserv_Mount note above).
       else
          Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
       end if;
@@ -699,8 +741,10 @@ begin
    end if;
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
-   PROCFS_EP := Akernel_User.Syscalls.EP_Create;
-   LIBMAN_EP := Akernel_User.Syscalls.EP_Create;
+    PROCFS_EP := Akernel_User.Syscalls.EP_Create;
+    LIBMAN_EP := Akernel_User.Syscalls.EP_Create;
+    NETSRV_EP := Akernel_User.Syscalls.EP_Create;
+   Device_Manager.Net_Client_EP := NETSRV_EP;
    Device_Manager.Elevated_EP := Akernel_User.Syscalls.EP_Create;
 
    Device_Manager.Libman_EP := LIBMAN_EP;

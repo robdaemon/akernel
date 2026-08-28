@@ -1,0 +1,58 @@
+--  Milestone 72a: lwIP 2.2.1 as a static C library. The sources
+--  themselves are NOT tracked: the top-level Makefile downloads,
+--  checksum-verifies and extracts the release tarball into
+--  ../../third_party/lwip on demand (see the LWIP_* rules), so this
+--  project only builds after `make` has stamped that tree. The
+--  committed part of the port lives in port/ (lwipopts.h, arch/cc.h,
+--  arch/perf.h, sys_arch.c) and is held to -Werror; the vendored
+--  tree compiles with -Wno-error per the runtime_build.gpr vendored-C
+--  precedent.
+--
+--  Subset: NO_SYS raw API, IPv4 only (lwIP is dual-stack capable but
+--  our socket ring ABI is u32-addressed — an IPv6 conversation for a
+--  much later milestone), no DNS/DHCP/AutoIP/IGMP/ACD, no lowpan /
+--  bridge / slip / zep netifs. ipv6/ and api/ are excluded by not
+--  listing their dirs; ppp/ is a subdir and never enters Source_Dirs.
+
+library project Lwip is
+
+   for Languages use ("C");
+   for Target use "riscv64-elf";
+
+   for Library_Name use "lwip";
+   for Library_Kind use "static";
+   for Library_Auto_Init use "False";
+
+   Lwip_Root := Project'Project_Dir & "/../../third_party/lwip";
+
+   for Source_Dirs use
+     (Lwip_Root & "/src/core",
+      Lwip_Root & "/src/core/ipv4",
+      Lwip_Root & "/src/netif",
+      "port");
+
+   for Excluded_Source_Files use
+     ("altcp.c", "altcp_alloc.c", "altcp_tcp.c", "dns.c",
+      "acd.c", "autoip.c", "dhcp.c", "igmp.c",
+      "bridgeif.c", "bridgeif_fdb.c", "slipif.c", "zepif.c",
+      "lowpan6.c", "lowpan6_ble.c", "lowpan6_common.c");
+
+   for Object_Dir use "../../obj/userspace/lwip";
+   for Library_Dir use "../../obj/userspace/lwip/lib";
+   for Create_Missing_Dirs use "True";
+
+   Cflags := ("-O2", "-ffunction-sections", "-fdata-sections",
+              "-fno-delete-null-pointer-checks",
+              "-Wall", "-Wno-error",
+              "-I" & Project'Project_Dir & "/port",
+              "-I" & Lwip_Root & "/src/include");
+
+   package Compiler is
+      for Default_Switches ("C") use Cflags;
+
+      --  Our own port code keeps the house standard.
+      for Switches ("sys_arch.c") use Cflags & ("-Werror");
+      for Switches ("aknet_glue.c") use Cflags & ("-Werror");
+   end Compiler;
+
+end Lwip;

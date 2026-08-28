@@ -1,0 +1,11 @@
+with "../virtio/virtio.gpr";
+project Virtio_Net extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/virtio_net";
+   for Main use ("virtio_net.adb");
+
+   package Builder is
+      for Executable ("virtio_net.adb") use "virtio_net.elf";
+   end Builder;
+end Virtio_Net;

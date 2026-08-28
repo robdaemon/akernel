@@ -32,8 +32,12 @@ FILESERVER_ELF := bin/userspace/fileserver.elf
 FAT32_ELF := bin/userspace/fat32.elf
 PARTMGR_ELF := bin/userspace/partmgr.elf
 PROCFS_ELF := bin/userspace/procfs.elf
+NETSERV_ELF := bin/userspace/netserv.elf
+NET_TEST_ELF := bin/userspace/net_test.elf
+UDP_TEST_ELF := bin/userspace/udp_test.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
+VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
 VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 VIRTIO_GPU_ELF := bin/userspace/virtio_gpu.elf
 LIBMAN_ELF := bin/userspace/libman.elf
@@ -53,9 +57,9 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs virtio_rng virtio_blk virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
-DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
@@ -101,6 +105,39 @@ $(RTS_LIB): $(RTS_GPR) $(RTS_SRCS)
 
 $(CRATES): | $(RTS_LIB)
 	$(MAKE) -C userspace/$@
+
+#  Third-party fetch-at-build (milestone 72): vendored C libraries
+#  are downloaded, checksum-verified, extracted and patched on
+#  demand under third_party/ (gitignored; only third_party/patches/
+#  is tracked). lwIP 2.2.1 is the first consumer: netserv links it
+#  via userspace/lwip/lwip.gpr. GitHub mirror of the savannah
+#  release tag (the savannah release mirrors 404 as of 2026-08).
+LWIP_VER := 2.2.1
+LWIP_TAG := STABLE-2_2_1_RELEASE
+LWIP_TARBALL := third_party/download/lwip-$(LWIP_VER).tar.gz
+LWIP_SHA256 := ce0b7461c0ad9602c376f0bf07c5eb7253b48c7bf66f011c6bf3e2a96731c539
+LWIP_STAMP := third_party/lwip/.stamp-$(LWIP_VER)
+
+$(LWIP_TARBALL):
+	mkdir -p third_party/download
+	curl -sL --fail --max-time 600 -o $@.tmp \
+	  https://github.com/lwip-tcpip/lwip/archive/refs/tags/$(LWIP_TAG).tar.gz
+	echo "$(LWIP_SHA256)  $@.tmp" | sha256sum -c -
+	mv $@.tmp $@
+
+$(LWIP_STAMP): $(LWIP_TARBALL) $(wildcard third_party/patches/lwip-*.patch)
+	rm -rf third_party/lwip third_party/.lwip-extract
+	mkdir -p third_party/.lwip-extract
+	tar xzf $(LWIP_TARBALL) -C third_party/.lwip-extract
+	mv third_party/.lwip-extract/lwip-$(LWIP_TAG) third_party/lwip
+	rmdir third_party/.lwip-extract
+	set -e; for p in third_party/patches/lwip-*.patch; do \
+	  [ -e "$$p" ] || break; \
+	  patch -d third_party/lwip -p1 < "$$p"; \
+	done
+	touch $@
+
+netserv: $(LWIP_STAMP)
 
 
 
@@ -193,13 +230,16 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Fat32 $(FAT32_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Partmgr $(PARTMGR_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Procfs $(PROCFS_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Netserv $(NETSERV_ELF)
 	printf '%s\n' 'driver ns16550a Drivers/Serial none 0' > $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver pci,1af4 Drivers/VirtioNet pci 1' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioInput pci 18' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioGpu pci 16' >> $(INITRD_ROOT)/System/Drivers
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioRng $(VIRTIO_RNG_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioBlk $(VIRTIO_BLK_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioNet $(VIRTIO_NET_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioInput $(VIRTIO_INPUT_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioGpu $(VIRTIO_GPU_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/Serial $(SERIAL_ELF)
@@ -210,6 +250,8 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Memstage $(MEMSTAGE_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Echo_Server $(ECHO_SERVER_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Teardown $(TEARDOWN_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Net_Test $(NET_TEST_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Udp_Test $(UDP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -223,13 +265,18 @@ ifeq ($(INITRD_MODE),task_test)
 	printf '%s\n' 'program 3 Tests/Task_Test console' >> $(INITRD_ROOT)/System/Manifest
 endif
 ifeq ($(INITRD_MODE),test)
-	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 10 System/Netserv console fs netdev net_server net_register' >> $(INITRD_ROOT)/System/Manifest
+ifeq ($(INITRD_MODE),test)
+	printf '%s\n' 'program 11 Tests/Net_Test console net' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 12 Tests/Udp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
+endif
 	printf '%s\n' '# file Tests/Echo_Server' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)
 	python3 tools/mkinitrd.py $(INITRD_CPIO) $(INITRD_IMG)
@@ -251,6 +298,8 @@ run: all $(DISK_IMG)
 	  -device virtio-keyboard-pci,addr=0x5 \
 	  -device virtio-tablet-pci,addr=0x6 \
 	  -device virtio-gpu-pci,addr=0x7 \
+	  -netdev user,id=n0 \
+	  -device virtio-net-pci,netdev=n0,addr=0x8 \
 	  -monitor unix:/tmp/qmon.sock,server,nowait \
   -qmp unix:/tmp/qqmp.sock,server,nowait \
   $(QEMU_ARGS)

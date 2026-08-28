@@ -137,7 +137,8 @@ package Kernel.IPC is
 
    --  Reply: consumes the reply cap at Cap (Reply_Object kind,
    --  minted by an earlier Receive), copies label+words into the
-   --  caller's buffer, wakes it with Result_Ok.
+   --  caller's buffer (caps do NOT travel in replies), wakes it
+   --  with Result_Ok.
    procedure Reply
      (Replier : Kernel.Tasks.Thread_Access;
       Cap     : Kernel.Capabilities.Handle;

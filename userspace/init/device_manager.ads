@@ -28,6 +28,11 @@ package Device_Manager is
    --  Akernel_User.Files is bound.
    procedure Start_Display;
    function Block_Service return Akernel_User.Syscalls.U64;
+   --  Net_Service returns init's Send side of the service endpoint
+   --  of the spawned virtio class-1 (network) driver, 0 when no
+   --  network device was found; init grants it to System/Netserv
+   --  via the "netdev" manifest token.
+   function Net_Service return Akernel_User.Syscalls.U64;
    --  The elevation service (milestone 45): init creates the
    --  endpoint and stores it here (Send side for the
    --  "elevated_svc" manifest token); Start_Elevated stages and
@@ -36,6 +41,11 @@ package Device_Manager is
    --  missing image (logs and returns; Elevate then fails
    --  cleanly on the unanswered Call).
    Elevated_EP : Akernel_User.Syscalls.U64 := 0;
+   --  Netserv client endpoint (m71c): init hands the owner cap
+   --  here so Spawn_Program can grant the Send side to Sys:
+   --  programs at uniform handle 5 (terminals re-grant it to
+   --  their shells at handle 6).
+   Net_Client_EP : Akernel_User.Syscalls.U64 := 0;
    --  Library manager endpoint (milestone 65): Send side granted to
    --  every spawned program so Open_Library can reach the manager.
    Libman_EP : Akernel_User.Syscalls.U64 := 0;

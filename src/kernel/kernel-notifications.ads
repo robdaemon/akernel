@@ -23,7 +23,12 @@ package Kernel.Notifications is
    --  U64'Last is kernel-reserved.
    Notification_Label : constant U64 := U64'Last;
 
-   Max_Notifications : constant := 16;
+   --  Steady-state consumers: one per IRQ-driven driver (serial,
+   --  virtio-*) plus one per notification-multiplexing server
+   --  (terminal, trinket, netserv, fuzz's bound test object).
+   --  16 fit exactly until netserv (m71b) tipped the pool to full
+   --  and starved the fuzz ntfn phase of its second object.
+   Max_Notifications : constant := 32;
 
    type Status is
      (Ok,

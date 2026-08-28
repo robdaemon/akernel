@@ -1,0 +1,10 @@
+project Udp_Test extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/udp_test";
+   for Main use ("udp_test.adb");
+
+   package Builder is
+      for Executable ("udp_test.adb") use "udp_test.elf";
+   end Builder;
+end Udp_Test;

@@ -21,6 +21,12 @@ package Scripting is
    FS_EP      : constant Akernel_User.Syscalls.U64 := 2;
    Win_EP     : constant Akernel_User.Syscalls.U64 := 3;
    Svc_EP     : constant Akernel_User.Syscalls.U64 := 5;
+   --  Handle 6 (m71c): the netserv client endpoint (Send). Every
+   --  command spawner must grant it — an invalid grant source
+   --  fails the whole spawn — so the terminal, the fuzz harness
+   --  and Scripting.Exec itself were extended in the same
+   --  commit.
+   Net_EP     : constant Akernel_User.Syscalls.U64 := 6;
 
    --  Split a command line into its first word and the trimmed
    --  remainder: Word = Cmd (Cmd'First .. W_Last), the rest is

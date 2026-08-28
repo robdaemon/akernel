@@ -163,6 +163,19 @@ package Kernel.Tasks is
      (TCB    : in out Thread_Control_Block;
       Queued : Boolean);
 
+   --  Endpoint caller-queue membership (m72b): while the thread
+   --  sits on an endpoint's caller queue this records WHICH
+   --  endpoint, so thread-death paths can unlink it. Without the
+   --  back-pointer a thread killed mid-call stayed linked, and the
+   --  recycled slot later cross-delivered IPC to an innocent thread
+   --  (the m72a/m72b wedge forensics).
+   function Queued_On_EP
+     (TCB : Thread_Control_Block) return System.Address;
+
+   procedure Set_Queued_On_EP
+     (TCB    : in out Thread_Control_Block;
+      Object : System.Address);
+
    --  Scheduling priority (milestone 62), Amiga task-priority
    --  lineage: -128 .. 127, default 0.  The scheduler always runs
    --  the highest-priority ready thread; ties break boosted-first
@@ -416,6 +429,7 @@ private
       Sleep_Deadline   : Kernel.Capabilities.U64;
       Bound_Ntfn       : System.Address;
       Recv_EP          : System.Address;
+      Queued_On_EP     : System.Address;
       Waiting_For      : Thread_Access;
       Waiters_Head     : Thread_Access;
       Waiters_Next     : Thread_Access;

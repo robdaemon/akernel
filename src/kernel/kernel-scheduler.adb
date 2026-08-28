@@ -355,7 +355,12 @@ package body Kernel.Scheduler is
       --  Voluntary block ends the boost: the next wake re-earns it.
       Kernel.Tasks.Set_Boosted (My_Current.all, False);
       Set_My_Current (null);
-      Yield (Result);
+      --  No Yield here: every caller (Sleep_Until, Thread_Wait) is
+      --  a trap-level path that ends in Schedule_Saved_Context,
+      --  which performs the single schedule.  A second Yield popped
+      --  the ready-queue head and re-queued it without running it,
+      --  starving that thread on every sleep (m72b wedge).
+      Result := Ok;
    end Block_Current;
 
    procedure Exit_Current (Result : out Status) is

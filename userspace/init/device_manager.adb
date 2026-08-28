@@ -61,6 +61,11 @@ package body Device_Manager is
    Console_Handle  : U64 := 0;
    Resource_Handle : U64 := 0;
    Block_EP        : U64 := 0;
+   --  Class-1 (virtio-net) frame service endpoint, recorded at
+   --  spawn (first-wins); init grants its Send side to programs
+   --  whose manifest line carries the "netdev" token (System/
+   --  Netserv).
+   Net_EP          : U64 := 0;
    Bureau_Svc      : U64 := 0;  --  Bureau window service (Send)
    --  Seat (milestone 28 slice 4): class-18 (virtio-input)
    --  service endpoints, recorded at spawn; after Bureau +
@@ -83,6 +88,7 @@ package body Device_Manager is
    Startup_Buf : String (1 .. 2048) := (others => Character'Val (0));
 
    function Block_Service return U64 is (Block_EP);
+   function Net_Service return U64 is (Net_EP);
    Next_Id         : U64 := First_Driver_Id;
 
    function Shl (Value : U64; Amount : Natural) return U64
@@ -364,6 +370,9 @@ package body Device_Manager is
          Next_Id := Next_Id + 1;
          if L.Class_Id = 2 and then Block_EP = 0 then
             Block_EP := Svc_EP;
+         end if;
+         if L.Class_Id = 1 and then Net_EP = 0 then
+            Net_EP := Svc_EP;
          end if;
          Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
       else
@@ -800,6 +809,9 @@ package body Device_Manager is
       if L.Class_Id = 2 and then Block_EP = 0 then
          Block_EP := Svc_EP;
       end if;
+      if L.Class_Id = 1 and then Net_EP = 0 then
+         Net_EP := Svc_EP;
+      end if;
       if L.Class_Id = 18 and then Input_Count < 4 then
          Input_Svc (Input_Count) := Svc_EP;
          Input_Count := Input_Count + 1;
@@ -994,6 +1006,12 @@ package body Device_Manager is
       --  shells, shells to commands at handle 5.
       Set_Grant (Grant_Count, Elevated_EP, Right_Send, 0);
       Grant_Count := Grant_Count + 1;
+      --  Handle 5: the netserv client endpoint (Send; m71c) —
+      --  terminals re-grant it to their shells at handle 6.
+      if Net_Client_EP /= 0 then
+         Set_Grant (Grant_Count, Net_Client_EP, Right_Send, 0);
+         Grant_Count := Grant_Count + 1;
+      end if;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
         and then Process_Cap /= 0
       then

@@ -5,6 +5,7 @@ with Arch.Context;
 with Arch.MMU;
 with Kernel.CPUs;
 with Kernel.ELF;
+with Kernel.IPC;
 with Kernel.Memory;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
@@ -765,6 +766,19 @@ package body Kernel.Processes is
                   Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T), 0);
                end if;
             end;
+
+            --  Unlink from any endpoint caller queue first. The
+            --  slot returns to the free list below; a stale link
+            --  would corrupt the queue and later cross-deliver IPC
+            --  to the slot's next occupant (m72a/m72b wedge
+            --  forensics). Also clears a stale Waiting_Receiver.
+            if Kernel.Tasks.Queued_On_EP (Threads (T)) /=
+                 System.Null_Address
+            then
+               Kernel.IPC.Cleanup_Thread_Cap
+                 (Threads (T)'Unchecked_Access,
+                  Kernel.Tasks.Queued_On_EP (Threads (T)));
+            end if;
 
             Kernel.Tasks.Set_State (Threads (T), Kernel.Tasks.Dead);
             Kernel.Tasks.Set_Queued (Threads (T), False);

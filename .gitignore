@@ -36,3 +36,8 @@ b__*.ads
 .DS_Store
 disk.img
 .pi/
+
+# Third-party sources: downloaded + extracted at make time (m72).
+# Only tracked patches survive the ignore.
+third_party/*
+!third_party/patches/

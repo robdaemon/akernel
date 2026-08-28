@@ -67,6 +67,7 @@ package body Kernel.Tasks is
       TCB.Priority := 0;
       TCB.Bound_Ntfn := System.Null_Address;
       TCB.Recv_EP := System.Null_Address;
+      TCB.Queued_On_EP := System.Null_Address;
       TCB.Waiting_For := null;
       TCB.Waiters_Head := null;
       TCB.Waiters_Next := null;
@@ -312,11 +313,25 @@ package body Kernel.Tasks is
 
    procedure Set_Queued
      (TCB    : in out Thread_Control_Block;
-      Queued : Boolean)
-   is
+      Queued : Boolean) is
    begin
       TCB.Queued := Queued;
    end Set_Queued;
+
+   function Queued_On_EP
+     (TCB : Thread_Control_Block) return System.Address is
+   begin
+      return TCB.Queued_On_EP;
+   end Queued_On_EP;
+
+   procedure Set_Queued_On_EP
+     (TCB    : in out Thread_Control_Block;
+      Object : System.Address) is
+   begin
+      TCB.Queued_On_EP := Object;
+   end Set_Queued_On_EP;
+
+
 
    function Is_Boosted (TCB : Thread_Control_Block) return Boolean is
    begin

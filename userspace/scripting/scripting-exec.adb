@@ -187,7 +187,9 @@ package body Scripting.Exec is
       Set_Grant (2, Win_EP, Right_Send, 0);
       Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
       Set_Grant (4, Svc_EP, Right_Send, 0);
-      if Spawn (Mem_Cap, 5, Proc_Cap) /= Spawn_Ok
+      --  Handle 6 = the netserv client endpoint (m71c).
+      Set_Grant (5, Net_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 6, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Akernel_User.Console.Put_Line ("spawn failed: " & Word);

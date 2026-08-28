@@ -331,6 +331,8 @@ package body Kernel.IPC is
          Endpoint_Object.Queue_Head :=
            Kernel.Tasks.Endpoint_Queue_Next (Caller.all);
          Kernel.Tasks.Set_Endpoint_Queue_Next (Caller.all, null);
+         Kernel.Tasks.Set_Queued_On_EP
+           (Caller.all, System.Null_Address);
          Wake_With_Result (Caller, Result_Endpoint_Gone);
       end loop;
       Endpoint_Object.Queue_Tail := null;
@@ -365,6 +367,7 @@ package body Kernel.IPC is
    is
    begin
       Kernel.Tasks.Set_Endpoint_Queue_Next (Caller.all, null);
+      Kernel.Tasks.Set_Queued_On_EP (Caller.all, Object'Address);
 
       if Object.Queue_Tail = null then
          Object.Queue_Head := Caller;
@@ -391,6 +394,8 @@ package body Kernel.IPC is
             Object.Queue_Tail := null;
          end if;
          Kernel.Tasks.Set_Endpoint_Queue_Next (Caller.all, null);
+         Kernel.Tasks.Set_Queued_On_EP
+           (Caller.all, System.Null_Address);
 
          exit when not Is_Dead (Caller);
       end loop;
@@ -999,7 +1004,15 @@ package body Kernel.IPC is
          return;
       end if;
 
-      --  One-shot: consume the cap, deliver label+words, wake caller.
+      --  One-shot: consume the cap, deliver label+words, wake
+      --  caller. Caps do NOT travel in replies: Transfer_Message
+      --  on this direction was tried in m71c and reverted —
+      --  servers leave received (and since deleted) request caps
+      --  in their buffer, and auditing every reply site in every
+      --  server was not worth it when the one consumer (netserv
+      --  Op_Socket) can mint client-side instead. (Libman's
+      --  reply-cap code path has therefore never delivered its
+      --  cap: Open_Library silently falls back to Open_Via_Self.)
       Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
 
       Caller_Buf.Label := Replier_Buf.Label;
@@ -1089,6 +1102,8 @@ package body Kernel.IPC is
             end if;
 
             Kernel.Tasks.Set_Endpoint_Queue_Next (Thread.all, null);
+            Kernel.Tasks.Set_Queued_On_EP
+              (Thread.all, System.Null_Address);
             exit;
          end if;
 

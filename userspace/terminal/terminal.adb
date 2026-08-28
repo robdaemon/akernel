@@ -46,6 +46,7 @@ procedure Terminal is
    FS_EP      : constant U64 := 2;
    Win_EP     : constant U64 := 3;
    Elevated_Svc : constant U64 := 4;  --  elevation svc (from devmgr)
+   Net_Svc      : constant U64 := 5;  --  netserv client (from devmgr, m71c)
    --  Runtime-created stream sink endpoint (full rights: mints
    --  the console-server sink attach AND the shell's console
    --  cap). Filled in before the service loop starts.
@@ -517,7 +518,8 @@ procedure Terminal is
       --  (Send; a shell child is GUI only once it calls
       --  Surface_Create), 4 = an empty args page (the uniform
       --  layout — commands take their argument string there),
-      --  5 = the elevation service (milestone 45).
+      --  5 = the elevation service (milestone 45), 6 = the
+      --  netserv client endpoint (Send; m71c).
       Args_Cap := Mem_Alloc (1);
       if Args_Cap = Syscall_Failed then
          Debug_Put_Line ("terminal shell args alloc failed");
@@ -529,7 +531,8 @@ procedure Terminal is
       Set_Grant (2, Win_EP, Right_Send, 0);
       Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
       Set_Grant (4, Elevated_Svc, Right_Send, 0);
-      if Spawn (Mem_Cap, 5, Proc_Cap) /= Spawn_Ok
+      Set_Grant (5, Net_Svc, Right_Send, 0);
+      if Spawn (Mem_Cap, 6, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Debug_Put_Line ("terminal shell spawn failed");

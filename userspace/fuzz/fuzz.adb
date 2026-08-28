@@ -94,7 +94,7 @@ procedure Fuzz is
    Sys_Thread_Regs    : constant U64 := 32;
    Sys_Set_Priority   : constant U64 := 35;
 
-   Highest_Known      : constant U64 := 35;
+   Highest_Known      : constant U64 := 42;
 
    Failed : constant U64 := U64'Last;
 
@@ -218,6 +218,7 @@ procedure Fuzz is
    --  admin=9, elevated_svc=10.
    Console_EP   : constant U64 := 2;
    Elevated_Cap : constant U64 := 10;
+   Net_Cap      : constant U64 := 11;
 
    --  Helper: stage a C: command from disk and spawn it under the
    --  uniform ABI, exactly as the shell does.  Args is the
@@ -310,7 +311,12 @@ procedure Fuzz is
       --  "elevated_svc" manifest token (handle 9).
       Akernel_User.Syscalls.Set_Grant
         (4, Elevated_Cap, Akernel_User.Syscalls.Right_Send, 0);
-      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 5, Proc);
+      --  Handle 6: the netserv client endpoint (m71c) — the
+      --  uniform command ABI; fuzz's own copy rides the "net"
+      --  manifest token (handle 11).
+      Akernel_User.Syscalls.Set_Grant
+        (5, Net_Cap, Akernel_User.Syscalls.Right_Send, 0);
+      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 6, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
@@ -4211,6 +4217,17 @@ begin
          Run_Command ("Sys:C/Delete", "FZSM2.TXT", 0,
                       "delete with cwd-relative arg");
 
+         --  m71c: the network stack end to end — Sys:C/Ping
+         --  over an ICMP ping socket to the slirp gateway (ARP
+         --  + echo round trip), an unreachable target (RC 10),
+         --  and the Net: volume through C:Type.
+         Run_Command ("Sys:C/Ping", "-c 1 10.0.2.2", 0,
+                      "ping gateway RC 0");
+         Run_Command ("Sys:C/Ping", "-c 1 10.0.2.99", 10,
+                      "ping unreachable RC 10");
+         Run_Command ("Sys:C/Type", "Net:status", 0,
+                      "type Net:status");
+
          Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
                       "cd missing dir fails");
          Run_Command ("Sys:C/CD", "BD0:README.TXT", 10,
@@ -5606,6 +5623,9 @@ begin
       --  fill cap-table slots.  process_info (30) stays in: it
       --  validates arguments before any write and never blocks.
       --  Directed IPC coverage is a separate milestone.
+      --  Also skipped: ep_set_stamp_identity (41, endpoint-mutating)
+      --  and irq_msi_create (42, fills IRQ slots — and its virtual
+      --  sources are kernel-global, not per-process).
       if Number /= Sys_Exit
         and then Number /= Sys_IPC_Call
         and then Number /= Sys_IPC_Recv
@@ -5620,6 +5640,7 @@ begin
         and then Number /= Sys_Thread_Self
         and then Number /= Sys_Thread_Wait
         and then Number /= 41
+        and then Number /= 42
       then
          A0 := Arg_Value;
          A1 := Arg_Value;
