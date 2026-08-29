@@ -21,16 +21,29 @@ with Akernel_User.Syscalls;
 --  0 = ephemeral -> assigned), Op_Connect=22 (word0 = IPv4 BE
 --  low 32, word1 = port), Op_Kick=23 (one-way send: TX ring
 --  dirty), Op_Poll=24 -> (status, rx level, tx free, error),
---  Op_Close=25. The server signals the client notification with
---  bit 0 = RX readable, bit 1 = error/closed.
+--  Op_Close=25, and m72c's Op_Listen=26 (word0 = backlog hint)
+--  and Op_Accept=27 (cap0 = a fresh two-page ring pair, cap1 =
+--  a client ntfn; reply carries the child socket id, the client
+--  mints its badged cap — the Op_Socket pattern). The server
+--  signals the client notification with bit 0 = RX readable,
+--  bit 1 = error/closed.
 --
 --  Protocols: IPPROTO_UDP datagrams (hairpin loopback when the
 --  destination is our own address; a closed local port sets the
---  sender's error word) and IPPROTO_ICMP ping sockets (Linux
+--  sender's error word), IPPROTO_ICMP ping sockets (Linux
 --  ping-socket semantics: the client sends an ICMP echo request
 --  message, netserv owns the IP header, overwrites the ident
 --  with the socket id, recomputes the checksum, and matches
---  echo replies back to the socket).
+--  echo replies back to the socket) and m72c's IPPROTO_TCP
+--  streams (SOCK_STREAM): Connect blocks until the handshake
+--  resolves (reply status 0 ok / 4 refused / 5 timeout), Listen
+--  marks the socket (Poll's rx level is the parked-accept
+--  backlog), Accept claims a pending connection as a fresh
+--  handle, and the rings carry a byte stream in the same slots
+--  (addr/port unused). Peer close or a reset arrives as a
+--  zero-length slot with flags bit 0: Recv_From reports it as
+--  Status_Ok with Count = 0 (EOF); Poll's sticky error word
+--  distinguishes (0 = orderly, 4/5/6 = refused/timeout/reset).
 --
 --  Wait strategy: Recv_From/Send_To poll the shared rings in
 --  Sleep_Until slices (5 ms) against a Read_Time deadline —
@@ -46,10 +59,12 @@ package Akernel_User.Sockets is
    subtype U64 is Syscalls.U64;
    subtype U32 is Interfaces.Unsigned_32;
 
-   AF_INET    : constant U64 := 2;
-   SOCK_DGRAM : constant U64 := 2;
+   AF_INET     : constant U64 := 2;
+   SOCK_STREAM : constant U64 := 1;
+   SOCK_DGRAM  : constant U64 := 2;
 
    IPPROTO_ICMP : constant U64 := 1;
+   IPPROTO_TCP  : constant U64 := 6;
    IPPROTO_UDP  : constant U64 := 17;
 
    Status_Ok        : constant U64 := 0;
@@ -65,8 +80,9 @@ package Akernel_User.Sockets is
    --  command ABI handle 6 for C: programs).
    procedure Attach (Net_Cap : U64);
 
-   --  New datagram socket (Proto = IPPROTO_UDP or IPPROTO_ICMP);
-   --  Handle returns the minted socket cap. Protocol status.
+   --  New socket (Proto = IPPROTO_UDP, IPPROTO_ICMP or
+   --  IPPROTO_TCP); Handle returns the minted socket cap.
+   --  Protocol status.
    function Socket (Proto : U64; Handle : out U64) return U64;
 
    --  Bind a local port (0 = ephemeral; Assigned returns the
@@ -74,8 +90,22 @@ package Akernel_User.Sockets is
    function Bind (Handle : U64; Port : U64; Assigned : out U64)
                   return U64;
 
-   --  Default peer + RX filter. Port is ignored for ICMP.
+   --  Default peer + RX filter (UDP/ICMP; Port ignored for ICMP).
+   --  For TCP this CONNECTS: blocks until the handshake resolves
+   --  and returns 0 ok / 4 refused / 5 timeout (a few seconds at
+   --  worst — the server bounds the wait).
    function Connect (Handle : U64; IP : U32; Port : U64) return U64;
+
+   --  TCP: mark a bound socket as a listener. Backlog is a hint;
+   --  the server parks as many pending connections as it has
+   --  socket slots.
+   function Listen (Handle : U64; Backlog : U64) return U64;
+
+   --  TCP: claim a pending connection on a listener as a fresh
+   --  stream handle. Non-blocking: Status_Not_Ready when the
+   --  backlog is empty (Poll's rx level reports it).
+   function Accept_Connection
+     (Handle : U64; New_Handle : out U64) return U64;
 
    --  Queue a datagram (Len <= 996) and kick the server. IP/Port
    --  select the destination; pass 0/0 for the Connect default.
@@ -86,10 +116,13 @@ package Akernel_User.Sockets is
       IP     : U32;
       Port   : U64) return U64;
 
-   --  Pop the next datagram; waits up to Timeout ticks
+   --  Pop the next datagram (or, for TCP, the next stream bytes
+   --  — chunking is arbitrary); waits up to Timeout ticks
    --  (0 = non-blocking). Count returns the payload bytes
-   --  (truncated at Max), Src_* the sender. Status_Timeout on
-   --  an empty ring past the deadline.
+   --  (truncated at Max), Src_* the sender (unused for TCP).
+   --  Status_Timeout on an empty ring past the deadline. For TCP,
+   --  Status_Ok with Count = 0 is EOF: the peer closed (or the
+   --  connection reset — Poll's error word says which).
    function Recv_From
      (Handle   : U64;
       Buf      : System.Address;
@@ -99,9 +132,11 @@ package Akernel_User.Sockets is
       Src_Port : out U64;
       Count    : out U64) return U64;
 
-   --  Snapshot: queued RX datagrams, free TX slots, sticky
-   --  error word (nonzero once a TX failed, e.g. ARP timeout
-   --  or hairpin to a closed port).
+   --  Snapshot: queued RX datagrams (a TCP listener: the parked
+   --  accept backlog), free TX slots, sticky error word (nonzero
+   --  once a TX failed, e.g. ARP timeout or hairpin to a closed
+   --  port; m72c: 4 = connect refused, 5 = connect timeout,
+   --  6 = reset).
    function Poll
      (Handle   : U64;
       Rx_Level : out U64;

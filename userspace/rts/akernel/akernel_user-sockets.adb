@@ -12,6 +12,8 @@ package body Akernel_User.Sockets is
    Op_Kick    : constant U64 := 23;
    Op_Poll    : constant U64 := 24;
    Op_Close   : constant U64 := 25;
+   Op_Listen  : constant U64 := 26;
+   Op_Accept  : constant U64 := 27;
 
    --  Client-side bookkeeping: the netserv socket cap, the
    --  ring-pair object and the notification live as long as the
@@ -89,7 +91,8 @@ package body Akernel_User.Sockets is
    begin
       Handle := 0;
       if Net_EP = 0
-        or else (Proto /= IPPROTO_UDP and then Proto /= IPPROTO_ICMP)
+        or else (Proto /= IPPROTO_UDP and then Proto /= IPPROTO_ICMP
+                 and then Proto /= IPPROTO_TCP)
       then
          return Status_Bad_Args;
       end if;
@@ -141,7 +144,8 @@ package body Akernel_User.Sockets is
          Syscalls.Message.Label := Op_Socket;
          Syscalls.Message.Words := (others => 0);
          Syscalls.Message.Words (0) := AF_INET;
-         Syscalls.Message.Words (1) := SOCK_DGRAM;
+         Syscalls.Message.Words (1) :=
+           (if Proto = IPPROTO_TCP then SOCK_STREAM else SOCK_DGRAM);
          Syscalls.Message.Words (2) := Proto;
          Syscalls.Message.Caps := (0 => Ring_Mint, 1 => Ntfn_Mint,
                                    others => 0);
@@ -222,6 +226,121 @@ package body Akernel_User.Sockets is
       end if;
       return Syscalls.Message.Words (0);
    end Connect;
+
+   function Listen (Handle : U64; Backlog : U64) return U64 is
+   begin
+      if Find (Handle) = 0 then
+         return Status_Bad_Args;
+      end if;
+      Syscalls.Message.Label := Op_Listen;
+      Syscalls.Message.Words := (others => 0);
+      Syscalls.Message.Words (0) := Backlog;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (Handle) /= Syscalls.IPC_Ok then
+         return Status_Error;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Listen;
+
+   --  Accept_Connection mirrors Socket's setup: a fresh ring pair + client
+   --  ntfn are transferred on the LISTENER's cap and the reply
+   --  carries the child id; the child cap is a local mint with
+   --  that badge. On any failure the local setup is torn down.
+   function Accept_Connection
+     (Handle : U64; New_Handle : out U64) return U64
+   is
+      Idx       : Natural := 0;
+      Ring_Mint : U64;
+      Ntfn_Mint : U64;
+      Result    : U64;
+   begin
+      New_Handle := 0;
+      if Find (Handle) = 0 then
+         return Status_Bad_Args;
+      end if;
+      for I in Socks'Range loop
+         if not Socks (I).Used then
+            Idx := I;
+            exit;
+         end if;
+      end loop;
+      if Idx = 0 then
+         return Status_Not_Ready;
+      end if;
+
+      Socks (Idx).VA := Ring_VA_Base
+        + U64 (Idx - 1) * Ring_VA_Stride;
+      Socks (Idx).Ring_Cap := Syscalls.Mem_Alloc (Ring_Pages);
+      Socks (Idx).Ntfn_Cap := Syscalls.Ntfn_Create;
+      if Socks (Idx).Ring_Cap = Syscalls.Syscall_Failed
+        or else Socks (Idx).Ntfn_Cap = Syscalls.Syscall_Failed
+        or else Syscalls.Mem_Map
+          (Syscalls.Address_Space_Cap, Socks (Idx).Ring_Cap,
+           Socks (Idx).VA, 0, Ring_Bytes, 3) /= 0
+      then
+         return Status_Error;
+      end if;
+      declare
+         Rx_Hdr : Ring_Words with Address => To_Addr (Socks (Idx).VA);
+         Tx_Hdr : Ring_Words with Address =>
+           To_Addr (Socks (Idx).VA + Syscalls.Page_Size);
+      begin
+         Rx_Hdr := (others => 0);
+         Tx_Hdr := (others => 0);
+      end;
+
+      Ring_Mint := Syscalls.Cap_Mint
+        (Socks (Idx).Ring_Cap,
+         Syscalls.Right_Map + Syscalls.Right_Read
+           + Syscalls.Right_Write + Syscalls.Right_Transfer, 0);
+      Ntfn_Mint := Syscalls.Cap_Mint
+        (Socks (Idx).Ntfn_Cap,
+         Syscalls.Right_Write + Syscalls.Right_Transfer, 0);
+      if Ring_Mint = Syscalls.Syscall_Failed
+        or else Ntfn_Mint = Syscalls.Syscall_Failed
+      then
+         Result := Status_Error;
+      else
+         Syscalls.Message.Label := Op_Accept;
+         Syscalls.Message.Words := (others => 0);
+         Syscalls.Message.Caps := (0 => Ring_Mint, 1 => Ntfn_Mint,
+                                   others => 0);
+         if Syscalls.IPC_Call (Handle) /= Syscalls.IPC_Ok then
+            Result := Status_Error;
+         else
+            Result := Syscalls.Message.Words (0);
+         end if;
+         if Syscalls.Cap_Delete (Ring_Mint) /= 0
+           or else Syscalls.Cap_Delete (Ntfn_Mint) /= 0
+         then
+            Result := Status_Error;
+         end if;
+      end if;
+
+      if Result = Status_Ok then
+         Socks (Idx).Sock_Cap := Syscalls.Cap_Mint
+           (Net_EP, Syscalls.Right_Send, Syscalls.Message.Words (1));
+         if Socks (Idx).Sock_Cap /= Syscalls.Syscall_Failed then
+            Socks (Idx).Used := True;
+            New_Handle := Socks (Idx).Sock_Cap;
+            return Status_Ok;
+         end if;
+         Result := Status_Error;
+      end if;
+
+      declare
+         Saved : constant U64 := Result;
+      begin
+         Result := Syscalls.Mem_Unmap
+           (Syscalls.Address_Space_Cap, Socks (Idx).VA, Ring_Bytes);
+         Result := Syscalls.Cap_Delete (Socks (Idx).Ring_Cap);
+         Result := Syscalls.Cap_Delete (Socks (Idx).Ntfn_Cap);
+         Socks (Idx).VA := 0;
+         Socks (Idx).Ring_Cap := 0;
+         Socks (Idx).Ntfn_Cap := 0;
+         return (if Saved = Status_Ok then Status_Error else Saved);
+      end;
+   end Accept_Connection;
 
    function Send_To
      (Handle : U64;
@@ -342,23 +461,35 @@ package body Akernel_User.Sockets is
                Mem : Byte_Span (0 .. Slot_Size - 1)
                  with Address => To_Addr (Slot);
                Dst : Byte_Span (0 .. Max - 1) with Address => Buf;
+               Flags : U64;
             begin
                Len := U64 (Mem (0)) + U64 (Mem (1)) * 256;
+               Flags := U64 (Mem (2)) + U64 (Mem (3)) * 256;
                for I in 0 .. 3 loop
                   Src_IP := Src_IP * 256 + U32 (Mem (4 + U64 (I)));
                   Src_Port := Src_Port * 256 + U64 (Mem (8 + U64 (I)));
                end loop;
                Count := U64'Min (Len, Max);
-               for I in 0 .. Count - 1 loop
-                  Dst (I) := Mem (12 + I);
-               end loop;
+               --  Count may be 0 (m72c EOF marker slot, or an
+               --  empty datagram): 0 - 1 would wrap the modular
+               --  index and the loop would run off the slot.
+               if Count > 0 then
+                  for I in 0 .. Count - 1 loop
+                     Dst (I) := Mem (12 + I);
+                  end loop;
+               end if;
+               declare
+                  Hdr : Ring_Words with Address => To_Addr (Base);
+               begin
+                  Hdr (1) := Tail + 1;
+               end;
+               if (Flags and 1) /= 0 then
+                  --  m72c EOF marker (peer FIN / reset): report
+                  --  Status_Ok with Count = 0.
+                  Count := 0;
+               end if;
+               return Status_Ok;
             end;
-            declare
-               Hdr : Ring_Words with Address => To_Addr (Base);
-            begin
-               Hdr (1) := Tail + 1;
-            end;
-            return Status_Ok;
          end if;
          Now := Syscalls.Read_Time;
          if Timeout = 0 or else Now >= Deadline then

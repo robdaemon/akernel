@@ -35,6 +35,7 @@ PROCFS_ELF := bin/userspace/procfs.elf
 NETSERV_ELF := bin/userspace/netserv.elf
 NET_TEST_ELF := bin/userspace/net_test.elf
 UDP_TEST_ELF := bin/userspace/udp_test.elf
+TCP_TEST_ELF := bin/userspace/tcp_test.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
@@ -57,7 +58,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
@@ -252,6 +253,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Teardown $(TEARDOWN_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Net_Test $(NET_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Udp_Test $(UDP_TEST_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Tcp_Test $(TCP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -276,6 +278,7 @@ endif
 ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 11 Tests/Net_Test console net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 12 Tests/Udp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 13 Tests/Tcp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' '# file Tests/Echo_Server' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)
@@ -309,8 +312,15 @@ FORCE:
 #  `make test` boots the SAME system with the test manifest
 #  (Fuzz + Spin program slots) — the fuzz suite self-runs and
 #  shuts the machine down, exactly like the old `make run`.
+#  m72c: Tests/Tcp_Test's wire half echoes through slirp to a
+#  host-side server (guest 10.0.2.2 -> host 127.0.0.1), started
+#  here for the duration of the boot.
 test:
-	$(MAKE) run INITRD_MODE=test
+	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
+	PID=$$!; \
+	$(MAKE) run INITRD_MODE=test; ST=$$?; \
+	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
+	exit $$ST
 
 clean: clean-kernel clean-rts clean-userspace clean-initrd
 

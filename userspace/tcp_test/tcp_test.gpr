@@ -1,0 +1,10 @@
+project Tcp_Test extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/tcp_test";
+   for Main use ("tcp_test.adb");
+
+   package Builder is
+      for Executable ("tcp_test.adb") use "tcp_test.elf";
+   end Builder;
+end Tcp_Test;

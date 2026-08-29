@@ -12,7 +12,7 @@ with Akernel_User.Files;
 --  built the protocol surface on a hand-rolled ARP/IPv4/ICMP/UDP
 --  engine; m72b swapped the internals for vendored lwIP 2.2.1
 --  (NO_SYS raw API) while keeping every client-visible protocol
---  byte-identical: the ring pairs, ops 20..25/40, badges, the
+--  byte-identical: the ring pairs, ops 20..27/40, badges, the
 --  Net: volume files, and the error semantics all behave exactly
 --  as m71c specified. The lwIP boundary lives in
 --  userspace/lwip/port/aknet_glue.c:
@@ -86,6 +86,27 @@ with Akernel_User.Files;
 --  badge (the pid badges the file server forwards are equally
 --  self-asserted); the table merely demultiplexes.
 --
+--  TCP (m72c): SOCK_STREAM/PROTO 6 sockets, one tcp_pcb each.
+--  Op_Connect parks the reply cap (Reply_Stash) and completes
+--  when lwIP's connected/err callback fires — synchronously for
+--  a hairpin, off the frame drain for the wire — or when a 5 s
+--  deadline aborts the attempt (sticky errors gain 4 = refused,
+--  5 = connect timeout, 6 = reset). Op_Listen=26 converts the
+--  pcb (lwIP tcp_listen consumes it); the accept callback parks
+--  each child pcb in a free table slot (unclaimed: no ring pair
+--  yet) and Op_Accept=27 — same cap transfer as Op_Socket —
+--  claims one, replying the child id for the client to mint.
+--  Streams ride the same slot rings: the recv callback accepts
+--  a pbuf chain only when it fits the ring WHOLE (binary — lwIP
+--  keeps a refused chain in pcb->refused_data and retries on the
+--  fast timer or on our aknet_tcp_kick from Accept/tick/poll;
+--  TCP_WND == ring capacity keeps any in-window chain fittable
+--  by an empty ring), chunking it into ≤996-byte slots. Peer
+--  FIN and reset/timeout land as a zero-length EOF slot (flags
+--  bit 0) so a blocked reader wakes; TX drain tcp_writes slots
+--  and retries backpressured (ERR_MEM) tails from the sent
+--  callback and the tick. Net:tcp is a netstat-style listing.
+--
 --  RX ring (shared with the driver, mapped here RW): word0 head
 --  (driver), word1 tail (us), word2 dropped, word3 slot count;
 --  2048-byte slots at offset 4096, slot = u16 little-endian
@@ -127,10 +148,13 @@ package body Netserv_Engine is
     Op_Kick    : constant U64 := 23;
     Op_Poll    : constant U64 := 24;
     Op_Close   : constant U64 := 25;
+    Op_Listen  : constant U64 := 26;
+    Op_Accept  : constant U64 := 27;
     Op_Ping    : constant U64 := 40;
 
-    AF_INET    : constant U64 := 2;
-    SOCK_DGRAM : constant U64 := 2;
+    AF_INET     : constant U64 := 2;
+    SOCK_STREAM : constant U64 := 1;
+    SOCK_DGRAM  : constant U64 := 2;
 
     Status_Ok        : constant U64 := 0;
     Status_Not_Found : constant U64 := 1;
@@ -173,7 +197,28 @@ package body Netserv_Engine is
     Signal_Tick : constant U64 := 4;
 
     Proto_Icmp : constant U8 := 1;
+    Proto_Tcp  : constant U8 := 6;
     Proto_Udp  : constant U8 := 17;
+
+    --  TCP connection states (Sock_State.Conn_State).
+    Conn_Idle       : constant U8 := 0;
+    Conn_Connecting : constant U8 := 1;
+    Conn_Up         : constant U8 := 2;
+    Conn_Failed     : constant U8 := 3;
+
+    --  Sticky error codes: 1..3 are m71c (hairpin closed port,
+    --  ARP resolve failed, usage error); m72c adds 4 = connect
+    --  refused, 5 = connect timeout, 6 = connection reset.
+    Err_Refused : constant U64 := 4;
+    Err_Cx_Timeout : constant U64 := 5;
+    Err_Reset   : constant U64 := 6;
+
+    --  RX slot flags: bit 0 = EOF marker (peer FIN or error).
+    Slot_Flag_Eof : constant U64 := 1;
+
+    --  TCP connect deadline (lwIP's own SYN retry budget runs to
+    --  minutes; the client-visible bound is ours).
+    Tcp_Cx_Timeout : constant U64 := 5 * Tick_Hz;
 
    function To_Addr (VA : U64) return System.Address is
      (System.Storage_Elements.To_Address
@@ -266,8 +311,80 @@ package body Netserv_Engine is
      (I : U32; Ip : System.Address; Mac : System.Address) return Int
      with Import, Convention => C, External_Name => "aknet_arp_get";
 
-   procedure Aknet_Check_Timeouts
-     with Import, Convention => C, External_Name => "aknet_timeouts";
+    procedure Aknet_Check_Timeouts
+      with Import, Convention => C, External_Name => "aknet_timeouts";
+
+    --  Deliver queued hairpin (own-address) packets — see the
+    --  glue's header for why delivery is never synchronous.
+    --  Top-level contexts only (post-dispatch, Op_Kick before
+    --  its reply); never from a callback.
+    procedure Aknet_Hairpin_Drain
+      with Import, Convention => C,
+           External_Name => "aknet_hairpin_drain";
+
+    --  TCP (m72c): pcbs are opaque System.Address handles here.
+    function Aknet_Tcp_New (Id : U32) return System.Address
+      with Import, Convention => C, External_Name => "aknet_tcp_new";
+
+    function Aknet_Tcp_Bind
+      (Pcb : System.Address; Port : U32) return Int
+      with Import, Convention => C, External_Name => "aknet_tcp_bind";
+
+    --  tcp_listen consumes the pcb: Pcb returns the listen pcb.
+    function Aknet_Tcp_Listen
+      (Pcb : in out System.Address; Id : U32) return Int
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_listen";
+
+    --  Attach the full callback set under socket Id (accepted
+    --  children).
+    procedure Aknet_Tcp_Attach (Pcb : System.Address; Id : U32)
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_attach";
+
+    function Aknet_Tcp_Connect
+      (Pcb : System.Address; Ip : U32; Port : U32) return Int
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_connect";
+
+    function Aknet_Tcp_Write
+      (Pcb : System.Address; Data : System.Address; Len : U32)
+       return Int
+      with Import, Convention => C, External_Name => "aknet_tcp_write";
+
+    function Aknet_Tcp_Output (Pcb : System.Address) return Int
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_output";
+
+    --  Retry a refused (parked by lwIP) RX chain now.
+    function Aknet_Tcp_Kick (Pcb : System.Address) return Int
+      with Import, Convention => C, External_Name => "aknet_tcp_kick";
+
+    --  Close from any state (callbacks cleared first; abort
+    --  fallback). Also clears the glue's listen-table entry Id.
+    function Aknet_Tcp_Close
+      (Pcb : System.Address; Id : U32) return Int
+      with Import, Convention => C, External_Name => "aknet_tcp_close";
+
+    function Aknet_Tcp_State (Pcb : System.Address) return Int
+      with Import, Convention => C, External_Name => "aknet_tcp_state";
+
+    function Aknet_Tcp_Remote_Port (Pcb : System.Address) return U32
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_remote_port";
+
+    function Aknet_Tcp_Remote_Ip (Pcb : System.Address) return U32
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_remote_ip";
+
+    function Aknet_Pbuf_Totlen (P : System.Address) return U32
+      with Import, Convention => C,
+           External_Name => "aknet_pbuf_totlen";
+
+    procedure Aknet_Pbuf_Copy
+      (P : System.Address; Off : U32; Dst : System.Address; Len : U32)
+      with Import, Convention => C,
+           External_Name => "aknet_pbuf_copy";
 
    ------------------------------------------------------------------
    --  Configuration and state
@@ -317,9 +434,22 @@ package body Netserv_Engine is
     --  from Op_Socket, kept to pin the frames and the signal
     --  target; both are deleted (and the window unmapped) on
     --  Op_Close. Error is sticky until close: 1 = hairpin to a
-    --  closed port, 2 = ARP resolve failed, 3 = usage error.
-    --  Pcb is the lwIP udp_pcb for proto 17 (ping sockets share
-    --  Raw_Pcb and keep Null_Address here).
+    --  closed port, 2 = ARP resolve failed, 3 = usage error, and
+    --  m72c adds 4 = connect refused, 5 = connect timeout,
+    --  6 = reset. Pcb is the lwIP udp_pcb for proto 17 (ping
+    --  sockets share Raw_Pcb and keep Null_Address here) and the
+    --  tcp_pcb for proto 6 — for a listener, the converted
+    --  listen pcb.
+    --
+    --  TCP-only fields (m72c): Listening marks a listen pcb;
+    --  Conn_State is Idle/Connecting/Up/Failed (Conn_* below);
+    --  Reply_Stash parks a deferred Op_Connect reply cap with
+    --  Conn_Deadline bounding the wait and Conn_Fail the reason;
+    --  Parent/Claimed track accepted children (a child is parked
+    --  by the accept callback WITHOUT a ring pair — Claimed =
+    --  False — until Op_Accept transfers one); Pend_Eof defers
+    --  the EOF marker when the ring is full; Eof_Done suppresses
+    --  a duplicate marker when a reset follows an orderly FIN.
     Max_Socks : constant := 8;
 
     type Sock_State is record
@@ -334,6 +464,15 @@ package body Netserv_Engine is
        Ring_Cap   : U64 := 0;
        Ntfn_Cap   : U64 := 0;
        Pcb        : System.Address := System.Null_Address;
+       Listening     : Boolean := False;
+       Claimed       : Boolean := True;
+       Conn_State    : U8 := Conn_Idle;
+       Conn_Fail     : U64 := 0;
+       Conn_Deadline : U64 := 0;
+       Reply_Stash   : U64 := 0;
+       Parent        : Natural := 0;
+       Pend_Eof      : Boolean := False;
+       Eof_Done      : Boolean := False;
     end record;
 
     Socks      : array (1 .. Max_Socks) of Sock_State;
@@ -772,6 +911,350 @@ package body Netserv_Engine is
    end Aknet_On_Icmp_Rx;
 
    ------------------------------------------------------------------
+   --  TCP (m72c). Callbacks run on this thread (frame drain, tick
+   --  or synchronously out of a hairpinned send/connect). The RX
+   --  contract is whole-chain-or-nothing: a chain that does not
+   --  fit the ring is refused (lwIP parks it in pcb->refused_data
+   --  and retries via the fast timer or Aknet_Tcp_Kick), so stream
+   --  bytes are never dropped or partially acknowledged. See the
+   --  glue's TCP section for the lwIP-side contract.
+   ------------------------------------------------------------------
+
+   --  Store a whole pbuf chain into Id's RX ring as ≤996-byte
+   --  slots. True = stored (and the client signalled); False =
+   --  ring cannot take the whole chain (nothing stored; the
+   --  caller refuses the chain to lwIP).
+   function Store_Tcp_Rx
+     (Id : Natural; P : System.Address; Total : U64) return Boolean
+   is
+      VA   : constant U64 := Sock_VA (Id);
+      Head : U64;
+      Tail : U64;
+      Off  : U64 := 0;
+      N    : U64;
+      Slot : U64;
+   begin
+      declare
+         Hdr : Ring_Words with Address => To_Addr (VA);
+      begin
+         Head := Hdr (0);
+         Tail := Hdr (1);
+      end;
+      if (Head - Tail) * Sock_Max_Payload + Total
+           > Sock_Slots * Sock_Max_Payload
+      then
+         return False;
+      end if;
+      while Off < Total loop
+         N := U64'Min (Total - Off, Sock_Max_Payload);
+         Slot := VA + Sock_Slot_Base + (Head mod Sock_Slots)
+           * Sock_Slot_Size;
+         declare
+            Mem : Byte_Span (0 .. Sock_Slot_Size - 1)
+              with Address => To_Addr (Slot);
+         begin
+            Mem (0) := U8 (N mod 256);
+            Mem (1) := U8 (N / 256);
+            Mem (2) := 0;
+            Mem (3) := 0;
+            for I in 0 .. 3 loop
+               Mem (4 + U64 (I)) := U8
+                 (Shr (U64 (Socks (Id).Peer_IP), (3 - I) * 8)
+                    and 16#FF#);
+               Mem (8 + U64 (I)) := U8
+                 (Shr (U64 (Socks (Id).Peer_Port), (3 - I) * 8)
+                    and 16#FF#);
+            end loop;
+         end;
+         Aknet_Pbuf_Copy (P, U32 (Off), To_Addr (Slot + 12),
+                          U32 (N));
+         Off := Off + N;
+         Head := Head + 1;
+      end loop;
+      Fence;
+      declare
+         Hdr : Ring_Words with Address => To_Addr (VA);
+      begin
+         Hdr (0) := Head;
+      end;
+      if Syscalls.Ntfn_Signal (Socks (Id).Ntfn_Cap, 1) /= 0 then
+         Console.Put_Line ("netserv tcp rx signal failed");
+      end if;
+      return True;
+   end Store_Tcp_Rx;
+
+   --  Zero-length EOF marker slot (flags bit 0). A full ring
+   --  defers it to Pend_Eof (retried on tick/poll/kick); False
+   --  when deferred.
+   function Enqueue_Eof (Id : Natural) return Boolean is
+      VA   : constant U64 := Sock_VA (Id);
+      Head : U64;
+      Tail : U64;
+      Slot : U64;
+   begin
+      declare
+         Hdr : Ring_Words with Address => To_Addr (VA);
+      begin
+         Head := Hdr (0);
+         Tail := Hdr (1);
+      end;
+      if Head - Tail >= Sock_Slots then
+         return False;
+      end if;
+      Slot := VA + Sock_Slot_Base + (Head mod Sock_Slots)
+        * Sock_Slot_Size;
+      declare
+         Mem : Byte_Span (0 .. Sock_Slot_Size - 1)
+           with Address => To_Addr (Slot);
+      begin
+         Mem (0) := 0;
+         Mem (1) := 0;
+         Mem (2) := U8 (Slot_Flag_Eof);
+         Mem (3) := 0;
+      end;
+      Fence;
+      declare
+         Hdr : Ring_Words with Address => To_Addr (VA);
+      begin
+         Hdr (0) := Head + 1;
+      end;
+      if Syscalls.Ntfn_Signal (Socks (Id).Ntfn_Cap, 1) /= 0 then
+         Console.Put_Line ("netserv tcp eof signal failed");
+      end if;
+      return True;
+   end Enqueue_Eof;
+
+   --  Push a parked lwIP refused chain (if any) at the ring and
+   --  flush a deferred EOF marker behind it. Called on the tick,
+   --  on Op_Accept (a fresh ring) and on client ops.
+   procedure Retry_Tcp (Id : Natural) is
+      Rc : Int;
+   begin
+      if not Socks (Id).Claimed then
+         return;                    --  no ring mapped yet
+      end if;
+      if Socks (Id).Pcb /= System.Null_Address
+        and then Socks (Id).Conn_State = Conn_Up
+      then
+         Rc := Aknet_Tcp_Kick (Socks (Id).Pcb);
+      end if;
+      if Socks (Id).Pend_Eof then
+         if Enqueue_Eof (Id) then
+            Socks (Id).Pend_Eof := False;
+         end if;
+      end if;
+   end Retry_Tcp;
+
+   --  Accept callback on a listener: park the child pcb in a free
+   --  slot (no ring pair — Op_Accept transfers one and claims).
+   --  Nonzero return = no room; lwIP aborts the connection.
+   function Aknet_On_Tcp_Accept
+     (Id : U32; New_Pcb : System.Address) return Int
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_accept";
+
+   function Aknet_On_Tcp_Accept
+     (Id : U32; New_Pcb : System.Address) return Int
+   is
+      Listener : constant Natural := Natural (Id);
+      Child    : Natural := 0;
+   begin
+      if Listener < 1 or else Listener > Max_Socks
+        or else not Socks (Listener).Used
+        or else not Socks (Listener).Listening
+      then
+         return 1;
+      end if;
+      for I in 1 .. Max_Socks loop
+         if not Socks (I).Used then
+            Child := I;
+            exit;
+         end if;
+      end loop;
+      if Child = 0 then
+         return 1;
+      end if;
+      Socks (Child) :=
+        (Used       => True,
+         Proto      => Proto_Tcp,
+         Bound      => True,
+         Connected  => True,
+         Local_Port => Socks (Listener).Local_Port,
+         Peer_IP    => Aknet_Tcp_Remote_Ip (New_Pcb),
+         Peer_Port  => Aknet_Tcp_Remote_Port (New_Pcb),
+         Pcb        => New_Pcb,
+         Claimed    => False,
+         Conn_State => Conn_Up,
+         Parent     => Listener,
+         others     => <>);
+      Aknet_Tcp_Attach (New_Pcb, U32 (Child));
+      --  Wake a client waiting on the listener's ntfn (Poll
+      --  reports the backlog as its RX level).
+      if Syscalls.Ntfn_Signal (Socks (Listener).Ntfn_Cap, 1) /= 0
+      then
+         Console.Put_Line ("netserv accept signal failed");
+      end if;
+      return 0;
+   end Aknet_On_Tcp_Accept;
+
+   --  Connected callback (may fire synchronously inside
+   --  tcp_connect on a hairpin): drive the state machine; the
+   --  service loop answers the stashed Op_Connect reply.
+   procedure Aknet_On_Tcp_Connected (Id : U32; Err : Int)
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_connected";
+
+   procedure Aknet_On_Tcp_Connected (Id : U32; Err : Int) is
+   begin
+      if Id < 1 or else Id > U32 (Max_Socks)
+        or else not Socks (Natural (Id)).Used
+        or else Socks (Natural (Id)).Proto /= Proto_Tcp
+        or else Socks (Natural (Id)).Conn_State /= Conn_Connecting
+      then
+         return;
+      end if;
+      if Err = 0 then
+         Socks (Natural (Id)).Conn_State := Conn_Up;
+         Socks (Natural (Id)).Connected := True;
+      else
+         Socks (Natural (Id)).Conn_State := Conn_Failed;
+         Socks (Natural (Id)).Conn_Fail := Err_Cx_Timeout;
+      end if;
+   end Aknet_On_Tcp_Connected;
+
+   --  Recv callback: 0 = chain refused (ring cannot take it
+   --  whole; lwIP parks it), 1 = stored.
+   function Aknet_On_Tcp_Rx
+     (Id : U32; P : System.Address) return Int
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_rx";
+
+   function Aknet_On_Tcp_Rx
+     (Id : U32; P : System.Address) return Int
+   is
+   begin
+      if Id < 1 or else Id > U32 (Max_Socks) then
+         return 0;
+      end if;
+      declare
+         S : Sock_State renames Socks (Natural (Id));
+      begin
+         if not S.Used or else S.Proto /= Proto_Tcp
+           or else not S.Claimed
+         then
+            return 0;
+         end if;
+         if Store_Tcp_Rx (Natural (Id), P,
+                          U64 (Aknet_Pbuf_Totlen (P)))
+         then
+            return 1;
+         end if;
+         return 0;
+      end;
+   end Aknet_On_Tcp_Rx;
+
+   --  Orderly peer FIN: the EOF marker goes after every byte
+   --  (lwIP delivers CLOSED only once refused data is drained).
+   procedure Aknet_On_Tcp_Eof (Id : U32)
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_eof";
+
+   procedure Aknet_On_Tcp_Eof (Id : U32) is
+   begin
+      if Id < 1 or else Id > U32 (Max_Socks) then
+         return;
+      end if;
+      declare
+         S : Sock_State renames Socks (Natural (Id));
+      begin
+         if not S.Used or else S.Proto /= Proto_Tcp
+           or else S.Eof_Done
+         then
+            return;
+         end if;
+         S.Eof_Done := True;
+         if not S.Claimed or else not Enqueue_Eof (Natural (Id))
+         then
+            S.Pend_Eof := True;
+         end if;
+      end;
+   end Aknet_On_Tcp_Eof;
+
+   --  lwIP error callback (the pcb is already freed by lwIP when
+   --  this runs): refused connects (RST during the handshake) and
+   --  our own connect-timeout abort complete the deferred
+   --  Op_Connect; a reset of an up connection sets the sticky
+   --  error and wakes the reader with an EOF marker.
+   procedure Aknet_On_Tcp_Err (Id : U32; Err : Int)
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_err";
+
+   procedure Aknet_On_Tcp_Err (Id : U32; Err : Int) is
+   begin
+      if Id < 1 or else Id > U32 (Max_Socks) then
+         return;
+      end if;
+      declare
+         S : Sock_State renames Socks (Natural (Id));
+      begin
+         if not S.Used or else S.Proto /= Proto_Tcp then
+            return;
+         end if;
+         S.Pcb := System.Null_Address;
+         if S.Conn_State = Conn_Connecting then
+            --  lwIP ERR_RST (-14) is the refused handshake; our
+            --  tick abort arrives as ERR_ABRT (-13) = timeout.
+            S.Conn_State := Conn_Failed;
+            if Err = -14 then
+               S.Conn_Fail := Err_Refused;
+            else
+               S.Conn_Fail := Err_Cx_Timeout;
+            end if;
+         elsif S.Conn_State = Conn_Up then
+            if S.Reply_Stash /= 0 then
+               --  Reset between a completed handshake and the
+               --  deferred reply: the connect reports the reset.
+               S.Conn_State := Conn_Failed;
+               S.Conn_Fail := Err_Reset;
+            else
+               S.Conn_State := Conn_Idle;
+               Flag_Error (Natural (Id), Err_Reset);
+               if not S.Eof_Done then
+                  S.Eof_Done := True;
+                  if not S.Claimed
+                    or else not Enqueue_Eof (Natural (Id))
+                  then
+                     S.Pend_Eof := True;
+                  end if;
+               end if;
+            end if;
+         end if;
+      end;
+   end Aknet_On_Tcp_Err;
+
+   --  Forward declaration: Drain_Sock_Tx (below) is retried from
+   --  the sent callback and the tick.
+   procedure Drain_Sock_Tx (Id : Natural);
+
+   --  Sent callback: window/queue space freed — retry a
+   --  backpressured TX ring.
+   procedure Aknet_On_Tcp_Sent (Id : U32; Len : U32)
+     with Export, Convention => C,
+          External_Name => "aknet_on_tcp_sent";
+
+   procedure Aknet_On_Tcp_Sent (Id : U32; Len : U32) is
+   begin
+      if Id >= 1 and then Id <= U32 (Max_Socks)
+        and then Socks (Natural (Id)).Used
+        and then Socks (Natural (Id)).Proto = Proto_Tcp
+        and then Socks (Natural (Id)).Conn_State = Conn_Up
+        and then Len > 0
+      then
+         Drain_Sock_Tx (Natural (Id));
+      end if;
+   end Aknet_On_Tcp_Sent;
+
+   ------------------------------------------------------------------
    --  Receive path: drain every published frame between tail and
    --  head into lwIP (ethernet_input demuxes ARP/IPv4; UDP and
    --  ICMP land in the callbacks above). Called from the
@@ -954,6 +1437,24 @@ package body Netserv_Engine is
                   end if;
                end if;
             end if;
+         elsif Socks (Id).Proto = Proto_Tcp then
+            --  Stream slot: addr/port fields are unused. Len is
+            --  ≤ 996 = MSS, so each slot maps to one segment.
+            if Socks (Id).Conn_State /= Conn_Up
+              or else Socks (Id).Pcb = System.Null_Address
+            then
+               Flag_Error (Id, 3);   --  send on a non-up stream
+            else
+               Rc := Aknet_Tcp_Write
+                 (Socks (Id).Pcb, To_Addr (Slot + 12), U32 (Len));
+               if Rc /= 0 then
+                  --  Backpressure (lwIP snd_buf full): leave this
+                  --  and later slots queued — the sent callback
+                  --  and the tick retry. Skip the tail advance.
+                  exit;
+               end if;
+               Rc := Aknet_Tcp_Output (Socks (Id).Pcb);
+            end if;
          else
             --  ICMP ping socket: the client queued an echo
             --  request message; we own type/code/ident/cksum.
@@ -1011,19 +1512,38 @@ package body Netserv_Engine is
    --  Message.Badge = socket id.
    ------------------------------------------------------------------
 
+   --  Free a socket's lwIP pcb by protocol (Op_Close and the
+   --  Op_Socket error paths).
+   procedure Free_Pcb (Proto : U8; Pcb : System.Address;
+                       Id : Natural)
+   is
+      Rc : Int;
+   begin
+      if Pcb = System.Null_Address then
+         return;
+      end if;
+      if Proto = Proto_Udp then
+         Aknet_Udp_Del (Pcb);
+      elsif Proto = Proto_Tcp then
+         Rc := Aknet_Tcp_Close (Pcb, U32 (Id));
+      end if;
+   end Free_Pcb;
+
    procedure Handle_Sock_Open is
       Dom  : constant U64 := Syscalls.Message.Words (0);
       Typ  : constant U64 := Syscalls.Message.Words (1);
       Pro  : constant U64 := Syscalls.Message.Words (2);
       Ring : constant U64 := Syscalls.Message.Caps (0);
       Ntf  : constant U64 := Syscalls.Message.Caps (1);
+      Dgram_Ok  : constant Boolean := Typ = SOCK_DGRAM
+        and then (Pro = U64 (Proto_Udp) or else Pro = U64 (Proto_Icmp));
+      Stream_Ok : constant Boolean := Typ = SOCK_STREAM
+        and then Pro = U64 (Proto_Tcp);
       Id   : Natural := 0;
       Pcb  : System.Address := System.Null_Address;
       R    : U64;
    begin
-      if Dom /= AF_INET or else Typ /= SOCK_DGRAM
-        or else (Pro /= U64 (Proto_Udp)
-                 and then Pro /= U64 (Proto_Icmp))
+      if Dom /= AF_INET or else (not Dgram_Ok and then not Stream_Ok)
         or else Ring = 0 or else Ntf = 0
       then
          if Ring /= 0 then
@@ -1051,25 +1571,28 @@ package body Netserv_Engine is
       end if;
 
       --  UDP sockets get their lwIP pcb now (the recv arg is the
-      --  socket id); ping sockets share the raw pcb.
+      --  socket id); ping sockets share the raw pcb; TCP sockets
+      --  get a tcp_pcb (callbacks attach at connect/accept).
       if Pro = U64 (Proto_Udp) then
          Pcb := Aknet_Udp_New (U32 (Id));
-         if Pcb = System.Null_Address then
-            R := Syscalls.Cap_Delete (Ring);
-            R := Syscalls.Cap_Delete (Ntf);
-            Console.Put_Line ("netserv sock open: pcb failed");
-            Reply (Status_Not_Ready, 0);
-            return;
-         end if;
+      elsif Pro = U64 (Proto_Tcp) then
+         Pcb := Aknet_Tcp_New (U32 (Id));
+      end if;
+      if (Pro = U64 (Proto_Udp) or else Pro = U64 (Proto_Tcp))
+        and then Pcb = System.Null_Address
+      then
+         R := Syscalls.Cap_Delete (Ring);
+         R := Syscalls.Cap_Delete (Ntf);
+         Console.Put_Line ("netserv sock open: pcb failed");
+         Reply (Status_Not_Ready, 0);
+         return;
       end if;
 
       if Syscalls.Mem_Map
            (Syscalls.Address_Space_Cap, Ring, Sock_VA (Id), 0,
             Sock_Ring_Bytes, 3) /= 0
       then
-         if Pcb /= System.Null_Address then
-            Aknet_Udp_Del (Pcb);
-         end if;
+         Free_Pcb (U8 (Pro), Pcb, Id);
          R := Syscalls.Cap_Delete (Ring);
          R := Syscalls.Cap_Delete (Ntf);
          Console.Put_Line ("netserv sock open: map failed");
@@ -1100,12 +1623,16 @@ package body Netserv_Engine is
       Reply (Status_Ok, U64 (Id));
    end Handle_Sock_Open;
 
-   function Port_In_Use (P : U32; Except : Natural) return Boolean is
+   --  Port table check, per protocol (lwIP enforces the pcb-level
+   --  conflicts; this keeps our demux and the ephemeral cursor
+   --  honest).
+   function Port_In_Use
+     (Proto : U8; P : U32; Except : Natural) return Boolean is
    begin
       for I in 1 .. Max_Socks loop
          if I /= Except
            and then Socks (I).Used
-           and then Socks (I).Proto = Proto_Udp
+           and then Socks (I).Proto = Proto
            and then Socks (I).Bound
            and then Socks (I).Local_Port = P
          then
@@ -1115,34 +1642,66 @@ package body Netserv_Engine is
       return False;
    end Port_In_Use;
 
+   --  Ephemeral bind: first free port from the rotating cursor.
+   --  False when the range is exhausted (practically never).
+   function Bind_Ephemeral (Id : Natural) return Boolean is
+      Port : U32 := Next_Ephem;
+      Rc   : Int;
+   begin
+      for N in 0 .. 16#3FFF# loop
+         exit when not Port_In_Use (Socks (Id).Proto, Port, Id);
+         Port := 49152 + (Port - 49152 + 1) mod 16#4000#;
+         if N = 16#3FFF# then
+            return False;
+         end if;
+      end loop;
+      Next_Ephem := 49152 + (Port - 49152 + 1) mod 16#4000#;
+      if Socks (Id).Proto = Proto_Udp then
+         Rc := Aknet_Udp_Bind (Socks (Id).Pcb, Port);
+      else
+         Rc := Aknet_Tcp_Bind (Socks (Id).Pcb, Port);
+      end if;
+      if Rc /= 0 then
+         return False;
+      end if;
+      Socks (Id).Bound := True;
+      Socks (Id).Local_Port := Port;
+      return True;
+   end Bind_Ephemeral;
+
    procedure Handle_Sock_Bind (Id : Natural) is
       P    : constant U64 := Syscalls.Message.Words (0);
       Port : U32;
+      Rc   : Int;
    begin
-      if Socks (Id).Proto /= Proto_Udp or else P > 16#FFFF# then
+      if (Socks (Id).Proto /= Proto_Udp
+          and then Socks (Id).Proto /= Proto_Tcp)
+        or else Socks (Id).Bound or else Socks (Id).Listening
+        or else P > 16#FFFF#
+      then
          Reply (Status_Bad_Args, 0);
          return;
       end if;
       if P = 0 then
-         --  Ephemeral: first free port from the rotating cursor.
-         Port := Next_Ephem;
-         for N in 0 .. 16#3FFF# loop
-            exit when not Port_In_Use (Port, Id);
-            Port := 49152 + (Port - 49152 + 1) mod 16#4000#;
-            if N = 16#3FFF# then
-               Reply (Status_Not_Ready, 0);
-               return;
-            end if;
-         end loop;
-         Next_Ephem := 49152 + (Port - 49152 + 1) mod 16#4000#;
-      else
-         Port := U32 (P);
-         if Port_In_Use (Port, Id) then
+         --  Ephemeral: the rotating-cursor helper.
+         if not Bind_Ephemeral (Id) then
             Reply (Status_Not_Ready, 0);
             return;
          end if;
+         Reply (Status_Ok, U64 (Socks (Id).Local_Port));
+         return;
       end if;
-      if Aknet_Udp_Bind (Socks (Id).Pcb, Port) /= 0 then
+      Port := U32 (P);
+      if Port_In_Use (Socks (Id).Proto, Port, Id) then
+         Reply (Status_Not_Ready, 0);
+         return;
+      end if;
+      if Socks (Id).Proto = Proto_Udp then
+         Rc := Aknet_Udp_Bind (Socks (Id).Pcb, Port);
+      else
+         Rc := Aknet_Tcp_Bind (Socks (Id).Pcb, Port);
+      end if;
+      if Rc /= 0 then
          Reply (Status_Not_Ready, 0);
          return;
       end if;
@@ -1156,10 +1715,64 @@ package body Netserv_Engine is
       Port : constant U64 := Syscalls.Message.Words (1);
    begin
       if IP64 = 0 or else IP64 > 16#FFFF_FFFF#
-        or else (Socks (Id).Proto = Proto_Udp
+        or else (Socks (Id).Proto /= Proto_Icmp
                  and then (Port = 0 or else Port > 16#FFFF#))
       then
          Reply (Status_Bad_Args, 0);
+         return;
+      end if;
+      if Socks (Id).Proto = Proto_Tcp then
+         --  TCP connect (m72c): the handshake completes via lwIP
+         --  callbacks — synchronously on a hairpin, off the frame
+         --  drain for the wire — so, like Op_Ping, the reply is
+         --  deferred (Reply_Stash) and the service loop answers
+         --  it (0 ok / 4 refused / 5 timeout). Re-connect after a
+         --  failure gets a fresh pcb (lwIP freed the old one).
+         if Socks (Id).Listening
+           or else (Socks (Id).Conn_State /= Conn_Idle
+                    and then Socks (Id).Conn_State /= Conn_Failed)
+         then
+            Reply (Status_Bad_Args, 0);
+            return;
+         end if;
+         if not Socks (Id).Bound
+           and then not Bind_Ephemeral (Id)
+         then
+            Reply (Status_Not_Ready, 0);
+            return;
+         end if;
+         if Socks (Id).Pcb = System.Null_Address then
+            Socks (Id).Pcb := Aknet_Tcp_New (U32 (Id));
+            if Socks (Id).Pcb = System.Null_Address then
+               Reply (Status_Not_Ready, 0);
+               return;
+            end if;
+            --  A fresh pcb forgets the earlier bind.
+            if Aknet_Tcp_Bind
+                 (Socks (Id).Pcb, Socks (Id).Local_Port) /= 0
+            then
+               Reply (Status_Not_Ready, 0);
+               return;
+            end if;
+         end if;
+         Socks (Id).Peer_IP := U32 (IP64);
+         Socks (Id).Peer_Port := U32 (Port);
+         Socks (Id).Conn_Fail := 0;
+         --  Conn_State BEFORE the call: the connected/err
+         --  callbacks can fire synchronously out of a hairpinned
+         --  SYN and must see the Connecting state.
+         Socks (Id).Conn_State := Conn_Connecting;
+         Socks (Id).Conn_Deadline :=
+           Syscalls.Read_Time + Tcp_Cx_Timeout;
+         if Aknet_Tcp_Connect
+              (Socks (Id).Pcb, U32 (IP64), U32 (Port)) /= 0
+         then
+            Socks (Id).Conn_State := Conn_Idle;
+            Reply (Status_Not_Ready, 0);
+            return;
+         end if;
+         Socks (Id).Reply_Stash := Reply_H;
+         Reply_H := 0;
          return;
       end if;
       if Socks (Id).Proto = Proto_Udp
@@ -1175,11 +1788,115 @@ package body Netserv_Engine is
       Reply (Status_Ok, 0);
    end Handle_Sock_Connect;
 
+   --  Op_Listen (m72c): convert the bound TCP pcb to a listen
+   --  pcb. word0 = backlog hint (the table parks at most the
+   --  free slots; lwIP's own backlog bounds the wire side).
+   procedure Handle_Sock_Listen (Id : Natural) is
+      Pcb : System.Address := Socks (Id).Pcb;
+   begin
+      if Socks (Id).Proto /= Proto_Tcp
+        or else not Socks (Id).Bound
+        or else Socks (Id).Listening
+        or else Socks (Id).Conn_State /= Conn_Idle
+        or else Pcb = System.Null_Address
+      then
+         Reply (Status_Bad_Args, 0);
+         return;
+      end if;
+      if Aknet_Tcp_Listen (Pcb, U32 (Id)) /= 0 then
+         Reply (Status_Not_Ready, 0);
+         return;
+      end if;
+      Socks (Id).Pcb := Pcb;   --  tcp_listen consumed the old pcb
+      Socks (Id).Listening := True;
+      Reply (Status_Ok, 0);
+   end Handle_Sock_Listen;
+
+   --  Op_Accept (m72c, non-blocking): claim a parked child. Cap
+   --  transfer exactly like Op_Socket (cap0 = two-page ring pair,
+   --  cap1 = the client's ntfn); the reply carries the child id
+   --  and the client mints its badged cap itself. Status_Not_Ready
+   --  when the backlog is empty.
+   procedure Handle_Sock_Accept (Id : Natural) is
+      Ring  : constant U64 := Syscalls.Message.Caps (0);
+      Ntf   : constant U64 := Syscalls.Message.Caps (1);
+      Child : Natural := 0;
+      R     : U64;
+   begin
+      if not Socks (Id).Listening or else Ring = 0 or else Ntf = 0
+      then
+         if Ring /= 0 then
+            R := Syscalls.Cap_Delete (Ring);
+         end if;
+         if Ntf /= 0 then
+            R := Syscalls.Cap_Delete (Ntf);
+         end if;
+         Reply (Status_Bad_Args, 0);
+         return;
+      end if;
+      for I in 1 .. Max_Socks loop
+         if Socks (I).Used
+           and then Socks (I).Parent = Id
+           and then not Socks (I).Claimed
+         then
+            Child := I;
+            exit;
+         end if;
+      end loop;
+      if Child = 0 then
+         R := Syscalls.Cap_Delete (Ring);
+         R := Syscalls.Cap_Delete (Ntf);
+         Reply (Status_Not_Ready, 0);
+         return;
+      end if;
+      if Syscalls.Mem_Map
+           (Syscalls.Address_Space_Cap, Ring, Sock_VA (Child), 0,
+            Sock_Ring_Bytes, 3) /= 0
+      then
+         R := Syscalls.Cap_Delete (Ring);
+         R := Syscalls.Cap_Delete (Ntf);
+         Reply (Status_Not_Ready, 0);
+         return;
+      end if;
+      declare
+         Rx_Hdr : Ring_Words with Address =>
+           To_Addr (Sock_VA (Child));
+         Tx_Hdr : Ring_Words with Address =>
+           To_Addr (Sock_VA (Child) + Syscalls.Page_Size);
+      begin
+         Rx_Hdr := (others => 0);
+         Tx_Hdr := (others => 0);
+      end;
+      Socks (Child).Ring_Cap := Ring;
+      Socks (Child).Ntfn_Cap := Ntf;
+      Socks (Child).Claimed := True;
+      --  Bytes that arrived while the child was parked sit in
+      --  lwIP's refused_data (no ring to take them) — retry now.
+      Retry_Tcp (Child);
+      Reply (Status_Ok, U64 (Child));
+   end Handle_Sock_Accept;
+
    procedure Handle_Sock_Poll (Id : Natural) is
       VA : constant U64 := Sock_VA (Id);
       Rx_Level : U64;
       Tx_Used  : U64;
    begin
+      --  A listener's ring pair carries no data: the "RX level"
+      --  is the parked-accept backlog.
+      if Socks (Id).Listening then
+         Rx_Level := 0;
+         for I in 1 .. Max_Socks loop
+            if Socks (I).Used
+              and then Socks (I).Parent = Id
+              and then not Socks (I).Claimed
+            then
+               Rx_Level := Rx_Level + 1;
+            end if;
+         end loop;
+         Reply4 (Status_Ok, Rx_Level, 0, Socks (Id).Error);
+         return;
+      end if;
+      Retry_Tcp (Id);
       declare
          Hdr : Ring_Words with Address => To_Addr (VA);
       begin
@@ -1198,17 +1915,72 @@ package body Netserv_Engine is
    procedure Handle_Sock_Close (Id : Natural) is
       R : U64;
    begin
-      if Socks (Id).Pcb /= System.Null_Address then
-         Aknet_Udp_Del (Socks (Id).Pcb);
+      --  A deferred Op_Connect still owes its caller: answer it
+      --  (the socket is gone; that is the result).
+      if Socks (Id).Reply_Stash /= 0 then
+         Reply_To (Socks (Id).Reply_Stash, Err_Reset, 0);
+         Socks (Id).Reply_Stash := 0;
       end if;
+      if Socks (Id).Listening then
+         --  Unclaimed children were never seen by the client:
+         --  close them out. Claimed ones live on with their
+         --  client (POSIX semantics); drop the back-pointer.
+         for I in 1 .. Max_Socks loop
+            if Socks (I).Used and then Socks (I).Parent = Id then
+               if Socks (I).Claimed then
+                  Socks (I).Parent := 0;
+               else
+                  Free_Pcb (Proto_Tcp, Socks (I).Pcb, I);
+                  Socks (I) := (others => <>);
+               end if;
+            end if;
+         end loop;
+      end if;
+      Free_Pcb (Socks (Id).Proto, Socks (Id).Pcb, Id);
       Scrub_Pending (Id);
-      R := Syscalls.Mem_Unmap
-        (Syscalls.Address_Space_Cap, Sock_VA (Id), Sock_Ring_Bytes);
-      R := Syscalls.Cap_Delete (Socks (Id).Ring_Cap);
-      R := Syscalls.Cap_Delete (Socks (Id).Ntfn_Cap);
+      if Socks (Id).Claimed then
+         R := Syscalls.Mem_Unmap
+           (Syscalls.Address_Space_Cap, Sock_VA (Id),
+            Sock_Ring_Bytes);
+      end if;
+      if Socks (Id).Ring_Cap /= 0 then
+         R := Syscalls.Cap_Delete (Socks (Id).Ring_Cap);
+      end if;
+      if Socks (Id).Ntfn_Cap /= 0 then
+         R := Syscalls.Cap_Delete (Socks (Id).Ntfn_Cap);
+      end if;
       Socks (Id) := (others => <>);
       Reply (Status_Ok, 0);
    end Handle_Sock_Close;
+
+   --  Tick_Tcp: per-tick TCP bookkeeping (m72c) — connect
+   --  deadlines, refused-data retries and deferred EOF markers,
+   --  and backpressured TX rings (the sent callback covers the
+   --  ACK-driven cases; this bounds the rest at 50 ms).
+   procedure Tick_Tcp is
+   begin
+      for I in 1 .. Max_Socks loop
+         if Socks (I).Used and then Socks (I).Proto = Proto_Tcp then
+            if Socks (I).Conn_State = Conn_Connecting
+              and then Syscalls.Read_Time > Socks (I).Conn_Deadline
+            then
+               --  Connect timeout: the glue's close clears the
+               --  callbacks first, so this stays silent (no err
+               --  event); the deferred op completes below.
+               Free_Pcb (Proto_Tcp, Socks (I).Pcb, I);
+               Socks (I).Pcb := System.Null_Address;
+               Socks (I).Conn_State := Conn_Failed;
+               Socks (I).Conn_Fail := Err_Cx_Timeout;
+            end if;
+            Retry_Tcp (I);
+            if Socks (I).Conn_State = Conn_Up
+              and then Socks (I).Claimed
+            then
+               Drain_Sock_Tx (I);
+            end if;
+         end if;
+      end loop;
+   end Tick_Tcp;
 
    ------------------------------------------------------------------
    --  Op_Ping (internal test op, m71b; m72b: over the shared raw
@@ -1285,11 +2057,30 @@ package body Netserv_Engine is
    --  (dotted decimal, offset-0 whole-value writes). ReadDir and
    --  file-op badges: the file server forwards with per-client
    --  pid badges, so nothing here may assume badge 0 — the
-   --  socket ops live on disjoint labels (21..25).
+   --  socket ops live on disjoint labels (21..27).
    ------------------------------------------------------------------
 
    type Net_File is (Nf_None, Nf_Root, Nf_Status, Nf_Address,
-                     Nf_Gateway, Nf_Dns, Nf_Arp);
+                     Nf_Gateway, Nf_Dns, Nf_Arp, Nf_Tcp);
+
+   --  lwIP tcp_state values as words (the enum is stable across
+   --  2.x; 0 = closed/unknown also covers a freed pcb).
+   function Tcp_State_Image (S : Int) return String is
+   begin
+      case S is
+         when 1      => return "listen";
+         when 2      => return "syn_sent";
+         when 3      => return "syn_rcvd";
+         when 4      => return "established";
+         when 5      => return "fin_wait_1";
+         when 6      => return "fin_wait_2";
+         when 7      => return "close_wait";
+         when 8      => return "closing";
+         when 9      => return "last_ack";
+         when 10     => return "time_wait";
+         when others => return "closed";
+      end case;
+   end Tcp_State_Image;
 
    --  Render scratch (library level: content is tiny — the ARP
    --  file is the largest at a handful of ~30-byte lines).
@@ -1345,6 +2136,8 @@ package body Netserv_Engine is
          return Nf_Dns;
       elsif Path = "arp" then
          return Nf_Arp;
+      elsif Path = "tcp" then
+         return Nf_Tcp;
       end if;
       return Nf_None;
    end Resolve;
@@ -1391,6 +2184,28 @@ package body Netserv_Engine is
                then
                   Put_Line (Ip_Image (Render_Ip) & " "
                             & Mac_Image (Render_Mac));
+               end if;
+            end loop;
+         when Nf_Tcp =>
+            --  netstat-style (m72c): id, lwIP state, local and
+            --  peer endpoints; a parked (not yet Op_Accept'ed)
+            --  child is marked.
+            for I in 1 .. Max_Socks loop
+               if Socks (I).Used
+                 and then Socks (I).Proto = Proto_Tcp
+               then
+                  Put_Line
+                    (Dec (U32 (I)) & " "
+                     & (if Socks (I).Listening then "listen"
+                        elsif Socks (I).Pcb /= System.Null_Address
+                        then Tcp_State_Image
+                          (Aknet_Tcp_State (Socks (I).Pcb))
+                        else "closed")
+                     & " " & Ip_Image (My_IP) & ":"
+                     & Dec (Socks (I).Local_Port)
+                     & " " & Ip_Image (Socks (I).Peer_IP) & ":"
+                     & Dec (Socks (I).Peer_Port)
+                     & (if Socks (I).Claimed then "" else " parked"));
                end if;
             end loop;
          when others =>
@@ -1448,6 +2263,9 @@ package body Netserv_Engine is
                Name_Len := 3;
             when 4 =>
                Name (1 .. 3) := "arp";
+               Name_Len := 3;
+            when 5 =>
+               Name (1 .. 3) := "tcp";
                Name_Len := 3;
             when others =>
                null;
@@ -1853,7 +2671,7 @@ package body Netserv_Engine is
       --  LABEL, not badge: the file server forwards Net: ops with
       --  per-client pid badges (labels 0..18), raw service-cap
       --  calls arrive badge 0 (Op_Socket, Op_Ping), and socket
-      --  ops (21..25) arrive on the minted caps with badge =
+      --  ops (21..27) arrive on the minted caps with badge =
       --  socket id.
       ---------------------------------------------------------------
 
@@ -1879,6 +2697,7 @@ package body Netserv_Engine is
                   if (Bits and Signal_Tick) /= 0 then
                      Aknet_Check_Timeouts;
                      Check_Pending;
+                     Tick_Tcp;
                   end if;
                end;
             elsif L <= 18 then
@@ -1887,7 +2706,7 @@ package body Netserv_Engine is
                Handle_Ping;
             elsif L = Op_Socket and then Badge = 0 then
                Handle_Sock_Open;
-            elsif L >= Op_Bind and then L <= Op_Close
+            elsif L >= Op_Bind and then L <= Op_Accept
               and then Badge >= 1 and then Badge <= U64 (Max_Socks)
               and then Socks (Natural (Badge)).Used
             then
@@ -1898,11 +2717,19 @@ package body Netserv_Engine is
                   Handle_Sock_Connect (Id);
                elsif L = Op_Kick then
                   Drain_Sock_Tx (Id);    --  call (m72b: was send)
+                  --  m72c: hairpinned packets queue (reentrancy);
+                  --  deliver before the reply so a UDP hairpin
+                  --  keeps its m71c send-then-receive semantics.
+                  Aknet_Hairpin_Drain;
                   if Reply_H /= 0 then
                      Reply (Status_Ok, 0);
                   end if;
                elsif L = Op_Poll then
                   Handle_Sock_Poll (Id);
+               elsif L = Op_Listen then
+                  Handle_Sock_Listen (Id);
+               elsif L = Op_Accept then
+                  Handle_Sock_Accept (Id);
                else
                   Handle_Sock_Close (Id);
                end if;
@@ -1910,6 +2737,13 @@ package body Netserv_Engine is
                Reply (Status_Bad_Args, 0);
             end if;
          end;
+
+         --  m72c: whatever the dispatch queued onto the hairpin
+         --  (a connect's handshake, a close's FIN, tick-time
+         --  retransmits, refused-data window updates) is delivered
+         --  now — before the deferred completions below, so a
+         --  hairpinned connect is answered in this same round.
+         Aknet_Hairpin_Drain;
 
          --  Complete a deferred Op_Ping: the raw callback cleared
          --  Ping_Pending (success, report the RTT) or the timeout
@@ -1925,6 +2759,24 @@ package body Netserv_Engine is
                Ping_Reply_H := 0;
             end if;
          end if;
+
+         --  Complete deferred Op_Connects (m72c): the connected/
+         --  err callbacks (synchronous on a hairpin, off the
+         --  frame drain on the wire) or the tick's timeout abort
+         --  have set the outcome; reply with 0 / 4 / 5.
+         for I in 1 .. Max_Socks loop
+            if Socks (I).Used and then Socks (I).Reply_Stash /= 0
+            then
+               if Socks (I).Conn_State = Conn_Up then
+                  Reply_To (Socks (I).Reply_Stash, Status_Ok, 0);
+                  Socks (I).Reply_Stash := 0;
+               elsif Socks (I).Conn_State = Conn_Failed then
+                  Reply_To (Socks (I).Reply_Stash,
+                            Socks (I).Conn_Fail, 0);
+                  Socks (I).Reply_Stash := 0;
+               end if;
+            end if;
+         end loop;
       end loop;
    end Run;
 

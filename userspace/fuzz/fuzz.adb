@@ -4227,6 +4227,10 @@ begin
                       "ping unreachable RC 10");
          Run_Command ("Sys:C/Type", "Net:status", 0,
                       "type Net:status");
+         --  m72c: the TCP netstat listing (content varies with
+         --  Tcp_Test's sockets; RC 0 is the check).
+         Run_Command ("Sys:C/Type", "Net:tcp", 0,
+                      "type Net:tcp");
 
          Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
                       "cd missing dir fails");

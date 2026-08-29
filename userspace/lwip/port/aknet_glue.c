@@ -1,4 +1,4 @@
-/*  Milestone 72b: lwIP <-> netserv glue.
+/*  Milestone 72b/72c: lwIP <-> netserv glue.
  *
  *  netserv.adb keeps the whole client-facing surface (ring pairs,
  *  badges, ops, Net: volume); this file is the thin adapter between
@@ -11,8 +11,18 @@
  *
  *  Hairpin: m71c looped "dst == our own address" traffic back
  *  locally. lwIP has no ARP entry for ourselves, so aknet_output
- *  intercepts own-address packets at the IP layer and feeds them
- *  straight back into ip4_input — the wire never sees them.
+ *  intercepts own-address packets at the IP layer. They are NOT
+ *  fed synchronously into ip4_input (m72c): tcp_in.c keeps parse
+ *  state in file-static variables (inseg/recv_flags/recv_data), so
+ *  a reentrant tcp_input — SYN hairpinned from inside tcp_connect,
+ *  its SYN-ACK from inside the SYN's tcp_input — corrupts the
+ *  in-flight handshake (the m72c hairpin-connect wedge), the same
+ *  reason lwIP's own loopif queues loopback packets. And the queue
+ *  holds COPIES, not pbuf refs: lwIP's input path mutates the pbuf
+ *  it is handed (pbuf_remove_header), which corrupts a TCP segment
+ *  still parked in the sender's unacked queue. Hairpinned copies
+ *  sit on a FIFO drained by aknet_hairpin_drain, called only from
+ *  netserv's top-level contexts, never from a callback.
  *
  *  The netmask is 0.0.0.0 on purpose: the m71c stack had no
  *  routing and ARPed every destination directly (slirp's network
@@ -49,6 +59,15 @@ static struct netif aknet_netif;
 static u8_t aknet_txbuf[2048];
 static u8_t aknet_rxbuf[2048];
 
+/*  Hairpin queue (see the file header): own-address pbufs held
+ *  for later, non-reentrant delivery. 16 entries is far beyond
+ *  anything a drain round can accumulate. */
+#define AKNET_HQ_SIZE 16
+static struct pbuf *aknet_hq[AKNET_HQ_SIZE];
+static u32_t aknet_hq_head;
+static u32_t aknet_hq_tail;
+static u8_t  aknet_hq_draining;
+
 /*------------------------------------------------------------------*/
 /*  netif driver                                                    */
 /*------------------------------------------------------------------*/
@@ -71,15 +90,52 @@ aknet_output (struct netif *netif, struct pbuf *p,
 {
    if (ip4_addr_cmp (ipaddr, netif_ip4_addr (netif)))
       {
-         /*  Hairpin: ip4_input consumes its pbuf, but a netif
-          *  output function must not consume the caller's pbuf
-          *  (aknet_raw_send/aknet_udp_send free it after sendto).
-          *  Keep the caller's reference alive across the hairpin
-          *  or the send path double-frees and corrupts the pool. */
-         pbuf_ref (p);
-         return ip4_input (p, netif);
+         struct pbuf *q;
+
+         /*  Hairpin: queue a COPY for aknet_hairpin_drain (the
+          *  queue avoids reentrant tcp_input — tcp_in.c keeps
+          *  parse state in file-static variables). A copy, never
+          *  a pbuf_ref of the caller's pbuf: lwIP's input path
+          *  mutates what it is handed (pbuf_remove_header in
+          *  tcp_input), and the caller can keep that pbuf — a
+          *  TCP segment lives in the unacked queue for the whole
+          *  RTT; mutating it corrupts the segment's bookkeeping
+          *  (the m72c unpurgeable-SYN-ACK nagle deadlock). UDP/
+          *  ICMP freed theirs immediately, which is why m72b's
+          *  ref-based hairpin looked fine. */
+         if (aknet_hq_tail - aknet_hq_head >= AKNET_HQ_SIZE)
+            return ERR_MEM;
+         q = pbuf_alloc (PBUF_RAW, p->tot_len, PBUF_RAM);
+         if (q == NULL)
+            return ERR_MEM;
+         pbuf_copy (q, p);
+         aknet_hq[aknet_hq_tail % AKNET_HQ_SIZE] = q;
+         aknet_hq_tail++;
+         return ERR_OK;
       }
    return etharp_output (netif, p, ipaddr);
+}
+
+/*  Deliver every queued hairpin packet, FIFO. Draining can
+ *  enqueue more (the SYN-ACK's delivery produces the ACK), so
+ *  loop until empty. Called only from netserv's top-level
+ *  contexts — the drain guard makes a stray nested call (none
+ *  exist today) a harmless no-op, not corruption. */
+void
+aknet_hairpin_drain (void)
+{
+   if (aknet_hq_draining)
+      return;
+   aknet_hq_draining = 1;
+   while (aknet_hq_head != aknet_hq_tail)
+      {
+         struct pbuf *p = aknet_hq[aknet_hq_head % AKNET_HQ_SIZE];
+
+         aknet_hq_head++;
+         if (ip4_input (p, &aknet_netif) != ERR_OK)
+            pbuf_free (p);
+      }
+   aknet_hq_draining = 0;
 }
 
 static err_t
@@ -329,4 +385,257 @@ void
 aknet_timeouts (void)
 {
    sys_check_timeouts ();
+}
+
+/*------------------------------------------------------------------*/
+/*  TCP sockets (m72c): one tcp_pcb per stream socket, listen pcbs  */
+/*  for Op_Listen. Callback arg = socket id everywhere.             */
+/*                                                                  */
+/*  RX backpressure rides lwIP's refused-data mechanism (verified   */
+/*  in tcp_in.c/tcp.c): the recv callback accepts a chain only      */
+/*  when aknet_on_tcp_rx reports it stored WHOLE in the socket's    */
+/*  RX ring; otherwise it returns ERR_MEM and lwIP keeps the chain  */
+/*  in pcb->refused_data (we must not free it), re-delivering on    */
+/*  the fast timer or on aknet_tcp_kick. The CLOSED event (recv     */
+/*  callback with p == NULL) is delivered only after refused data,  */
+/*  so the Ada-side EOF marker stays in stream order. TCP_WND ==    */
+/*  the ring capacity (4 x 996) makes any in-window chain fit an    */
+/*  empty ring, so a whole-chain accept is always possible once     */
+/*  the client drains.                                              */
+/*                                                                  */
+/*  Accept parking: the accept callback asks the Ada side for a     */
+/*  child socket slot; on success the child pcb is parked (client   */
+/*  claims it with Op_Accept), on overflow ERR_ABRT makes lwIP      */
+/*  abort the embryonic connection. tcp_accepted needs the LISTEN   */
+/*  pcb, which the callback does not receive — hence the per-id     */
+/*  listen table below.                                             */
+/*------------------------------------------------------------------*/
+
+#include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"   /*  tcp_process_refused_data */
+
+extern int   aknet_on_tcp_accept (u32_t id, struct tcp_pcb *newpcb);
+extern void  aknet_on_tcp_connected (u32_t id, int err);
+extern int   aknet_on_tcp_rx (u32_t id, struct pbuf *p);
+extern void  aknet_on_tcp_eof (u32_t id);
+extern void  aknet_on_tcp_sent (u32_t id, u32_t len);
+extern void  aknet_on_tcp_err (u32_t id, int err);
+
+#define AKNET_MAX_SOCKS 8
+
+static struct tcp_pcb *aknet_listen_pcbs[AKNET_MAX_SOCKS + 1];
+
+static err_t aknet_tcp_rx_cb (void *arg, struct tcp_pcb *tpcb,
+                              struct pbuf *p, err_t err);
+static err_t aknet_tcp_sent_cb (void *arg, struct tcp_pcb *tpcb,
+                                u16_t len);
+static void  aknet_tcp_err_cb (void *arg, err_t err);
+
+static void
+aknet_tcp_set_cbs (struct tcp_pcb *pcb)
+{
+   tcp_recv (pcb, aknet_tcp_rx_cb);
+   tcp_sent (pcb, aknet_tcp_sent_cb);
+   tcp_err (pcb, aknet_tcp_err_cb);
+}
+
+static err_t
+aknet_tcp_accept_cb (void *arg, struct tcp_pcb *newpcb, err_t err)
+{
+   u32_t id = (u32_t) (uintptr_t) arg;
+
+   (void) err;
+   if (aknet_on_tcp_accept (id, newpcb) != 0)
+      return ERR_ABRT;
+   /*  The Ada side parked the pcb; free a lwIP backlog slot. */
+   if (id >= 1 && id <= AKNET_MAX_SOCKS
+       && aknet_listen_pcbs[id] != NULL)
+      tcp_accepted (aknet_listen_pcbs[id]);
+   return ERR_OK;
+}
+
+static err_t
+aknet_tcp_connected_cb (void *arg, struct tcp_pcb *tpcb, err_t err)
+{
+   (void) tpcb;
+   aknet_on_tcp_connected ((u32_t) (uintptr_t) arg, (int) err);
+   return ERR_OK;
+}
+
+static err_t
+aknet_tcp_rx_cb (void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
+                 err_t err)
+{
+   (void) err;
+   if (p == NULL)
+      {
+         aknet_on_tcp_eof ((u32_t) (uintptr_t) arg);
+         return ERR_OK;
+      }
+   if (aknet_on_tcp_rx ((u32_t) (uintptr_t) arg, p) == 0)
+      return ERR_MEM;   /*  refused: lwIP keeps + retries (see above) */
+   tcp_recved (tpcb, p->tot_len);
+   pbuf_free (p);
+   return ERR_OK;
+}
+
+static err_t
+aknet_tcp_sent_cb (void *arg, struct tcp_pcb *tpcb, u16_t len)
+{
+   (void) tpcb;
+   aknet_on_tcp_sent ((u32_t) (uintptr_t) arg, (u32_t) len);
+   return ERR_OK;
+}
+
+static void
+aknet_tcp_err_cb (void *arg, err_t err)
+{
+   aknet_on_tcp_err ((u32_t) (uintptr_t) arg, (int) err);
+}
+
+struct tcp_pcb *
+aknet_tcp_new (u32_t id)
+{
+   struct tcp_pcb *pcb = tcp_new ();
+
+   if (pcb != NULL)
+      tcp_arg (pcb, (void *) (uintptr_t) id);
+   return pcb;
+}
+
+int
+aknet_tcp_bind (struct tcp_pcb *pcb, u32_t port)
+{
+   return (int) tcp_bind (pcb, IP_ADDR_ANY, (u16_t) port);
+}
+
+/*  tcp_listen CONSUMES *ppcb and returns the listen pcb; the Ada
+ *  side keeps its table entry pointing at the result. */
+int
+aknet_tcp_listen (struct tcp_pcb **ppcb, u32_t id)
+{
+   struct tcp_pcb *l;
+
+   tcp_arg (*ppcb, (void *) (uintptr_t) id);
+   l = tcp_listen (*ppcb);
+   if (l == NULL)
+      return ERR_MEM;
+   *ppcb = l;
+   if (id >= 1 && id <= AKNET_MAX_SOCKS)
+      aknet_listen_pcbs[id] = l;
+   tcp_accept (l, aknet_tcp_accept_cb);
+   return 0;
+}
+
+/*  Accepted child: full callback set under its own socket id. */
+void
+aknet_tcp_attach (struct tcp_pcb *pcb, u32_t id)
+{
+   tcp_arg (pcb, (void *) (uintptr_t) id);
+   aknet_tcp_set_cbs (pcb);
+}
+
+int
+aknet_tcp_connect (struct tcp_pcb *pcb, u32_t ip, u32_t port)
+{
+   ip4_addr_t dst;
+
+   ip4_addr_set_u32 (&dst, PP_HTONL (ip));
+   aknet_tcp_set_cbs (pcb);
+   return (int) tcp_connect (pcb, &dst, (u16_t) port,
+                             aknet_tcp_connected_cb);
+}
+
+int
+aknet_tcp_write (struct tcp_pcb *pcb, const u8_t *data, u32_t len)
+{
+   return (int) tcp_write (pcb, data, (u16_t) len,
+                           TCP_WRITE_FLAG_COPY);
+}
+
+int
+aknet_tcp_output (struct tcp_pcb *pcb)
+{
+   return (int) tcp_output (pcb);
+}
+
+/*  Retry a parked (refused) RX chain now instead of waiting for
+ *  the fast timer — called after Accept maps the ring, on the
+ *  tick and on client ops. The NULL check is ours: lwIP only
+ *  guards refused_data under LWIP_WND_SCALE, and
+ *  tcp_process_refused_data on an empty pcb dereferences NULL
+ *  (the m72c stval=0x15 fault). */
+int
+aknet_tcp_kick (struct tcp_pcb *pcb)
+{
+   if (pcb->refused_data == NULL)
+      return 0;
+   return (int) tcp_process_refused_data (pcb);
+}
+
+/*  Close from any state. Callbacks are cleared first so no late
+ *  event (CLOSEPEND retry, RST in flight) can touch a socket slot
+ *  the Ada side is about to free; a pcb that cannot FIN now is
+ *  aborted instead. */
+int
+aknet_tcp_close (struct tcp_pcb *pcb, u32_t id)
+{
+   err_t e;
+
+   if (id >= 1 && id <= AKNET_MAX_SOCKS)
+      aknet_listen_pcbs[id] = NULL;   /*  harmless for non-listeners */
+   tcp_arg (pcb, NULL);
+   /*  tcp_recv/sent/err assert on LISTEN pcbs (and the default
+       LWIP_PLATFORM_ASSERT aborts): a listener only ever got
+       tcp_accept, so there is nothing to clear. */
+   if (pcb->state != LISTEN)
+   {
+      tcp_recv (pcb, NULL);
+      tcp_sent (pcb, NULL);
+      tcp_err (pcb, NULL);
+   }
+   e = tcp_close (pcb);
+   if (e != ERR_OK)
+      tcp_abort (pcb);
+   return 0;
+}
+
+/*  Introspection for the Net:tcp listing. */
+int
+aknet_tcp_state (struct tcp_pcb *pcb)
+{
+   return (int) pcb->state;
+}
+
+u32_t
+aknet_tcp_local_port (struct tcp_pcb *pcb)
+{
+   return (u32_t) pcb->local_port;
+}
+
+u32_t
+aknet_tcp_remote_port (struct tcp_pcb *pcb)
+{
+   return (u32_t) pcb->remote_port;
+}
+
+u32_t
+aknet_tcp_remote_ip (struct tcp_pcb *pcb)
+{
+   return PP_NTOHL (ip4_addr_get_u32 (ip_2_ip4 (&pcb->remote_ip)));
+}
+
+/*  pbuf accessors for the Ada-side ring chunker (the recv callback
+ *  hands the chain over; Ada copies slot-sized pieces straight out
+ *  of it). */
+u32_t
+aknet_pbuf_totlen (struct pbuf *p)
+{
+   return (u32_t) p->tot_len;
+}
+
+void
+aknet_pbuf_copy (struct pbuf *p, u32_t off, u8_t *dst, u32_t len)
+{
+   pbuf_copy_partial (p, dst, (u16_t) len, (u16_t) off);
 }

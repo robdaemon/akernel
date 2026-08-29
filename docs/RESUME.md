@@ -644,10 +644,10 @@ Chunks (each independently shippable + green):
 - **M72a — plumbing (done).** gitignore + Makefile fetch rules; lwip.gpr +
   port layer; netserv.gpr withs it, lwip_init() smoke at startup,
   stack not yet switched. Gate: full suite green.
-- **M72b — engine swap.** All m71c tests pass byte-for-byte unchanged
+- **M72b — engine swap (done).** All m71c tests pass byte-for-byte unchanged
   (udp_test, ping ×3, Net: files, fuzz e2e) — the regression net.
   Hand-rolled ARP/IPv4/UDP/ICMP deleted.
-- **M72c — TCP.** Tests/Tcp_Test (manifest program 13, deterministic
+- **M72c — TCP (done).** Tests/Tcp_Test (manifest program 13, deterministic
   hairpin: listen/accept/connect, bidirectional echo, multi-KB
   transfer, refused, orderly close) + tools/tcp_echo.py host server
   on 127.0.0.1 started by make test (guest → 10.0.2.2 via slirp) +
@@ -738,6 +738,53 @@ The instr8 "PT page == RX ring frame" observation never recurred
 in later runs and remains unexplained — keep on the watchlist.
 Gates: SMP1 1413P/0F, SMP4 1414P/0F, zero-warning build.
 
+**M72c landed (2026-08-28).** TCP end to end on the raw API.
+New ops Op_Listen=26/Op_Accept=27 (non-blocking; the accept
+callback parks the child pcb in a free table slot unclaimed and
+ringless; Op_Accept transfers a fresh ring pair + ntfn on the
+LISTENER's cap like Op_Socket and replies the child id, the client
+mints its badge — `Accept_Connection`, `accept` being reserved).
+Connect is deferred (Reply_Stash + 5 s deadline, sticky errors
+4 refused / 5 timeout / 6 reset); Conn_State goes Connecting
+BEFORE tcp_connect because hairpin callbacks fire synchronously.
+EOF = zero-length ring slot, flags bit 0; Recv_From reports it as
+Status_Ok/Count=0. Backpressure rides lwIP's refused-data: the rx
+callback accepts a chain whole-or-nothing (TCP_WND 3984 == ring
+capacity 4×996, load-bearing) and returns ERR_MEM otherwise, lwIP
+parks it in refused_data and retries on the fast timer; CLOSED
+(p==NULL → our eof cb) is delivered only after refused data
+drains, so the EOF marker lands behind every byte. Tx backpressure
+ERR_MEM → sent-cb + 50 ms tick retry. Tests/Tcp_Test (manifest
+13): Net:address, hairpin listen/connect/accept, echo both ways,
+8 KiB pattern (i*7+3 mod 256) interleaved send/recv, refused
+connect, orderly close EOF, then slirp echo to the host's
+tools/tcp_echo.py (make test starts it, 127.0.0.1:10007); fuzz
+`type Net:tcp` netstat listing. Bug crop, all lwIP contracts now
+commented in the port:
+- tcp_in.c keeps parse state in file-statics, so a reentrant
+  tcp_input (SYN hairpinned from inside tcp_connect) corrupts the
+  in-flight handshake — the hairpin now QUEUES packets and drains
+  them from top-level contexts only (the Op_Kick branch preserves
+  m71c's send-then-receive ping semantics), same reason lwIP's
+  loopif queues.
+- tcp_process_refused_data dereferences refused_data->flags with
+  no null guard (unless LWIP_WND_SCALE): aknet_tcp_kick must
+  null-check first (stval=0x15 fault; pbuf.flags sits at 0x15).
+- lwIP's input path MUTATES the pbuf it is handed
+  (pbuf_remove_header): the hairpin must queue a COPY, never a
+  pbuf_ref — a shared pbuf let tcp_input rewrite a segment still
+  parked in the sender's unacked queue, which underflowed
+  TCP_TCPLEN into an unpurgeable unacked entry and a nagle
+  deadlock (child never sent).
+- RTS Recv_From wrapped the modular copy loop for zero-length
+  slots (0-1 = U64'Last → CONSTRAINT_ERROR in the first-ever
+  empty slot, the EOF marker itself; process died in the LCH).
+- tcp_recv/sent/err/poll all LWIP_ASSERT on LISTEN pcbs and the
+  default LWIP_PLATFORM_ASSERT aborts: aknet_tcp_close skips the
+  callback clearing for listeners (netserv died on listener close
+  and took every later network test with it).
+Gates: SMP1 1453P/0F ×8, SMP4 1453P/0F ×3, zero-warning build.
+
 - **M73 — GNAT.Sockets.** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
@@ -756,7 +803,17 @@ caps** (Kernel.IPC.Reply zeroes them): libman's reply-cap path has
 never delivered — Open_Library silently falls back to Open_Via_Self
 (private copies, so the shared-library cache is untested). Fixing it
 means Transfer_Message on the reply direction + auditing every reply
-site in every server to clear Message.Caps.
+site in every server to clear Message.Caps. **SMP4 console loss:
+occasionally one verdict line vanishes entirely (bytes lost, not
+garbled — "fat rename ok", "PASS thread_test"), neighbors intact,
+suite otherwise green; pre-existing writer race, not counted as a
+failure.** **Whole-system stall flake: two SMP1 runs early in the
+m72c gate stopped mid-fuzz (pipe reader spawn-wait; elevate spawn)
+with 0 FAILs, then 8/8 SMP1 + 3/3 SMP4 clean on identical bits —
+signature matches the still-open endpoint-queue-integrity watchlist
+entry above (short-lived spawned peers = "death while queued"
+candidates); reproducer+probe loop lives at
+/tmp/opencode/m72c_repro.sh + m72c_probe1.py.**
 
 ## Open candidates
 
