@@ -785,6 +785,32 @@ commented in the port:
   and took every later network test with it).
 Gates: SMP1 1453P/0F ×8, SMP4 1453P/0F ×3, zero-warning build.
 
+**SMP1 suite-time regression root-caused (2026-08-28): 9m36 →
+4m16, now level with SMP4's ~4 min.** Two stacked costs, both in
+the UP wakeup path, neither in M72c proper (15e0f45 timed the same
+9m47 as e8fc564):
+- IRQ-wake latency behind the hog. Drivers block in Ntfn_Wait; the
+  external-IRQ path woke them boosted at the queue head but
+  RETURNED to the interrupted thread — on UP, Notify_Work's IPI
+  no-ops with one hart, so the waiter sat behind Tests/Spin for
+  the rest of the 50 ms quantum on every device round trip (the
+  boost only took effect at the next tick). Fix: new
+  Kernel.Scheduler.Should_Boost_Preempt (queued boosted thread at
+  priority >= an unboosted running thread) checked at
+  external-interrupt exit on UP only, Handle_Preemption if set.
+  SMP4 keeps tick/IPI semantics. Worth ~90 s alone.
+- Spin's fair 50/50 share. The 3cf6791 "hog only fills idle" era
+  predates the M70 scripting suite; CPU-bound spawn/script phases
+  now dominate, and fair sharing with the hog doubles them. Fix:
+  Spin demotes itself to priority -1 when CPU_Count = 1 — every
+  woken thread strictly outranks it (priority preemption already
+  fires at syscall tail and now IRQ exit), so it fills true idle
+  only; the canary is intact (still spins forever, still hangs
+  the boot if timer preemption breaks). SMP keeps priority 0.
+  Worth ~4 min.
+Measured: SMP1 9m36s pre-fix, 8m10s kernel-only, 4m16s both;
+SMP4 4m16s, 0 FAIL everywhere.
+
 - **M73 — GNAT.Sockets.** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend

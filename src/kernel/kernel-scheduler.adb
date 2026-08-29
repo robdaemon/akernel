@@ -308,6 +308,41 @@ package body Kernel.Scheduler is
       return False;
    end Should_Preempt;
 
+   --  True when a boosted (freshly woken) thread waits in the ready
+   --  queue and this hart's running thread is unboosted and no
+   --  higher in priority.  On UP there is no IPI to deliver a wake
+   --  (Kernel.CPUs.Notify_Work no-ops with one hart), so without an
+   --  explicit check a driver woken by its IRQ sits behind a CPU
+   --  hog for the rest of the 50 ms quantum — the Spin canary then
+   --  costs real wall time per device round trip.  Checked at
+   --  external-interrupt exit; Handle_Preemption no-ops for
+   --  kernel/idle traps.  Boost stays positional: the pop consumes
+   --  it, so a preempted hog simply resumes at the next tick.
+   function Should_Boost_Preempt return Boolean is
+      Cur  : constant Kernel.Tasks.Thread_Access := My_Current;
+      Cand : Kernel.Tasks.Thread_Access;
+   begin
+      if Cur = null
+        or else Kernel.Tasks.State (Cur.all) /= Kernel.Tasks.Running
+        or else Kernel.Tasks.Is_Boosted (Cur.all)
+      then
+         return False;
+      end if;
+
+      for R in 0 .. Count - 1 loop
+         Cand := Queue (Queue_Index (R));
+         if Cand /= null
+           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
+           and then Kernel.Tasks.Is_Boosted (Cand.all)
+           and then Kernel.Tasks.Priority (Cand.all)
+                      >= Kernel.Tasks.Priority (Cur.all)
+         then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Should_Boost_Preempt;
+
    procedure Yield (Result : out Status) is
       Next : Kernel.Tasks.Thread_Access;
    begin

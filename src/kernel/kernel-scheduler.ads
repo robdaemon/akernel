@@ -53,6 +53,11 @@ package Kernel.Scheduler is
    --  crossing wake reschedules immediately, not at the next tick.
    function Should_Preempt return Boolean;
 
+   --  Boost analog of Should_Preempt, for the UP IRQ-exit path
+   --  (see the body).  Not consulted on SMP: sibling harts absorb
+   --  the wake latency there.
+   function Should_Boost_Preempt return Boolean;
+
    function Ready_Count return Natural;
 
    --  Sleep queue (milestone 66b).  Deadline is an absolute time in

@@ -2787,6 +2787,21 @@ package body Arch.Traps is
         and then Code = Supervisor_External
       then
          Board.Interrupts.Handle_External_Interrupt;
+         --  UP wakeup-boost delivery: the IRQ may have woken a
+         --  driver/Ntfn waiter, now boosted at the queue head.
+         --  With one hart Notify_Work cannot IPI, so without this
+         --  check the waiter sits behind a running CPU hog (the
+         --  Spin canary) for the rest of the 50 ms quantum on
+         --  every device round trip.  Preempt now, like the
+         --  priority-crossing checks; Handle_Preemption no-ops for
+         --  SPP-set (kernel/idle) traps.  SMP keeps tick/IPI
+         --  latency: sibling harts absorb wakes there.
+         if Kernel.Scheduler.Should_Preempt
+           or else (Kernel.CPUs.Count <= 1
+                    and then Kernel.Scheduler.Should_Boost_Preempt)
+         then
+            Handle_Preemption (Frame);
+         end if;
          return;
       elsif (Cause and Interrupt_Bit) /= 0
         and then Code = Supervisor_Software
