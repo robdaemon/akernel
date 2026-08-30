@@ -607,6 +607,20 @@ aknet_tcp_state (struct tcp_pcb *pcb)
    return (int) pcb->state;
 }
 
+/*  m73: peer address of a connected/accepted pcb, so accept(2) can
+ *  fill the caller's sockaddr_in.  lwIP stores remote_ip.addr in
+ *  network order; the RTS/engine convention is the host-order packed
+ *  integer (a<<24|b<<16|c<<8|d), hence the ntohl. */
+int
+aknet_tcp_peer (struct tcp_pcb *pcb, u32_t *ip, u16_t *port)
+{
+   if (pcb == NULL)
+      return -1;
+   *ip = PP_NTOHL (pcb->remote_ip.addr);
+   *port = pcb->remote_port;
+   return 0;
+}
+
 u32_t
 aknet_tcp_local_port (struct tcp_pcb *pcb)
 {

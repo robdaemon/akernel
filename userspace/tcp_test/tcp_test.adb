@@ -67,6 +67,8 @@ procedure Tcp_Test is
    Rx_Lvl : U64;
    Tx_Free : U64;
    Err    : U64;
+   Peer_IP   : U32;
+   Peer_Port : U64;
    Src_IP : U32;
    Src_Port : U64;
    Name_Buf : String (1 .. 32);
@@ -139,9 +141,11 @@ begin
    Expect (St = Sock.Status_Ok and then Rx_Lvl = 1,
            "tcp listener backlog reports one pending");
 
-   St := Sock.Accept_Connection (A, C);
+   St := Sock.Accept_Connection (A, C, Peer_IP, Peer_Port);
    Expect (St = Sock.Status_Ok and then C /= 0,
            "tcp accept returns the child");
+   Expect (Peer_IP = My_IP and then Peer_Port /= 0,
+           "tcp accept reports the peer address");
 
    --  Small echo both ways.
    Put ("hello tcp");

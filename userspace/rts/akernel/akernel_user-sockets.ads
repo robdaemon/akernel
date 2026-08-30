@@ -80,6 +80,12 @@ package Akernel_User.Sockets is
    --  command ABI handle 6 for C: programs).
    procedure Attach (Net_Cap : U64);
 
+   --  The attached netserv endpoint (0 = not attached). Mirrors
+   --  Files.Endpoint/Console.Endpoint: the GNAT.Sockets bridge
+   --  (m73) lazily attaches handle 6 unless a program attached its
+   --  own first.
+   function Endpoint return U64;
+
    --  New socket (Proto = IPPROTO_UDP, IPPROTO_ICMP or
    --  IPPROTO_TCP); Handle returns the minted socket cap.
    --  Protocol status.
@@ -103,9 +109,14 @@ package Akernel_User.Sockets is
 
    --  TCP: claim a pending connection on a listener as a fresh
    --  stream handle. Non-blocking: Status_Not_Ready when the
-   --  backlog is empty (Poll's rx level reports it).
+   --  backlog is empty (Poll's rx level reports it). Peer_*
+   --  return the connection's remote address (m73: BSD accept
+   --  fills a sockaddr_in from them).
    function Accept_Connection
-     (Handle : U64; New_Handle : out U64) return U64;
+     (Handle     : U64;
+      New_Handle : out U64;
+      Peer_IP    : out U32;
+      Peer_Port  : out U64) return U64;
 
    --  Queue a datagram (Len <= 996) and kick the server. IP/Port
    --  select the destination; pass 0/0 for the Connect default.
@@ -153,5 +164,21 @@ package Akernel_User.Sockets is
 
    --  The reverse: "10.0.2.15".
    function Ip_Image (IP : U32) return String;
+
+   --  m73: C-convention exports for gnat_user/akernel_gsocket.c
+   --  (GNAT.Sockets' C helper layer).  Scalars and out-parameters
+   --  only, so the C ABI matches the Ada profile directly.
+private
+   pragma Export (C, Attach, "aknet_sock_attach");
+   pragma Export (C, Endpoint, "aknet_sock_endpoint");
+   pragma Export (C, Socket, "aknet_sock_socket");
+   pragma Export (C, Bind, "aknet_sock_bind");
+   pragma Export (C, Connect, "aknet_sock_connect");
+   pragma Export (C, Listen, "aknet_sock_listen");
+   pragma Export (C, Accept_Connection, "aknet_sock_accept");
+   pragma Export (C, Send_To, "aknet_sock_sendto");
+   pragma Export (C, Recv_From, "aknet_sock_recvfrom");
+   pragma Export (C, Poll, "aknet_sock_poll");
+   pragma Export (C, Close, "aknet_sock_close");
 
 end Akernel_User.Sockets;

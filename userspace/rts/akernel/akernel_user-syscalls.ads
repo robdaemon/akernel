@@ -404,10 +404,16 @@ package Akernel_User.Syscalls is
       Badge : U64;
    end record;
 
-   Message : IPC_Message
-     with Volatile, Address =>
-       System'To_Address (System.Storage_Elements.Integer_Address
-         (IPC_Buffer_VA));
+   type IPC_Message_Access is access all IPC_Message;
+
+   --  Message (m73): the CALLING thread's IPC buffer view.  The
+   --  legacy fixed IPC_Buffer_VA only covers the initial thread;
+   --  secondary threads (Jorvik tasks) get their own page, whose
+   --  VA the kernel reports via syscall 43.  A function returning
+   --  access keeps the existing Message.Label / Message.Words
+   --  notation working via implicit dereference.
+   function Message return IPC_Message_Access;
+   pragma Inline (Message);
 
    --  Spawn grant list: up to Max_Grants entries of (source handle,
    --  rights mask, badge) written into this thread's buffer page at

@@ -184,7 +184,7 @@ package body Netserv_Engine is
     Ring_Bytes : constant U64 := Ring_Pages * Syscalls.Page_Size;
     Tx_VA      : constant U64 := 16#5410_0000#;
     Sock_VA_Base   : constant U64 := 16#5420_0000#;
-    Sock_VA_Stride : constant U64 := 16#10_0000#;
+    Sock_VA_Stride : constant U64 := 16#1_0000#;
     Buf_Win_VA     : constant U64 := 16#54A0_0000#;
     Buf_Bytes      : constant U64 := 8 * Syscalls.Page_Size;
     Ticker_Stack_Top : constant U64 := 16#54B0_1000#;
@@ -369,6 +369,13 @@ package body Netserv_Engine is
     function Aknet_Tcp_State (Pcb : System.Address) return Int
       with Import, Convention => C, External_Name => "aknet_tcp_state";
 
+   --  m73: peer address of a parked/claimed child (accept(2) wants
+   --  it for the caller's sockaddr_in).
+    function Aknet_Tcp_Peer
+      (Pcb : System.Address; Ip : out U32; Port : out U32) return Int
+      with Import, Convention => C,
+           External_Name => "aknet_tcp_peer";
+
     function Aknet_Tcp_Remote_Port (Pcb : System.Address) return U32
       with Import, Convention => C,
            External_Name => "aknet_tcp_remote_port";
@@ -450,7 +457,9 @@ package body Netserv_Engine is
     --  False — until Op_Accept transfers one); Pend_Eof defers
     --  the EOF marker when the ring is full; Eof_Done suppresses
     --  a duplicate marker when a reset follows an orderly FIN.
-    Max_Socks : constant := 8;
+    --  m73: 8 -> 16; concurrent GNAT.Sockets programs (gsock_test
+    --  alongside tcp/udp/net tests) transiently overflowed 8.
+    Max_Socks : constant := 16;
 
     type Sock_State is record
        Used       : Boolean := False;
@@ -1870,10 +1879,24 @@ package body Netserv_Engine is
       Socks (Child).Ring_Cap := Ring;
       Socks (Child).Ntfn_Cap := Ntf;
       Socks (Child).Claimed := True;
+      --  m73: record the peer so the reply can carry it (BSD
+      --  accept fills the caller's sockaddr_in).
+      declare
+         Ip   : U32 := 0;
+         Port : U32 := 0;
+         Rc   : Int;
+      begin
+         Rc := Aknet_Tcp_Peer (Socks (Child).Pcb, Ip, Port);
+         if Rc = 0 then
+            Socks (Child).Peer_IP   := Ip;
+            Socks (Child).Peer_Port := Port;
+         end if;
+      end;
       --  Bytes that arrived while the child was parked sit in
       --  lwIP's refused_data (no ring to take them) — retry now.
       Retry_Tcp (Child);
-      Reply (Status_Ok, U64 (Child));
+      Reply4 (Status_Ok, U64 (Child), U64 (Socks (Child).Peer_IP),
+              U64 (Socks (Child).Peer_Port));
    end Handle_Sock_Accept;
 
    procedure Handle_Sock_Poll (Id : Natural) is
@@ -2168,7 +2191,8 @@ package body Netserv_Engine is
             Put_Line ("rx " & Dec (U32 (Rx_Frames))
                       & " tx " & Dec (U32 (Tx_Frames))
                       & " dropped " & Dec (U32 (Ring_Hdr (2))));
-            Put_Line ("sockets " & Dec (U32 (Live_Socks)) & "/8");
+            Put_Line ("sockets " & Dec (U32 (Live_Socks))
+                      & "/" & Dec (U32 (Max_Socks)));
          when Nf_Address =>
             Put_Line (Ip_Image (My_IP));
          when Nf_Gateway =>
@@ -2682,11 +2706,11 @@ package body Netserv_Engine is
             Syscalls.Process_Exit;
          end if;
 
-         declare
-            L     : constant U64 := Syscalls.Message.Label;
-            Badge : constant U64 := Syscalls.Message.Badge;
-            Id    : Natural;
-         begin
+          declare
+             L     : constant U64 := Syscalls.Message.Label;
+             Badge : constant U64 := Syscalls.Message.Badge;
+             Id    : Natural;
+          begin
             if L = Syscalls.Notification_Label then
                declare
                   Bits : constant U64 := Syscalls.Message.Words (0);
@@ -2704,8 +2728,8 @@ package body Netserv_Engine is
                Handle_File_Op;
             elsif L = Op_Ping and then Badge = 0 then
                Handle_Ping;
-            elsif L = Op_Socket and then Badge = 0 then
-               Handle_Sock_Open;
+             elsif L = Op_Socket and then Badge = 0 then
+                Handle_Sock_Open;
             elsif L >= Op_Bind and then L <= Op_Accept
               and then Badge >= 1 and then Badge <= U64 (Max_Socks)
               and then Socks (Natural (Badge)).Used

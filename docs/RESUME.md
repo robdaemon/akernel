@@ -811,7 +811,41 @@ the UP wakeup path, neither in M72c proper (15e0f45 timed the same
 Measured: SMP1 9m36s pre-fix, 8m10s kernel-only, 4m16s both;
 SMP4 4m16s, 0 FAIL everywhere.
 
-- **M73 — GNAT.Sockets.** Vendor g-socket/g-socthi/g-soccon/g-stsifd
+**M73 landed (2026-08-29).** GNAT.Sockets works end to end,
+including from a secondary Jorvik task.
+- Vendored 17 libgnat socket units into `gnat_user/`; g-socthi
+  adapted, g-stseme.adb rewritten onto newlib `strerror`.
+- `akernel_gsocket.c` ports gsocket.c's `__gnat_*` helpers onto
+  `Akernel_User.Sockets` IPC. Notable port semantics: BSD auto-bind
+  on connect/send for unbound sockets (accepted sockets inherit the
+  listener's local address); `gethostbyaddr` resolves numerically
+  (dotted name via inet_ntop) because GNAT maps
+  `Get_Host_By_Name(dotted)` onto it; the C DNS helper binds an
+  ephemeral port first (netserv requires Bound for UDP send).
+- **Clock-domain trap:** syscall 34 (`read_clock`) is the WALL clock
+  (RTC s/ns); sleep deadlines live in the 10 MHz `time` CSR domain.
+  The port reads ticks via `akernel_rdtime` (U-mode `csrr time`).
+  Mixing them silently produces ~50 s sleeps / immediate wakeups.
+- **Per-thread IPC buffer:** secondary threads get their own IPC page
+  (s-osinte `Next_IPC_VA`); the kernel reads the message from the
+  *calling* thread's page, but `Akernel_User.Syscalls.Message` was
+  fixed at the initial thread's VA — task IPC sent an empty page.
+  Fix: new syscall 43 `Sys_Thread_IPC_VA`; `Syscalls.Message` is now
+  an access-returning function (implicit dereference keeps every
+  `Message.Label/...` call site) with a 0-fallback for the initial
+  thread.
+- Socket pools bumped: netserv Max_Socks 8→16 with VA stride
+  1 MiB→64 KiB (fits before Buf_Win), RTS Max_Socks 4→8.
+- New `Tests/Gsock_Test` (manifest program 14, `console fs net`):
+  address read, numeric gethostbyname/getaddrinfo/gethostbyaddr, UDP
+  round trip + auto-bind, selector expire/readable/abort, TCP
+  listen/connect/accept/echo/EOF, and a deterministic DNS hairpin —
+  a Jorvik task answers an A-record query for "test.akernel" through
+  the netserv loopback path.
+- `s-oscons.ads` gained the full newlib errno block.
+Gates: SMP1 1471P/0F, SMP4 1471P/0F, zero-warning build.
+
+- **M73 — GNAT.Sockets (done).** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
   hand-written s-oscons.ads with AF_INET/SOCK_*/SOL_*/MSG_* (AKERNEL

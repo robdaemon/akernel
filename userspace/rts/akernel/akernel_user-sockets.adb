@@ -17,9 +17,10 @@ package body Akernel_User.Sockets is
 
    --  Client-side bookkeeping: the netserv socket cap, the
    --  ring-pair object and the notification live as long as the
-   --  socket. Four sockets is generous for a CLI program (ping
-   --  uses one; a future DNS resolver one more).
-   Max_Socks : constant := 4;
+   --  socket.  m73: 4 -> 8; a GNAT.Sockets program easily holds a
+   --  UDP pair plus a listener, connector and accepted child at
+   --  once (gsock_test), four was tight.
+   Max_Socks : constant := 8;
 
    Ring_Pages : constant U64 := 2;
    Ring_Bytes : constant U64 := Ring_Pages * Syscalls.Page_Size;
@@ -82,6 +83,13 @@ package body Akernel_User.Sockets is
    begin
       Net_EP := Net_Cap;
    end Attach;
+
+   ------------------------------------------------------------------
+
+   function Endpoint return U64 is
+   begin
+      return Net_EP;
+   end Endpoint;
 
    function Socket (Proto : U64; Handle : out U64) return U64 is
       Idx       : Natural := 0;
@@ -247,7 +255,10 @@ package body Akernel_User.Sockets is
    --  carries the child id; the child cap is a local mint with
    --  that badge. On any failure the local setup is torn down.
    function Accept_Connection
-     (Handle : U64; New_Handle : out U64) return U64
+     (Handle     : U64;
+      New_Handle : out U64;
+      Peer_IP    : out U32;
+      Peer_Port  : out U64) return U64
    is
       Idx       : Natural := 0;
       Ring_Mint : U64;
@@ -255,6 +266,8 @@ package body Akernel_User.Sockets is
       Result    : U64;
    begin
       New_Handle := 0;
+      Peer_IP := 0;
+      Peer_Port := 0;
       if Find (Handle) = 0 then
          return Status_Bad_Args;
       end if;
@@ -318,6 +331,8 @@ package body Akernel_User.Sockets is
       end if;
 
       if Result = Status_Ok then
+         Peer_IP   := U32 (Syscalls.Message.Words (2));
+         Peer_Port := Syscalls.Message.Words (3);
          Socks (Idx).Sock_Cap := Syscalls.Cap_Mint
            (Net_EP, Syscalls.Right_Send, Syscalls.Message.Words (1));
          if Socks (Idx).Sock_Cap /= Syscalls.Syscall_Failed then

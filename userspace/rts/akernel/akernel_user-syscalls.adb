@@ -198,6 +198,10 @@ package body Akernel_User.Syscalls is
      with Import, Convention => C,
           External_Name => "akernel_sys_thread_self";
 
+   function Raw_Thread_IPC_VA return U64
+     with Import, Convention => C,
+          External_Name => "akernel_sys_thread_ipc_va";
+
    function Raw_Thread_Wait (Cap : U64) return U64
      with Import, Convention => C,
           External_Name => "akernel_sys_thread_wait";
@@ -532,6 +536,23 @@ package body Akernel_User.Syscalls is
    begin
       return Raw_Thread_Self;
    end Thread_Self;
+
+   --  m73: the calling thread's IPC buffer view.  Syscall 43
+   --  reports the per-thread VA; a zero answer (foreign threads
+   --  created before this ABI) falls back to the legacy initial-
+   --  thread window.
+   function Message return IPC_Message_Access is
+      function To_Access is new Ada.Unchecked_Conversion
+        (System.Address, IPC_Message_Access);
+      VA : U64 := Raw_Thread_IPC_VA;
+   begin
+      if VA = 0 then
+         VA := IPC_Buffer_VA;
+      end if;
+      return To_Access
+        (System.Storage_Elements.To_Address
+           (System.Storage_Elements.Integer_Address (VA)));
+   end Message;
 
    function Thread_Wait (Cap : U64) return U64 is
    begin

@@ -94,6 +94,7 @@ package body Arch.Traps is
    Sys_Thread_Wait       : constant U64 := 40;
    Sys_EP_Set_Stamp_Identity : constant U64 := 41;
    Sys_IRQ_MSI_Create        : constant U64 := 42;
+   Sys_Thread_IPC_VA         : constant U64 := 43;
 
    --  Which right a notification syscall requires on its cap.
    type Ntfn_Right is (Ntfn_Wait_Right, Ntfn_Signal_Right, Ntfn_Manage_Right);
@@ -1127,6 +1128,23 @@ package body Arch.Traps is
       Trap_Frame_Set_A0
         (Frame, U64 (Kernel.Processes.Thread_Self (Current)));
    end Handle_Thread_Self;
+
+   --  Sys_Thread_IPC_VA (m73): return the calling thread's IPC
+   --  buffer user VA. Secondary threads get their own buffer page
+   --  (s-osinte maps it below the legacy 16#6FFF_0000# window), so
+   --  the Akernel_User.Syscalls Message view must be per-thread.
+   procedure Handle_Thread_IPC_VA (Frame : System.Address) is
+      Current : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Scheduler.Current;
+   begin
+      if Current = null then
+         Trap_Frame_Set_A0 (Frame, 0);
+         return;
+      end if;
+
+      Trap_Frame_Set_A0
+        (Frame, Kernel.Tasks.IPC_Buffer_VA_Of (Current.all));
+   end Handle_Thread_IPC_VA;
 
    procedure Handle_Sleep_Until (Frame : System.Address) is
       Current  : constant Kernel.Tasks.Thread_Access :=
@@ -2720,6 +2738,8 @@ package body Arch.Traps is
          return;
       elsif Number = Sys_EP_Set_Stamp_Identity then
          Handle_EP_Set_Stamp_Identity (Frame);
+      elsif Number = Sys_Thread_IPC_VA then
+         Handle_Thread_IPC_VA (Frame);
       else
          Trap_Frame_Set_A0 (Frame, U64'Last);
       end if;

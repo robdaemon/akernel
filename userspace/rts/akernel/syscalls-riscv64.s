@@ -358,6 +358,16 @@ akernel_sys_thread_self:
     ret
 .size akernel_sys_thread_self, . - akernel_sys_thread_self
 
+#  m73: calling thread's IPC buffer user VA (secondary threads get
+#  their own page below the legacy 0x6FFF_0000 window).
+.global akernel_sys_thread_ipc_va
+.type akernel_sys_thread_ipc_va, @function
+akernel_sys_thread_ipc_va:
+    li a7, 43
+    ecall
+    ret
+.size akernel_sys_thread_ipc_va, . - akernel_sys_thread_ipc_va
+
 .global akernel_sys_sleep_until
 .type akernel_sys_sleep_until, @function
 akernel_sys_sleep_until:
