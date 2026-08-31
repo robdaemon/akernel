@@ -20,6 +20,13 @@ The previous full resume is archived at `docs/HISTORY.md`.
 
 ## Recently shipped
 
+- **M78b** — opt-in DHCP client (lwIP dhcp.c behind a writable
+  `Net:dhcp` file + `ENV:Net.DHCP` boot flag; static config stays
+  the default, restored on stop). Tests/Dhcp_Test boots in the
+  test manifest (program 15).
+- **M78a** — netserv-resident DNS resolver (lwIP dns.c behind
+  `Op_Resolve=28`); the m73 per-client resolver deleted; hairpin
+  closed-port precheck learned about lwIP-internal pcbs.
 - **M77** — net-stack polish: virtio_net_hdr legacy-vs-modern
   asserted loud at boot; net watchlist cleared.
 - **M76** — kernel hardening: endpoint caller-queue tail
@@ -1003,15 +1010,88 @@ ABA closed; the libman manager path works for the first time.
   same library project concurrently and gprlib crashes; build
   serially); SMP1 1475-1476P/0F x2, SMP4 1474-1475P/0F x2.
 
+**M78a landed (2026-08-31).** DNS is netserv-resident: lwIP's
+dns.c (compiled in — one-line `lwip.gpr`/`lwipopts.h` changes;
+`MEMP_NUM_UDP_PCB` 10→11, `LWIP_RAND` defined as newlib `rand()`
+— it has no opt.h default) backs a new `Op_Resolve=28` on the raw
+service cap: the hostname rides cap0 as a one-page memobj (word0 =
+length 1..255, mapped read-only at the Net: buffer window, deleted
+per op), a 4-slot pending table (lwIP DNS_TABLE_SIZE) stashes the
+reply cap, and the glue's found callback records the outcome for
+the service loop's deferred-reply pass (the Op_Connect pattern;
+lwIP's own timer bounds the wait off the 50 ms tick — no new
+plumbing). Cache hits answer inline (`ERR_OK` fills the address
+WITHOUT calling back — verified in dns_gethostbyname_addrtype).
+`Net:dns` writes (and the boot config) now `dns_setserver` for
+real; lwIP's OpenDNS default is unreachable behind slirp.
+Client side: `Akernel_User.Sockets.Resolve` (+ `aknet_sock_resolve`
+C export); akernel_gsocket.c's m73 hand-rolled resolver (fixed
+txid 0x4D37, one ephemeral UDP socket per lookup, client-side
+answer parser, ~160 lines) deleted — `__gnat_gethostbyname`/
+`__gnat_getaddrinfo` keep their numeric short-circuits; a failed
+lookup maps to HOST_NOT_FOUND (lwIP does not distinguish NXDOMAIN
+from timeout), resolver-full to TRY_AGAIN.
+- **Root-caused regression this milestone**: the m71c hairpin
+  closed-port precheck in `Drain_Sock_Tx` scans only netserv's
+  OWN socket table, so a hairpinned reply to a lwIP-internal pcb
+  (the resolver's, dns.c-allocated with a random source port) drew
+  sticky error 1 on the sender and was dropped — the resolver
+  timed out after 4 retries while the test responder answered into
+  the void. Fix: `aknet_udp_port_open` walks lwIP's `udp_pcbs`
+  for a pcb owning the port WITHOUT our client recv callback
+  (client-visible ports keep the exact m71c scan semantics,
+  including the connected-socket peer filter). DHCP's pcb (m78b)
+  rides the same path.
+- gsock_test's deterministic DNS hairpin passes byte-unchanged
+  (responder untouched — it echoes the query header, so lwIP's
+  random txid and dns_recv's RFC 5452 source check are both
+  satisfied) — it now exercises query AND reply through the
+  hairpin queue from netserv's own pcb.
+- Gates: full `make clean` + zero-warning serial build; SMP1
+  1473P/0F, SMP4 1473P/0F.
+
+**M78b landed (2026-08-31).** DHCP client, opt-in: lwIP's dhcp.c
+(compiled in like m78a's dns.c — `MEMP_NUM_UDP_PCB` 11→12;
+`LWIP_DHCP_DOES_ACD_CHECK 0` — 2.2 defaults it to LWIP_DHCP and
+it would drag in acd.c) behind a readable+writable `Net:dhcp`
+file (whole-value commands `start`/`stop`/`renew`; reads render
+the DHCP_STATE_* name plus the lease while bound) and an
+`ENV:Net.DHCP` boot flag (1/on/true/yes). Static config stays the
+DEFAULT and address/gateway writes are rejected (status 2) while
+the client runs; start stashes the pre-start values and stop
+restores them in the same netserv activation (dhcp.c's
+release-and-stop zeroes the netif address — the zero window never
+escapes netserv's single thread). The 50 ms tick polls
+dhcp_supplied_address and mirrors the netif's leased address/
+gateway into My_IP/Gateway_IP on an edge (the ping/hairpin
+checks and Net:status/Net:address renders read those mirrors;
+lwIP sets the netif itself in dhcp_bind). DHCP's pcb (port 68)
+is lwIP-internal, so the m78a aknet_udp_port_open hairpin
+exception already covers it; slirp always answers DHCP with
+10.0.2.15/10.0.2.2 for this MAC. Two latent fixes this
+milestone: aknet_setup now copies the MAC BEFORE netif_add
+(dhcp_create_msg reads netif->hwaddr), and dhcp_renew is gated
+on bound in the glue (lwIP enters RENEWING unconditionally).
+- **Test**: Tests/Dhcp_Test (manifest program 15, "console fs
+  net") — static default → start → bound via slirp → lease
+  mirrors (10.0.2.15 / 10.0.2.2) → static write rejected while
+  on → ping gateway on the lease → renew → stop → off → static
+  restored → ping again. Its pings retry through status 2:
+  Op_Ping allows ONE outstanding request and net_test's ~2 s
+  unreachable-target ARP timeout can hold it (found on the first
+  run — two FAILs, both the ping collision).
+- Fuzz: `type Net:dhcp` after `type Net:tcp`.
+- Gates: full `make clean` + zero-warning serial build; SMP1
+  1500P/0F, SMP4 1500P/0F + clean-build rerun 1498P/0F.
+
 - **M73 — GNAT.Sockets (done).** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
   hand-written s-oscons.ads with AF_INET/SOCK_*/SOL_*/MSG_* (AKERNEL
   values, no host ABI). getaddrinfo numeric-only + slirp DNS helper.
 
-Deferred: DHCP, socket servers (finger etc.), DNS resolver beyond
-slirp's built-in, external ICMP (slirp does not forward it — tests
-target the gateway by design).
+Deferred: socket servers (finger etc.), external ICMP (slirp does
+not forward it — tests target the gateway by design).
 
 Net watchlist: empty. The virtio_net_hdr mode is asserted loud at
 boot (M77); the RX ring already drops new frames with a counter
@@ -1027,6 +1107,11 @@ console-loss and whole-system stall flakes were fixed in M74.
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
+3. **Glue listen-table sizing** — `AKNET_MAX_SOCKS=8` in
+   aknet_glue.c vs netserv's `Max_Socks=16`: socket ids 9..16 get
+   no listen-table entry (harmless today — the `id <= 8` guards
+   just skip, and listeners in the 9..16 range only lose
+   `tcp_accepted` backlog accounting). Bump or reconcile.
 
 ## Working rules
 
