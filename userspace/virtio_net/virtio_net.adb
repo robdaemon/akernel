@@ -94,12 +94,21 @@ procedure Virtio_Net is
    Rx_Slots     : constant := 16;
    Rx_Slot_Pages : constant := Rx_Slots * Rx_Slot_Size / 4096;  --  8
 
-   Hdr_Len : constant := 10;  --  legacy virtio_net_hdr
+   --  Legacy virtio_net_hdr.  Guaranteed by the negotiation in
+   --  the driver entry: only feature word 0 is ever offered, so a
+   --  spec-compliant device runs the legacy datapath (the boot
+   --  line there says so explicitly); a modern-only device would
+   --  have rejected FEATURES_OK.
+   Hdr_Len : constant := 10;
    MTU     : constant := 1500;
 
    --  VIRTIO_NET_F_MAC (feature bit 5) fits the word-0 feature
    --  negotiation Virtio.PCI supports.
    Feat_MAC : constant Virtio.U32 := 2 ** 5;
+
+   --  VIRTIO_F_VERSION_1: hi-word bit 0, read for the boot-time
+   --  datapath diagnostic only (never negotiated).
+   Feat_Version_1 : constant Virtio.U32 := 2 ** 0;
 
    --  Frame service protocol labels (shared with System/Netserv).
    Op_Info  : constant U64 := 0;
@@ -442,6 +451,21 @@ begin
    if (Dev.Status and Virtio.Status_Features_Ok) = 0 then
       Debug_Put_Line ("virtio-net features rejected");
       Process_Exit;
+   end if;
+
+   --  m77: make the datapath mode loud.  Only feature word 0 was
+   --  offered above, so a spec-compliant device now runs the
+   --  legacy datapath and Hdr_Len = 10 holds; a modern-only
+   --  device would have rejected FEATURES_OK and we would not be
+   --  here.  Report whether the device offered VIRTIO_F_VERSION_1
+   --  so a future QEMU config change is visible in the boot log.
+   if (Dev.Device_Features_Hi and Feat_Version_1) /= 0 then
+      Akernel_User.Console.Put_Line
+        ("virtio-net legacy datapath (modern offered, not negotiated),"
+         & " virtio_net_hdr 10 bytes");
+   else
+      Akernel_User.Console.Put_Line
+        ("virtio-net legacy datapath, virtio_net_hdr 10 bytes");
    end if;
 
    if (Dev.Device_Features and Feat_MAC) /= 0 then

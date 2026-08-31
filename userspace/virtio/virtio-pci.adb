@@ -37,6 +37,12 @@ package body Virtio.PCI is
       return Common_Read32 (Cfg_Device_Features);
    end Device_Features;
 
+   function Device_Features_Hi return U32 is
+   begin
+      Common_Write32 (Cfg_Device_Feat_Sel, 1);
+      return Common_Read32 (Cfg_Device_Features);
+   end Device_Features_Hi;
+
    procedure Set_Driver_Features (Bits : U32) is
    begin
       Common_Write32 (Cfg_Driver_Feat_Sel, 0);

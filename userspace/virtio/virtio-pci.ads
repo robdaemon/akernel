@@ -57,10 +57,14 @@ package Virtio.PCI is
    procedure Set_Status (Bits : U32);
    procedure Add_Status (Bits : U32);
 
-   --  Feature negotiation, feature word 0 (bits 0..31); ring/
-   --  transport features (bit 32+) are not consulted.
+   --  Feature negotiation, feature word 0 (bits 0..31).
    function Device_Features return U32;
    procedure Set_Driver_Features (Bits : U32);
+
+   --  Feature word 1 (bits 32..63, carries VIRTIO_F_VERSION_1 at
+   --  bit 32).  Read-only diagnostic: negotiation stays word-0
+   --  only, so the datapath is always legacy.
+   function Device_Features_Hi return U32;
 
    function Num_Queues return U32;
 
