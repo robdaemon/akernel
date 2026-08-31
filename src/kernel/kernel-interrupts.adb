@@ -62,6 +62,31 @@ package body Kernel.Interrupts is
       end if;
    end Cleanup_Thread_Cap;
 
+   procedure Cleanup_Thread (Thread : Kernel.Tasks.Thread_Access) is
+      Cur : Kernel.Objects.IRQ_Line_Access;
+   begin
+      --  Line.Waiter is only ever registered together with the
+      --  Blocked_IRQ state (Wait + the trap handler's block run
+      --  under the kernel lock), so a thread in any other state
+      --  cannot be a waiter and the source scan is skipped.
+      if Thread = null
+        or else Kernel.Tasks.State (Thread.all) /=
+                  Kernel.Tasks.Blocked_IRQ
+      then
+         return;
+      end if;
+
+      for I in Lines'Range loop
+         Cur := Lines (I);
+         while Cur /= null loop
+            if Cur.Waiter = Thread then
+               Cur.Waiter := null;
+            end if;
+            Cur := Cur.Next;
+         end loop;
+      end loop;
+   end Cleanup_Thread;
+
    procedure Register
      (Line   : not null Kernel.Objects.IRQ_Line_Access;
       Result : out Status)

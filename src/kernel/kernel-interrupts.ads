@@ -72,4 +72,13 @@ package Kernel.Interrupts is
    procedure Cleanup_Thread_Cap
      (Thread : Kernel.Tasks.Thread_Access;
       Object : System.Address);
+
+   --  Thread-death hook (Mark_Exited / Thread_Exit): clear any
+   --  IRQ-line waiter slot pointing at this thread. The cap-close
+   --  hook above only fires for caps the dying process still holds
+   --  and only matches the exit-CALLING thread, so a killed
+   --  secondary blocked in irq_wait would otherwise leave
+   --  Line.Waiter dangling into a freed TCB slot — a later Deliver
+   --  would wake the slot's next occupant (m74 teardown audit).
+   procedure Cleanup_Thread (Thread : Kernel.Tasks.Thread_Access);
 end Kernel.Interrupts;

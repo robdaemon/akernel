@@ -845,6 +845,55 @@ including from a secondary Jorvik task.
 - `s-oscons.ads` gained the full newlib errno block.
 Gates: SMP1 1471P/0F, SMP4 1471P/0F, zero-warning build.
 
+**M74 landed (2026-08-30).** Watchlist flakes: death-while-blocked
+teardown, SMP kernel-stack use-after-free, UART THR overrun.
+- Teardown audit: a dying thread now detaches from EVERY kernel
+  object holding a raw TCB pointer, via one `Teardown_Thread`
+  helper called from Mark_Exited's kill loop and Thread_Exit before
+  the state change (the state-gated scans need the pre-death
+  state): endpoint caller-queue unlink (existing), the missing
+  `Cancel_Receive` (Waiting_Receiver slots — the recv-side brick:
+  after TCB-slot reuse, Receive returned Invalid_Task forever),
+  notification bindings/waiters (new
+  `Kernel.Notifications.Cleanup_Thread`; `Clear_Waiter` previously
+  had no call sites), IRQ line waiters (new
+  `Kernel.Interrupts.Cleanup_Thread`, gated on Blocked_IRQ),
+  Thread_Wait lists (existing).
+- SMP: Mark_Exited freed sibling kernel stacks immediately while a
+  sibling thread could still be executing in user mode on another
+  hart (user mode runs lock-free) — its next trap wrote a full
+  register frame into the reallocated frame (the m72b "endpoint
+  queue tail = non-thread heap address" forensics). Stacks of
+  threads that are some CPU's current now go onto THAT CPU's
+  deferred list (new `Kernel.Scheduler.Current_CPU_Of`); deferred
+  entries carry a per-hart trap epoch (`Note_Trap_Entry` bumps at
+  every trap entry, before the drain) and are freed only two epochs
+  after recording, because the victim's own first trap entry — and
+  its drain — still runs on the doomed stack.
+- Console line loss: both UART writers (kernel `Board.UART` and
+  `Drivers/Serial`) wrote THR with zero flow control and FIFOs
+  disabled; a QEMU chardev hiccup (or the other writer racing on
+  SMP4 — the two writers share the device with no common lock) made
+  the next write overwrite the pending byte, collapsing a whole
+  line burst — the "bytes lost, not garbled" signature. Both
+  writers now poll LSR THRE before every write and enable the 16550
+  FIFOs (FCR=0x07). The IPC path itself was audited first: the
+  queued-send pool blocks (never drops) on exhaustion, and no
+  kernel-side message-drop path exists.
+- Deferred (still watchlisted): reply-cap TCB-address ABA (no
+  generation tags on reply caps / Waiting_Receiver),
+  `Enqueue_Caller`'s blind Queue_Tail trust, `Process_Slot_Of`
+  slot-0 fallback for out-of-table processes, `Exit_Current` not
+  calling Remove_Sleeper.
+- Gates: clean rebuild zero warnings; SMP1 1475P/0F x5, SMP4
+  1472P/0F x4, no stall, no lost console lines. Note for future
+  greps: PASS-count variance between runs is now COSMETIC — with
+  byte loss gone, a writer preempted mid-burst can merge two
+  verdicts into one physical line ("PASS tcp server seePASS tcp
+  accept..."); every verdict's bytes are present (verified by
+  fragment search), the line count just drops. If exact counts
+  ever matter, count verdicts with a fragment-tolerant parser.
+
 - **M73 — GNAT.Sockets (done).** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
@@ -863,17 +912,15 @@ caps** (Kernel.IPC.Reply zeroes them): libman's reply-cap path has
 never delivered — Open_Library silently falls back to Open_Via_Self
 (private copies, so the shared-library cache is untested). Fixing it
 means Transfer_Message on the reply direction + auditing every reply
-site in every server to clear Message.Caps. **SMP4 console loss:
-occasionally one verdict line vanishes entirely (bytes lost, not
-garbled — "fat rename ok", "PASS thread_test"), neighbors intact,
-suite otherwise green; pre-existing writer race, not counted as a
-failure.** **Whole-system stall flake: two SMP1 runs early in the
-m72c gate stopped mid-fuzz (pipe reader spawn-wait; elevate spawn)
-with 0 FAILs, then 8/8 SMP1 + 3/3 SMP4 clean on identical bits —
-signature matches the still-open endpoint-queue-integrity watchlist
-entry above (short-lived spawned peers = "death while queued"
-candidates); reproducer+probe loop lives at
-/tmp/opencode/m72c_repro.sh + m72c_probe1.py.**
+site in every server to clear Message.Caps. **M74 deferred items:
+reply-cap TCB-address ABA (Mint_Reply_Cap stores a raw TCB address;
+caller death does not revoke, and slot reuse + Awaiting_Reply re-set
+passes every guard — cross-delivers a stale reply; no generation
+tags yet); Enqueue_Caller trusts Queue_Tail blindly (any residual
+staleness becomes a wild Queue_Next write — no validity check);
+Process_Slot_Of returns slot 0 for out-of-table processes;
+Exit_Current does not Remove_Sleeper.** The SMP4 console-loss and
+whole-system stall flakes were root-caused and fixed in M74 above.
 
 ## Open candidates
 

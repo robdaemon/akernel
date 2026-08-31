@@ -244,4 +244,35 @@ package body Kernel.Notifications is
          Kernel.Tasks.Set_Bound_Ntfn (Thread.all, System.Null_Address);
       end if;
    end Cleanup_Thread_Cap;
+
+   procedure Cleanup_Thread (Thread : Kernel.Tasks.Thread_Access) is
+      Bound : System.Address;
+      Slot  : Natural;
+   begin
+      if Thread = null then
+         return;
+      end if;
+
+      Bound := Kernel.Tasks.Bound_Ntfn (Thread.all);
+      if Bound /= System.Null_Address then
+         Slot := Slot_Of (Bound);
+         if Slot /= 0 and then Pool (Slot).Bound_Thread = Thread then
+            Pool (Slot).Bound_Thread := null;
+         end if;
+         Kernel.Tasks.Set_Bound_Ntfn (Thread.all, System.Null_Address);
+      end if;
+
+      --  A blocked ntfn_wait waiter is registered in exactly one
+      --  slot (Record_Waiter pairs with the Blocked_Notification
+      --  state under the kernel lock), so the scan is gated on it.
+      if Kernel.Tasks.State (Thread.all) =
+           Kernel.Tasks.Blocked_Notification
+      then
+         for I in Pool'Range loop
+            if Pool (I).Waiting = Thread then
+               Pool (I).Waiting := null;
+            end if;
+         end loop;
+      end if;
+   end Cleanup_Thread;
 end Kernel.Notifications;

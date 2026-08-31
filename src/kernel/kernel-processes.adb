@@ -5,8 +5,10 @@ with Arch.Context;
 with Arch.MMU;
 with Kernel.CPUs;
 with Kernel.ELF;
+with Kernel.Interrupts;
 with Kernel.IPC;
 with Kernel.Memory;
+with Kernel.Notifications;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Scheduler;
@@ -89,12 +91,26 @@ package body Kernel.Processes is
    --  Per-CPU deferred kernel-stack free list.  A thread's own stack
    --  cannot be deallocated while it is still executing on it; the
    --  frame is recorded here and freed once the hart has switched
-   --  away (drained at every trap entry and in the idle loop).
+   --  away.  Entries carry the hart's trap epoch (Note_Trap_Entry
+   --  bumps it at every trap entry, before the drain): an entry is
+   --  freeable once the epoch has advanced by 2.  One epoch is the
+   --  victim's own first trap — the trap-entry drain itself still
+   --  runs on the doomed stack when a thread was killed by
+   --  Mark_Exited while executing in user mode on another hart.
    Max_Deferred_Stacks : constant := Max_Thread_Slots;
+
+   type Deferred_Stack_Entry is record
+      Stack_Top : U64;
+      Epoch     : U64;
+   end record;
+
    Deferred_Stacks     : array (Kernel.CPUs.CPU_Index,
-                                0 .. Max_Deferred_Stacks - 1) of U64;
+                                0 .. Max_Deferred_Stacks - 1)
+     of Deferred_Stack_Entry;
    Deferred_Count      : array (Kernel.CPUs.CPU_Index) of Natural range
       0 .. Max_Deferred_Stacks :=
+     (others => 0);
+   Trap_Epoch          : array (Kernel.CPUs.CPU_Index) of U64 :=
      (others => 0);
 
    --  Pid generations (milestone 51): pid = Generation * 256 +
@@ -723,6 +739,36 @@ package body Kernel.Processes is
    procedure Remove_As_Waiter (Waiter : Kernel.Tasks.Thread_Access);
    procedure Wake_Thread_Waiters (Target : Kernel.Tasks.Thread_Access);
 
+   --  Record Stack_Top on CPU's deferred list (defined with the
+   --  drain machinery below; Mark_Exited needs it earlier).
+   procedure Defer_Stack_On
+     (CPU       : Kernel.CPUs.CPU_Index;
+      Stack_Top : U64);
+
+   --  Detach a dying thread from every kernel object that can hold
+   --  a raw pointer to its TCB: endpoint caller queues and
+   --  waiting-receiver slots, notification bindings/waiters, IRQ
+   --  line waiters, and Thread_Wait lists.  The TCB slot returns
+   --  to the free list right after; any stale pointer would alias
+   --  the slot's next occupant (m72a/m72b wedge forensics — the
+   --  original fix covered caller queues only; m74 covers the
+   --  rest).  Must run BEFORE the thread is marked Dead so the
+   --  state-gated scans (Blocked_Notification / Blocked_IRQ) still
+   --  see the pre-death state.
+   procedure Teardown_Thread (T : Kernel.Tasks.Thread_Access) is
+   begin
+      if Kernel.Tasks.Queued_On_EP (T.all) /= System.Null_Address then
+         Kernel.IPC.Cleanup_Thread_Cap
+           (T, Kernel.Tasks.Queued_On_EP (T.all));
+      end if;
+
+      Kernel.IPC.Cancel_Receive (T);
+      Kernel.Notifications.Cleanup_Thread (T);
+      Kernel.Interrupts.Cleanup_Thread (T);
+      Remove_As_Waiter (T);
+      Wake_Thread_Waiters (T);
+   end Teardown_Thread;
+
    procedure Mark_Exited
      (Thread : Kernel.Tasks.Thread_Access;
       Code   : Kernel.Capabilities.U64) is
@@ -754,12 +800,29 @@ package body Kernel.Processes is
                Top : constant U64 :=
                  Kernel.Tasks.Kernel_Stack_Top (Threads (T));
                PMM_Result : Kernel.Physical_Memory.Status;
+               On_CPU     : Kernel.CPUs.CPU_Index;
+               Running    : Boolean;
             begin
                if Top /= 0 then
                   if Threads (T)'Address /= Thread.all'Address then
-                     Kernel.Physical_Memory.Deallocate_Frame
-                       (Frame  => Top - Kernel.Physical_Memory.Page_Size,
-                        Result => PMM_Result);
+                     --  A sibling thread may be executing in USER
+                     --  mode on another hart right now (user mode
+                     --  runs lock-free); its next trap still lands
+                     --  on this stack.  If the thread is some hart's
+                     --  current, defer the free onto THAT hart's
+                     --  epoch-stamped list — the drain frees it only
+                     --  after the victim has trapped (and switched
+                     --  away).  Otherwise the stack is provably
+                     --  idle and can go immediately.
+                     Kernel.Scheduler.Current_CPU_Of
+                       (Threads (T)'Unchecked_Access, Running, On_CPU);
+                     if Running then
+                        Defer_Stack_On (On_CPU, Top);
+                     else
+                        Kernel.Physical_Memory.Deallocate_Frame
+                          (Frame  => Top - Kernel.Physical_Memory.Page_Size,
+                           Result => PMM_Result);
+                     end if;
                   else
                      Free_Kernel_Stack_Later (Top);
                   end if;
@@ -767,23 +830,12 @@ package body Kernel.Processes is
                end if;
             end;
 
-            --  Unlink from any endpoint caller queue first. The
-            --  slot returns to the free list below; a stale link
-            --  would corrupt the queue and later cross-deliver IPC
-            --  to the slot's next occupant (m72a/m72b wedge
-            --  forensics). Also clears a stale Waiting_Receiver.
-            if Kernel.Tasks.Queued_On_EP (Threads (T)) /=
-                 System.Null_Address
-            then
-               Kernel.IPC.Cleanup_Thread_Cap
-                 (Threads (T)'Unchecked_Access,
-                  Kernel.Tasks.Queued_On_EP (Threads (T)));
-            end if;
+            --  Detach from every kernel object holding a raw TCB
+            --  pointer before the slot returns to the free list.
+            Teardown_Thread (Threads (T)'Unchecked_Access);
 
             Kernel.Tasks.Set_State (Threads (T), Kernel.Tasks.Dead);
             Kernel.Tasks.Set_Queued (Threads (T), False);
-            Remove_As_Waiter (Threads (T)'Unchecked_Access);
-            Wake_Thread_Waiters (Threads (T)'Unchecked_Access);
 
             if Threads (T)'Address /= Thread.all'Address then
                declare
@@ -1238,10 +1290,15 @@ package body Kernel.Processes is
          Kernel.Tasks.Set_Kernel_Stack_Top (Threads (T_Slot), 0);
       end if;
 
+      --  Detach from every kernel object holding a raw TCB pointer
+      --  (endpoint receiver slots, notification bindings, Thread_Wait
+      --  lists) before the slot returns to the free list.  Runs
+      --  before the state change so state-gated scans see the
+      --  pre-death state.
+      Teardown_Thread (Threads (T_Slot)'Unchecked_Access);
+
       Kernel.Tasks.Set_State (Threads (T_Slot), Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (Threads (T_Slot), False);
-      Remove_As_Waiter (Threads (T_Slot)'Unchecked_Access);
-      Wake_Thread_Waiters (Threads (T_Slot)'Unchecked_Access);
       Kernel.Scheduler.Remove_Thread
         (Threads (T_Slot)'Unchecked_Access, Ignore);
       Thread_Used (T_Slot) := False;
@@ -1334,33 +1391,62 @@ package body Kernel.Processes is
       return Kernel.Tasks.Id (Thread.all);
    end Thread_Self;
 
-   procedure Free_Kernel_Stack_Later (Stack_Top : U64) is
-      CPU : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+   --  Record Stack_Top on CPU's deferred list, stamped with the
+   --  hart's current trap epoch.
+   procedure Defer_Stack_On
+     (CPU       : Kernel.CPUs.CPU_Index;
+      Stack_Top : U64)
+   is
    begin
       if Stack_Top = 0 then
          return;
       end if;
 
       if Deferred_Count (CPU) < Max_Deferred_Stacks then
-         Deferred_Stacks (CPU, Deferred_Count (CPU)) := Stack_Top;
+         Deferred_Stacks (CPU, Deferred_Count (CPU)) :=
+           (Stack_Top => Stack_Top, Epoch => Trap_Epoch (CPU));
          Deferred_Count (CPU) := Deferred_Count (CPU) + 1;
       end if;
+   end Defer_Stack_On;
+
+   procedure Free_Kernel_Stack_Later (Stack_Top : U64) is
+   begin
+      Defer_Stack_On (Kernel.CPUs.Current, Stack_Top);
    end Free_Kernel_Stack_Later;
+
+   procedure Note_Trap_Entry is
+      CPU : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+   begin
+      Trap_Epoch (CPU) := Trap_Epoch (CPU) + 1;
+   end Note_Trap_Entry;
 
    procedure Drain_Deferred_Kernel_Stacks is
       CPU    : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
-      Top    : U64;
+      Epoch  : constant U64 := Trap_Epoch (CPU);
+      Keep   : Natural := 0;
       Ignore : Kernel.Physical_Memory.Status;
    begin
-      while Deferred_Count (CPU) > 0 loop
-         Deferred_Count (CPU) := Deferred_Count (CPU) - 1;
-         Top := Deferred_Stacks (CPU, Deferred_Count (CPU));
-         if Top /= 0 then
-            Kernel.Physical_Memory.Deallocate_Frame
-              (Frame  => Top - Kernel.Physical_Memory.Page_Size,
-               Result => Ignore);
+      --  Entries are pushed in nondecreasing epoch order, so the
+      --  freeable ones (recorded two or more trap entries ago)
+      --  form a prefix; walk all entries anyway, free the old
+      --  ones, and compact the too-young remainder down.  A
+      --  too-young entry may belong to a thread killed on another
+      --  hart whose own first trap — this very drain included —
+      --  still runs on the doomed stack.
+      for I in 0 .. Deferred_Count (CPU) - 1 loop
+         if Epoch - Deferred_Stacks (CPU, I).Epoch >= 2 then
+            if Deferred_Stacks (CPU, I).Stack_Top /= 0 then
+               Kernel.Physical_Memory.Deallocate_Frame
+                 (Frame  => Deferred_Stacks (CPU, I).Stack_Top -
+                            Kernel.Physical_Memory.Page_Size,
+                  Result => Ignore);
+            end if;
+         else
+            Deferred_Stacks (CPU, Keep) := Deferred_Stacks (CPU, I);
+            Keep := Keep + 1;
          end if;
       end loop;
+      Deferred_Count (CPU) := Keep;
    end Drain_Deferred_Kernel_Stacks;
 
    procedure Reap_Process

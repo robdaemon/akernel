@@ -29,17 +29,40 @@ package body Board.UART is
    function RBR return U64 is (Base + 0); -- receive buffer, read
    function THR return U64 is (Base + 0); -- transmit holding, write
    function IER return U64 is (Base + 1); -- interrupt enable
+   function FCR return U64 is (Base + 2); -- FIFO control, write
    function IIR return U64 is (Base + 2); -- interrupt identification
    function LSR return U64 is (Base + 5); -- line status
 
-   IER_RDA : constant U8 := 16#01#; -- received data available
-   LSR_DR  : constant U8 := 16#01#; -- data ready
+   IER_RDA   : constant U8 := 16#01#; -- received data available
+   LSR_DR    : constant U8 := 16#01#; -- data ready
+   LSR_THRE  : constant U8 := 16#20#; -- transmit holding/FIFO empty
+   FCR_FIFO  : constant U8 := 16#07#; -- FIFO enable + RX/TX reset
 
    function Mmio_Read8 (Address : U64) return U8
      with Import, Convention => C, External_Name => "mmio_read8";
 
    procedure Mmio_Write8 (Address : U64; Value : U8)
      with Import, Convention => C, External_Name => "mmio_write8";
+
+   --  Wait for the transmit holding register (or TX FIFO) to drain
+   --  before the next byte.  Without this a burst of THR writes
+   --  silently overwrites a byte the QEMU chardev has not consumed
+   --  yet (thr_ipending overwrite) — the "lost console line" flake:
+   --  one line vanishes wholesale, neighbors intact.  Both UART
+   --  writers (this and Drivers/Serial) must poll; they share the
+   --  device without a common lock.
+   procedure Wait_THRE is
+   begin
+      while (Mmio_Read8 (LSR) and LSR_THRE) = 0 loop
+         null;
+      end loop;
+   end Wait_THRE;
+
+   procedure Put_Char (C : Character) is
+   begin
+      Wait_THRE;
+      Mmio_Write8 (THR, Character'Pos (C));
+   end Put_Char;
 
    procedure Set_Base (Physical_Base : Interfaces.Unsigned_64) is
    begin
@@ -49,7 +72,7 @@ package body Board.UART is
    procedure Unlocked_Put (S : String) is
    begin
       for C of S loop
-         Mmio_Write8 (THR, Character'Pos (C));
+         Put_Char (C);
       end loop;
    end Unlocked_Put;
 
@@ -59,10 +82,7 @@ package body Board.UART is
          Unlocked_Put_Decimal (Value / 10);
       end if;
 
-      Mmio_Write8
-        (THR,
-         Character'Pos
-           (Character'Val (Character'Pos ('0') + Value mod 10)));
+      Put_Char (Character'Val (Character'Pos ('0') + Value mod 10));
    end Unlocked_Put_Decimal;
 
    procedure Unlocked_Put_Hex (Value : U64) is
@@ -71,11 +91,9 @@ package body Board.UART is
    begin
       Unlocked_Put ("0x");
       loop
-         Mmio_Write8
-           (THR,
-            Character'Pos
-              (Hex (Natural (Interfaces.Shift_Right (Value, Shift)
-                 and 16#f#) + 1)));
+         Put_Char
+           (Hex (Natural (Interfaces.Shift_Right (Value, Shift)
+              and 16#f#) + 1));
          exit when Shift = 0;
          Shift := Shift - 4;
       end loop;
@@ -92,7 +110,7 @@ package body Board.UART is
    begin
       Raw_Spin_Lock (Print_Lock'Address);
       Unlocked_Put (S);
-      Mmio_Write8 (THR, Character'Pos (Character'Val (10)));
+      Put_Char (Character'Val (10));
       Raw_Spin_Unlock (Print_Lock'Address);
    end Put_Line;
 
@@ -118,7 +136,7 @@ package body Board.UART is
    procedure Put_Line_Unsafe (S : String) is
    begin
       Unlocked_Put (S);
-      Mmio_Write8 (THR, Character'Pos (Character'Val (10)));
+      Put_Char (Character'Val (10));
    end Put_Line_Unsafe;
 
    procedure Put_Hex_Unsafe (Value : U64) is
@@ -128,7 +146,10 @@ package body Board.UART is
 
    procedure Initialize_Interrupts is
    begin
-      --  Enable UART receive-data-available interrupt. PLIC handles routing.
+      --  Enable the 16550 FIFOs (16-byte TX buffer absorbs print
+      --  bursts; Wait_THRE still gates every write) and the
+      --  receive-data-available interrupt. PLIC handles routing.
+      Mmio_Write8 (FCR, FCR_FIFO);
       Mmio_Write8 (IER, IER_RDA);
    end Initialize_Interrupts;
 
@@ -146,6 +167,7 @@ package body Board.UART is
          exit when (Status and LSR_DR) = 0;
 
          Received := Mmio_Read8 (RBR);
+         Wait_THRE;
          Mmio_Write8 (THR, Received); -- echo for now
       end loop;
    end Handle_Interrupt;

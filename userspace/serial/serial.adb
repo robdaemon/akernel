@@ -45,9 +45,12 @@ procedure Serial is
 
    RBR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
    THR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
+   FCR : constant Akernel_User.MMIO.U64 := MMIO_VA + 2;
    LSR : constant Akernel_User.MMIO.U64 := MMIO_VA + 5;
 
-   LSR_DR : constant Akernel_User.MMIO.U8 := 16#01#;
+   LSR_DR   : constant Akernel_User.MMIO.U8 := 16#01#;
+   LSR_THRE : constant Akernel_User.MMIO.U8 := 16#20#;
+   FCR_FIFO : constant Akernel_User.MMIO.U8 := 16#07#;
 
    package RPC is new Akernel_User.IPC
      (Akernel_User.Streams.Stream_Request,
@@ -65,17 +68,36 @@ procedure Serial is
    Caps     : RPC.Cap_Array;
    Reply_H  : U64;
 
+   --  Wait for THR (or the TX FIFO) to drain before the next byte.
+   --  Without this a flushed-line burst silently overwrites a byte
+   --  the QEMU chardev has not consumed yet (thr_ipending
+   --  overwrite) — the "lost console line" flake.  The kernel's
+   --  debug writer (Board.UART) shares this UART without a common
+   --  lock and polls THRE the same way.
+   procedure Wait_THRE is
+   begin
+     while (Akernel_User.MMIO.Read8 (LSR) and LSR_THRE) = 0 loop
+        null;
+     end loop;
+   end Wait_THRE;
+
+   procedure UART_Put_Char (Ch : Character) is
+   begin
+     Wait_THRE;
+     Akernel_User.MMIO.Write8 (THR, Character'Pos (Ch));
+   end UART_Put_Char;
+
    procedure UART_Put (S : String) is
    begin
       for Ch of S loop
-         Akernel_User.MMIO.Write8 (THR, Character'Pos (Ch));
+        UART_Put_Char (Ch);
       end loop;
    end UART_Put;
 
    procedure UART_Put_Line (S : String) is
    begin
       UART_Put (S);
-      Akernel_User.MMIO.Write8 (THR, Character'Pos (Character'Val (10)));
+     UART_Put_Char (Character'Val (10));
    end UART_Put_Line;
 
    --  Input FIFO: UART RX bytes (echoed) and Op_Input bytes from
@@ -119,7 +141,7 @@ procedure Serial is
          exit when (Reg and LSR_DR) = 0;
          Reg := Akernel_User.MMIO.Read8 (RBR);
          Input_Put (Character'Val (Natural (Reg)));
-         Akernel_User.MMIO.Write8 (THR, Reg);
+        UART_Put_Char (Character'Val (Natural (Reg)));
       end loop;
    end Drain_RX;
 
@@ -207,7 +229,7 @@ procedure Serial is
       if Slot = 0 then
          if Free = 0 then
             --  Table full: bypass buffering rather than drop bytes.
-            Akernel_User.MMIO.Write8 (THR, Character'Pos (Ch));
+           UART_Put_Char (Ch);
             return;
          end if;
          Slot := Free;
@@ -245,6 +267,10 @@ begin
       Debug_Put_Line ("serial map mmio failed");
       Process_Exit;
    end if;
+
+   --  Enable the 16550 FIFOs: the 16-byte TX buffer absorbs
+   --  flushed-line bursts (Wait_THRE still gates every write).
+   Akernel_User.MMIO.Write8 (FCR, FCR_FIFO);
 
    UART_Put_Line ("console server online");
 

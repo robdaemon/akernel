@@ -1,5 +1,4 @@
 with Arch.SBI;
-with Kernel.CPUs;
 
 package body Kernel.Scheduler is
    use type Kernel.Tasks.Thread_Access;
@@ -280,6 +279,23 @@ package body Kernel.Scheduler is
    begin
       return My_Current;
    end Current;
+
+   procedure Current_CPU_Of
+     (TCB   : Kernel.Tasks.Thread_Access;
+      Found : out Boolean;
+      CPU   : out Kernel.CPUs.CPU_Index)
+   is
+   begin
+      Found := False;
+      CPU   := Kernel.CPUs.CPU_Index'First;
+      for C in Current_TCBS'Range loop
+         if Current_TCBS (C) = TCB then
+            Found := True;
+            CPU   := C;
+            return;
+         end if;
+      end loop;
+   end Current_CPU_Of;
 
    --  True when a queued thread strictly outranks this hart's
    --  running thread.  Checked at syscall exit and on the

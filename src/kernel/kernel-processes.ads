@@ -88,9 +88,17 @@ package Kernel.Processes is
    --  Kernel stacks cannot be freed by the thread still running on
    --  them.  Thread_Exit / Mark_Exited push the frame onto a per-CPU
    --  deferred list; the trap handler / idle loop drains it once the
-   --  CPU is no longer on that stack.
+   --  CPU is no longer on that stack.  Deferred entries carry the
+   --  hart's trap epoch: a stack becomes freeable two epochs after
+   --  recording, because a thread killed while running in user mode
+   --  on another hart (Mark_Exited) still takes its first trap —
+   --  and the trap-entry drain — on the doomed stack.
    procedure Free_Kernel_Stack_Later (Stack_Top : U64);
    procedure Drain_Deferred_Kernel_Stacks;
+
+   --  Bump this hart's trap epoch (called by the trap handler at
+   --  every trap entry, before Drain_Deferred_Kernel_Stacks).
+   procedure Note_Trap_Entry;
 
    --  Process introspection (milestone 37a): fixed-size binary
    --  snapshot of one process for the process_info syscall; the

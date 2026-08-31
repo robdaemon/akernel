@@ -1,4 +1,5 @@
 with Interfaces;
+with Kernel.CPUs;
 with Kernel.Tasks;
 
 package Kernel.Scheduler is
@@ -30,6 +31,15 @@ package Kernel.Scheduler is
       Result : out Status);
 
    function Current return Kernel.Tasks.Thread_Access;
+
+   --  Which CPU currently has TCB as its running thread, if any.
+   --  Process teardown consults this to defer freeing a kernel
+   --  stack whose owning hart may still be executing on it in
+   --  user mode (m74 SMP stack-free fix).
+   procedure Current_CPU_Of
+     (TCB   : Kernel.Tasks.Thread_Access;
+      Found : out Boolean;
+      CPU   : out Kernel.CPUs.CPU_Index);
 
    procedure Yield (Result : out Status);
 

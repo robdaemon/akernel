@@ -111,6 +111,16 @@ package Kernel.Notifications is
       Object : System.Address;
       Unbind : Boolean);
 
+   --  Thread-death hook (Mark_Exited / Thread_Exit): clear any
+   --  binding this thread holds (via its Bound_Ntfn back-pointer)
+   --  and any blocked ntfn_wait registration. The cap-close hook
+   --  above only fires for caps the dying process still holds and
+   --  only matches the exit-CALLING thread, so a killed secondary
+   --  thread's binding/waiter slot would otherwise dangle into the
+   --  freed TCB — after slot reuse a Signal would write a result
+   --  into and wake an unrelated thread (m74 teardown audit).
+   procedure Cleanup_Thread (Thread : Kernel.Tasks.Thread_Access);
+
 private
    type Notification is record
       Header       : Kernel.Objects.Object_Header;

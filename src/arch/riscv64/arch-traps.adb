@@ -2876,10 +2876,14 @@ package body Arch.Traps is
    procedure Riscv_Trap_Handler (Frame : System.Address) is
    begin
       Kernel.Lock.Acquire;
-      --  Drain any kernel stacks that exited threads left behind.
-      --  Safe here: the current hart is on its own thread stack,
-      --  and the stacks in the deferred list are owned by dead
-      --  threads that have already switched away.
+      --  Bump this hart's trap epoch BEFORE draining deferred
+      --  kernel stacks: a stack recorded by Mark_Exited for a
+      --  sibling killed while running here in user mode is still
+      --  in use by THIS trap entry, so entries become freeable
+      --  only one epoch after the victim's own trap (two after
+      --  recording).  Entries old enough belong to dead threads
+      --  that have already switched away.
+      Kernel.Processes.Note_Trap_Entry;
       Kernel.Processes.Drain_Deferred_Kernel_Stacks;
       Dispatch_Trap (Frame);
       --  No Release here: the trampoline releases the lock after
