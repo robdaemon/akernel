@@ -693,20 +693,28 @@ package body Kernel.Processes is
       Spawn_Image (Parent, Image, Grant_Count, Result, Process_Cap);
    end Spawn_Boot_Image;
 
-   --  Map a live process pointer back to its slot index.
-   function Process_Slot_Of
-     (Process : Kernel.Tasks.Process_Access) return Process_Index
+   --  Map a live process pointer back to its slot index.  Found is
+   --  False for null or out-of-table pointers; callers must not use
+   --  Slot then (pre-m76 this silently aliased slot 0, and a bogus
+   --  pointer would have corrupted process 0's thread count).
+   procedure Process_Slot_Of
+     (Process : Kernel.Tasks.Process_Access;
+      Slot    : out Process_Index;
+      Found   : out Boolean)
    is
    begin
+      Slot  := Process_Index'First;
+      Found := False;
       if Process = null then
-         return Process_Index'First;
+         return;
       end if;
       for I in Process_Index loop
          if Processes (I)'Address = Process.all'Address then
-            return I;
+            Slot  := I;
+            Found := True;
+            return;
          end if;
       end loop;
-      return Process_Index'First;
    end Process_Slot_Of;
 
    --  The initial thread of a process lives in the thread table at
@@ -784,8 +792,9 @@ package body Kernel.Processes is
    procedure Mark_Exited
      (Thread : Kernel.Tasks.Thread_Access;
       Code   : Kernel.Capabilities.U64) is
-      Process : Kernel.Tasks.Process_Access;
-      Slot    : Process_Index;
+      Process    : Kernel.Tasks.Process_Access;
+      Slot       : Process_Index;
+      Slot_Found : Boolean;
    begin
       if Thread = null then
          return;
@@ -796,7 +805,7 @@ package body Kernel.Processes is
          return;
       end if;
 
-      Slot := Process_Slot_Of (Process);
+      Process_Slot_Of (Process, Slot, Slot_Found);
       Kernel.Tasks.Set_Exit_Code (Process.all, Code);
       Kernel.Tasks.Set_Process_State
         (PCB       => Process.all,
@@ -868,7 +877,9 @@ package body Kernel.Processes is
          end if;
       end loop;
 
-      Process_Thread_Count (Slot) := 0;
+      if Slot_Found then
+         Process_Thread_Count (Slot) := 0;
+      end if;
       Cleanup_Cap_Refs (Thread);
    end Mark_Exited;
 
@@ -906,6 +917,7 @@ package body Kernel.Processes is
       Current       : constant Kernel.Tasks.Thread_Access := Parent;
       Process       : Kernel.Tasks.Process_Access;
       P_Slot        : Process_Index;
+      P_Found       : Boolean;
       T_Slot        : Thread_Index;
       Stack_Cap     : Kernel.Capabilities.Handle;
       IPC_Cap       : Kernel.Capabilities.Handle;
@@ -962,8 +974,11 @@ package body Kernel.Processes is
       if Process = null then
          return;
       end if;
-      P_Slot := Process_Slot_Of (Process);
+      Process_Slot_Of (Process, P_Slot, P_Found);
       Result := No_Slot;
+      if not P_Found then
+         return;
+      end if;
 
       if Kernel.Tasks.IPC_Buffer_PA (Current.all) = 0 then
          Result := Invalid_Program;
@@ -1256,6 +1271,7 @@ package body Kernel.Processes is
    is
       Process    : Kernel.Tasks.Process_Access;
       P_Slot     : Process_Index;
+      P_Found    : Boolean;
       T_Slot     : Thread_Index := Thread_Index'First;
       Found      : Boolean := False;
       Ignore     : Kernel.Scheduler.Status;
@@ -1270,7 +1286,11 @@ package body Kernel.Processes is
       if Process = null then
          return;
       end if;
-      P_Slot := Process_Slot_Of (Process);
+      Process_Slot_Of (Process, P_Slot, P_Found);
+      if not P_Found then
+         Result := Invalid_Program;
+         return;
+      end if;
 
       for T in Thread_Index loop
          if Thread_Used (T)

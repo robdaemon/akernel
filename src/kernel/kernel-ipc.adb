@@ -361,19 +361,56 @@ package body Kernel.IPC is
    --  Caller queue
    ------------------------------------------------------------------
 
+   --  A stored Queue_Tail is trusted only while it still points at
+   --  a thread queued on THIS endpoint with no successor.  Any
+   --  residual staleness turns the enqueue into a wild Queue_Next
+   --  write (m76), so a suspicious tail is rebuilt by walking from
+   --  Queue_Head; the walk is bounded by the thread-table size so
+   --  a corrupt cycle cannot hang the kernel.
+   Max_Queue_Walk : constant := 256;  --  = Max_Thread_Slots
+
    procedure Enqueue_Caller
      (Object : in out Endpoint;
       Caller : Kernel.Tasks.Thread_Access)
    is
+      Scan : Kernel.Tasks.Thread_Access;
+      Tail : Kernel.Tasks.Thread_Access;
    begin
       Kernel.Tasks.Set_Endpoint_Queue_Next (Caller.all, null);
       Kernel.Tasks.Set_Queued_On_EP (Caller.all, Object'Address);
 
-      if Object.Queue_Tail = null then
+      Tail := Object.Queue_Tail;
+      if (Tail = null and then Object.Queue_Head /= null)
+        or else
+          (Tail /= null
+           and then
+             (Kernel.Tasks.Queued_On_EP (Tail.all) /= Object'Address
+              or else Kernel.Tasks.Endpoint_Queue_Next (Tail.all) /=
+                null))
+      then
+         Tail := null;
+         Scan := Object.Queue_Head;
+         for I in 1 .. Max_Queue_Walk loop
+            exit when Scan = null;
+            exit when Kernel.Tasks.Queued_On_EP (Scan.all) /=
+              Object'Address;
+            if Kernel.Tasks.Endpoint_Queue_Next (Scan.all) = null then
+               Tail := Scan;
+               exit;
+            end if;
+            Scan := Kernel.Tasks.Endpoint_Queue_Next (Scan.all);
+         end loop;
+         if Tail = null then
+            --  The head chain is unusable: drop it rather than
+            --  trust any of its links.
+            Object.Queue_Head := null;
+         end if;
+      end if;
+
+      if Tail = null then
          Object.Queue_Head := Caller;
       else
-         Kernel.Tasks.Set_Endpoint_Queue_Next
-           (Object.Queue_Tail.all, Caller);
+         Kernel.Tasks.Set_Endpoint_Queue_Next (Tail.all, Caller);
       end if;
 
       Object.Queue_Tail := Caller;

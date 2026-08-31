@@ -421,6 +421,11 @@ package body Kernel.Scheduler is
          return;
       end if;
 
+      --  A dying thread must leave the sleep queue too (Remove_Thread
+      --  already does this for killed siblings); a stale entry would
+      --  be popped by the tick handler through a recycled TCB.
+      Remove_Sleeper (My_Current);
+
       Kernel.Tasks.Set_State (My_Current.all, Kernel.Tasks.Dead);
       Kernel.Tasks.Set_Queued (My_Current.all, False);
       Set_My_Current (null);
