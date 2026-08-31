@@ -170,10 +170,12 @@ package body Akernel_User.Sockets is
       end if;
 
       if Result = Status_Ok then
-         --  Caps do not travel in replies: the id is the reply
-         --  and the socket cap is a LOCAL mint of the service
-         --  endpoint with badge = id (the server demultiplexes
-         --  on Message.Badge).
+         --  The id arrives in the reply and the socket cap is a
+         --  LOCAL mint of the service endpoint with badge = id
+         --  (the server demultiplexes on Message.Badge). This
+         --  design dates from when replies could not carry caps
+         --  (pre-m75); it is kept because the badged mint is also
+         --  what scopes the socket's rights.
          Socks (Idx).Sock_Cap := Syscalls.Cap_Mint
            (Net_EP, Syscalls.Right_Send, Syscalls.Message.Words (1));
          if Socks (Idx).Sock_Cap /= Syscalls.Syscall_Failed then

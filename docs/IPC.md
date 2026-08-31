@@ -172,7 +172,8 @@ free-slot mint removes by construction.
 
 | Event | Result |
 |---|---|
-| `reply(handle)` | Reply words copied to caller buffer; caller wakes with 0; cap consumed (forgotten). A second `reply` on the same handle -> invalid (1). |
+| `reply(handle)` | Reply label/words/caps transferred to the caller buffer (caps need `Transfer` right in the replier's table, m75; transfer failure wakes the caller with 2); caller wakes with 0; cap consumed (forgotten). A second `reply` on the same handle -> invalid (1). |
+| Reply cap minting | Badge is stamped with the caller's thread-slot generation (m75); `reply`/close-hook on a cap whose caller's slot was reused fails invalid / fails nothing — never cross-delivers. |
 | Server exits/is reaped with pending reply caps | Each cap's close hook wakes its caller with `reply gone` (4). |
 | Server `cap_delete`s a reply cap | The caller wakes with `reply gone` (4) — the "drop this request" semantic. |
 | Caller exits while blocked in `call` | Unlinked from endpoint queue; server's later `reply` -> invalid. |
@@ -420,8 +421,9 @@ variable length, never zero-padded, split at `:` everywhere (the
 fileserver accepts device and label names up to 16 chars each).
 
 Stateless reads (no fids, no close). The read buffer is client-owned
-(replies cannot transfer caps — the reply path zeroes cap slots);
-the transferred cap pins the frames while the server holds it. The
+(the reply transfers no caps here: the fileserver clears its cap slots
+before replying); the transferred cap pins the frames while the server
+holds it. The
 server maps boot files via the mem_map boot-file branch (borrowed
 RO pages + lead-in offset) and copies into the client buffer mapped
 in its own AS. Manifest tokens: `fs_server` (Receive side),

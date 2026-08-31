@@ -116,21 +116,30 @@ copy sender buffer -> receiver buffer via physmap overlays
 `Queue_Next` link); receiver dequeues head, transfers, mints one-shot
 reply cap at handle 254 (`Reply_Object` pointing at caller TCB);
 caller stays blocked (`Awaiting_Reply` flag) until reply. Replies
-carry label+words only. Caller badge recorded in TCB at call time.
+carry label+words+caps (m75: `Reply` runs the same `Transfer_Message`
+as the send direction; a transfer failure still wakes the caller with
+2). Caller badge recorded in TCB at call time.
 
 Cap transfer: up to 4 buffer cap slots (0 = none); each must be valid
-with Transfer right; duplicated full-rights into receiver table;
-receiver buffer slots rewritten to new handles; rollback closes
-partial inserts (no partial delivery).
+with Transfer right (and not `Reply_Object`, m75 — a rollback close
+would wrongly fire `Fail_Reply_Target`); duplicated full-rights into
+receiver table; receiver buffer slots rewritten to new handles;
+rollback closes partial inserts (no partial delivery).
 
 Wake-with-status: waker writes result code into blocked thread's saved
 a0 (`Kernel.Tasks.Set_Saved_Result` -> `Arch.Context.Set_Saved_Result`,
 frame word 9) then `Scheduler.Wake`. Userspace codes: 0 ok, 1 invalid,
 2 transfer failed, 3 endpoint gone, 4 reply gone.
 
-Reply cap lifecycle: consumed by `Reply` via `Tasks.Forget_Cap` (raw
+Reply cap lifecycle: minted by `Mint_Reply_Cap` with the caller's
+thread-slot generation stamped in the badge (m75 — the counter lives
+outside the TCB in Kernel.Processes and bumps per slot reuse, same
+as process `Slot_Generation`); `Reply` and `Fail_Reply_Target` (which
+now takes the badge) refuse a stale cap, so a reply cap left dangling
+by a dead caller can never cross-deliver to the slot's new owner
+(TCB-address ABA). Consumed by `Reply` via `Tasks.Forget_Cap` (raw
 close, no hooks); failed via dispatcher `Reply_Object` case ->
-`Fail_Reply_Target` on server exit/reap or re-receive overwrite.
+`Fail_Reply_Target` on server exit/reap or cap_delete.
 Endpoint finalizer fails all queued callers + waiting receiver with
 endpoint-gone.
 

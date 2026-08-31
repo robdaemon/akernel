@@ -471,7 +471,8 @@ Other fixes applied:
   travel in IPC replies in this kernel (Kernel.IPC.Reply drops
   them; transferring there was tried and reverted: servers leave
   dead request caps in their reply buffer, and every reply site
-  in every server would have needed auditing). The client mints
+  in every server would have needed auditing — M75 later did the
+  audit and lifted the restriction; the badged-mint design stays). The client mints
   its own cap on the service endpoint with badge = socket id
   instead.** Badges demux, they are not authority (the pid
   badges the file server forwards are equally self-asserted).
@@ -894,6 +895,58 @@ teardown, SMP kernel-stack use-after-free, UART THR overrun.
   fragment search), the line count just drops. If exact counts
   ever matter, count verdicts with a fragment-tolerant parser.
 
+**M75 landed (2026-08-30).** Caps travel in IPC replies; reply-cap
+ABA closed; the libman manager path works for the first time.
+- Kernel: `Kernel.IPC.Reply` now `Transfer_Message`s into the
+  caller's buffer (was: caps zeroed, the m71c revert); the reply
+  cap is still consumed with `Forget_Cap`, and a transfer failure
+  wakes the caller with `Result_Transfer_Failed` (2) instead of
+  dropping silently. `Transfer_Message` rejects `Reply_Object`
+  caps (a rollback `Close_Cap` would wrongly fire
+  `Fail_Reply_Target`). No trap-layer change.
+- Reply-cap TCB-address ABA closed with generation tags:
+  per-thread-slot `Thread_Slot_Generation` (outside the TCB, same
+  pattern as process `Slot_Generation`, wrap 2**23) stamped into
+  the reply cap's badge by `Mint_Reply_Cap`; `Reply` and
+  `Fail_Reply_Target` (now takes the badge) refuse stale caps, so
+  a cap left dangling by a dead caller can never cross-deliver to
+  the slot's new owner.
+- Userspace audit (the m71c blocker): every reply site now clears
+  `Message.Caps` unless it deliberately sends one — helper-level
+  in bureau `Win_Reply`, fileserver `Reply2` + the deferred pipe
+  replies (a cross-REQUEST cap leak: reply on a stored handle
+  while Message holds a later request's caps), virtio_gpu
+  `Display_Reply`; per-site in virtio_blk (Op_Read/Write replied
+  with the client's LIVE Buf_Cap in Caps(0)), virtio_net (Op_Tx
+  Buf_Cap, Op_Set_Rx ring caps), virtio_input (would have bounced
+  Bureau's endpoint cap to devmgr), virtio_rng.
+- libman: mints the client service cap with Right_Transfer (the
+  reply transfer requires it) and Cap_Deletes the mint after the
+  reply. Enabling the path exposed three dormant bugs: init's
+  `libman` grant was Send-only so `Libman_Available`'s cap_mint
+  probe always failed (universal silent fallback to private
+  spawns); libman received on handle 6 but grant handles are
+  positional — `libman_server` is the 3rd manifest token, so its
+  first `IPC_Recv` failed at boot and the endpoint died; and
+  Close_Library told the manager before dropping its mint while
+  `Expunge` polls the reap before replying — a three-party
+  deadlock (the library exits only when its endpoint's last Send
+  cap is gone). Fixed: Send+Transfer grant, Service_EP=3,
+  delete-mint-first in Close_Library, and a libserv management
+  label (`Shutdown_Label`=0, intercepted before Dispatch) that
+  makes the library exit on expunge — the refcount-0
+  Endpoint_Gone exit could never fire (the server's own cap keeps
+  the count above zero; the "last client closed" comment was
+  aspirational since M58).
+- Regression hook: `Akernel_User.Libs.Opened_Via_Libman` + fuzz
+  verdict `libs open delivered via libman reply cap` proves the
+  reply cap delivers and the shared cache (not a private spawn)
+  serves the open.
+- Gates: zero-warning serial build (NOTE: parallel `make -jN`
+  corrupts libakernel_user.a — every crate's gprbuild builds the
+  same library project concurrently and gprlib crashes; build
+  serially); SMP1 1475-1476P/0F x2, SMP4 1474-1475P/0F x2.
+
 - **M73 — GNAT.Sockets (done).** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
   helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
@@ -907,20 +960,13 @@ target the gateway by design).
 Watchlist: virtio_net_hdr legacy-vs-modern size; RX ring overflow =
 drop-new with a counter in Net:status; fixed VA windows stay literals
 with the overlap guard; ARP cache / socket table sized with headroom
-in the same commit; devmgr Max_Lines 8 → 6 used. **IPC_Reply drops
-caps** (Kernel.IPC.Reply zeroes them): libman's reply-cap path has
-never delivered — Open_Library silently falls back to Open_Via_Self
-(private copies, so the shared-library cache is untested). Fixing it
-means Transfer_Message on the reply direction + auditing every reply
-site in every server to clear Message.Caps. **M74 deferred items:
-reply-cap TCB-address ABA (Mint_Reply_Cap stores a raw TCB address;
-caller death does not revoke, and slot reuse + Awaiting_Reply re-set
-passes every guard — cross-delivers a stale reply; no generation
-tags yet); Enqueue_Caller trusts Queue_Tail blindly (any residual
+in the same commit; devmgr Max_Lines 8 → 6 used. **Remaining M74
+deferred items: Enqueue_Caller trusts Queue_Tail blindly (any residual
 staleness becomes a wild Queue_Next write — no validity check);
 Process_Slot_Of returns slot 0 for out-of-table processes;
-Exit_Current does not Remove_Sleeper.** The SMP4 console-loss and
-whole-system stall flakes were root-caused and fixed in M74 above.
+Exit_Current does not Remove_Sleeper.** The IPC_Reply cap drop and
+reply-cap ABA items were fixed in M75 above; the SMP4 console-loss
+and whole-system stall flakes were fixed in M74.
 
 ## Open candidates
 
