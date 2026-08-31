@@ -9,6 +9,7 @@
 /initrd/out/
 **/bin/
 **/obj/
+.opencode/
 
 # Native/bare-metal binaries and objects
 *.elf
