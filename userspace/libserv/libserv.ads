@@ -16,6 +16,15 @@ package Libserv is
 
    Invalid_Handle : constant U64 := 0;
 
+   --  Management label (m75): Run intercepts it BEFORE Dispatch —
+   --  replies Ok and returns cleanly, exiting the library process.
+   --  The library manager sends it on expunge; library dispatch
+   --  callbacks must not use label 0. (The "endpoint going away"
+   --  exit path cannot fire: the server's own cap keeps the
+   --  refcount above zero, so an explicit shutdown is the only way
+   --  a library server ever exits.)
+   Shutdown_Label : constant U64 := 0;
+
    --  Dispatch callback: handle one request arriving on the library's
    --  service endpoint. Request words and transferred caps are in the
    --  arrays; Reply_Handle is the one-shot reply cap from Receive.

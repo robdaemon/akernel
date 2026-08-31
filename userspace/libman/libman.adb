@@ -17,7 +17,11 @@ procedure Libman is
 
    Console_Cap : constant U64 := 1;
    FS_Cap      : constant U64 := 2;
-   Service_EP  : constant U64 := 6;  --  uniform ABI library manager
+   Service_EP  : constant U64 := 3;  --  3rd manifest token
+   --  (console fs libman_server). Was 6 ("uniform ABI") — handle 6
+   --  is the CLIENT-side libman handle; the server's own Receive
+   --  side landed at 3, so libman's first IPC_Recv failed and the
+   --  manager never served a request (m75 found this).
 
    Max_Name      : constant := 64;
    Max_Libraries : constant := 16;
@@ -88,8 +92,20 @@ procedure Libman is
    procedure Expunge (Index : Natural) is
       E : Library_Entry renames Entries (Index);
       Code : U64 := 0;
+      Discard : U64;
    begin
       if E.Service_Cap /= 0 then
+         --  m75: ask the library server to shut down first
+         --  (libserv management label 0). Without it the reap poll
+         --  below spins forever: the server's own endpoint cap
+         --  keeps the refcount above zero, so the "last client
+         --  closed -> Endpoint_Gone" exit can never fire. If the
+         --  call fails the server is already gone; reap anyway.
+         Message.Label := 0;  --  Libserv.Shutdown_Label
+         Message.Words := (others => 0);
+         Message.Caps := (others => 0);
+         Message.Badge := 0;
+         Discard := IPC_Call (E.Service_Cap);
          Result := Cap_Delete (E.Service_Cap);
       end if;
       if E.Process_Cap /= 0 then

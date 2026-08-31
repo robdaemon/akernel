@@ -5522,6 +5522,13 @@ begin
       Check (Lib /= Akernel_User.Libs.Invalid_Handle,
              "libs open testlib ok");
 
+      --  m75: with a manager bound, the open must come from
+      --  libman's reply cap (shared cache), not the private-spawn
+      --  fallback — this is the IPC-reply cap-transfer regression
+      --  test.
+      Check (Akernel_User.Libs.Opened_Via_Libman (Lib),
+             "libs open delivered via libman reply cap");
+
       Message.Label := 1;
       Message.Words := String_To_Words ("fuzzme");
       Message.Caps := (others => 0);

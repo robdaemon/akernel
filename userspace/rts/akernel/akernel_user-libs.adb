@@ -385,13 +385,29 @@ package body Akernel_User.Libs is
          return;
       end if;
 
+      --  Delete our mint BEFORE telling the manager (m75): the
+      --  library server exits only when the last Send cap on its
+      --  service endpoint is gone, and the manager's Expunge polls
+      --  the reap before replying to our close call. Deleting
+      --  after the call deadlocks all three parties.
+      Result := Cap_Delete (Cap);
+
       if Idx /= 0 and then Open_Table (Idx).Source = From_Libman then
          Close_Via_Libman
            (Open_Table (Idx).Name (1 .. Open_Table (Idx).Name_Len));
       end if;
 
-      Result := Cap_Delete (Cap);
       Remove_Entry (Cap);
    end Close_Library;
+
+   ----------------------
+   -- Opened_Via_Libman --
+   ----------------------
+
+   function Opened_Via_Libman (Cap : U64) return Boolean is
+      Idx : constant Natural := Find_Entry (Cap);
+   begin
+      return Idx /= 0 and then Open_Table (Idx).Source = From_Libman;
+   end Opened_Via_Libman;
 
 end Akernel_User.Libs;

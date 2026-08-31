@@ -605,8 +605,11 @@ procedure Init is
                    Akernel_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "libman") then
             --  Shared library manager endpoint (milestone 65):
-            --  Send side granted to every program.
-            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Send, 0);
+            --  Send side granted to every program. m75: +
+            --  Transfer — Libman_Available probes by minting, and
+            --  cap_mint requires the source Transfer right.
+            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Send
+                   + Akernel_User.Syscalls.Right_Transfer, 0);
          elsif Token_Equals (Token, Length, "libman_server") then
             --  Library manager server: Receive side.
             Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Receive, 0);

@@ -39,4 +39,9 @@ package Akernel_User.Libs is
    --  Close a library handle returned by Open_Library.
    procedure Close_Library (Cap : U64);
 
+   --  Test hook (m75): True when the handle was delivered by the
+   --  manager's reply cap (shared-library cache), False when it
+   --  came from a private-spawn fallback (or is not open here).
+   function Opened_Via_Libman (Cap : U64) return Boolean;
+
 end Akernel_User.Libs;

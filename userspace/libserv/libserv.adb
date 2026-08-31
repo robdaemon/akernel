@@ -56,6 +56,17 @@ package body Libserv is
             exit;
          end if;
 
+         --  Management op (m75): the manager's expunge asks us to
+         --  shut down. Reply, then leave the loop.
+         if Message.Label = Shutdown_Label then
+            Message.Label := 0;
+            Message.Words := (others => 0);
+            Message.Caps := (others => 0);
+            Message.Badge := 0;
+            Status := IPC_Reply (Reply_H);
+            exit;
+         end if;
+
          declare
             Req_Words : Words := Message.Words;
             Req_Caps  : Caps := Message.Caps;
