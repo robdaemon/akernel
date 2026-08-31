@@ -59,7 +59,7 @@ package body Kernel.Objects is
                null;
             end if;
          when Kernel.Capabilities.Reply_Object =>
-            Kernel.IPC.Fail_Reply_Target (Cap.Object);
+            Kernel.IPC.Fail_Reply_Target (Cap.Object, Cap.Badge);
          when Kernel.Capabilities.IRQ_Object =>
             declare
                Line : constant Kernel.Objects.IRQ_Line_Access :=

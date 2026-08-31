@@ -136,9 +136,12 @@ package Kernel.IPC is
       Reply_Handle : out Kernel.Capabilities.Handle);
 
    --  Reply: consumes the reply cap at Cap (Reply_Object kind,
-   --  minted by an earlier Receive), copies label+words into the
-   --  caller's buffer (caps do NOT travel in replies), wakes it
-   --  with Result_Ok.
+   --  minted by an earlier Receive; badge must match the caller's
+   --  thread-slot generation — stale caps from a reused slot fail
+   --  Reply_Missing), transfers label+words+caps into the caller's
+   --  buffer (m75: caps DO travel in replies), wakes it with
+   --  Result_Ok, or Result_Transfer_Failed when a cap in the
+   --  replier's buffer cannot be transferred.
    procedure Reply
      (Replier : Kernel.Tasks.Thread_Access;
       Cap     : Kernel.Capabilities.Handle;
@@ -164,8 +167,12 @@ package Kernel.IPC is
 
    --  Reply-cap-close hook: fails the caller a reply cap points at
    --  (server exited, was reaped, or dropped the request with
-   --  cap_delete). Caller wakes with Result_Reply_Gone.
-   procedure Fail_Reply_Target (Caller_Object : System.Address);
+   --  cap_delete). Caller wakes with Result_Reply_Gone. The cap's
+   --  badge must match the caller's thread-slot generation (m75):
+   --  a stale cap whose caller's slot was reused fails nothing.
+   procedure Fail_Reply_Target
+     (Caller_Object : System.Address;
+      Badge         : Kernel.Capabilities.U64);
 
    --  Receiver-teardown hook: permanently fail an endpoint whose
    --  receiving side is dying. Queued callers and a waiting

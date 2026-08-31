@@ -58,6 +58,7 @@ package body Kernel.Tasks is
       TCB.IPC_Buffer := 0;
       TCB.IPC_Buffer_User_VA := 0;
       TCB.Awaiting_Reply := False;
+      TCB.Reply_Generation := 0;
       TCB.Reply_Wanted   := False;
       TCB.Queue_Next := null;
       TCB.Call_Badge := 0;
@@ -331,8 +332,6 @@ package body Kernel.Tasks is
       TCB.Queued_On_EP := Object;
    end Set_Queued_On_EP;
 
-
-
    function Is_Boosted (TCB : Thread_Control_Block) return Boolean is
    begin
       return TCB.Boosted;
@@ -393,6 +392,21 @@ package body Kernel.Tasks is
    begin
       return TCB.Awaiting_Reply;
    end Is_Awaiting_Reply;
+
+   procedure Set_Reply_Generation
+     (TCB        : in out Thread_Control_Block;
+      Generation : Kernel.Capabilities.U64)
+   is
+   begin
+      TCB.Reply_Generation := Generation;
+   end Set_Reply_Generation;
+
+   function Reply_Generation
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64
+   is
+   begin
+      return TCB.Reply_Generation;
+   end Reply_Generation;
 
    procedure Set_Reply_Wanted
      (TCB    : in out Thread_Control_Block;

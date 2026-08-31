@@ -549,7 +549,12 @@ package body Kernel.IPC is
 
                if Cap_Result /= Kernel.Capabilities.Ok
                  or else not Cap_Info.Rights.Transfer
+                 or else Cap_Info.Kind = Kernel.Capabilities.Reply_Object
                then
+                  --  Reply_Object rejected like cap_mint / spawn
+                  --  grants do: a rollback Close_Cap on one would
+                  --  wrongly fire Fail_Reply_Target via the close
+                  --  hooks.
                   Rollback;
                   Result := Transfer_Failed;
                   return;
@@ -586,13 +591,20 @@ package body Kernel.IPC is
    --  Reply cap
    ------------------------------------------------------------------
 
-   procedure Fail_Reply_Target (Caller_Object : System.Address) is
+   procedure Fail_Reply_Target
+     (Caller_Object : System.Address;
+      Badge         : U64)
+   is
       Caller : constant Kernel.Tasks.Thread_Access :=
         To_Thread (Caller_Object);
    begin
       if Is_Dead (Caller)
         or else not Kernel.Tasks.Is_Awaiting_Reply (Caller.all)
+        or else Badge /= Kernel.Tasks.Reply_Generation (Caller.all)
       then
+         --  Badge mismatch (m75): the cap outlived its caller's
+         --  thread-slot incarnation; failing the slot's current
+         --  occupant would be a cross-delivery.
          return;
       end if;
 
@@ -603,7 +615,11 @@ package body Kernel.IPC is
    --  at the caller. Milestone 47: an ordinary free-slot cap (was
    --  a fixed handle-254 slot a re-receive overwrote, failing the
    --  previous caller); a server thread may now hold many
-   --  outstanding reply caps and reply in any order.
+   --  outstanding reply caps and reply in any order. The badge
+   --  stamps the caller's thread-slot generation (m75): after the
+   --  caller dies and its slot is reused, the stale cap fails
+   --  Reply/Fail_Reply_Target's generation check instead of
+   --  cross-delivering to the slot's new owner.
    procedure Mint_Reply_Cap
      (Receiver : Kernel.Tasks.Thread_Access;
       Caller   : Kernel.Tasks.Thread_Access;
@@ -619,7 +635,7 @@ package body Kernel.IPC is
          Kind   => Kernel.Capabilities.Reply_Object,
          Object => Caller.all'Address,
          Rights => Kernel.Capabilities.No_Rights,
-         Badge  => 0,
+         Badge  => Kernel.Tasks.Reply_Generation (Caller.all),
          Result => Cap_Result,
          Cap    => Cap);
 
@@ -966,6 +982,7 @@ package body Kernel.IPC is
       Cap_Info    : Kernel.Capabilities.Cap_Entry;
       Caller      : Kernel.Tasks.Thread_Access;
       Caller_Buf  : Buffer_Message_Access;
+      Transfer_St : Status;
       Wake_Result : Kernel.Scheduler.Status;
    begin
       if Replier = null or else Replier_Buf = null then
@@ -990,7 +1007,13 @@ package body Kernel.IPC is
 
       if Is_Dead (Caller)
         or else not Kernel.Tasks.Is_Awaiting_Reply (Caller.all)
+        or else Cap_Info.Badge /=
+                Kernel.Tasks.Reply_Generation (Caller.all)
       then
+         --  Badge mismatch (m75): the cap was minted for a dead
+         --  caller whose thread slot has since been reused;
+         --  replying through it would cross-deliver to the slot's
+         --  new owner.
          Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
          Result := Reply_Missing;
          return;
@@ -1004,21 +1027,26 @@ package body Kernel.IPC is
          return;
       end if;
 
-      --  One-shot: consume the cap, deliver label+words, wake
-      --  caller. Caps do NOT travel in replies: Transfer_Message
-      --  on this direction was tried in m71c and reverted —
-      --  servers leave received (and since deleted) request caps
-      --  in their buffer, and auditing every reply site in every
-      --  server was not worth it when the one consumer (netserv
-      --  Op_Socket) can mint client-side instead. (Libman's
-      --  reply-cap code path has therefore never delivered its
-      --  cap: Open_Library silently falls back to Open_Via_Self.)
+      --  One-shot: consume the cap, transfer label+words+caps into
+      --  the caller's buffer, wake it. Caps travel in replies as of
+      --  m75 (every server's reply sites are audited to clear
+      --  Message.Caps; libman replies with a minted service-
+      --  endpoint cap). The reply cap itself is consumed with
+      --  Forget_Cap (raw close, no hooks) — Close_Cap would fire
+      --  Fail_Reply_Target and wrongly wake the just-satisfied
+      --  caller with Reply_Gone.
       Kernel.Tasks.Forget_Cap (Replier, Cap, Cap_Result);
 
-      Caller_Buf.Label := Replier_Buf.Label;
-      Caller_Buf.Words := Replier_Buf.Words;
-      Caller_Buf.Caps := (others => 0);
-      Caller_Buf.Badge := 0;
+      Transfer_Message (Replier, Caller, 0, Transfer_St);
+      if Transfer_St /= Ok then
+         --  Delivery failed (bad/revoked cap in the replier's
+         --  buffer): the caller still wakes, with
+         --  Result_Transfer_Failed; the reply cap is gone either
+         --  way.
+         Wake_With_Result (Caller, Result_Transfer_Failed);
+         Result := Ok;
+         return;
+      end if;
 
       Kernel.Tasks.Set_Awaiting_Reply (Caller.all, False);
       Kernel.Tasks.Set_Saved_Result (Caller.all, Result_Ok);

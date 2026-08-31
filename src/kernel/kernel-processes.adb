@@ -130,6 +130,14 @@ package body Kernel.Processes is
    Slot_Generation : array (Process_Index) of U64 :=
      (others => 0);
 
+   --  Same trick for THREAD slots (m75): stamped into reply-cap
+   --  badges by Mint_Reply_Cap, so a reply cap left dangling by a
+   --  dead caller fails Reply/Fail_Reply_Target's generation check
+   --  after the slot is reused (TCB-address ABA). Lives outside
+   --  the TCB: Initialize_Thread overwrites the whole record.
+   Thread_Slot_Generation : array (Thread_Index) of U64 :=
+     (others => 0);
+
    Stack_Top : constant U64 := 16#7000_0000#;
 
    --  User stack pages per spawned process (fuzz overflowed the
@@ -538,6 +546,10 @@ package body Kernel.Processes is
         (TCB     => Threads (Thread_Slot),
          Id      => New_Thread_Id,
          Process => Processes (Slot)'Unchecked_Access);
+      Kernel.Tasks.Set_Reply_Generation
+        (Threads (Thread_Slot), Thread_Slot_Generation (Thread_Slot));
+      Thread_Slot_Generation (Thread_Slot) :=
+        (Thread_Slot_Generation (Thread_Slot) + 1) mod Generation_Wrap;
       Kernel.Tasks.Set_Kernel_Stack_Top
         (TCB       => Threads (Thread_Slot),
          Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
@@ -1109,6 +1121,10 @@ package body Kernel.Processes is
         (TCB     => Threads (T_Slot),
          Id      => New_Thread_Id,
          Process => Process);
+      Kernel.Tasks.Set_Reply_Generation
+        (Threads (T_Slot), Thread_Slot_Generation (T_Slot));
+      Thread_Slot_Generation (T_Slot) :=
+        (Thread_Slot_Generation (T_Slot) + 1) mod Generation_Wrap;
       Kernel.Tasks.Set_Kernel_Stack_Top
         (TCB       => Threads (T_Slot),
          Stack_Top => KStack_Frame + Kernel.Physical_Memory.Page_Size);

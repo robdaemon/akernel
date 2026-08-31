@@ -223,6 +223,21 @@ package Kernel.Tasks is
 
    function Is_Awaiting_Reply (TCB : Thread_Control_Block) return Boolean;
 
+   --  Reply-cap generation tag (m75): bumped every time this
+   --  thread's slot is reallocated (Kernel.Processes keeps the
+   --  per-slot counter OUTSIDE the TCB because Initialize_Thread
+   --  overwrites the whole record). Mint_Reply_Cap stamps it into
+   --  the reply cap's badge; Reply and Fail_Reply_Target refuse a
+   --  cap whose badge is stale, so a reply cap left dangling by a
+   --  dead caller can never cross-deliver to the thread that later
+   --  reuses the slot (the TCB-address ABA).
+   procedure Set_Reply_Generation
+     (TCB        : in out Thread_Control_Block;
+      Generation : Kernel.Capabilities.U64);
+
+   function Reply_Generation
+     (TCB : Thread_Control_Block) return Kernel.Capabilities.U64;
+
    --  Plain-send bookkeeping (milestone 35): set at Call (True) /
    --  Send (False) before queueing; the receiver reads it to decide
    --  whether to mint a reply cap and leave the caller parked, or
@@ -419,6 +434,7 @@ private
       IPC_Buffer       : Kernel.Capabilities.U64;
       IPC_Buffer_User_VA : Kernel.Capabilities.U64;
       Awaiting_Reply   : Boolean;
+      Reply_Generation : Kernel.Capabilities.U64;
       Reply_Wanted     : Boolean;
       Queue_Next       : Thread_Access;
       Call_Badge       : Kernel.Capabilities.U64;
