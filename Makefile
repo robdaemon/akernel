@@ -16,6 +16,16 @@ INITRD_MODE ?= interactive
 #  make run QEMU_ARGS="-display gtk" — the later -display wins
 #  and serial stays on stdio.
 QEMU_ARGS ?= -nographic
+#  virtio-9p host share (m79): the Host: volume is runtime opt-in —
+#  the guest reacts to the device on the PCI bus, there is no
+#  guest-side configuration. `make test` appends QEMU_9P_FLAGS so
+#  the suite gates the share; interactive boots opt in with qemu
+#  args, e.g.
+#    make run QEMU_ARGS="-nographic $(QEMU_9P_FLAGS)"
+#  Set QEMU_9P_FLAGS= (empty) to run the suite without the device
+#  (fuzz then prints SKIP for the Host: checks).
+SHARE_DIR ?= $(CURDIR)/share
+QEMU_9P_FLAGS ?= -fsdev local,id=fs0,path=$(SHARE_DIR),security_model=none -device virtio-9p-pci,fsdev=fs0,mount_tag=host,addr=0x9
 INITRD_ADDR ?= 0x84000000
 
 KERNEL_ELF := bin/akernel.elf
@@ -41,6 +51,7 @@ DHCP_TEST_ELF := bin/userspace/dhcp_test.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
+VIRTIO_9P_ELF := bin/userspace/virtio_9p.elf
 VIRTIO_INPUT_ELF := bin/userspace/virtio_input.elf
 VIRTIO_GPU_ELF := bin/userspace/virtio_gpu.elf
 LIBMAN_ELF := bin/userspace/libman.elf
@@ -60,7 +71,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
@@ -238,11 +249,13 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioRng pci 4' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioBlk pci 2' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioNet pci 1' >> $(INITRD_ROOT)/System/Drivers
+	printf '%s\n' 'driver pci,1af4 Drivers/Virtio9p pci 9' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioInput pci 18' >> $(INITRD_ROOT)/System/Drivers
 	printf '%s\n' 'driver pci,1af4 Drivers/VirtioGpu pci 16' >> $(INITRD_ROOT)/System/Drivers
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioRng $(VIRTIO_RNG_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioBlk $(VIRTIO_BLK_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioNet $(VIRTIO_NET_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/Virtio9p $(VIRTIO_9P_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioInput $(VIRTIO_INPUT_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/VirtioGpu $(VIRTIO_GPU_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/Serial $(SERIAL_ELF)
@@ -324,7 +337,8 @@ FORCE:
 test:
 	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
 	PID=$$!; \
-	$(MAKE) run INITRD_MODE=test; ST=$$?; \
+	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR); fi; \
+	$(MAKE) run INITRD_MODE=test QEMU_ARGS="$(QEMU_ARGS) $(QEMU_9P_FLAGS)"; ST=$$?; \
 	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
 	exit $$ST
 

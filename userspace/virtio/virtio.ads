@@ -20,6 +20,7 @@ package Virtio is
    Device_Block   : constant U32 := 2;
    Device_Console : constant U32 := 3;
    Device_RNG     : constant U32 := 4;
+   Device_9P      : constant U32 := 9;
    Device_GPU     : constant U32 := 16;
 
    --  Status register bits.
