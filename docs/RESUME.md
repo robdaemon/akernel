@@ -71,7 +71,10 @@ per-milestone detail too.
 
 ## Active
 
-Nothing in flight. Next candidates: the open candidates below.
+Nothing in flight. Planned but not started: **M80 grow-on-demand
+tables** (the Max_* limit-fixes pass) — `docs/LIMIT_FIXES.md`;
+load it only when working on M80. Otherwise: the open candidates
+below.
 
 ## Open candidates
 
@@ -82,7 +85,8 @@ Nothing in flight. Next candidates: the open candidates below.
    aknet_glue.c vs netserv's `Max_Socks=16`: socket ids 9..16 get
    no listen-table entry (harmless today — the `id <= 8` guards
    just skip, and listeners in the 9..16 range only lose
-   `tcp_accepted` backlog accounting). Bump or reconcile.
+   `tcp_accepted` backlog accounting). Subsumed by M80e
+   (`docs/LIMIT_FIXES.md`) if that lands first.
 
 Deferred (not candidates): socket servers (finger etc.), external
 ICMP (slirp does not forward it — tests target the gateway by
