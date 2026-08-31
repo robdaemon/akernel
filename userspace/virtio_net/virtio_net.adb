@@ -415,6 +415,7 @@ begin
    end if;
 
    Message.Words := (others => 0);
+   Message.Caps := (others => 0);  --  m75: replies transfer caps
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-net config reply failed");
       Process_Exit;
@@ -653,6 +654,7 @@ begin
             Message.Words (2) :=
               U64 (Our_Mac (4)) or U64 (Our_Mac (5)) * 16#100#;
             Message.Words (3) := MTU;
+            Message.Caps := (others => 0);  --  m75
             if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-net reply failed");
             end if;
@@ -660,6 +662,9 @@ begin
          elsif Message.Label = Op_Tx then
             Frame_Len := Message.Words (0);
             Buf_Cap   := Message.Caps (0);
+            --  m75: detach the received buffer cap so no reply
+            --  bounces it back to the caller.
+            Message.Caps := (others => 0);
 
             if Buf_Cap = 0 or else Frame_Len < 14
               or else Frame_Len > MTU + 14
@@ -702,12 +707,16 @@ begin
             then
                Message.Words (0) := 3;  --  bad arguments
                Message.Words (1) := 0;
+               Message.Caps := (others => 0);  --  m75
                if IPC_Reply (Reply_H) /= IPC_Ok then
                   Debug_Put_Line ("virtio-net reply failed");
                end if;
             else
                Ring_Cap  := Message.Caps (0);
                Ring_Ntfn := Message.Caps (1);
+               --  m75: replies transfer caps; detach the received
+               --  ring caps from the buffer.
+               Message.Caps := (others => 0);
 
                Result := Mem_Map
                  (Address_Space => Address_Space_Cap,
@@ -749,6 +758,7 @@ begin
          else
             Message.Words (0) := 3;
             Message.Words (1) := 0;
+            Message.Caps := (others => 0);  --  m75
             if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-net reply failed");
             end if;

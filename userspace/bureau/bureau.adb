@@ -190,18 +190,21 @@ procedure Bureau is
    function Pane_Y (S : Natural) return U64 is
      (Wins (S).Y + Frame + Title_H);
 
-   --  Raw word reply (same pattern as the display driver).
-   procedure Win_Reply
-     (Reply_H : U64; Req_Label : U64; W0, W1, W2, W3, W4 : U64) is
-   begin
-      Message.Label := Req_Label;
-      Message.Words (0) := W0;
-      Message.Words (1) := W1;
-      Message.Words (2) := W2;
-      Message.Words (3) := W3;
-      Message.Words (4) := W4;
-      Message.Words (5) := 0;
-      if IPC_Reply (Reply_H) /= IPC_Ok then
+    --  Raw word reply (same pattern as the display driver). Caps
+    --  are cleared (m75): replies transfer them now, and request
+    --  caps (queue/ntfn/object) sit live in the buffer.
+    procedure Win_Reply
+      (Reply_H : U64; Req_Label : U64; W0, W1, W2, W3, W4 : U64) is
+    begin
+       Message.Label := Req_Label;
+       Message.Words (0) := W0;
+       Message.Words (1) := W1;
+       Message.Words (2) := W2;
+       Message.Words (3) := W3;
+       Message.Words (4) := W4;
+       Message.Words (5) := 0;
+       Message.Caps := (others => 0);
+       if IPC_Reply (Reply_H) /= IPC_Ok then
          Debug_Put_Line ("bureau reply failed");
          Process_Exit;
       end if;

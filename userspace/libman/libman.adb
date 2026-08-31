@@ -273,7 +273,10 @@ procedure Libman is
             return;
          end if;
 
-         Client := Cap_Mint (Message.Caps (0), Right_Send, 0);
+         --  m75: the mint needs Right_Transfer — the kernel's
+         --  reply path (Transfer_Message) requires it.
+         Client := Cap_Mint
+           (Message.Caps (0), Right_Send + Right_Transfer, 0);
          if Client = Syscall_Failed then
             Discard := Cap_Delete (Message.Caps (0));
             Discard := Cap_Delete (Proc);
@@ -295,6 +298,9 @@ procedure Libman is
          Message.Words (1) := Revision;
          Message.Caps := (0 => Client, others => 0);
          Result := IPC_Reply (Reply_H);
+         --  Minted copies are deleted after the transfer (m75:
+         --  the reply actually delivers the cap now).
+         Discard := Cap_Delete (Client);
       end;
    end Load_And_Open;
 
@@ -303,15 +309,18 @@ procedure Libman is
       Min_Version : U64;
       Reply_H     : U64)
    is
-      Idx    : constant Natural := Entry_By_Name (Name);
-      Client : U64;
+      Idx     : constant Natural := Entry_By_Name (Name);
+      Client  : U64;
+      Discard : U64;
    begin
       if Idx /= 0 then
          if Entries (Idx).Version < Min_Version then
             Reply_Fail (Reply_H);
             return;
          end if;
-         Client := Cap_Mint (Entries (Idx).Service_Cap, Right_Send, 0);
+         --  m75: Right_Transfer so the reply path can transfer.
+         Client := Cap_Mint
+           (Entries (Idx).Service_Cap, Right_Send + Right_Transfer, 0);
          if Client = Syscall_Failed then
             Reply_Fail (Reply_H);
             return;
@@ -323,6 +332,7 @@ procedure Libman is
          Message.Words (1) := Entries (Idx).Revision;
          Message.Caps := (0 => Client, others => 0);
          Result := IPC_Reply (Reply_H);
+         Discard := Cap_Delete (Client);  --  m75: transferred now
          return;
       end if;
 

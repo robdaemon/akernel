@@ -532,6 +532,7 @@ begin
    end if;
 
    Message.Words := (others => 0);
+   Message.Caps := (others => 0);  --  m75: replies transfer caps
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-input config reply failed");
       Process_Exit;
@@ -700,6 +701,7 @@ begin
          --  Devmgr pushes Bureau's window-service endpoint.
          Seat_EP := Message.Caps (0);
          Message.Words := (others => 0);
+         Message.Caps := (others => 0);  --  m75
          if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-input seat reply failed");
             Process_Exit;
@@ -709,6 +711,7 @@ begin
       else
          Message.Words := (others => 0);
          Message.Words (0) := 3;
+         Message.Caps := (others => 0);  --  m75
          if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-input reply failed");
             Process_Exit;

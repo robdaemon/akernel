@@ -500,6 +500,7 @@ begin
    end if;
 
    Message.Words := (others => 0);
+   Message.Caps := (others => 0);  --  m75: replies transfer caps
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-blk config reply failed");
       Process_Exit;
@@ -776,6 +777,7 @@ begin
          elsif Message.Label = Op_Info then
             Message.Words (0) := 0;
             Message.Words (1) := Capacity;
+            Message.Caps := (others => 0);  --  m75
             if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-blk reply failed");
             end if;
@@ -787,6 +789,7 @@ begin
             Message.Words (0) :=
               (if Flush_Dirty (Force_Device => True) then 0 else 1);
             Message.Words (1) := 0;
+            Message.Caps := (others => 0);  --  m75
             if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-blk reply failed");
             end if;
@@ -795,6 +798,9 @@ begin
             Sector  := Message.Words (0);
             Count   := Message.Words (1);
             Buf_Cap := Message.Caps (0);
+            --  m75: replies transfer caps; detach the received
+            --  buffer cap from the buffer so no reply bounces it.
+            Message.Caps := (others => 0);
 
             if Buf_Cap = 0 or else Count = 0 or else Count > 8
               or else Sector + Count > Capacity
@@ -912,6 +918,9 @@ begin
             Sector  := Message.Words (0);
             Count   := Message.Words (1);
             Buf_Cap := Message.Caps (0);
+            --  m75: replies transfer caps; detach the received
+            --  buffer cap from the buffer so no reply bounces it.
+            Message.Caps := (others => 0);
 
             if Buf_Cap = 0 or else Count = 0 or else Count > 8
               or else Sector + Count > Capacity
@@ -989,6 +998,7 @@ begin
          else
             Message.Words (0) := 3;
             Message.Words (1) := 0;
+            Message.Caps := (others => 0);  --  m75
             if IPC_Reply (Reply_H) /= IPC_Ok then
                Debug_Put_Line ("virtio-blk reply failed");
             end if;

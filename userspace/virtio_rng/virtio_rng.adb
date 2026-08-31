@@ -181,6 +181,7 @@ begin
    end if;
 
    Message.Words := (others => 0);
+   Message.Caps := (others => 0);  --  m75: replies transfer caps
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-rng config reply failed");
       Process_Exit;
@@ -342,6 +343,7 @@ begin
          --  No service yet: unknown op status, like blk's 3.
          Message.Words (0) := 3;
          Message.Words (1) := 0;
+         Message.Caps := (others => 0);  --  m75
          if IPC_Reply (Reply_H) /= IPC_Ok then
             Debug_Put_Line ("virtio-rng reply failed");
             Process_Exit;

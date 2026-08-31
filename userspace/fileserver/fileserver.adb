@@ -354,6 +354,9 @@ procedure Fileserver is
       Syscalls.Message.Label := 0;
       Syscalls.Message.Words (0) := Status;
       Syscalls.Message.Words (1) := Value;
+      --  m75: replies transfer caps now; drop any received request
+      --  caps (e.g. a forwarded Buf cap) still sitting in the buffer.
+      Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
          Akernel_User.Console.Put_Line ("fileserver: reply failed");
       end if;
@@ -1062,6 +1065,10 @@ procedure Fileserver is
                      end if;
                      Syscalls.Message.Words (0) := St;
                      Syscalls.Message.Words (1) := Count;
+                     --  m75: deferred reply on a stored handle —
+                     --  Message.Caps belongs to a LATER request;
+                     --  clear it before it transfers cross-request.
+                     Syscalls.Message.Caps := (others => 0);
                      if Syscalls.IPC_Reply (Pend_Reply (S))
                        /= Syscalls.IPC_Ok
                      then
@@ -1098,6 +1105,9 @@ procedure Fileserver is
                      end if;
                      Syscalls.Message.Words (0) := St;
                      Syscalls.Message.Words (1) := Pend_Length (S);
+                     --  m75: deferred reply — clear the current
+                     --  request's caps (see the P_Read case above).
+                     Syscalls.Message.Caps := (others => 0);
                      if Syscalls.IPC_Reply (Pend_Reply (S))
                        /= Syscalls.IPC_Ok
                      then
@@ -1131,6 +1141,9 @@ procedure Fileserver is
          then
             Syscalls.Message.Words (0) := Files.Status_Not_Found;
             Syscalls.Message.Words (1) := 0;
+            --  m75: deferred reply — clear the current request's
+            --  caps (see Drain_Pipe).
+            Syscalls.Message.Caps := (others => 0);
             if Syscalls.IPC_Reply (Pend_Reply (S))
               /= Syscalls.IPC_Ok
             then

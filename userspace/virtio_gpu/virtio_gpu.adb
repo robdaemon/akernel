@@ -502,18 +502,21 @@ procedure Virtio_Gpu is
 
    package DSP renames Akernel_User.Display;
 
-   --  Reply with raw words (the RPC generic marshals stream
-   --  payloads; display replies are plain words).
-   procedure Display_Reply (Reply_H : U64; Req_Label : U64; W0 : U64) is
-   begin
-      Message.Label := Req_Label;
-      Message.Words (0) := W0;
-      Message.Words (1) := U64 (Width);
-      Message.Words (2) := U64 (Height);
-      Message.Words (3) := U64 (Width * 4);
-      Message.Words (4) := FB_Pages;
-      Message.Words (5) := 64;
-      if IPC_Reply (Reply_H) /= IPC_Ok then
+    --  Reply with raw words (the RPC generic marshals stream
+    --  payloads; display replies are plain words). Caps are
+    --  cleared (m75): replies transfer them now, and Op_Set_Buffer
+    --  leaves received FB caps in the buffer.
+    procedure Display_Reply (Reply_H : U64; Req_Label : U64; W0 : U64) is
+    begin
+       Message.Label := Req_Label;
+       Message.Words (0) := W0;
+       Message.Words (1) := U64 (Width);
+       Message.Words (2) := U64 (Height);
+       Message.Words (3) := U64 (Width * 4);
+       Message.Words (4) := FB_Pages;
+       Message.Words (5) := 64;
+       Message.Caps := (others => 0);
+       if IPC_Reply (Reply_H) /= IPC_Ok then
          Debug_Put_Line ("virtio-gpu display reply failed");
          Process_Exit;
       end if;
@@ -636,6 +639,7 @@ begin
    end if;
 
    Message.Words := (others => 0);
+   Message.Caps := (others => 0);  --  m75: replies transfer caps
    if IPC_Reply (Reply_H) /= IPC_Ok then
       Debug_Put_Line ("virtio-gpu config reply failed");
       Process_Exit;
