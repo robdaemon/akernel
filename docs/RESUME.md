@@ -20,16 +20,22 @@ The previous full resume is archived at `docs/HISTORY.md`.
 
 ## Recently shipped
 
-- **Milestone 65** — Tier-1 shared library manager (`System/Libman`).
-  Version/revision enforcement, reference counting, per-client caps,
-  private-spawn fallback when no manager is bound.
-- **Docs** — Trinket widget/window/rendering docs under
-  `docs/trinket/`; Ravenscar tasking runtime design under
-  `docs/runtime/tasking.md`.
+- **M76** — kernel hardening: endpoint caller-queue tail
+  validation, `Process_Slot_Of` no longer aliases slot 0,
+  `Exit_Current` removes the dying thread from the sleep queue.
+- **M75** — caps travel in IPC replies (+ reply-cap generation
+  tags); the libman manager path works for the first time.
+- **M74** — watchlist flakes fixed: full death teardown, SMP-safe
+  kernel-stack free, UART THRE flow control.
 
 ## Active
 
-**Milestone 66 — kernel thread primitives** (see
+Nothing in flight. Next candidates: the net-stack watchlist items
+below, or the open candidates at the bottom of this file.
+
+## Landed milestone detail
+
+**Milestone 66 — kernel thread primitives (done)** (see
 `docs/runtime/tasking.md`).
 
 - [x] Add `Thread_Create`, `Thread_Exit`, `Thread_Self` syscalls.
@@ -128,9 +134,7 @@ Other fixes applied:
   list, and the trap handler / idle loop drain the list once the
   hart is running on a different stack.
 
-## Active
-
-**Milestone 67a — `Thread_Wait` (join)**.
+**Milestone 67a — `Thread_Wait` (join) (done)**.
 
 - [x] Kernel wait list per thread (head + next + back-pointer) so a
   caller can block until the target exits.
@@ -354,8 +358,6 @@ Other fixes applied:
   QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
   desktop boot smoke clean.
 
-## Active
-
 **Milestone 70 — AmigaDOS-style script interpreter (done).**
 
 - [x] New library crate `userspace/scripting/`: the root package
@@ -400,8 +402,6 @@ Other fixes applied:
   QEMU_SMP=1` and `make test QEMU_SMP=4` pass end-to-end;
   desktop boot smoke clean. Language reference:
   `docs/shell/scripting.md`.
-
-## Active
 
 **Milestone 71 — network stack** (plan locked 2026-08-25).
 
@@ -910,6 +910,29 @@ teardown, SMP kernel-stack use-after-free, UART THR overrun.
   fragment search), the line count just drops. If exact counts
   ever matter, count verdicts with a fragment-tolerant parser.
 
+**M76 landed (2026-08-30).** The remaining M74 deferred kernel
+hardening items, all closed:
+- `Enqueue_Caller` no longer trusts a stored `Queue_Tail` blindly:
+  the tail is used only while it still points at a thread queued
+  on THIS endpoint with no successor; otherwise it is rebuilt by a
+  bounded walk from `Queue_Head` (bound = thread-table size, so a
+  corrupt cycle cannot hang the kernel), and an unusable head
+  chain is dropped rather than followed. Closes the wild
+  `Queue_Next` write.
+- `Process_Slot_Of` is now a procedure with a `Found` out-param
+  instead of silently aliasing slot 0 for null/out-of-table
+  pointers; `Mark_Exited` guards its thread-count reset, and
+  `Thread_Create`/`Thread_Exit` fail with `No_Slot` /
+  `Invalid_Program`. A slot-0 alias in `Thread_Exit` would have
+  decremented process 0's `Process_Thread_Count` and could trigger
+  a false last-thread teardown.
+- `Exit_Current` removes the dying thread from the sleep queue
+  (`Remove_Thread` already did this for killed siblings); a stale
+  entry would have been popped by the tick handler through a
+  recycled TCB.
+- Gates: zero-warning serial build; SMP1 1473/1472P 0F x2,
+  SMP4 1472/1471P 0F x2.
+
 **M75 landed (2026-08-30).** Caps travel in IPC replies; reply-cap
 ABA closed; the libman manager path works for the first time.
 - Kernel: `Kernel.IPC.Reply` now `Transfer_Message`s into the
@@ -975,13 +998,11 @@ target the gateway by design).
 Watchlist: virtio_net_hdr legacy-vs-modern size; RX ring overflow =
 drop-new with a counter in Net:status; fixed VA windows stay literals
 with the overlap guard; ARP cache / socket table sized with headroom
-in the same commit; devmgr Max_Lines 8 → 6 used. **Remaining M74
-deferred items: Enqueue_Caller trusts Queue_Tail blindly (any residual
-staleness becomes a wild Queue_Next write — no validity check);
-Process_Slot_Of returns slot 0 for out-of-table processes;
-Exit_Current does not Remove_Sleeper.** The IPC_Reply cap drop and
-reply-cap ABA items were fixed in M75 above; the SMP4 console-loss
-and whole-system stall flakes were fixed in M74.
+in the same commit; devmgr Max_Lines 8 → 6 used. All M74 deferred
+kernel items were fixed across M75 (IPC_Reply caps, reply-cap ABA)
+and M76 (Enqueue_Caller tail, Process_Slot_Of slot 0, Exit_Current
+sleeper); the SMP4 console-loss and whole-system stall flakes were
+fixed in M74.
 
 ## Open candidates
 
