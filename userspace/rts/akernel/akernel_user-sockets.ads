@@ -158,6 +158,19 @@ package Akernel_User.Sockets is
    --  all local caps.
    function Close (Handle : U64) return U64;
 
+   --  m78a: resolve a hostname to an IPv4 address through the
+   --  netserv-resident resolver (lwIP dns.c; queries go to the
+   --  Net:dns server and share lwIP's cache). Blocks until the
+   --  resolver answers, bounded by lwIP's own DNS retry/timeout
+   --  budget (a few seconds at worst). Statuses: Status_Ok with
+   --  IP set (packed big-endian, the Ip_Image convention);
+   --  Status_Timeout (1) = the lookup failed (NXDOMAIN, no
+   --  answer, timeout — the wire does not distinguish);
+   --  Status_Not_Ready (2) = the resolver table is full;
+   --  Status_Bad_Args (3) = empty or oversize name (> 255);
+   --  Status_Error (4) = transport failure.
+   function Resolve (Name : String; IP : out U32) return U64;
+
    --  Dotted-decimal IPv4 ("10.0.2.15", optional trailing
    --  CR/LF); False on any malformation.
    function Parse_IP (Text : String; IP : out U32) return Boolean;
@@ -180,5 +193,11 @@ private
    pragma Export (C, Recv_From, "aknet_sock_recvfrom");
    pragma Export (C, Poll, "aknet_sock_poll");
    pragma Export (C, Close, "aknet_sock_close");
+
+   --  m78a: C-friendly Resolve (name as address + length) for
+   --  akernel_gsocket.c's DNS path.
+   function Resolve_C
+     (Name : System.Address; Len : U64; IP : out U32) return U64;
+   pragma Export (C, Resolve_C, "aknet_sock_resolve");
 
 end Akernel_User.Sockets;

@@ -37,6 +37,7 @@ NET_TEST_ELF := bin/userspace/net_test.elf
 UDP_TEST_ELF := bin/userspace/udp_test.elf
 TCP_TEST_ELF := bin/userspace/tcp_test.elf
 GSOCK_TEST_ELF := bin/userspace/gsock_test.elf
+DHCP_TEST_ELF := bin/userspace/dhcp_test.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
@@ -59,7 +60,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
@@ -256,6 +257,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Udp_Test $(UDP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Tcp_Test $(TCP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Gsock_Test $(GSOCK_TEST_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Dhcp_Test $(DHCP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -282,6 +284,7 @@ ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 12 Tests/Udp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 13 Tests/Tcp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 14 Tests/Gsock_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 15 Tests/Dhcp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' '# file Tests/Echo_Server' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)

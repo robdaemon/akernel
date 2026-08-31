@@ -14,6 +14,7 @@ package body Akernel_User.Sockets is
    Op_Close   : constant U64 := 25;
    Op_Listen  : constant U64 := 26;
    Op_Accept  : constant U64 := 27;
+   Op_Resolve : constant U64 := 28;
 
    --  Client-side bookkeeping: the netserv socket cap, the
    --  ring-pair object and the notification live as long as the
@@ -30,6 +31,10 @@ package body Akernel_User.Sockets is
    --  base at 16#4600_0000# and thread stacks at 16#6F00_0000#).
    Ring_VA_Base : constant U64 := 16#4A00_0000#;
    Ring_VA_Stride : constant U64 := 16#10_0000#;
+
+   --  m78a: one-page hostname buffer for Op_Resolve, right above
+   --  the eight ring pairs (they end at 16#4A80_0000#).
+   Resolve_VA : constant U64 := 16#4A80_0000#;
 
    Slots        : constant U64 := 4;
    Slot_Size    : constant U64 := 1008;
@@ -569,6 +574,88 @@ package body Akernel_User.Sockets is
       Socks (Idx) := (others => <>);
       return Status;
    end Close;
+
+   --  m78a: the name rides a one-page memobj (word0 = length);
+   --  the server maps it read-only at its Net: buffer window and
+   --  deletes the cap after the call, per the buffer-cap rules.
+   function Resolve (Name : String; IP : out U32) return U64 is
+      Cap  : U64;
+      Mint : U64;
+      R    : U64 := Status_Error;
+   begin
+      IP := 0;
+      if Net_EP = 0 or else Name'Length = 0
+        or else Name'Length > 255
+      then
+         return Status_Bad_Args;
+      end if;
+      Cap := Syscalls.Mem_Alloc (1);
+      if Cap = Syscalls.Syscall_Failed
+        or else Syscalls.Mem_Map
+          (Syscalls.Address_Space_Cap, Cap, Resolve_VA, 0,
+           Syscalls.Page_Size, 3) /= 0
+      then
+         return Status_Error;
+      end if;
+      declare
+         Mem : Byte_Span (0 .. Syscalls.Page_Size - 1)
+           with Address => To_Addr (Resolve_VA);
+      begin
+         for I in 1 .. Name'Length loop
+            Mem (U64 (I - 1)) := U8 (Character'Pos (Name (I)));
+         end loop;
+      end;
+      Mint := Syscalls.Cap_Mint
+        (Cap, Syscalls.Right_Map + Syscalls.Right_Read
+           + Syscalls.Right_Transfer, 0);
+      if Mint = Syscalls.Syscall_Failed then
+         R := Status_Error;
+      else
+         Syscalls.Message.Label := Op_Resolve;
+         Syscalls.Message.Words := (others => 0);
+         Syscalls.Message.Words (0) := U64 (Name'Length);
+         Syscalls.Message.Caps := (0 => Mint, others => 0);
+         if Syscalls.IPC_Call (Net_EP) /= Syscalls.IPC_Ok then
+            R := Status_Error;
+         else
+            R := Syscalls.Message.Words (0);
+            if R = Status_Ok then
+               IP := U32 (Syscalls.Message.Words (1));
+            end if;
+         end if;
+         if Syscalls.Cap_Delete (Mint) /= 0 then
+            R := Status_Error;
+         end if;
+      end if;
+      declare
+         Saved : constant U64 := R;
+      begin
+         if Syscalls.Mem_Unmap
+              (Syscalls.Address_Space_Cap, Resolve_VA,
+               Syscalls.Page_Size) /= 0
+           or else Syscalls.Cap_Delete (Cap) /= 0
+         then
+            --  Keep the server's protocol status when there
+            --  was one.
+            return (if Saved = Status_Ok then Status_Error
+                    else Saved);
+         end if;
+         return Saved;
+      end;
+   end Resolve;
+
+   function Resolve_C
+     (Name : System.Address; Len : U64; IP : out U32) return U64
+   is
+      S : String (1 .. Natural (U64'Min (Len, 4096)))
+        with Address => Name;
+   begin
+      IP := 0;
+      if Len = 0 or else Len > 4096 then
+         return Status_Bad_Args;
+      end if;
+      return Resolve (S, IP);
+   end Resolve_C;
 
    function Parse_IP (Text : String; IP : out U32) return Boolean is
       Parts : array (0 .. 3) of U32 := (others => 0);

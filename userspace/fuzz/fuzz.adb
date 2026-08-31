@@ -4231,6 +4231,10 @@ begin
          --  Tcp_Test's sockets; RC 0 is the check).
          Run_Command ("Sys:C/Type", "Net:tcp", 0,
                       "type Net:tcp");
+         --  m78b: the DHCP control file (state render; off by
+         --  default — Dhcp_Test drives the live start/stop).
+         Run_Command ("Sys:C/Type", "Net:dhcp", 0,
+                      "type Net:dhcp");
 
          Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
                       "cd missing dir fails");

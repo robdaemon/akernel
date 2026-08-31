@@ -33,7 +33,8 @@
 #define MEMP_MEM_MALLOC                 1
 #define MEM_ALIGNMENT                   8
 
-/*  Protocols: IPv4 + ARP + ICMP + UDP + TCP + raw pcbs. */
+/*  Protocols: IPv4 + ARP + ICMP + UDP + TCP + raw pcbs, plus the
+ *  m78a DNS resolver and the m78b opt-in DHCP client. */
 #define LWIP_IPV4                       1
 #define LWIP_IPV6                       0
 #define LWIP_ARP                        1
@@ -41,8 +42,11 @@
 #define LWIP_RAW                        1
 #define LWIP_UDP                        1
 #define LWIP_TCP                        1
-#define LWIP_DNS                        0
-#define LWIP_DHCP                       0
+#define LWIP_DNS                        1
+#define LWIP_DHCP                       1
+/*  2.2 defaults this to LWIP_DHCP, which would pull in acd.c;
+ *  slirp's flat /0 needs no address-conflict detection. */
+#define LWIP_DHCP_DOES_ACD_CHECK        0
 #define LWIP_AUTOIP                     0
 #define LWIP_IGMP                       0
 #define LWIP_ACD                        0
@@ -57,8 +61,10 @@
 /*  PCB pools: 8 client UDP sockets + spares; one shared raw ICMP
  *  pcb (Op_Ping + ping sockets) + spares. TCP (m72c): the 8-socket
  *  table plus TIME_WAIT stragglers — 5 (the opt.h default) was
- *  already tight for the tcp_test listener/child/refused churn. */
-#define MEMP_NUM_UDP_PCB                10
+ *  already tight for the tcp_test listener/child/refused churn.
+ *  +1 for the m78a netserv-resident DNS resolver's pcb, +1 for
+ *  the m78b DHCP client's. */
+#define MEMP_NUM_UDP_PCB                12
 #define MEMP_NUM_RAW_PCB                4
 #define MEMP_NUM_TCP_PCB                10
 #define MEMP_NUM_TCP_PCB_LISTEN         8
@@ -71,5 +77,12 @@
 /*  Stats feed Net:status; nothing prints them from inside lwIP. */
 #define LWIP_STATS                      1
 #define LWIP_STATS_DISPLAY              0
+
+/*  dns.c draws txids and random source ports from LWIP_RAND, which
+ *  has no opt.h default (the port supplies it); newlib rand() rides
+ *  the gloss arena like malloc. lwipopts.h is included before lwIP's
+ *  types exist, hence the bare int. */
+#include <stdlib.h>
+#define LWIP_RAND()                     (rand ())
 
 #endif /* AKERNEL_LWIPOPTS_H */

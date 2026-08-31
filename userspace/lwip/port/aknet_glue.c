@@ -39,6 +39,8 @@
 #include "lwip/etharp.h"
 #include "lwip/udp.h"
 #include "lwip/raw.h"
+#include "lwip/dns.h"
+#include "lwip/dhcp.h"
 #include "lwip/timeouts.h"
 #include "lwip/prot/iana.h"
 #include "lwip/prot/ip4.h"
@@ -164,9 +166,13 @@ aknet_setup (const u8_t *mac, u32_t ip, u32_t gw, u32_t mtu)
    ip4_addr_set_u32 (&a, PP_HTONL (ip));
    ip4_addr_set_u32 (&g, PP_HTONL (gw));
    ip4_addr_set_u32 (&m, 0);
+   /*  m78b: the MAC lands BEFORE netif_add — dhcp.c reads
+    *  netif->hwaddr to build DISCOVER/REQUEST, and nothing in
+    *  netif_add/init overwrites it (aknet_netif_init only sets
+    *  hwaddr_len). */
+   memcpy (aknet_netif.hwaddr, mac, 6);
    netif_add (&aknet_netif, &a, &m, &g, NULL, aknet_netif_init,
               ethernet_input);
-   memcpy (aknet_netif.hwaddr, mac, 6);
    if (mtu != 0)
       aknet_netif.mtu = (u16_t) mtu;
    netif_set_default (&aknet_netif);
@@ -276,6 +282,26 @@ aknet_udp_del (struct udp_pcb *pcb)
    udp_remove (pcb);
 }
 
+/*  Hairpin closed-port precheck support (m78a): netserv's m71c
+ *  sender-side sticky error scans its OWN socket table, which does
+ *  not cover lwIP-internal pcbs (the dns.c resolver pcb; dhcp's
+ *  later) — a hairpinned reply to such a port must NOT draw the
+ *  "closed port" error and drop. Client pcbs all carry our recv
+ *  callback, so they are excluded (client-visible ports stay the
+ *  Ada table's business, keeping m71c's connected-socket peer
+ *  filter exact); 1 = some lwIP-internal pcb owns the port. */
+int
+aknet_udp_port_open (u32_t port)
+{
+   struct udp_pcb *pcb;
+
+   for (pcb = udp_pcbs; pcb != NULL; pcb = pcb->next)
+      if (pcb->local_port == (u16_t) port
+          && pcb->recv != aknet_udp_rx_cb)
+         return 1;
+   return 0;
+}
+
 /*------------------------------------------------------------------*/
 /*  Raw ICMP: one shared pcb for Op_Ping and the ping sockets       */
 /*------------------------------------------------------------------*/
@@ -375,6 +401,140 @@ aknet_arp_get (u32_t i, u32_t *ip, u8_t *mac)
    *ip = PP_NTOHL (ip4_addr_get_u32 (eip));
    memcpy (mac, emac->addr, 6);
    return 1;
+}
+
+/*------------------------------------------------------------------*/
+/*  DNS resolver (m78a): lwIP's dns.c backs netserv's Op_Resolve.   */
+/*  One global resolver state (pcb, 4-entry table/cache), queries   */
+/*  retransmit and time out off sys_check_timeouts (the 50 ms       */
+/*  ticker); replies arrive as ordinary UDP frames off the RX       */
+/*  drain. The found callback fires exactly once per in-flight      */
+/*  query (ipaddr == NULL on failure/timeout).                      */
+/*------------------------------------------------------------------*/
+
+extern void aknet_on_dns_reply (u32_t slot, u32_t ip);
+
+static void
+aknet_dns_found_cb (const char *name, const ip_addr_t *ipaddr,
+                    void *arg)
+{
+   u32_t ip = 0;
+
+   (void) name;
+   if (ipaddr != NULL)
+      ip = PP_NTOHL (ip4_addr_get_u32 (ip_2_ip4 (ipaddr)));
+   aknet_on_dns_reply ((u32_t) (uintptr_t) arg, ip);
+}
+
+/*  Writable Net:dns + the boot config: lwIP's default server
+ *  (resolver1.opendns.com) is unreachable behind slirp. */
+void
+aknet_dns_setserver (u32_t ip)
+{
+   ip_addr_t s;
+
+   ip4_addr_set_u32 (ip_2_ip4 (&s), PP_HTONL (ip));
+   dns_setserver (0, &s);
+}
+
+/*  Start (or answer from cache) an A-record query for name,
+ *  reporting against pending-table slot. Returns 1 = answered now
+ *  (*ip filled, host order; the callback does NOT fire on a cache
+ *  hit — verified in dns_gethostbyname_addrtype), 0 = in flight
+ *  (the callback fires exactly once, from the tick or the frame
+ *  drain), <0 = rejected (dns table full, bad name, no server
+ *  set). The Ada side marks the slot busy BEFORE this call: a
+ *  hairpinned answer (dst == own address, e.g. the gsock_test
+ *  responder) still arrives via the drain, but the slot must be
+ *  valid from the call on. */
+int
+aknet_dns_resolve (const char *name, u32_t slot, u32_t *ip)
+{
+   ip_addr_t addr;
+   err_t     e = dns_gethostbyname (name, &addr, aknet_dns_found_cb,
+                                    (void *) (uintptr_t) slot);
+
+   if (e == ERR_OK)
+      {
+         *ip = PP_NTOHL (ip4_addr_get_u32 (ip_2_ip4 (&addr)));
+         return 1;
+      }
+   if (e == ERR_INPROGRESS)
+      return 0;
+   return -1;
+}
+
+/*------------------------------------------------------------------*/
+/*  DHCP client (m78b): lwIP's dhcp.c, opt-in behind the writable   */
+/*  Net:dhcp file (start/stop/renew) and the ENV:Net.DHCP boot      */
+/*  flag; the static boot config stays the default. The state       */
+/*  machine runs off sys_check_timeouts (dhcp_discover's own        */
+/*  retransmit sys_timeouts) and receives via the normal RX drain;  */
+/*  its pcb is lwIP-internal (port 68), so the m78a                */
+/*  aknet_udp_port_open hairpin exception covers it.                */
+/*                                                                  */
+/*  netserv mirrors the lease: it polls aknet_dhcp_bound off the    */
+/*  50 ms tick and, on an edge, copies the netif address/gateway    */
+/*  (aknet_get_addr) into its own My_IP/Gateway_IP. lwIP itself     */
+/*  sets the netif address in dhcp_bind; the mirror keeps the       */
+/*  Net:status/Net:address renders and the ping/hairpin checks      */
+/*  truthful. Stop releases (slirp shrugs) and zeroes the netif     */
+/*  address; netserv immediately restores the stashed static        */
+/*  config, so the zero window never escapes netserv's single       */
+/*  thread.                                                         */
+/*------------------------------------------------------------------*/
+
+/*  Start (or restart) the DHCP negotiation. 0 = started, <0 =
+ *  rejected (mtu, malloc, pcb). */
+int
+aknet_dhcp_start (void)
+{
+   return dhcp_start (&aknet_netif) == ERR_OK ? 0 : -1;
+}
+
+/*  Release the lease (when one is held — dhcp.c zeroes the netif
+ *  address itself) and switch the client off. The caller restores
+ *  the static config right after. */
+void
+aknet_dhcp_stop (void)
+{
+   dhcp_release_and_stop (&aknet_netif);
+}
+
+/*  0 = renew request sent, <0 = no lease to renew (dhcp_renew
+ *  unconditionally enters RENEWING, so gate on bound here). */
+int
+aknet_dhcp_renew (void)
+{
+   if (!dhcp_supplied_address (&aknet_netif))
+      return -1;
+   return dhcp_renew (&aknet_netif) == ERR_OK ? 0 : -1;
+}
+
+/*  1 while a lease supplies the address (BOUND/RENEWING/REBINDING). */
+int
+aknet_dhcp_bound (void)
+{
+   return dhcp_supplied_address (&aknet_netif);
+}
+
+/*  Raw dhcp->state (prot/dhcp.h DHCP_STATE_*), 0 (OFF) before the
+ *  first start. */
+int
+aknet_dhcp_state (void)
+{
+   struct dhcp *d = netif_dhcp_data (&aknet_netif);
+
+   return d != NULL ? (int) d->state : 0;
+}
+
+/*  The netif's current address/gateway, host order — the inverse
+ *  of aknet_set_addr. */
+void
+aknet_get_addr (u32_t *ip, u32_t *gw)
+{
+   *ip = PP_NTOHL (ip4_addr_get_u32 (netif_ip4_addr (&aknet_netif)));
+   *gw = PP_NTOHL (ip4_addr_get_u32 (netif_ip4_gw (&aknet_netif)));
 }
 
 /*------------------------------------------------------------------*/

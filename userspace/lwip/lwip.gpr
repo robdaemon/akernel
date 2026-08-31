@@ -10,9 +10,10 @@
 --
 --  Subset: NO_SYS raw API, IPv4 only (lwIP is dual-stack capable but
 --  our socket ring ABI is u32-addressed — an IPv6 conversation for a
---  much later milestone), no DNS/DHCP/AutoIP/IGMP/ACD, no lowpan /
---  bridge / slip / zep netifs. ipv6/ and api/ are excluded by not
---  listing their dirs; ppp/ is a subdir and never enters Source_Dirs.
+--  much later milestone), DNS resolver (m78a: backs netserv's
+--  Op_Resolve), no DHCP/AutoIP/IGMP/ACD, no lowpan / bridge / slip /
+--  zep netifs. ipv6/ and api/ are excluded by not listing their dirs;
+--  ppp/ is a subdir and never enters Source_Dirs.
 
 library project Lwip is
 
@@ -32,8 +33,8 @@ library project Lwip is
       "port");
 
    for Excluded_Source_Files use
-     ("altcp.c", "altcp_alloc.c", "altcp_tcp.c", "dns.c",
-      "acd.c", "autoip.c", "dhcp.c", "igmp.c",
+     ("altcp.c", "altcp_alloc.c", "altcp_tcp.c",
+      "acd.c", "autoip.c", "igmp.c",
       "bridgeif.c", "bridgeif_fdb.c", "slipif.c", "zepif.c",
       "lowpan6.c", "lowpan6_ble.c", "lowpan6_common.c");
 

@@ -44,11 +44,12 @@ with Akernel_User.Files;
 --    self-register the Net: volume at the end of bring-up — the
 --    Receive-only handle 4 cannot mint a Send cap for the fs).
 --
---  Static config: 10.0.2.15 with gateway 10.0.2.2 and DNS
---  10.0.2.3 (QEMU slirp), overridable via ENV:Net.Address /
---  ENV:Net.Gateway / ENV:Net.DNS (dotted decimal) at boot and
---  via the writable Net: files at runtime (address/gateway writes
---  reprogram the netif).
+ --  Static config: 10.0.2.15 with gateway 10.0.2.2 and DNS
+ --  10.0.2.3 (QEMU slirp), overridable via ENV:Net.Address /
+ --  ENV:Net.Gateway / ENV:Net.DNS (dotted decimal) at boot and
+ --  via the writable Net: files at runtime (address/gateway writes
+ --  reprogram the netif). ENV:Net.DHCP (1/on/true/yes) opts into
+ --  the DHCP client at boot (m78b).
 --
 --  Op_Ping (label 40): word0 = target IPv4 packed big-endian in
 --  the low 32 bits (10.0.2.2 = 16#0A00_0202#) -> (status, rtt);
@@ -86,8 +87,28 @@ with Akernel_User.Files;
 --  badge (the pid badges the file server forwards are equally
 --  self-asserted); the table merely demultiplexes.
 --
---  TCP (m72c): SOCK_STREAM/PROTO 6 sockets, one tcp_pcb each.
---  Op_Connect parks the reply cap (Reply_Stash) and completes
+--  DNS (m78a): Op_Resolve=28 on the raw service cap (badge 0)
+--  resolves A records through lwIP's dns.c — the name rides cap0
+--  as a one-page memobj (word0 = length), the reply is deferred
+--  until the resolver answers off the tick or the frame drain.
+--  The query target is DNS_IP (boot config / writable Net:dns,
+--  both programmed via aknet_dns_setserver). This replaces the
+--  m73 per-client hand-rolled resolver in akernel_gsocket.c:
+--  every GNAT.Sockets lookup now shares lwIP's 4-entry cache and
+--  one UDP pcb here instead of opening an ephemeral socket per
+ --  query.
+ --
+ --  DHCP (m78b, opt-in): lwIP's dhcp.c behind the writable
+ --  Net:dhcp file (start/stop/renew; reads render the state
+ --  machine) and the ENV:Net.DHCP boot flag. Static config stays
+ --  the default; while DHCP is on, Net:address/Net:gateway writes
+ --  are rejected (the lease owns them) and the pre-start values
+ --  are stashed so stop restores them. The tick polls
+ --  dhcp_supplied_address and, on a bound edge, mirrors the
+ --  netif's leased address/gateway into My_IP/Gateway_IP (the
+ --  ping/hairpin checks and Net:status renders read those).
+ --
+ --  TCP (m72c): SOCK_STREAM/PROTO 6 sockets, one tcp_pcb each.--  Op_Connect parks the reply cap (Reply_Stash) and completes
 --  when lwIP's connected/err callback fires — synchronously for
 --  a hairpin, off the frame drain for the wire — or when a 5 s
 --  deadline aborts the attempt (sticky errors gain 4 = refused,
@@ -142,15 +163,16 @@ package body Netserv_Engine is
 
     --  Client-facing ops on the service endpoint (file protocol
     --  labels 0..18 are answered for the Net: volume).
-    Op_Socket  : constant U64 := 20;
-    Op_Bind    : constant U64 := 21;
-    Op_Connect : constant U64 := 22;
-    Op_Kick    : constant U64 := 23;
-    Op_Poll    : constant U64 := 24;
-    Op_Close   : constant U64 := 25;
-    Op_Listen  : constant U64 := 26;
-    Op_Accept  : constant U64 := 27;
-    Op_Ping    : constant U64 := 40;
+     Op_Socket  : constant U64 := 20;
+     Op_Bind    : constant U64 := 21;
+     Op_Connect : constant U64 := 22;
+     Op_Kick    : constant U64 := 23;
+     Op_Poll    : constant U64 := 24;
+     Op_Close   : constant U64 := 25;
+     Op_Listen  : constant U64 := 26;
+     Op_Accept  : constant U64 := 27;
+     Op_Resolve : constant U64 := 28;
+     Op_Ping    : constant U64 := 40;
 
     AF_INET     : constant U64 := 2;
     SOCK_STREAM : constant U64 := 1;
@@ -287,7 +309,16 @@ package body Netserv_Engine is
       Port : U32;
       Data : System.Address;
       Len  : U32) return Int
-     with Import, Convention => C, External_Name => "aknet_udp_send";
+      with Import, Convention => C, External_Name => "aknet_udp_send";
+
+   --  1 when some lwIP-internal pcb (dns.c's resolver, not a
+   --  client socket — those are the Socks table's business) owns
+   --  the local port. Consulted by the hairpin closed-port
+   --  precheck so a reply to the resolver is not dropped as
+   --  "closed" (m78a).
+   function Aknet_Udp_Port_Open (Port : U32) return Int
+      with Import, Convention => C,
+           External_Name => "aknet_udp_port_open";
 
    procedure Aknet_Udp_Del (Pcb : System.Address)
      with Import, Convention => C, External_Name => "aknet_udp_del";
@@ -311,8 +342,52 @@ package body Netserv_Engine is
      (I : U32; Ip : System.Address; Mac : System.Address) return Int
      with Import, Convention => C, External_Name => "aknet_arp_get";
 
-    procedure Aknet_Check_Timeouts
-      with Import, Convention => C, External_Name => "aknet_timeouts";
+     procedure Aknet_Check_Timeouts
+       with Import, Convention => C, External_Name => "aknet_timeouts";
+
+     --  DNS resolver (m78a): lwIP dns.c. Setserver programs the
+     --  query target (boot config + writable Net:dns); Resolve
+     --  returns 1 = answered from cache (Ip filled, no callback),
+     --  0 = in flight (Aknet_On_Dns_Reply fires exactly once off
+     --  the tick or the frame drain), <0 = rejected.
+     procedure Aknet_Dns_Setserver (Ip : U32)
+       with Import, Convention => C,
+            External_Name => "aknet_dns_setserver";
+
+      function Aknet_Dns_Resolve
+        (Name : System.Address; Slot : U32; Ip : out U32) return Int
+        with Import, Convention => C,
+             External_Name => "aknet_dns_resolve";
+
+     --  DHCP client (m78b, opt-in): Start/Stop/Renew return 0 ok
+     --  / <0 rejected (Renew also when no lease is held); Bound is
+     --  dhcp_supplied_address (BOUND/RENEWING/REBINDING), polled
+     --  off the tick; State is the raw DHCP_STATE_* (0 = off);
+     --  Get_Addr reads the netif's current address/gateway (the
+     --  lease once bound) in host order.
+     function Aknet_Dhcp_Start return Int
+       with Import, Convention => C,
+            External_Name => "aknet_dhcp_start";
+
+     procedure Aknet_Dhcp_Stop
+       with Import, Convention => C,
+            External_Name => "aknet_dhcp_stop";
+
+     function Aknet_Dhcp_Renew return Int
+       with Import, Convention => C,
+            External_Name => "aknet_dhcp_renew";
+
+     function Aknet_Dhcp_Bound return Int
+       with Import, Convention => C,
+            External_Name => "aknet_dhcp_bound";
+
+     function Aknet_Dhcp_State return Int
+       with Import, Convention => C,
+            External_Name => "aknet_dhcp_state";
+
+     procedure Aknet_Get_Addr (Ip : out U32; Gw : out U32)
+       with Import, Convention => C,
+            External_Name => "aknet_get_addr";
 
     --  Deliver queued hairpin (own-address) packets — see the
     --  glue's header for why delivery is never synchronous.
@@ -405,6 +480,18 @@ package body Netserv_Engine is
    Our_Mac    : Mac_Addr := (others => 0);
    MTU        : U64 := 1500;
 
+   --  DHCP (m78b): on while the client runs (Net:dhcp start /
+   --  ENV:Net.DHCP). Static_* stash the pre-start static config
+   --  for stop to restore; Was_Bound edges (polled off the tick)
+   --  mirror the lease into My_IP/Gateway_IP. Env_Dhcp is the
+   --  boot flag (read with the other ENV: overrides, before the
+   --  no-blocking-fs-calls window opens).
+   Dhcp_On        : Boolean := False;
+   Dhcp_Was_Bound : Boolean := False;
+   Static_IP      : U32 := 0;
+   Static_GW      : U32 := 0;
+   Env_Dhcp       : Boolean := False;
+
    Reply_H    : U64;
    Ring_Cap   : U64;
    Tx_Cap     : U64;
@@ -433,8 +520,8 @@ package body Netserv_Engine is
     Rx_Frames : U64 := 0;
     Tx_Frames : U64 := 0;
 
-    --  Socket table (m71c): 8 slots is generous for a CLI box —
-    --  ping holds one briefly, a future DNS resolver one. Ring
+     --  Socket table (m71c): 8 slots is generous for a CLI box —
+     --  ping holds one briefly. Ring
     --  pairs map at Sock_VA_Base + (id-1)*Sock_VA_Stride (2 pages
     --  each; the stride leaves room and keeps the windows
     --  literal). Ring_Cap/Ntfn_Cap are the transferred copies
@@ -499,7 +586,30 @@ package body Netserv_Engine is
        Deadline : U64 := 0;
     end record;
 
-    Pend : array (1 .. Max_Socks) of Pend_Rec;
+     Pend : array (1 .. Max_Socks) of Pend_Rec;
+
+     --  Outstanding Op_Resolve queries (m78a): lwIP's dns.c owns
+     --  the wire state (retries and the final timeout fire off the
+     --  ticker's sys_check_timeouts), this table parks the
+     --  one-shot reply cap until the glue callback records the
+     --  outcome (Done + Result; Result 0 = lookup failed). Sized
+     --  to lwIP's DNS_TABLE_SIZE default; an extra in-flight query
+     --  would be rejected by dns_enqueue anyway.
+     Max_Pending_Resolves : constant := 4;
+
+     type Resolve_Rec is record
+        Used    : Boolean := False;
+        Done    : Boolean := False;
+        Reply_H : U64 := 0;
+        Result  : U32 := 0;
+     end record;
+
+     Resolves : array (1 .. Max_Pending_Resolves) of Resolve_Rec;
+
+     --  Hostname scratch for Op_Resolve (single-threaded): the
+     --  client's name bytes plus a NUL for the C side. 256 covers
+     --  lwIP's DNS_MAX_NAME_LENGTH bound and the op's own 255 cap.
+     Resolve_Name : array (0 .. 256) of U8;
 
     --  Socket ring-pair layout (per ring, page 0 = RX, 1 = TX).
     Sock_Slots       : constant U64 := 4;
@@ -665,6 +775,31 @@ package body Netserv_Engine is
          Value := V;
       end if;
    end Read_Env_IP;
+
+   --  ENV: flag override (m78b): true when the file holds 1/on/
+   --  true/yes; absent or anything else keeps the default (off).
+   function Read_Env_Flag (Name : String) return Boolean is
+      Buf   : String (1 .. 32);
+      Size  : U64 := 0;
+      Count : U64 := 0;
+   begin
+      if Files.Open (Name, Size) /= Files.Status_Ok then
+         return False;
+      end if;
+      Size := U64'Min (Size, U64 (Buf'Length));
+      if Files.Read (Name, 0, Buf'Address, Size, Count)
+           /= Files.Status_Ok
+        or else Count = 0
+      then
+         return False;
+      end if;
+      declare
+         S : constant String := Buf (1 .. Natural (Count));
+      begin
+         return S = "1" or else S = "on"
+           or else S = "true" or else S = "yes";
+      end;
+   end Read_Env_Flag;
 
    --  Ones-complement checksum over Len bytes at VA Base
    --  (big-endian words; odd trailing byte padded with zero).
@@ -920,9 +1055,29 @@ package body Netserv_Engine is
    end Aknet_On_Icmp_Rx;
 
    ------------------------------------------------------------------
+   --  DNS resolver callback (m78a). Fires from the ticker's
+   --  sys_check_timeouts (retries/timeout) or the frame drain
+   --  (the answer datagram) — always on this thread. Records the
+   --  outcome; the service loop completes the deferred reply.
+   ------------------------------------------------------------------
+
+   procedure Aknet_On_Dns_Reply (Slot : U32; Ip : U32)
+     with Export, Convention => C,
+          External_Name => "aknet_on_dns_reply";
+
+   procedure Aknet_On_Dns_Reply (Slot : U32; Ip : U32) is
+   begin
+      if Slot >= 1 and then Slot <= U32 (Max_Pending_Resolves)
+        and then Resolves (Natural (Slot)).Used
+      then
+         Resolves (Natural (Slot)).Done := True;
+         Resolves (Natural (Slot)).Result := Ip;
+      end if;
+   end Aknet_On_Dns_Reply;
+
+   ------------------------------------------------------------------
    --  TCP (m72c). Callbacks run on this thread (frame drain, tick
-   --  or synchronously out of a hairpinned send/connect). The RX
-   --  contract is whole-chain-or-nothing: a chain that does not
+   --  or synchronously out of a hairpinned send/connect). The RX   --  contract is whole-chain-or-nothing: a chain that does not
    --  fit the ring is refused (lwIP parks it in pcb->refused_data
    --  and retries via the fast timer or Aknet_Tcp_Kick), so stream
    --  bytes are never dropped or partially acknowledged. See the
@@ -1422,10 +1577,15 @@ package body Netserv_Engine is
                   --  Ada-side precheck; an open port is delivered
                   --  through the stack (the glue loops the packet
                   --  back into ip4_input and the bound pcb's
-                  --  callback enqueues synchronously).
+                  --  callback enqueues synchronously). m78a: the
+                  --  Socks table does not cover lwIP-internal
+                  --  pcbs (the DNS resolver's), so a port owned
+                  --  by one of those also counts as open.
                   Target := Find_Udp_Rx
                     (Dst_Port, My_IP, Socks (Id).Local_Port);
-                  if Target = 0 then
+                  if Target = 0
+                    and then Aknet_Udp_Port_Open (Dst_Port) = 0
+                  then
                      Flag_Error (Id, 1);
                   else
                      Rc := Aknet_Udp_Send
@@ -2005,6 +2165,27 @@ package body Netserv_Engine is
       end loop;
    end Tick_Tcp;
 
+   --  m78b: poll the DHCP bound edge off the tick (50 ms
+   --  resolution, after Aknet_Check_Timeouts has run the state
+   --  machine). A rising edge mirrors the lease into
+   --  My_IP/Gateway_IP; a falling edge (lease lost) mirrors the
+   --  zeroed address the same way.
+   procedure Poll_Dhcp is
+      Bound : constant Boolean := Dhcp_On and then Aknet_Dhcp_Bound /= 0;
+   begin
+      if not Dhcp_On or else Bound = Dhcp_Was_Bound then
+         return;
+      end if;
+      Dhcp_Was_Bound := Bound;
+      Aknet_Get_Addr (My_IP, Gateway_IP);
+      if Bound then
+         Console.Put_Line ("netserv dhcp bound ip " & Ip_Image (My_IP)
+                           & " gw " & Ip_Image (Gateway_IP));
+      else
+         Console.Put_Line ("netserv dhcp lease lost");
+      end if;
+   end Poll_Dhcp;
+
    ------------------------------------------------------------------
    --  Op_Ping (internal test op, m71b; m72b: over the shared raw
    --  ICMP pcb, replies matched by the raw callback)
@@ -2075,6 +2256,96 @@ package body Netserv_Engine is
    end Handle_Ping;
 
    ------------------------------------------------------------------
+   --  Op_Resolve (m78a): netserv-resident DNS (lwIP dns.c). The
+   --  hostname rides cap0 (a one-page memobj, word0 = length
+   --  1..255) because a name does not fit the message words; the
+   --  buffer window + delete discipline matches the Net: file
+   --  ops. A cache hit replies inline; an in-flight query stashes
+   --  the one-shot reply cap in the Resolves table and the service
+   --  loop completes it when the glue callback records the
+   --  outcome (off the tick — retry/timeout — or the frame drain;
+   --  a hairpinned answer to our own address, e.g. the gsock_test
+   --  responder, queues and drains in the same loop round).
+   --  lwIP's own DNS timer bounds the wait. Replies (status, IPv4
+   --  packed big-endian): 0 ok, 1 lookup failed, 2 resolver
+   --  table full / rejected, 3 bad args.
+   ------------------------------------------------------------------
+
+   procedure Handle_Resolve is
+      Len  : constant U64 := Syscalls.Message.Words (0);
+      Buf  : constant U64 := Syscalls.Message.Caps (0);
+      Slot : Natural := 0;
+      Ip   : U32 := 0;
+      Rc   : Int;
+      R    : U64;
+   begin
+      if Buf = 0 or else Len = 0 or else Len > 255 then
+         if Buf /= 0 then
+            R := Syscalls.Cap_Delete (Buf);
+         end if;
+         Reply (Status_Bad_Args, 0);
+         return;
+      end if;
+      for I in 1 .. Max_Pending_Resolves loop
+         if not Resolves (I).Used then
+            Slot := I;
+            exit;
+         end if;
+      end loop;
+      if Slot = 0 then
+         R := Syscalls.Cap_Delete (Buf);
+         Reply (Status_Not_Ready, 0);
+         return;
+      end if;
+      if Syscalls.Mem_Map
+           (Syscalls.Address_Space_Cap, Buf, Buf_Win_VA, 0,
+            Syscalls.Page_Size, 1) /= 0
+      then
+         R := Syscalls.Cap_Delete (Buf);
+         Reply (Status_Not_Found, 0);
+         return;
+      end if;
+      declare
+         Mem : Byte_Span (0 .. Len - 1)
+           with Address => To_Addr (Buf_Win_VA);
+      begin
+         for I in 0 .. Len - 1 loop
+            Resolve_Name (Natural (I)) := Mem (I);
+         end loop;
+      end;
+      Resolve_Name (Natural (Len)) := 0;
+      if Syscalls.Mem_Unmap
+           (Syscalls.Address_Space_Cap, Buf_Win_VA,
+            Syscalls.Page_Size) /= 0
+      then
+         Console.Put_Line ("netserv resolve unmap failed");
+      end if;
+      if Syscalls.Cap_Delete (Buf) /= 0 then
+         Console.Put_Line ("netserv resolve cap delete failed");
+      end if;
+
+      --  Slot occupied BEFORE the glue call (the m72c Conn_State
+      --  rule): the callback must always find a live slot, and a
+      --  cache hit returns 1 instead of calling back.
+      Resolves (Slot) := (Used => True, Done => False,
+                          Reply_H => 0, Result => 0);
+      Rc := Aknet_Dns_Resolve (Resolve_Name'Address, U32 (Slot), Ip);
+      if Rc > 0 then
+         --  Cache hit: answered inline.
+         Resolves (Slot).Used := False;
+         Reply (Status_Ok, U64 (Ip));
+      elsif Rc = 0 then
+         Resolves (Slot).Reply_H := Reply_H;
+         Reply_H := 0;
+      else
+         --  lwIP rejected the query (dns table full, empty name,
+         --  no server programmed).
+         Resolves (Slot).Used := False;
+         Reply (Status_Not_Ready, 0);
+      end if;
+   end Handle_Resolve;
+
+   ------------------------------------------------------------------
    --  Net: volume (m71c). Root enumerates status / address /
    --  gateway / dns / arp; the three config files are writable
    --  (dotted decimal, offset-0 whole-value writes). ReadDir and
@@ -2084,7 +2355,7 @@ package body Netserv_Engine is
    ------------------------------------------------------------------
 
    type Net_File is (Nf_None, Nf_Root, Nf_Status, Nf_Address,
-                     Nf_Gateway, Nf_Dns, Nf_Arp, Nf_Tcp);
+                     Nf_Gateway, Nf_Dns, Nf_Arp, Nf_Tcp, Nf_Dhcp);
 
    --  lwIP tcp_state values as words (the enum is stable across
    --  2.x; 0 = closed/unknown also covers a freed pcb).
@@ -2104,6 +2375,26 @@ package body Netserv_Engine is
          when others => return "closed";
       end case;
    end Tcp_State_Image;
+
+   --  lwIP prot/dhcp.h DHCP_STATE_* (m78b).
+   function Dhcp_State_Image (S : Int) return String is
+   begin
+      case S is
+         when 1      => return "requesting";
+         when 2      => return "init";
+         when 3      => return "rebooting";
+         when 4      => return "rebinding";
+         when 5      => return "renewing";
+         when 6      => return "selecting";
+         when 7      => return "informing";
+         when 8      => return "checking";
+         when 9      => return "permanent";
+         when 10     => return "bound";
+         when 11     => return "releasing";
+         when 12     => return "backing_off";
+         when others => return "off";
+      end case;
+   end Dhcp_State_Image;
 
    --  Render scratch (library level: content is tiny — the ARP
    --  file is the largest at a handful of ~30-byte lines).
@@ -2159,11 +2450,13 @@ package body Netserv_Engine is
          return Nf_Dns;
       elsif Path = "arp" then
          return Nf_Arp;
-      elsif Path = "tcp" then
-         return Nf_Tcp;
-      end if;
-      return Nf_None;
-   end Resolve;
+       elsif Path = "tcp" then
+          return Nf_Tcp;
+       elsif Path = "dhcp" then
+          return Nf_Dhcp;
+       end if;
+       return Nf_None;
+    end Resolve;
 
    function Live_Socks return U64 is
       N : U64 := 0;
@@ -2197,8 +2490,17 @@ package body Netserv_Engine is
             Put_Line (Ip_Image (My_IP));
          when Nf_Gateway =>
             Put_Line (Ip_Image (Gateway_IP));
-         when Nf_Dns =>
-            Put_Line (Ip_Image (DNS_IP));
+          when Nf_Dns =>
+             Put_Line (Ip_Image (DNS_IP));
+          when Nf_Dhcp =>
+             --  m78b: the state machine (off before the first
+             --  start); a held lease adds the mirrored address/
+             --  gateway (identical to Net:address/Net:gateway).
+             Put_Line ("state " & Dhcp_State_Image (Aknet_Dhcp_State));
+             if Dhcp_On and then Dhcp_Was_Bound then
+                Put_Line ("ip " & Ip_Image (My_IP));
+                Put_Line ("gateway " & Ip_Image (Gateway_IP));
+             end if;
          when Nf_Arp =>
             --  lwIP's ARP table, stable entries only (the m71c
             --  cache had no pending state to display either).
@@ -2288,12 +2590,15 @@ package body Netserv_Engine is
             when 4 =>
                Name (1 .. 3) := "arp";
                Name_Len := 3;
-            when 5 =>
-               Name (1 .. 3) := "tcp";
-               Name_Len := 3;
-            when others =>
-               null;
-         end case;
+             when 5 =>
+                Name (1 .. 3) := "tcp";
+                Name_Len := 3;
+             when 6 =>
+                Name (1 .. 4) := "dhcp";
+                Name_Len := 4;
+             when others =>
+                null;
+          end case;
       end if;
       if Name_Len = 0 then
          Reply (Status_Not_Found, 0);
@@ -2372,7 +2677,10 @@ package body Netserv_Engine is
 
    --  Writable config: address/gateway/dns accept a dotted-
    --  decimal whole-value write at offset 0. Address and gateway
-   --  writes reprogram the netif (m72b).
+   --  writes reprogram the netif (m72b) — but are rejected while
+   --  the DHCP client is on (m78b: the lease owns them; stop it
+   --  first). Net:dhcp accepts a whole-value command: start,
+   --  stop, renew.
    procedure Handle_Write is
       Offset : constant U64 := Syscalls.Message.Words (0);
       Length : constant U64 := Syscalls.Message.Words (1);
@@ -2386,7 +2694,7 @@ package body Netserv_Engine is
       then
          Status := Status_Bad_Args;
       elsif F /= Nf_Address and then F /= Nf_Gateway
-        and then F /= Nf_Dns
+        and then F /= Nf_Dns and then F /= Nf_Dhcp
       then
          Status := Status_Bad_Args;
       elsif Syscalls.Mem_Map
@@ -2404,18 +2712,80 @@ package body Netserv_Engine is
             for I in 1 .. Natural (Length) loop
                Text (I) := Character'Val (Natural (Mem (U64 (I - 1))));
             end loop;
-            if Parse_IP (Text, V) then
-               case F is
-                  when Nf_Address =>
-                     My_IP := V;
-                     Aknet_Set_Addr (My_IP, Gateway_IP);
-                  when Nf_Gateway =>
-                     Gateway_IP := V;
-                     Aknet_Set_Addr (My_IP, Gateway_IP);
-                  when others =>
-                     DNS_IP := V;
-               end case;
-               Count := Length;
+            if F = Nf_Dhcp then
+               --  m78b: the command is the whole value; trim
+               --  trailing whitespace (a shell `echo` can carry a
+               --  newline).
+               declare
+                  Last : Natural := Text'Last;
+               begin
+                  while Last >= Text'First
+                    and then Text (Last) <= ' '
+                  loop
+                     Last := Last - 1;
+                  end loop;
+                  if Last < Text'First then
+                     Status := Status_Bad_Args;
+                  elsif Text (Text'First .. Last) = "start" then
+                     if Dhcp_On then
+                        Status := Status_Bad_Args;
+                     elsif Aknet_Dhcp_Start = 0 then
+                        Static_IP := My_IP;
+                        Static_GW := Gateway_IP;
+                        Dhcp_On := True;
+                        Dhcp_Was_Bound := False;
+                        Count := Length;
+                        Console.Put_Line ("netserv dhcp started");
+                     else
+                        Status := Status_Not_Ready;
+                     end if;
+                  elsif Text (Text'First .. Last) = "stop" then
+                     if not Dhcp_On then
+                        Status := Status_Bad_Args;
+                     else
+                        --  dhcp.c zeroes the netif address on
+                        --  release; restore the stashed static
+                        --  config in the same activation so the
+                        --  zero window never escapes this thread.
+                        Aknet_Dhcp_Stop;
+                        Dhcp_On := False;
+                        Dhcp_Was_Bound := False;
+                        My_IP := Static_IP;
+                        Gateway_IP := Static_GW;
+                        Aknet_Set_Addr (My_IP, Gateway_IP);
+                        Count := Length;
+                        Console.Put_Line
+                          ("netserv dhcp stopped, static restored");
+                     end if;
+                  elsif Text (Text'First .. Last) = "renew" then
+                     if Dhcp_On and then Aknet_Dhcp_Renew = 0 then
+                        Count := Length;
+                     else
+                        Status := Status_Not_Ready;
+                     end if;
+                  else
+                     Status := Status_Bad_Args;
+                  end if;
+               end;
+            elsif Parse_IP (Text, V) then
+               if Dhcp_On
+                 and then (F = Nf_Address or else F = Nf_Gateway)
+               then
+                  Status := Status_Not_Ready;
+               else
+                  case F is
+                     when Nf_Address =>
+                        My_IP := V;
+                        Aknet_Set_Addr (My_IP, Gateway_IP);
+                     when Nf_Gateway =>
+                        Gateway_IP := V;
+                        Aknet_Set_Addr (My_IP, Gateway_IP);
+                     when others =>
+                        DNS_IP := V;
+                        Aknet_Dns_Setserver (DNS_IP);
+                  end case;
+                  Count := Length;
+               end if;
             else
                Status := Status_Bad_Args;
             end if;
@@ -2603,6 +2973,7 @@ package body Netserv_Engine is
       Read_Env_IP ("ENV:Net.Address", My_IP);
       Read_Env_IP ("ENV:Net.Gateway", Gateway_IP);
       Read_Env_IP ("ENV:Net.DNS", DNS_IP);
+      Env_Dhcp := Read_Env_Flag ("ENV:Net.DHCP");
 
       --  Register the Net: volume as soon as the fs-dependent
       --  bring-up (the ENV: reads above) is done: later steps talk
@@ -2678,8 +3049,29 @@ package body Netserv_Engine is
          Fatal ("raw pcb failed");
       end if;
 
+      --  m78a: the resolver's query target (lwIP's own default is
+      --  an OpenDNS address, unreachable behind slirp). Writable
+      --  Net:dns reprograms it at runtime.
+      Aknet_Dns_Setserver (DNS_IP);
+
       Set_Rx_Online;
       Start_Ticker;
+
+      --  m78b: opt-in DHCP client. After RX and the ticker are
+      --  live: the offer arrives off the wire, retransmits run
+      --  off the tick. The tick poll mirrors the lease once
+      --  bound; the static config stays on the netif until then
+      --  (dhcp_start does not clear it).
+      if Env_Dhcp then
+         Static_IP := My_IP;
+         Static_GW := Gateway_IP;
+         if Aknet_Dhcp_Start = 0 then
+            Dhcp_On := True;
+            Console.Put_Line ("netserv dhcp started (ENV:Net.DHCP)");
+         else
+            Console.Put_Line ("netserv dhcp start failed");
+         end if;
+      end if;
 
       Console.Put_Line
         ("netserv online ip " & Ip_Image (My_IP)
@@ -2722,6 +3114,7 @@ package body Netserv_Engine is
                      Aknet_Check_Timeouts;
                      Check_Pending;
                      Tick_Tcp;
+                     Poll_Dhcp;
                   end if;
                end;
             elsif L <= 18 then
@@ -2730,6 +3123,8 @@ package body Netserv_Engine is
                Handle_Ping;
              elsif L = Op_Socket and then Badge = 0 then
                 Handle_Sock_Open;
+            elsif L = Op_Resolve and then Badge = 0 then
+               Handle_Resolve;
             elsif L >= Op_Bind and then L <= Op_Accept
               and then Badge >= 1 and then Badge <= U64 (Max_Socks)
               and then Socks (Natural (Badge)).Used
@@ -2799,6 +3194,25 @@ package body Netserv_Engine is
                             Socks (I).Conn_Fail, 0);
                   Socks (I).Reply_Stash := 0;
                end if;
+            end if;
+         end loop;
+
+         --  Complete deferred Op_Resolves (m78a): the glue
+         --  callback (tick, frame drain, hairpin) recorded the
+         --  outcome; reply (status, ip).
+         for I in 1 .. Max_Pending_Resolves loop
+            if Resolves (I).Used and then Resolves (I).Done
+              and then Resolves (I).Reply_H /= 0
+            then
+               if Resolves (I).Result /= 0 then
+                  Reply_To (Resolves (I).Reply_H, Status_Ok,
+                            U64 (Resolves (I).Result));
+               else
+                  Reply_To (Resolves (I).Reply_H,
+                            Status_Not_Found, 0);
+               end if;
+               Resolves (I).Used := False;
+               Resolves (I).Reply_H := 0;
             end if;
          end loop;
       end loop;

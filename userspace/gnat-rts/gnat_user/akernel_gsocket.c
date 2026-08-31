@@ -49,6 +49,8 @@ extern ak_u64  aknet_sock_recvfrom (ak_u64 handle, void *buf,
 extern ak_u64  aknet_sock_poll (ak_u64 handle, ak_u64 *rx_level,
                                 ak_u64 *tx_free, ak_u64 *error);
 extern ak_u64  aknet_sock_close (ak_u64 handle);
+extern ak_u64  aknet_sock_resolve (const void *name, ak_u64 len,
+                                   ak_u32 *ip);
 
 /*  Raw syscall stub (userspace/rts/akernel/syscalls-riscv64.s) */
 extern ak_u64 akernel_sys_sleep_until (ak_u64 deadline);
@@ -1368,9 +1370,10 @@ ak_fill_hostent (const char *name, const unsigned char *ip)
    ak_he.h_addr_list = ak_he_addr_list;
 }
 
-/*  DNS over UDP to the slirp resolver (Net:dns, default 10.0.2.3).
- *  Minimal A-record query; the answer parser skips compression
- *  pointers.  Returns 1 with *ip filled, 0 on failure. */
+/*  DNS via the netserv-resident resolver (m78a): Op_Resolve on
+ *  the netserv endpoint (lwIP dns.c inside netserv, queries go
+ *  to the Net:dns server).  Returns 1 with *ip filled, 0 on
+ *  failure. */
 static int
 ak_dns_query (const char *name, unsigned char *ip);
 
@@ -1549,172 +1552,35 @@ __gnat_servent_s_proto (struct ak_servent *s)
 }
 
 /* ------------------------------------------------------------------ */
-/*  DNS helper (slirp resolver)                                        */
+/*  DNS (m78a): netserv-resident resolver                              */
 /* ------------------------------------------------------------------ */
 
-/*  Resolver address: Net:dns (dotted decimal), fallback 10.0.2.3. */
-static ak_u32
-ak_dns_server (void)
-{
-   unsigned char b[4];
-   char          buf[64];
-   FILE         *f = fopen ("Net:dns", "r");
-
-   if (f != NULL)
-      {
-         size_t n = fread (buf, 1, sizeof buf - 1, f);
-
-         fclose (f);
-         buf[n] = '\0';
-         if (ak_parse_dotted (buf, b))
-            return ak_addr_to_u32 (b);
-      }
-   return 0x0A000203U;   /*  10.0.2.3 */
-}
-
-/*  Skip a DNS name (label sequence, possibly ending in a compression
- *  pointer).  Returns bytes consumed from P. */
-static int
-ak_dns_skip_name (const unsigned char *p)
-{
-   int n = 0;
-
-   for (;;)
-      {
-         unsigned char len = p[n];
-
-         n++;
-         if (len == 0)
-            break;
-         if ((len & 0xC0) == 0xC0)
-            {
-               n++;   /*  pointer: second byte, then done */
-               break;
-            }
-         n += len;
-      }
-   return n;
-}
-
+/*  A-record lookup through netserv's Op_Resolve (lwIP dns.c owns
+ *  the wire protocol, the cache and the retry/timeout budget; the
+ *  server is netserv's DNS_IP — the writable Net:dns file).  The
+ *  m73 hand-rolled query (one ephemeral UDP socket per lookup,
+ *  fixed txid, client-side answer parsing) is gone.  Returns 1
+ *  with *ip filled (network order bytes), 0 on failure with
+ *  ak_h_errno set: the wire no longer distinguishes NXDOMAIN from
+ *  a silent timeout (lwIP's found callback reports NULL for
+ *  both), so a failed lookup maps to HOST_NOT_FOUND and a
+ *  resolver-table-full rejection to TRY_AGAIN. */
 static int
 ak_dns_query (const char *name, unsigned char *ip)
 {
-   unsigned char pkt[512];
-   int           plen = 12;   /*  header */
-   ak_u64        handle, deadline, st;
-   const char   *p;
-   int           i, an;
+   ak_u32 out_ip = 0;
+   ak_u64 st;
 
    if (ak_ensure_net () != 0)
       return 0;
-
-   /*  Question section: labels + QTYPE A + QCLASS IN */
-   p = name;
-   for (;;)
+   st = aknet_sock_resolve (name, (ak_u64) strlen (name), &out_ip);
+   if (st == AK_ST_OK)
       {
-         const char *dot = strchr (p, '.');
-         int         ll  = dot ? (int) (dot - p) : (int) strlen (p);
-
-         if (ll == 0 || ll > 63 || plen + ll + 6 > (int) sizeof pkt)
-            return 0;
-         pkt[plen++] = (unsigned char) ll;
-         memcpy (pkt + plen, p, (size_t) ll);
-         plen += ll;
-         if (dot == NULL)
-            break;
-         p = dot + 1;
+         ak_u32_to_addr (out_ip, ip);
+         return 1;
       }
-   pkt[plen++] = 0;
-   pkt[plen++] = 0; pkt[plen++] = 1;    /*  QTYPE A */
-   pkt[plen++] = 0; pkt[plen++] = 1;    /*  QCLASS IN */
-
-   /*  Header: txid 0x4D37, RD query, one question */
-   memset (pkt, 0, 12);
-   pkt[0] = 0x4D; pkt[1] = 0x37;
-   pkt[2] = 0x01;                       /*  RD */
-   pkt[5] = 1;                          /*  QDCOUNT */
-
-    if (aknet_sock_socket (AK_IPPROTO_UDP, &handle) != AK_ST_OK)
-       return 0;
-    /*  netserv only sends from a bound socket; grab an ephemeral. */
-      {
-         ak_u64 assigned = 0;
-
-         if (aknet_sock_bind (handle, 0, &assigned) != AK_ST_OK)
-            {
-               (void) aknet_sock_close (handle);
-               return 0;
-            }
-      }
-    st = aknet_sock_sendto (handle, pkt, (ak_u64) plen,
-                            ak_dns_server (), 53);
-   if (st != AK_ST_OK)
-      {
-         (void) aknet_sock_close (handle);
-         return 0;
-      }
-
-   deadline = ak_now () + 3 * AK_TICK_HZ;
-   for (;;)
-      {
-         ak_u64 count = 0, src_port = 0;
-         ak_u32 src_ip = 0;
-
-         st = aknet_sock_recvfrom (handle, pkt, sizeof pkt, AK_SLICE,
-                                   &src_ip, &src_port, &count);
-         if (st == AK_ST_OK && count >= 12)
-            break;
-         if (ak_now () >= deadline)
-            {
-               (void) aknet_sock_close (handle);
-               ak_h_errno = AK_TRY_AGAIN;
-               return 0;
-            }
-      }
-   (void) aknet_sock_close (handle);
-
-   /*  txid and RCODE */
-   if (pkt[0] != 0x4D || pkt[1] != 0x37)
-      return 0;
-   if ((pkt[3] & 0x0F) == 3)
-      {
-         ak_h_errno = AK_HOST_NOT_FOUND;
-         return 0;
-      }
-   if ((pkt[3] & 0x0F) != 0)
-      return 0;
-
-   /*  Skip the question(s) */
-   i = 12;
-   {
-      int qd = (pkt[4] << 8) | pkt[5];
-
-      while (qd-- > 0)
-         {
-            i += ak_dns_skip_name (pkt + i);
-            i += 4;                    /*  qtype + qclass */
-         }
-   }
-
-   an = (pkt[6] << 8) | pkt[7];
-   while (an-- > 0 && i + 12 <= (int) sizeof pkt)
-      {
-         int rdlen;
-
-         i += ak_dns_skip_name (pkt + i);
-         if (i + 10 > (int) sizeof pkt)
-            break;
-         rdlen = (pkt[i + 8] << 8) | pkt[i + 9];
-         /*  TYPE A, CLASS IN, 4-byte rdata */
-         if (pkt[i] == 0 && pkt[i + 1] == 1
-             && pkt[i + 2] == 0 && pkt[i + 3] == 1 && rdlen == 4)
-            {
-               memcpy (ip, pkt + i + 10, 4);
-               return 1;
-            }
-         i += 10 + rdlen;
-      }
-   ak_h_errno = AK_NO_DATA;
+   ak_h_errno = (st == AK_ST_NOT_READY) ? AK_TRY_AGAIN
+                                        : AK_HOST_NOT_FOUND;
    return 0;
 }
 
