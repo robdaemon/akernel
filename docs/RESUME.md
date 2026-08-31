@@ -20,13 +20,13 @@ The previous full resume is archived at `docs/HISTORY.md`.
 
 ## Recently shipped
 
+- **M77** — net-stack polish: virtio_net_hdr legacy-vs-modern
+  asserted loud at boot; net watchlist cleared.
 - **M76** — kernel hardening: endpoint caller-queue tail
   validation, `Process_Slot_Of` no longer aliases slot 0,
   `Exit_Current` removes the dying thread from the sleep queue.
 - **M75** — caps travel in IPC replies (+ reply-cap generation
   tags); the libman manager path works for the first time.
-- **M74** — watchlist flakes fixed: full death teardown, SMP-safe
-  kernel-stack free, UART THRE flow control.
 
 ## Active
 
@@ -910,6 +910,24 @@ teardown, SMP kernel-stack use-after-free, UART THR overrun.
   fragment search), the line count just drops. If exact counts
   ever matter, count verdicts with a fragment-tolerant parser.
 
+**M77 landed (2026-08-30).** Net-stack polish; the last watchlist
+items closed:
+- `Virtio.PCI` gains `Device_Features_Hi` (feature word 1,
+  read-only diagnostic; negotiation stays word-0 only).
+- virtio_net reports the negotiated datapath at boot after the
+  FEATURES_OK check: "legacy datapath, virtio_net_hdr 10 bytes",
+  noting when VIRTIO_F_VERSION_1 was offered but not negotiated.
+  QEMU does offer it; we stay legacy by design. A modern-only
+  device would reject FEATURES_OK and the driver exits, so the
+  10-byte Hdr_Len assumption is now loud instead of implicit.
+- Verified already landed and pruned from the watchlist: the
+  driver RX ring drops new frames with a counter rendered as
+  "dropped N" in Net:status. The ARP/socket/devmgr sizing and
+  fixed-VA-window notes duplicated Working rules (current headroom
+  fine: Max_Socks 16 vs 10+10 lwIP PCBs, devmgr 6/8 lines used).
+- Gates: zero-warning serial build; SMP1 1473/1472P 0F x2,
+  SMP4 1471/1472P 0F x2.
+
 **M76 landed (2026-08-30).** The remaining M74 deferred kernel
 hardening items, all closed:
 - `Enqueue_Caller` no longer trusts a stored `Queue_Tail` blindly:
@@ -995,14 +1013,14 @@ Deferred: DHCP, socket servers (finger etc.), DNS resolver beyond
 slirp's built-in, external ICMP (slirp does not forward it — tests
 target the gateway by design).
 
-Watchlist: virtio_net_hdr legacy-vs-modern size; RX ring overflow =
-drop-new with a counter in Net:status; fixed VA windows stay literals
-with the overlap guard; ARP cache / socket table sized with headroom
-in the same commit; devmgr Max_Lines 8 → 6 used. All M74 deferred
-kernel items were fixed across M75 (IPC_Reply caps, reply-cap ABA)
-and M76 (Enqueue_Caller tail, Process_Slot_Of slot 0, Exit_Current
-sleeper); the SMP4 console-loss and whole-system stall flakes were
-fixed in M74.
+Net watchlist: empty. The virtio_net_hdr mode is asserted loud at
+boot (M77); the RX ring already drops new frames with a counter
+rendered as "dropped N" in Net:status; the ARP/socket/devmgr
+sizing and fixed-VA-window items duplicate Working rules below.
+All M74 deferred kernel items were fixed across M75 (IPC_Reply
+caps, reply-cap ABA) and M76 (Enqueue_Caller tail,
+Process_Slot_Of slot 0, Exit_Current sleeper); the SMP4
+console-loss and whole-system stall flakes were fixed in M74.
 
 ## Open candidates
 
