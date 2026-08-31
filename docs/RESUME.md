@@ -3,6 +3,21 @@
 Live state and open work. Earlier milestones live in `git log`.
 The previous full resume is archived at `docs/HISTORY.md`.
 
+## Project rules (permanent — read first)
+
+1. **Builds are serial.** Never `make -jN`: every crate's gprbuild
+   builds the shared `akernel_rts` library project, and concurrent
+   gprlib runs crash (`CONSTRAINT_ERROR : gprlib.adb index check
+   failed`) and corrupt `libakernel_user.a` mid-archive. Plain
+   `make all` / `make test` only.
+2. **Capability/syscall/ABI numbers are append-only.** Never
+   renumber or rearrange existing assignments (syscall numbers,
+   grant/uniform-ABI handles, message labels); allocate new ones
+   at the end. Renumbering breaks in ways the suite may not catch.
+3. **Zero compiler warnings, always.** Fix warnings as they occur
+   (style checker `-gnaty0` included); never let them accumulate
+   or land a build that emits them.
+
 ## Recently shipped
 
 - **Milestone 65** — Tier-1 shared library manager (`System/Libman`).
