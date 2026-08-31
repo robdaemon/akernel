@@ -102,10 +102,20 @@ procedure Virtio_9p is
    R_Statfs  : constant U8 := 9;
    T_Lopen   : constant U8 := 12;
    R_Lopen   : constant U8 := 13;
+   T_Lcreate : constant U8 := 14;
+   R_Lcreate : constant U8 := 15;
    T_Getattr : constant U8 := 24;
    R_Getattr : constant U8 := 25;
+   T_Setattr : constant U8 := 26;
+   R_Setattr : constant U8 := 27;
    T_Readdir : constant U8 := 40;
    R_Readdir : constant U8 := 41;
+   T_Mkdir   : constant U8 := 72;
+   R_Mkdir   : constant U8 := 73;
+   T_Renameat : constant U8 := 74;
+   R_Renameat : constant U8 := 75;
+   T_Unlinkat : constant U8 := 76;
+   R_Unlinkat : constant U8 := 77;
    R_Lerror  : constant U8 := 7;
    T_Version : constant U8 := 100;
    R_Version : constant U8 := 101;
@@ -115,6 +125,8 @@ procedure Virtio_9p is
    R_Walk    : constant U8 := 111;
    T_Read    : constant U8 := 116;
    R_Read    : constant U8 := 117;
+   T_Write   : constant U8 := 118;
+   R_Write   : constant U8 := 119;
    T_Clunk   : constant U8 := 120;
    R_Clunk   : constant U8 := 121;
 
@@ -145,7 +157,15 @@ procedure Virtio_9p is
 
    --  Linux open(2) flags used here.
    O_Rdonly    : constant Virtio.U32 := 0;
+   O_Wronly    : constant Virtio.U32 := 1;
+   O_Rdwr      : constant Virtio.U32 := 2;
+   O_Creat     : constant Virtio.U32 := 16#40#;
+   O_Trunc     : constant Virtio.U32 := 16#200#;
    O_Directory : constant Virtio.U32 := 16#1_0000#;
+
+   --  AT_REMOVEDIR for Tunlinkat; P9_SETATTR_SIZE for Tsetattr.
+   At_Removedir : constant Virtio.U32 := 16#200#;
+   Setattr_Size : constant Virtio.U32 := 16#08#;
 
    --  Per-op scratch fids (walk targets; the process is
    --  single-threaded so two suffice). Fid 0 is the attach root.
@@ -990,6 +1010,365 @@ procedure Virtio_9p is
       end if;
    end Handle_Volume_Info;
 
+   --  Split Path into parent (Path (Path'First .. + Parent_Len),
+   --  length 0 = root) and final component. Name_Len = 0 marks a
+   --  malformed path (trailing slash).
+   procedure Split_Path
+     (Path       : String;
+      Parent_Len : out Natural;
+      Name_First : out Natural;
+      Name_Len   : out Natural)
+   is
+      Last_Slash : Natural := 0;
+   begin
+      for I in Path'Range loop
+         if Path (I) = '/' then
+            Last_Slash := I;
+         end if;
+      end loop;
+      if Last_Slash = 0 then
+         Parent_Len := 0;
+         Name_First := Path'First;
+      else
+         Parent_Len := Last_Slash - Path'First;
+         Name_First := Last_Slash + 1;
+      end if;
+      if Name_First > Path'Last then
+         Name_Len := 0;
+      else
+         Name_Len := Path'Last - Name_First + 1;
+      end if;
+   end Split_Path;
+
+   --  Op_Write (m79c): arbitrary-offset writes; creates the file
+   --  when missing and the parent resolves (fat32 semantics),
+   --  rejects sparse writes (offset > size -> Out_Of_Range) and
+   --  directories (Bad_Args). The per-op buffer cap is mapped,
+   --  copied, unmapped and cap-deleted exactly once on every exit.
+   procedure Handle_Write is
+      Offset : constant U64 := Message.Words (0);
+      Length : constant U64 := Message.Words (1);
+      Buf    : constant U64 := Message.Caps (0);
+      Path   : constant String := Path_Of (2, 32);
+      Size   : U64 := 0;
+      Is_Dir : Boolean := False;
+      Status : U64 := Files.Status_Ok;
+      Count  : U64 := 0;
+      Mapped : Boolean := False;
+      Held   : Boolean := False;  --  Walk_Fid is live
+      Opened : Boolean := False;
+      Iounit : Virtio.U32 := 0;
+      Err    : Virtio.U32;
+   begin
+      if Buf = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Err := Walk_To (Path, Walk_Fid);
+      if Err = Enoent or else Err = Enotdir then
+         --  Create: walk the parent, Tlcreate the final component
+         --  (the fid becomes the new open file).
+         declare
+            Parent_Len : Natural;
+            Name_First : Natural;
+            Name_Len   : Natural;
+         begin
+            Split_Path (Path, Parent_Len, Name_First, Name_Len);
+            if Name_Len = 0 then
+               Status := Files.Status_Bad_Args;
+               Err    := Transport_Error;
+            else
+               Err := Walk_To
+                 (Path (Path'First .. Path'First + Parent_Len - 1),
+                  Walk_Fid);
+               if Err = 0 then
+                  Held := True;
+                  Begin_Req (T_Lcreate);
+                  Put32 (Walk_Fid);
+                  Put_Str (Path (Name_First .. Name_First + Name_Len - 1));
+                  Put32 (O_Rdwr or O_Creat or O_Trunc);
+                  Put32 (8#644#);
+                  Put32 (0);  --  gid (security_model=none ignores)
+                  Err := Round_Trip (R_Lcreate);
+                  if Err = 0 then
+                     Opened := True;
+                     Skip (13);           --  qid
+                     Iounit := Get32;
+                  end if;
+               end if;
+            end if;
+         end;
+      elsif Err = 0 then
+         Held := True;
+         Err := Getattr (Walk_Fid, Size, Is_Dir);
+         if Err /= 0 then
+            null;  --  mapped below
+         elsif Is_Dir then
+            Status := Files.Status_Bad_Args;
+            Err    := Transport_Error;
+         elsif Offset > Size then
+            --  No sparse writes (fat32 semantics).
+            Status := Files.Status_Out_Of_Range;
+            Err    := Transport_Error;
+         else
+            Begin_Req (T_Lopen);
+            Put32 (Walk_Fid);
+            Put32 (O_Wronly);
+            Err := Round_Trip (R_Lopen);
+            if Err = 0 then
+               Opened := True;
+               Skip (13);                 --  qid
+               Iounit := Get32;
+            end if;
+         end if;
+      end if;
+
+      if Opened then
+         if Mem_Map
+              (Address_Space => Address_Space_Cap,
+               Cap           => Buf,
+               VA            => Buf_Win_VA,
+               Offset        => 0,
+               Length        => Cli_Buf_Bytes,
+               Flags         => 3) = 0
+         then
+            Mapped := True;
+            declare
+               Chunk : U64;
+               N     : U64;
+            begin
+               while Count < Length loop
+                  Chunk := U64'Min (Length - Count, Io_Chunk);
+                  if Iounit /= 0 then
+                     Chunk := U64'Min (Chunk, U64 (Iounit));
+                  end if;
+                  Begin_Req (T_Write);
+                  Put32 (Walk_Fid);
+                  Put64 (Offset + Count);
+                  Put32 (Virtio.U32 (Chunk));
+                  for J in 0 .. Chunk - 1 loop
+                     Put8 (Cli_Buf (Count + J));
+                  end loop;
+                  Err := Round_Trip (R_Write);
+                  exit when Err /= 0;
+                  N := U64 (Get32);
+                  if N = 0 or else N > Chunk then
+                     Err := Transport_Error;  --  no forward progress
+                     exit;
+                  end if;
+                  Count := Count + N;
+               end loop;
+            end;
+            if Err /= 0 then
+               if Count = 0 then
+                  Status := Map_Errno (Err);
+               end if;
+               --  Partial write: report Ok with the short count.
+            end if;
+         else
+            Status := Files.Status_Not_Ready;
+         end if;
+      elsif Status = Files.Status_Ok then
+         Status := Map_Errno (Err);
+      end if;
+
+      if Mapped
+        and then Mem_Unmap
+          (Address_Space => Address_Space_Cap,
+           VA            => Buf_Win_VA,
+           Length        => Cli_Buf_Bytes) /= 0
+      then
+         Debug_Put_Line ("virtio-9p buffer unmap failed");
+      end if;
+      if Held then
+         Clunk (Walk_Fid);
+      end if;
+      --  Buffer caps transferred per op are deleted per op.
+      if Cap_Delete (Buf) /= 0 then
+         Debug_Put_Line ("virtio-9p buffer cap delete failed");
+      end if;
+      Reply2 (Status, Count);
+   end Handle_Write;
+
+   --  Op_Delete / Op_Rmdir (m79c): Tunlinkat on the parent fid,
+   --  flags 0 (file) / AT_REMOVEDIR (empty directory). Host
+   --  errnos do the type policing: a directory via Op_Delete is
+   --  EISDIR, a non-empty directory via Op_Rmdir is ENOTEMPTY —
+   --  both land as Bad_Args.
+   procedure Handle_Unlink (Directory : Boolean) is
+      Path       : constant String := Path_Of (0, 48);
+      Parent_Len : Natural;
+      Name_First : Natural;
+      Name_Len   : Natural;
+      Err        : Virtio.U32;
+   begin
+      Split_Path (Path, Parent_Len, Name_First, Name_Len);
+      if Name_Len = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      Err := Walk_To
+        (Path (Path'First .. Path'First + Parent_Len - 1), Walk_Fid);
+      if Err = 0 then
+         Begin_Req (T_Unlinkat);
+         Put32 (Walk_Fid);
+         Put_Str (Path (Name_First .. Name_First + Name_Len - 1));
+         Put32 ((if Directory then At_Removedir else 0));
+         Err := Round_Trip (R_Unlinkat);
+         Clunk (Walk_Fid);
+      end if;
+      Reply2 (Map_Errno (Err), 0);
+   end Handle_Unlink;
+
+   --  Op_Mkdir (m79c): Tmkdir on the parent fid, mode 0755.
+   procedure Handle_Mkdir is
+      Path       : constant String := Path_Of (0, 48);
+      Parent_Len : Natural;
+      Name_First : Natural;
+      Name_Len   : Natural;
+      Err        : Virtio.U32;
+   begin
+      Split_Path (Path, Parent_Len, Name_First, Name_Len);
+      if Name_Len = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      Err := Walk_To
+        (Path (Path'First .. Path'First + Parent_Len - 1), Walk_Fid);
+      if Err = 0 then
+         Begin_Req (T_Mkdir);
+         Put32 (Walk_Fid);
+         Put_Str (Path (Name_First .. Name_First + Name_Len - 1));
+         Put32 (8#755#);
+         Put32 (0);  --  gid
+         Err := Round_Trip (R_Mkdir);
+         Clunk (Walk_Fid);
+      end if;
+      Reply2 (Map_Errno (Err), 0);
+   end Handle_Mkdir;
+
+   --  Op_Truncate (m79c): Tsetattr SIZE 0 on the walked fid.
+   procedure Handle_Truncate is
+      Path : constant String := Path_Of (0, 48);
+      Err  : Virtio.U32;
+   begin
+      Err := Walk_To (Path, Walk_Fid);
+      if Err = 0 then
+         Begin_Req (T_Setattr);
+         Put32 (Walk_Fid);
+         Put32 (Setattr_Size);
+         Put32 (0);        --  mode
+         Put32 (0);        --  uid
+         Put32 (0);        --  gid
+         Put64 (0);        --  size
+         Put64 (0);        --  atime sec/nsec
+         Put64 (0);
+         Put64 (0);        --  mtime sec/nsec
+         Put64 (0);
+         Err := Round_Trip (R_Setattr);
+         Clunk (Walk_Fid);
+      end if;
+      Reply2 (Map_Errno (Err), 0);
+   end Handle_Truncate;
+
+   --  Op_Rename (m79c): FROM path in words 0..5, cap0 = the
+   --  client buffer holding the bare NUL-terminated TO path (the
+   --  VFS stripped both volume prefixes and rejected cross-volume
+   --  renames). Trenameat between the two parent fids; house
+   --  semantics: TO must not exist (Bad_Args), missing FROM or
+   --  either parent is Not_Found.
+   procedure Handle_Rename is
+      Path : constant String := Path_Of (0, 48);
+      Buf  : constant U64 := Message.Caps (0);
+      Err  : Virtio.U32;
+      To   : String (1 .. 255);
+      To_Len : Natural := 0;
+      F_Parent_Len : Natural;
+      F_Name_First : Natural;
+      F_Name_Len   : Natural;
+      T_Parent_Len : Natural;
+      T_Name_First : Natural;
+      T_Name_Len   : Natural;
+      T_Size : U64;
+      T_Dir  : Boolean;
+   begin
+      if Buf = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      --  Pull the TO path out of the transferred buffer, then
+      --  release the cap like every other per-op buffer.
+      if Mem_Map
+           (Address_Space => Address_Space_Cap,
+            Cap           => Buf,
+            VA            => Buf_Win_VA,
+            Offset        => 0,
+            Length        => Cli_Buf_Bytes,
+            Flags         => 3) = 0
+      then
+         for I in U64 (0) .. Cli_Buf_Bytes - 1 loop
+            exit when Cli_Buf (I) = 0 or else To_Len = To'Last;
+            To_Len := To_Len + 1;
+            To (To_Len) := Character'Val (Cli_Buf (I));
+         end loop;
+         if Mem_Unmap
+              (Address_Space => Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Cli_Buf_Bytes) /= 0
+         then
+            Debug_Put_Line ("virtio-9p buffer unmap failed");
+         end if;
+      end if;
+      if Cap_Delete (Buf) /= 0 then
+         Debug_Put_Line ("virtio-9p buffer cap delete failed");
+      end if;
+
+      if To_Len = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      --  TO must not exist (fat32 semantics).
+      if Stat_Path (To (1 .. To_Len), T_Size, T_Dir)
+        = Files.Status_Ok
+      then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Split_Path (Path, F_Parent_Len, F_Name_First, F_Name_Len);
+      Split_Path (To (1 .. To_Len),
+                  T_Parent_Len, T_Name_First, T_Name_Len);
+      if F_Name_Len = 0 or else T_Name_Len = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Err := Walk_To
+        (Path (Path'First .. Path'First + F_Parent_Len - 1),
+         Walk_Fid);
+      if Err = 0 then
+         Err := Walk_To
+           (To (1 .. T_Parent_Len), Aux_Fid);
+         if Err /= 0 then
+            Clunk (Walk_Fid);
+         end if;
+      end if;
+      if Err = 0 then
+         Begin_Req (T_Renameat);
+         Put32 (Walk_Fid);
+         Put_Str (Path (F_Name_First .. F_Name_First + F_Name_Len - 1));
+         Put32 (Aux_Fid);
+         Put_Str (To (T_Name_First .. T_Name_First + T_Name_Len - 1));
+         Err := Round_Trip (R_Renameat);
+         Clunk (Walk_Fid);
+         Clunk (Aux_Fid);
+      end if;
+      Reply2 (Map_Errno (Err), 0);
+   end Handle_Rename;
+
    --  fs wire-op dispatch (label, never badge — forwarded ops can
    --  carry pid badges; nothing here assumes badge 0).
    procedure Handle_File_Op is
@@ -999,16 +1378,27 @@ procedure Virtio_9p is
          Handle_Stat_Or_Open;
       elsif L = Files.Op_Read then
          Handle_Read;
+      elsif L = Files.Op_Write then
+         Handle_Write;
       elsif L = Files.Op_ReadDir then
          Handle_Read_Dir;
       elsif L = Files.Op_Volume_Info then
          Handle_Volume_Info;
+      elsif L = Files.Op_Delete then
+         Handle_Unlink (Directory => False);
+      elsif L = Files.Op_Rmdir then
+         Handle_Unlink (Directory => True);
+      elsif L = Files.Op_Mkdir then
+         Handle_Mkdir;
+      elsif L = Files.Op_Truncate then
+         Handle_Truncate;
+      elsif L = Files.Op_Rename then
+         Handle_Rename;
       elsif L = Files.Op_Sync or else L = Files.Op_Close then
          Reply2 (Files.Status_Ok, 0);
       else
-         --  Write/Delete/Truncate/Mkdir/Rmdir/Rename land in
-         --  M79c; Set_Name/Add_Block/Add_FS/Assign* are
-         --  fs-internal and never forwarded.
+         --  Set_Name/Add_Block/Add_FS/Assign* are fs-internal and
+         --  never forwarded.
          Reply2 (Files.Status_Bad_Args, 0);
       end if;
    end Handle_File_Op;

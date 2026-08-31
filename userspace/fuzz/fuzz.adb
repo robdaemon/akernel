@@ -4315,12 +4315,106 @@ begin
                Check (HSt = Akernel_User.Files.Status_Ok
                       and then Clus > 0 and then Total >= Free,
                       "host volume info");
-               --  M79b is read-only; M79c flips this to real
-               --  writes.
+               --  m79c: writes round-trip to the host directory.
+               --  Idempotent across runs (fixed names, rewritten
+               --  content); the Makefile greps the host side after
+               --  the suite (FZHOST.TXT present with the content,
+               --  host_delete_me.txt gone).
+               HSt := Akernel_User.Files.Delete ("Host:FZHOST.TXT");
+               Write_File ("Host:FZHOST.TXT",
+                           "guest was here" & ASCII.LF,
+                           "host share write creates");
+               Check_File ("Host:FZHOST.TXT",
+                           "guest was here" & ASCII.LF,
+                           "host share write readback");
+               Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('W'));
+               Buf (1) := Interfaces.Unsigned_8 (Character'Pos ('A'));
+               Buf (2) := Interfaces.Unsigned_8 (Character'Pos ('S'));
                HSt := Akernel_User.Files.Write
-                 ("Host:fzw.txt", 0, Buf'Address, 1, Count);
+                 ("Host:FZHOST.TXT", 6, Buf'Address, 3, Count);
+               Check (HSt = Akernel_User.Files.Status_Ok
+                      and then Count = 3,
+                      "host share offset write");
+               Check_File ("Host:FZHOST.TXT",
+                           "guest WAS here" & ASCII.LF,
+                           "host share offset write readback");
+               --  Restore the canonical content for the host-side
+               --  grep after the suite.
+               Write_File ("Host:FZHOST.TXT",
+                           "guest was here" & ASCII.LF,
+                           "host share rewrite restores");
+               HSt := Akernel_User.Files.Write
+                 ("Host:FZHOST.TXT", 100, Buf'Address, 3, Count);
+               Check (HSt = Akernel_User.Files.Status_Out_Of_Range,
+                      "host share sparse write rejected");
+               HSt := Akernel_User.Files.Rmdir ("Host:FZDIR");
+               HSt := Akernel_User.Files.Mkdir ("Host:FZDIR");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share mkdir");
+               HSt := Akernel_User.Files.Mkdir ("Host:FZDIR");
                Check (HSt = Akernel_User.Files.Status_Bad_Args,
-                      "host write rejected pre-m79c");
+                      "host share mkdir existing rejected");
+               HSt := Akernel_User.Files.Rmdir ("Host:FZDIR");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share rmdir");
+               --  The Makefile seeds host_delete_me.txt every
+               --  boot; the guest deletes it and the host side
+               --  asserts its absence after the suite.
+               HSt := Akernel_User.Files.Stat
+                 ("Host:host_delete_me.txt", HSize);
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share delete-me seeded");
+               HSt := Akernel_User.Files.Delete
+                 ("Host:host_delete_me.txt");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share delete");
+               HSt := Akernel_User.Files.Stat
+                 ("Host:host_delete_me.txt", HSize);
+               Check (HSt = Akernel_User.Files.Status_Not_Found,
+                      "host share delete gone");
+               HSt := Akernel_User.Files.Delete ("Host:FZRN1.TXT");
+               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
+               Write_File ("Host:FZRN1.TXT", "rename me" & ASCII.LF,
+                           "host share rename source written");
+               Write_File ("Host:FZRN2.TXT", "target" & ASCII.LF,
+                           "host share rename target written");
+               HSt := Akernel_User.Files.Rename
+                 ("Host:FZRN1.TXT", "Host:FZRN2.TXT");
+               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+                      "host share rename onto existing rejected");
+               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
+               HSt := Akernel_User.Files.Rename
+                 ("Host:FZRN1.TXT", "Host:FZRN2.TXT");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share rename");
+               HSt := Akernel_User.Files.Stat ("Host:FZRN1.TXT", HSize);
+               Match := HSt = Akernel_User.Files.Status_Not_Found;
+               HSt := Akernel_User.Files.Stat ("Host:FZRN2.TXT", HSize);
+               Check (Match
+                      and then HSt = Akernel_User.Files.Status_Ok
+                      and then HSize = 10,
+                      "host share rename moved the entry");
+               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share rename cleanup");
+               Write_File ("Host:FZTR.TXT", "truncate me" & ASCII.LF,
+                           "host share truncate source written");
+               HSt := Akernel_User.Files.Truncate ("Host:FZTR.TXT");
+               Check (HSt = Akernel_User.Files.Status_Ok,
+                      "host share truncate");
+               HSt := Akernel_User.Files.Stat ("Host:FZTR.TXT", HSize);
+               Check (HSt = Akernel_User.Files.Status_Ok
+                      and then HSize = 0,
+                      "host share truncate to zero");
+               HSt := Akernel_User.Files.Delete ("Host:FZTR.TXT");
+               HSt := Akernel_User.Files.Delete ("Host:FZCOPY.TXT");
+               Run_Command
+                 ("Sys:C/Copy", "Host:host_seed.txt Host:FZCOPY.TXT",
+                  0, "copy within host share via CLI");
+               Check_File ("Host:FZCOPY.TXT",
+                           "hello from the host" & ASCII.LF,
+                           "host share CLI copy contents");
+               HSt := Akernel_User.Files.Delete ("Host:FZCOPY.TXT");
                Run_Command ("Sys:C/Type", "Host:host_seed.txt", 0,
                             "type Host:host_seed.txt");
             end if;

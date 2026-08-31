@@ -44,6 +44,14 @@ per-milestone detail too.
 
 ## Recently shipped
 
+- **M79** — host file sharing via virtio-9p: `Drivers/Virtio9p`
+  speaks 9P2000.L over a single virtqueue and serves the `Host:`
+  volume (full read/write/create/delete/mkdir/rename/truncate).
+  Runtime opt-in via qemu args only — no device on the bus, no
+  driver, no mount, no error. `make test` attaches `./share` by
+  default (QEMU_9P_FLAGS; empty = suite skips Host: checks) and
+  asserts guest writes host-side after the run. fileserver
+  Max_Volumes 8→12 (the table was full; Net: lost the race).
 - **M78b** — opt-in DHCP client (lwIP dhcp.c behind a writable
   `Net:dhcp` file + `ENV:Net.DHCP` boot flag; static config stays
   the default, restored on stop). Tests/Dhcp_Test boots in the
@@ -85,3 +93,7 @@ design).
 - `make all && make run` — interactive GUI.
 - `make test` — suite (QEMU_SMP=4 default, also gated at SMP1).
 - `make disk.img` — rebuild the GPT/FAT32 data partition.
+- Host share (Host: volume) is runtime opt-in via qemu args:
+  `make run QEMU_ARGS="-nographic $(QEMU_9P_FLAGS)"` exports
+  `./share` read/write; `make test` attaches it by default
+  (QEMU_9P_FLAGS= to disable).

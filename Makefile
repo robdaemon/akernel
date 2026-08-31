@@ -337,8 +337,12 @@ FORCE:
 test:
 	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
 	PID=$$!; \
-	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR) && printf 'hello from the host\n' > $(SHARE_DIR)/host_seed.txt; fi; \
+	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR) && printf 'hello from the host\n' > $(SHARE_DIR)/host_seed.txt && printf 'delete me\n' > $(SHARE_DIR)/host_delete_me.txt; fi; \
 	$(MAKE) run INITRD_MODE=test QEMU_ARGS="$(QEMU_ARGS) $(QEMU_9P_FLAGS)"; ST=$$?; \
+	if [ -n "$(QEMU_9P_FLAGS)" ]; then \
+	  grep -q "guest was here" $(SHARE_DIR)/FZHOST.TXT || { echo "FAIL host share guest write missing on host"; ST=1; }; \
+	  test ! -e $(SHARE_DIR)/host_delete_me.txt || { echo "FAIL host share guest delete not visible on host"; ST=1; }; \
+	fi; \
 	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
 	exit $$ST
 
