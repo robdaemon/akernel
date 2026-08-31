@@ -66,6 +66,11 @@ package body Device_Manager is
    --  whose manifest line carries the "netdev" token (System/
    --  Netserv).
    Net_EP          : U64 := 0;
+   --  Class-9 (virtio-9p) host-share service endpoint, recorded at
+   --  spawn (first-wins); init pushes the Host: volume mount to the
+   --  file server when nonzero (m79; the device is runtime opt-in
+   --  via qemu args, so zero is the common case).
+   Np_EP           : U64 := 0;
    Bureau_Svc      : U64 := 0;  --  Bureau window service (Send)
    --  Seat (milestone 28 slice 4): class-18 (virtio-input)
    --  service endpoints, recorded at spawn; after Bureau +
@@ -89,6 +94,7 @@ package body Device_Manager is
 
    function Block_Service return U64 is (Block_EP);
    function Net_Service return U64 is (Net_EP);
+   function Np_Service return U64 is (Np_EP);
    Next_Id         : U64 := First_Driver_Id;
 
    function Shl (Value : U64; Amount : Natural) return U64
@@ -373,6 +379,9 @@ package body Device_Manager is
          end if;
          if L.Class_Id = 1 and then Net_EP = 0 then
             Net_EP := Svc_EP;
+         end if;
+         if L.Class_Id = 9 and then Np_EP = 0 then
+            Np_EP := Svc_EP;
          end if;
          Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
       else
@@ -811,6 +820,9 @@ package body Device_Manager is
       end if;
       if L.Class_Id = 1 and then Net_EP = 0 then
          Net_EP := Svc_EP;
+      end if;
+      if L.Class_Id = 9 and then Np_EP = 0 then
+         Np_EP := Svc_EP;
       end if;
       if L.Class_Id = 18 and then Input_Count < 4 then
          Input_Svc (Input_Count) := Svc_EP;

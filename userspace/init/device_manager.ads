@@ -33,6 +33,11 @@ package Device_Manager is
    --  network device was found; init grants it to System/Netserv
    --  via the "netdev" manifest token.
    function Net_Service return Akernel_User.Syscalls.U64;
+   --  Np_Service returns init's Send side of the service endpoint
+   --  of the spawned virtio class-9 (9P host share) driver, 0 when
+   --  no 9p device was found; init then pushes the Host: volume
+   --  mount to the file server (m79).
+   function Np_Service return Akernel_User.Syscalls.U64;
    --  The elevation service (milestone 45): init creates the
    --  endpoint and stores it here (Send side for the
    --  "elevated_svc" manifest token); Start_Elevated stages and

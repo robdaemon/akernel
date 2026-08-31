@@ -2,6 +2,7 @@ with System;
 with System.Storage_Elements;
 with Interfaces;
 with Akernel_User.Console;
+with Akernel_User.Files;
 with Akernel_User.Syscalls;
 with Virtio;
 with Virtio.PCI;
@@ -35,9 +36,20 @@ with Virtio.Queues;
 --  9P2000.L session: Tversion (msize 36864, "9P2000.L") then
 --  Tattach (fid 0 = the share root, afid NOFID, uname "akernel",
 --  aname "/", n_uname NONUNAME) then a root Tgetattr self-test.
---  Fid 0 is kept for the driver's lifetime; file operations
---  (M79b/M79c) walk clones off it per op because the akernel fs
---  protocol is stateless (every op carries a full path).
+--  Fid 0 is kept for the driver's lifetime; file operations walk
+--  clones off it per op because the akernel fs protocol is
+--  stateless (every op carries a full path, volume-stripped).
+--
+--  Host: volume protocol (m79b, the Akernel_User.Files wire ops,
+--  dispatched by label 1..18 on the service endpoint): Stat/Open
+--  (Twalk + Tgetattr), Read (walk + Tlopen O_RDONLY + Tread
+--  chunks, fat32 bounds semantics: offset >= size is
+--  Out_Of_Range), ReadDir (walk + Tlopen O_DIRECTORY + Treaddir
+--  skip-to-index; "." and ".." hidden; entry size from a real
+--  Stat), Volume_Info (Tstatfs), Sync/Close no-op Ok. Write-side
+--  ops land in M79c and answer Bad_Args until then. ReadDir and
+--  Stat/Open on the root ("" path) hit fid 0 directly — an attach
+--  fid is never opened, so it stays walkable.
 --
 --  DMA object layout (21 pages): pages 0..2 queue rings
 --  (desc/avail/used), pages 3..11 request buffer (36 KiB, msize
@@ -52,6 +64,10 @@ procedure Virtio_9p is
    use type Virtio.U32;
    use type Virtio.U64;
    use type Interfaces.Unsigned_8;
+
+   --  Short selector for the fs wire-protocol constants (no
+   --  use-visibility: the package also declares a U64 subtype).
+   package Files renames Akernel_User.Files;
 
    subtype U8 is Interfaces.Unsigned_8;
 
@@ -82,13 +98,25 @@ procedure Virtio_9p is
    Feat_Mount_Tag : constant Virtio.U32 := 1;
 
    --  9P2000.L message types (reply = request + 1, except errors).
+   T_Statfs  : constant U8 := 8;
+   R_Statfs  : constant U8 := 9;
+   T_Lopen   : constant U8 := 12;
+   R_Lopen   : constant U8 := 13;
+   T_Getattr : constant U8 := 24;
+   R_Getattr : constant U8 := 25;
+   T_Readdir : constant U8 := 40;
+   R_Readdir : constant U8 := 41;
+   R_Lerror  : constant U8 := 7;
    T_Version : constant U8 := 100;
    R_Version : constant U8 := 101;
    T_Attach  : constant U8 := 104;
    R_Attach  : constant U8 := 105;
-   R_Lerror  : constant U8 := 7;
-   T_Getattr : constant U8 := 24;
-   R_Getattr : constant U8 := 25;
+   T_Walk    : constant U8 := 110;
+   R_Walk    : constant U8 := 111;
+   T_Read    : constant U8 := 116;
+   R_Read    : constant U8 := 117;
+   T_Clunk   : constant U8 := 120;
+   R_Clunk   : constant U8 := 121;
 
    No_Fid   : constant Virtio.U32 := 16#FFFF_FFFF#;  --  P9_NOFID
    No_Uname : constant Virtio.U32 := 16#FFFF_FFFF#;  --  P9_NONUNAME
@@ -106,6 +134,32 @@ procedure Virtio_9p is
    Qid_Dir       : constant U8 := 16#80#;
 
    Msize_Offer : constant Virtio.U32 := Virtio.U32 (Buf_Bytes);
+
+   --  Linux errnos the volume server maps onto protocol statuses
+   --  (Map_Errno): ENOENT/ENOTDIR -> Not_Found, transport ->
+   --  Not_Ready, everything else (EACCES, EISDIR, E2BIG, ...)
+   --  -> Bad_Args.
+   Enoent  : constant Virtio.U32 := 2;
+   E2big   : constant Virtio.U32 := 7;
+   Enotdir : constant Virtio.U32 := 20;
+
+   --  Linux open(2) flags used here.
+   O_Rdonly    : constant Virtio.U32 := 0;
+   O_Directory : constant Virtio.U32 := 16#1_0000#;
+
+   --  Per-op scratch fids (walk targets; the process is
+   --  single-threaded so two suffice). Fid 0 is the attach root.
+   --  ReadDir stats the matched entry WHILE its directory fid is
+   --  open, so the entry stat must use a different fid (a 9P
+   --  newfid must be unused).
+   Walk_Fid : constant Virtio.U32 := 1;
+   Aux_Fid  : constant Virtio.U32 := 2;
+
+   --  Fixed VA window for the per-op client buffer cap (8 pages,
+   --  32 KiB — the Akernel_User.Files buffer geometry), mapped,
+   --  copied, unmapped and cap-deleted on every Read.
+   Buf_Win_VA    : constant U64 := 16#5100_0000#;
+   Cli_Buf_Bytes : constant U64 := 8 * 4096;
 
    --  First service-endpoint message from the device manager.
    Driver_Config_Label : constant U64 := U64'Last - 1;
@@ -203,6 +257,15 @@ procedure Virtio_9p is
 
    Msize    : Virtio.U32 := 0;  --  negotiated
    Root_Fid : constant Virtio.U32 := 0;
+
+   --  Per-request payload cap for Tread/Treaddir: the smaller of
+   --  the client buffer geometry and what fits one negotiated
+   --  message. Set after Tversion (Msize >= 4096 guaranteed by the
+   --  bring-up check, so this is always positive).
+   Io_Chunk : U64 := 0;
+
+   function Shl (Value : U64; Amount : Natural) return U64
+     renames Interfaces.Shift_Left;
 
    procedure Fail (S : String) is
    begin
@@ -324,6 +387,12 @@ procedure Virtio_9p is
       return Lo + Virtio.U64 (Get32) * 16#1_0000_0000#;
    end Get64;
 
+   --  Advance the parse cursor past N unwanted reply bytes.
+   procedure Skip (N : U64) is
+   begin
+      Rsp_Pos := Rsp_Pos + N;
+   end Skip;
+
    ------------------------------------------------------------------
    --  Synchronous RPC: submit the built request, poll-drain the
    --  used ring for the reply. Returns 0 when the reply has the
@@ -403,6 +472,546 @@ procedure Virtio_9p is
       end if;
       return 0;
    end Round_Trip;
+
+   ------------------------------------------------------------------
+   --  Host: volume server (Akernel_User.Files wire ops)
+   ------------------------------------------------------------------
+
+   --  Per-op client buffer overlay (valid while mapped).
+   type Cli_Bytes is
+     array (U64 range 0 .. Cli_Buf_Bytes - 1) of U8
+     with Volatile_Components;
+
+   Cli_Buf : Cli_Bytes with Address => To_Addr (Buf_Win_VA);
+
+   --  Map a server-side errno (or Transport_Error) onto a protocol
+   --  status.
+   function Map_Errno (Err : Virtio.U32) return U64 is
+   begin
+      if Err = 0 then
+         return Files.Status_Ok;
+      elsif Err = Enoent or else Err = Enotdir then
+         return Files.Status_Not_Found;
+      elsif Err = Transport_Error then
+         return Files.Status_Not_Ready;
+      else
+         return Files.Status_Bad_Args;
+      end if;
+   end Map_Errno;
+
+   --  Unpack a NUL-padded path from message words First .., at
+   --  most Max_Len chars (48 for Stat/Open/Rename words 0..5,
+   --  32 elsewhere).
+   function Path_Of (First : Natural; Max_Len : Natural) return String is
+      Name : String (1 .. 48) := (others => Character'Val (0));
+      Len  : Natural := 0;
+   begin
+      for P in 0 .. Max_Len - 1 loop
+         declare
+            Ch : constant Character :=
+              Character'Val (Natural
+                ((Message.Words (First + P / 8)
+                    / Shl (1, (P mod 8) * 8)) and 16#FF#));
+         begin
+            exit when Ch = Character'Val (0);
+            Len := Len + 1;
+            Name (Len) := Ch;
+         end;
+      end loop;
+      return Name (1 .. Len);
+   end Path_Of;
+
+   --  Walk Path ('/'-separated, volume-stripped, "" = clone the
+   --  root) from Root_Fid onto Fid. Returns 0, a server errno, or
+   --  Transport_Error. 9P walks are capped at 16 elements
+   --  (P9_MAXWELEM); longer paths are rejected E2BIG (the fs
+   --  protocol's 48-char paths can only exceed it with
+   --  pathological one-character names). A partial Rwalk (nwqid
+   --  short of nwname) means an element did not resolve: ENOENT.
+   function Walk_To (Path : String; Fid : Virtio.U32) return Virtio.U32 is
+      Elems : Natural := 0;
+      I     : Natural := Path'First;
+      Err   : Virtio.U32;
+   begin
+      while I <= Path'Last loop
+         if Path (I) /= '/' then
+            Elems := Elems + 1;
+            while I <= Path'Last and then Path (I) /= '/' loop
+               I := I + 1;
+            end loop;
+         else
+            I := I + 1;
+         end if;
+      end loop;
+      if Elems > 16 then
+         return E2big;
+      end if;
+
+      Begin_Req (T_Walk);
+      Put32 (Root_Fid);
+      Put32 (Fid);
+      Put16 (Virtio.U16 (Elems));
+      I := Path'First;
+      while I <= Path'Last loop
+         if Path (I) /= '/' then
+            declare
+               S : constant Natural := I;
+            begin
+               while I <= Path'Last and then Path (I) /= '/' loop
+                  I := I + 1;
+               end loop;
+               Put_Str (Path (S .. I - 1));
+            end;
+         else
+            I := I + 1;
+         end if;
+      end loop;
+
+      Err := Round_Trip (R_Walk);
+      if Err /= 0 then
+         return Err;
+      end if;
+      if Get16 /= Virtio.U16 (Elems) then
+         return Enoent;  --  partial walk: element did not resolve
+      end if;
+      return 0;
+   end Walk_To;
+
+   --  Best-effort fid cleanup.
+   procedure Clunk (Fid : Virtio.U32) is
+   begin
+      Begin_Req (T_Clunk);
+      Put32 (Fid);
+      if Round_Trip (R_Clunk) /= 0 then
+         Debug_Put_Line ("virtio-9p clunk failed");
+      end if;
+   end Clunk;
+
+   --  Tgetattr (P9_GETATTR_BASIC) on an open-or-walked fid.
+   function Getattr
+     (Fid    : Virtio.U32;
+      Size   : out U64;
+      Is_Dir : out Boolean) return Virtio.U32
+   is
+      Err  : Virtio.U32;
+      Mode : Virtio.U32;
+   begin
+      Size   := 0;
+      Is_Dir := False;
+      Begin_Req (T_Getattr);
+      Put32 (Fid);
+      Put64 (Getattr_Basic);
+      Err := Round_Trip (R_Getattr);
+      if Err /= 0 then
+         return Err;
+      end if;
+      --  valid[8] qid[13] mode[4] uid[4] gid[4] nlink[8] rdev[8]
+      --  size[8] — only mode and size are consumed.
+      Skip (8);                     --  valid
+      Skip (1);                     --  qid type
+      Skip (4);                     --  qid version
+      Skip (8);                     --  qid path
+      Mode := Get32;
+      Is_Dir := (Mode and S_Ifmt) = S_Ifdir;
+      Skip (4);                     --  uid
+      Skip (4);                     --  gid
+      Skip (8);                     --  nlink
+      Skip (8);                     --  rdev
+      Size := Get64;
+      return 0;
+   end Getattr;
+
+   --  Stat a volume-stripped path ("" = the share root, answered
+   --  from the attach fid without a walk) using Fid as the walk
+   --  scratch (must be an unused fid — see Walk_Fid/Aux_Fid).
+   function Stat_Path
+     (Path   : String;
+      Size   : out U64;
+      Is_Dir : out Boolean;
+      Fid    : Virtio.U32 := Walk_Fid) return U64
+   is
+      Err : Virtio.U32;
+   begin
+      if Path'Length = 0 then
+         Err := Getattr (Root_Fid, Size, Is_Dir);
+      else
+         Err := Walk_To (Path, Fid);
+         if Err = 0 then
+            Err := Getattr (Fid, Size, Is_Dir);
+            Clunk (Fid);
+         end if;
+      end if;
+      return Map_Errno (Err);
+   end Stat_Path;
+
+   --  Reply helpers. Every reply zeroes caps (m75: caps transfer
+   --  in replies) and unused words (fileserver hygiene rule).
+   procedure Reply2 (Status, W1 : U64) is
+   begin
+      Message.Words := (others => 0);
+      Message.Words (0) := Status;
+      Message.Words (1) := W1;
+      Message.Caps := (others => 0);
+      if IPC_Reply (Reply_H) /= IPC_Ok then
+         Debug_Put_Line ("virtio-9p reply failed");
+      end if;
+   end Reply2;
+
+   --  Op_Stat/Op_Open reply: (status, size, 0, 0, is_dir) — word 4
+   --  carries is_dir since milestone 64.
+   procedure Reply_Stat (Status : U64; Size : U64; Is_Dir : Boolean) is
+   begin
+      Message.Words := (others => 0);
+      Message.Words (0) := Status;
+      Message.Words (1) := Size;
+      Message.Words (4) := (if Is_Dir then 1 else 0);
+      Message.Caps := (others => 0);
+      if IPC_Reply (Reply_H) /= IPC_Ok then
+         Debug_Put_Line ("virtio-9p reply failed");
+      end if;
+   end Reply_Stat;
+
+   procedure Handle_Stat_Or_Open is
+      Path   : constant String := Path_Of (0, 48);
+      Size   : U64;
+      Is_Dir : Boolean;
+      Status : U64;
+   begin
+      Status := Stat_Path (Path, Size, Is_Dir);
+      if Status /= Files.Status_Ok then
+         Size := 0;
+         Is_Dir := False;
+      end if;
+      Reply_Stat (Status, Size, Is_Dir);
+   end Handle_Stat_Or_Open;
+
+   --  Op_Read: stat for bounds (fat32 semantics: offset >= size is
+   --  Out_Of_Range; directories are Bad_Args), then walk + lopen +
+   --  Tread chunks straight into the client buffer. The per-op
+   --  buffer cap is mapped, copied, unmapped and cap-deleted
+   --  exactly once, on every exit path.
+   procedure Handle_Read is
+      Offset : constant U64 := Message.Words (0);
+      Length : constant U64 := Message.Words (1);
+      Buf    : constant U64 := Message.Caps (0);
+      Path   : constant String := Path_Of (2, 32);
+      Size   : U64 := 0;
+      Is_Dir : Boolean := False;
+      Status : U64;
+      Count  : U64 := 0;
+      Mapped : Boolean := False;
+      Err    : Virtio.U32;
+   begin
+      if Buf = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Status := Stat_Path (Path, Size, Is_Dir);
+      if Status = Files.Status_Ok then
+         if Is_Dir then
+            Status := Files.Status_Bad_Args;
+         elsif Offset >= Size then
+            Status := Files.Status_Out_Of_Range;
+         else
+            Count := U64'Min (Length, Size - Offset);
+            Count := U64'Min (Count, Cli_Buf_Bytes);
+
+            Err := Walk_To (Path, Walk_Fid);
+            if Err /= 0 then
+               Status := Map_Errno (Err);
+               Count := 0;
+            else
+               Begin_Req (T_Lopen);
+               Put32 (Walk_Fid);
+               Put32 (O_Rdonly);
+               Err := Round_Trip (R_Lopen);
+               if Err /= 0 then
+                  Status := Map_Errno (Err);
+                  Count := 0;
+               else
+                  declare
+                     Iounit : Virtio.U32;
+                     Got    : U64 := 0;
+                     Chunk  : U64;
+                     N      : U64;
+                  begin
+                     --  Rlopen payload: qid[13] iounit[4].
+                     Skip (13);
+                     Iounit := Get32;
+
+                     if Mem_Map
+                          (Address_Space => Address_Space_Cap,
+                           Cap           => Buf,
+                           VA            => Buf_Win_VA,
+                           Offset        => 0,
+                           Length        => Cli_Buf_Bytes,
+                           Flags         => 3) = 0
+                     then
+                        Mapped := True;
+                        while Got < Count loop
+                           Chunk := U64'Min (Count - Got, Io_Chunk);
+                           if Iounit /= 0 then
+                              Chunk := U64'Min (Chunk, U64 (Iounit));
+                           end if;
+                           Begin_Req (T_Read);
+                           Put32 (Walk_Fid);
+                           Put64 (Offset + Got);
+                           Put32 (Virtio.U32 (Chunk));
+                           Err := Round_Trip (R_Read);
+                           exit when Err /= 0;
+                           N := U64 (Get32);
+                           if N = 0 or else N > Chunk
+                             or else Rsp_Pos + N > Rsp_End
+                           then
+                              exit;  --  EOF or malformed reply
+                           end if;
+                           for J in 0 .. N - 1 loop
+                              Cli_Buf (Got + J) := Rx_Buf (Rsp_Pos + J);
+                           end loop;
+                           Got := Got + N;
+                           exit when N < Chunk;  --  short read = EOF
+                        end loop;
+                        Count := Got;
+                        if Err /= 0 and then Got = 0 then
+                           Status := Map_Errno (Err);
+                        end if;
+                     else
+                        Status := Files.Status_Not_Ready;
+                        Count := 0;
+                     end if;
+                  end;
+               end if;
+               Clunk (Walk_Fid);
+            end if;
+         end if;
+      end if;
+
+      if Mapped
+        and then Mem_Unmap
+          (Address_Space => Address_Space_Cap,
+           VA            => Buf_Win_VA,
+           Length        => Cli_Buf_Bytes) /= 0
+      then
+         Debug_Put_Line ("virtio-9p buffer unmap failed");
+      end if;
+      --  Buffer caps transferred per op are deleted per op.
+      if Cap_Delete (Buf) /= 0 then
+         Debug_Put_Line ("virtio-9p buffer cap delete failed");
+      end if;
+      Reply2 (Status, Count);
+   end Handle_Read;
+
+   --  Op_ReadDir (stateless, by-index): open the directory and
+   --  Treaddir from offset 0, skipping to the requested index
+   --  ("." and ".." are hidden). Entry size comes from a real
+   --  Stat of the full path (the dirent carries none). Host
+   --  names longer than the 24-char reply field are truncated.
+   procedure Handle_Read_Dir is
+      Path  : constant String := Path_Of (0, 32);
+      Index : constant U64 := Message.Words (4);
+      Err   : Virtio.U32;
+      Seen  : U64 := 0;
+      Off   : U64 := 0;
+      Found : Boolean := False;
+      EDir  : Boolean := False;
+      ESize : U64 := 0;
+      EName : String (1 .. 24) := (others => Character'Val (0));
+      ELen  : Natural := 0;
+   begin
+      Err := Walk_To (Path, Walk_Fid);
+      if Err /= 0 then
+         Reply2 (Map_Errno (Err), 0);
+         return;
+      end if;
+      Begin_Req (T_Lopen);
+      Put32 (Walk_Fid);
+      Put32 (O_Rdonly or O_Directory);
+      Err := Round_Trip (R_Lopen);
+      if Err /= 0 then
+         Clunk (Walk_Fid);
+         Reply2 (Map_Errno (Err), 0);
+         return;
+      end if;
+
+      declare
+         N      : U64;
+         P_End  : U64;
+         D_Off  : U64 := 0;
+         Qtype  : U8;
+         Dtype  : U8;
+         Nlen   : Natural;
+         C      : Character;
+      begin
+         while not Found loop
+            Begin_Req (T_Readdir);
+            Put32 (Walk_Fid);
+            Put64 (Off);
+            Put32 (Virtio.U32 (Io_Chunk));
+            Err := Round_Trip (R_Readdir);
+            exit when Err /= 0;
+            N := U64 (Get32);
+            exit when N = 0;  --  end of directory
+            if Rsp_Pos + N > Rsp_End then
+               Err := Transport_Error;
+               exit;
+            end if;
+            P_End := Rsp_Pos + N;
+
+            while Rsp_Pos < P_End loop
+               --  dirent: qid[13] offset[8] type[1] name[s]
+               Qtype := Get8;
+               Skip (12);
+               D_Off := Get64;
+               Dtype := Get8;
+               Nlen := Natural (Get16);
+               if Rsp_Pos + U64 (Nlen) > P_End then
+                  Err := Transport_Error;
+                  exit;
+               end if;
+               declare
+                  NM   : String (1 .. 48);
+                  NL   : Natural := 0;
+                  Keep : Natural := 0;
+               begin
+                  for J in 1 .. Nlen loop
+                     C := Character'Val (Get8);
+                     if NL < NM'Last then
+                        NL := NL + 1;
+                        NM (NL) := C;
+                     end if;
+                  end loop;
+                  if NM (1 .. NL) /= "." and then NM (1 .. NL) /= ".." then
+                     if Seen = Index then
+                        Found := True;
+                        EDir  := Dtype = 4
+                          or else (Qtype and Qid_Dir) /= 0;
+                        Keep  := Natural'Min (NL, EName'Length);
+                        ELen  := Keep;
+                        EName := (others => Character'Val (0));
+                        EName (1 .. Keep) := NM (1 .. Keep);
+                        declare
+                           Full : constant String :=
+                             (if Path'Length = 0
+                              then NM (1 .. NL)
+                              else Path & "/" & NM (1 .. NL));
+                           S2   : U64;
+                           D2   : Boolean;
+                        begin
+                           --  Aux_Fid: the directory's Walk_Fid is
+                           --  open here, and a 9P newfid must be
+                           --  unused.
+                           if Stat_Path (Full, S2, D2, Aux_Fid)
+                             = Files.Status_Ok
+                           then
+                              ESize := S2;
+                           end if;
+                        end;
+                        exit;
+                     end if;
+                     Seen := Seen + 1;
+                  end if;
+               end;
+               exit when Err = Transport_Error;
+            end loop;
+            exit when Err /= 0;
+            Off := D_Off;
+            if Seen > 1_000_000 then
+               exit;  --  pathological host directory: give up
+            end if;
+         end loop;
+      end;
+
+      Clunk (Walk_Fid);
+
+      if Found then
+         Message.Words := (others => 0);
+         Message.Words (0) := Files.Status_Ok;
+         Message.Words (1) := ESize;
+         Message.Words (2) := (if EDir then 1 else 0);
+         for P in 1 .. ELen loop
+            Message.Words (3 + (P - 1) / 8) :=
+              Message.Words (3 + (P - 1) / 8)
+                or Shl (U64 (Character'Pos (EName (P))),
+                        ((P - 1) mod 8) * 8);
+         end loop;
+         Message.Caps := (others => 0);
+         if IPC_Reply (Reply_H) /= IPC_Ok then
+            Debug_Put_Line ("virtio-9p reply failed");
+         end if;
+      else
+         --  Exhausted without a hit: protocol end-of-enumeration
+         --  is Not_Found; a real error maps itself.
+         if Err = 0 then
+            Reply2 (Files.Status_Not_Found, 0);
+         else
+            Reply2 (Map_Errno (Err), 0);
+         end if;
+      end if;
+   end Handle_Read_Dir;
+
+   --  Op_Volume_Info: Tstatfs on the root fid ->
+   --  (status, total bytes, free bytes, block size).
+   procedure Handle_Volume_Info is
+      Err     : Virtio.U32;
+      Bsize   : Virtio.U64;
+      Blocks  : Virtio.U64;
+      Bavail  : Virtio.U64;
+      Namelen : Virtio.U64;
+   begin
+      Begin_Req (T_Statfs);
+      Put32 (Root_Fid);
+      Err := Round_Trip (R_Statfs);
+      if Err /= 0 then
+         Reply2 (Map_Errno (Err), 0);
+         return;
+      end if;
+      Skip (4);                     --  type
+      Bsize  := Virtio.U64 (Get32);
+      Blocks := Get64;
+      Skip (8);                     --  bfree (bavail reported)
+      Bavail := Get64;
+      Skip (8);                     --  files
+      Skip (8);                     --  ffree
+      Skip (8);                     --  fsid
+      Namelen := Virtio.U64 (Get32);
+      if Bsize = 0 or else Bsize > 16#1_0000_0000# or else Namelen = 0 then
+         Reply2 (Files.Status_Not_Ready, 0);
+         return;
+      end if;
+      Message.Words := (others => 0);
+      Message.Words (0) := Files.Status_Ok;
+      Message.Words (1) := Blocks * Bsize;
+      Message.Words (2) := Bavail * Bsize;
+      Message.Words (3) := Bsize;
+      Message.Caps := (others => 0);
+      if IPC_Reply (Reply_H) /= IPC_Ok then
+         Debug_Put_Line ("virtio-9p reply failed");
+      end if;
+   end Handle_Volume_Info;
+
+   --  fs wire-op dispatch (label, never badge — forwarded ops can
+   --  carry pid badges; nothing here assumes badge 0).
+   procedure Handle_File_Op is
+      L : constant U64 := Message.Label;
+   begin
+      if L = Files.Op_Stat or else L = Files.Op_Open then
+         Handle_Stat_Or_Open;
+      elsif L = Files.Op_Read then
+         Handle_Read;
+      elsif L = Files.Op_ReadDir then
+         Handle_Read_Dir;
+      elsif L = Files.Op_Volume_Info then
+         Handle_Volume_Info;
+      elsif L = Files.Op_Sync or else L = Files.Op_Close then
+         Reply2 (Files.Status_Ok, 0);
+      else
+         --  Write/Delete/Truncate/Mkdir/Rmdir/Rename land in
+         --  M79c; Set_Name/Add_Block/Add_FS/Assign* are
+         --  fs-internal and never forwarded.
+         Reply2 (Files.Status_Bad_Args, 0);
+      end if;
+   end Handle_File_Op;
 
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
@@ -576,6 +1185,7 @@ begin
       if Msize < 4096 or else Msize > Msize_Offer then
          Fail ("virtio-9p msize out of range");
       end if;
+      Io_Chunk := U64'Min (Cli_Buf_Bytes, U64 (Msize) - 24);
 
       --  Attach: fid 0 = share root, no auth, numeric-less uname.
       Begin_Req (T_Attach);
@@ -620,9 +1230,9 @@ begin
    end;
 
    ------------------------------------------------------------------
-   --  Service loop (M79a: no file ops yet — everything but IRQ
-   --  notifications is answered bad-arguments; M79b/M79c add the
-   --  Host: volume protocol here)
+   --  Service loop: IRQ notifications (drain stragglers) plus the
+   --  Host: volume protocol (fs wire ops 1..18, forwarded by the
+   --  file server).
    ------------------------------------------------------------------
 
    Akernel_User.Console.Put_Line ("virtio-9p online");
@@ -647,13 +1257,12 @@ begin
                Virtio.Queues.Free (Req_Q, Head);
             end loop;
          end;
+      elsif Message.Label >= Files.Op_Stat
+        and then Message.Label <= Files.Op_Close
+      then
+         Handle_File_Op;
       else
-         Message.Words (0) := 3;  --  bad arguments
-         Message.Words (1) := 0;
-         Message.Caps := (others => 0);  --  m75
-         if IPC_Reply (Reply_H) /= IPC_Ok then
-            Debug_Put_Line ("virtio-9p reply failed");
-         end if;
+         Reply2 (Files.Status_Bad_Args, 0);
       end if;
    end loop;
 end Virtio_9p;

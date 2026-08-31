@@ -4236,6 +4236,96 @@ begin
          Run_Command ("Sys:C/Type", "Net:dhcp", 0,
                       "type Net:dhcp");
 
+         --  m79: the Host: volume (virtio-9p host share). Present
+         --  only when make test attached QEMU_9P_FLAGS (the
+         --  default); absent device = SKIP, never a failure.
+         --  host_seed.txt is seeded on the host by the Makefile
+         --  before boot. Read path only here; M79c adds writes.
+         declare
+            HSt    : U64;
+            HSize  : U64 := 0;
+            HDir   : Boolean := False;
+            WDate  : U64;
+            WTime  : U64;
+            Total  : U64;
+            Free   : U64;
+            Clus   : U64;
+            Ent    : String (1 .. 24);
+            Ent_Len : Natural;
+            EDir   : Boolean;
+            ESize  : U64;
+            Idx    : U64;
+            Found_Seed : Boolean := False;
+         begin
+            for Try in 1 .. 10_000 loop
+               HSt := Akernel_User.Files.Stat ("Host:host_seed.txt", HSize);
+               exit when HSt = Akernel_User.Files.Status_Ok;
+               Akernel_User.Syscalls.Yield;
+            end loop;
+
+            if HSt /= Akernel_User.Files.Status_Ok then
+               Put_Line ("SKIP host share not present");
+            else
+               Check (HSize = 20, "host seed stat size");
+               Check_File ("Host:host_seed.txt",
+                           "hello from the host" & ASCII.LF,
+                           "host seed contents");
+               HSt := Akernel_User.Files.Stat_Ex
+                 ("Host:", HSize, WDate, WTime, HDir);
+               Check (HSt = Akernel_User.Files.Status_Ok
+                      and then HDir,
+                      "host root stat is a directory");
+               HSt := Akernel_User.Files.Stat_Ex
+                 ("Host:host_seed.txt", HSize, WDate, WTime, HDir);
+               Check (HSt = Akernel_User.Files.Status_Ok
+                      and then not HDir,
+                      "host seed stat is a file");
+               HSt := Akernel_User.Files.Stat
+                 ("Host:no_such_file.txt", HSize);
+               Check (HSt = Akernel_User.Files.Status_Not_Found,
+                      "host missing file stat fails");
+               HSt := Akernel_User.Files.Read
+                 ("Host:host_seed.txt", 20, Buf'Address, 8, Count);
+               Check (HSt = Akernel_User.Files.Status_Out_Of_Range,
+                      "host read past end is out of range");
+               HSt := Akernel_User.Files.Read
+                 ("Host:", 0, Buf'Address, 8, Count);
+               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+                      "host directory read rejected");
+               --  Root enumeration: host_seed.txt must appear with
+               --  file type and its true size; enumeration ends at
+               --  Not_Found.
+               Idx := 0;
+               loop
+                  HSt := Akernel_User.Files.Read_Dir
+                    ("Host:", Idx, Ent, Ent_Len, EDir, ESize);
+                  exit when HSt /= Akernel_User.Files.Status_Ok;
+                  if Ent (1 .. Ent_Len) = "host_seed.txt" then
+                     Found_Seed := not EDir and then ESize = 20;
+                  end if;
+                  Idx := Idx + 1;
+                  exit when Idx > 10_000;
+               end loop;
+               Check (Found_Seed
+                      and then HSt
+                        = Akernel_User.Files.Status_Not_Found,
+                      "host root readdir finds the seed");
+               HSt := Akernel_User.Files.Volume_Info
+                 ("Host:host_seed.txt", Total, Free, Clus);
+               Check (HSt = Akernel_User.Files.Status_Ok
+                      and then Clus > 0 and then Total >= Free,
+                      "host volume info");
+               --  M79b is read-only; M79c flips this to real
+               --  writes.
+               HSt := Akernel_User.Files.Write
+                 ("Host:fzw.txt", 0, Buf'Address, 1, Count);
+               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+                      "host write rejected pre-m79c");
+               Run_Command ("Sys:C/Type", "Host:host_seed.txt", 0,
+                            "type Host:host_seed.txt");
+            end if;
+         end;
+
          Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
                       "cd missing dir fails");
          Run_Command ("Sys:C/CD", "BD0:README.TXT", 10,

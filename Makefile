@@ -337,7 +337,7 @@ FORCE:
 test:
 	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
 	PID=$$!; \
-	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR); fi; \
+	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR) && printf 'hello from the host\n' > $(SHARE_DIR)/host_seed.txt; fi; \
 	$(MAKE) run INITRD_MODE=test QEMU_ARGS="$(QEMU_ARGS) $(QEMU_9P_FLAGS)"; ST=$$?; \
 	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
 	exit $$ST

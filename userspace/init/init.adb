@@ -378,6 +378,36 @@ procedure Init is
       end if;
    end Push_Procfs_Mount;
 
+   --  Send Op_Add_FS (device "9P0", label "Host") with the
+   --  virtio-9p driver's service endpoint (Send side, transferred
+   --  in cap slot 0) so the VFS mounts the host-shared volume
+   --  (m79). Only called when the devmgr spawned the driver — the
+   --  device is runtime opt-in via qemu args. Deadlock-safe unlike
+   --  the removed netserv push: the 9p server makes no blocking fs
+   --  calls during bring-up (or ever).
+   procedure Push_Host_Mount (Svc : Akernel_User.Syscalls.U64) is
+      use Akernel_User.Syscalls;
+      Dev   : constant String := "9P0";
+      Lab   : constant String := "Host";
+      Chars : constant String := Dev & Lab;
+   begin
+      Message.Label := 6;  --  Files.Op_Add_FS
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Dev'Length);
+      Message.Words (1) := U64 (Lab'Length);
+      Message.Words (2) := 1;  --  case-insensitive volume prefix
+      for P in 1 .. Chars'Length loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Chars (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (0 => Svc, others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("host share mount push failed");
+      end if;
+   end Push_Host_Mount;
+
    --  Send Op_Add_FS (device "Net", label "Net") with the
    --  netserv server's service endpoint (Send side, transferred
    --  in cap slot 0) so the VFS mounts the network volume.
@@ -765,6 +795,13 @@ begin
    --  the devmgr spawned a class-2 (block) driver.
    if Device_Manager.Block_Service /= 0 then
       Push_Block_Mount (Device_Manager.Block_Service);
+   end if;
+
+   --  Host-shared volume (m79): only when QEMU was launched with a
+   --  virtio-9p device and the devmgr spawned its driver; absent
+   --  device = no mount, no error.
+   if Device_Manager.Np_Service /= 0 then
+      Push_Host_Mount (Device_Manager.Np_Service);
    end if;
 
    --  Per-partition raw volumes (PD0:disk ...) if the manifest ran

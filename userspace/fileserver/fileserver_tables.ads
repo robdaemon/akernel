@@ -33,7 +33,11 @@ package Fileserver_Tables is
    --  Volumes (Amiga-style device/label mounts): the boot-file
    --  set is mounted under a device name and a volume label,
    --  either resolves on the wire.
-   Max_Volumes : constant := 8;
+   --  In use at m79: RD0/Initrd, WD0/Disk, PD0:part, BD0/Sys,
+   --  Proc, Net, Host = 7 — five spare. (M79b bump 8 -> 12: the
+   --  Host: push raced netserv's self-registration for the LAST
+   --  slot and Net: silently never mounted.)
+   Max_Volumes : constant := 12;
 
    type Volume_Entry is record
       Valid   : Boolean := False;
