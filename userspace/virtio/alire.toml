@@ -10,4 +10,4 @@ tags = []
 project-files = ["virtio.gpr"]
 
 [[depends-on]]
-gnat_riscv64_elf = "*"
+gnat_riscv64_elf = "15.3.1"
