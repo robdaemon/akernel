@@ -12,23 +12,25 @@ package body Akernel_User.Window is
       return Message.Words (0);
    end Call;
 
-   function Surface_Create
-     (EP             : U64;
-      Width, Height  : U64;
-      Queue_Cap      : U64 := 0;
-      Ntfn_Cap       : U64 := 0;
-      Id, Pages      : out U64;
-      Grant_W        : out U64;
-      Grant_H        : out U64) return U64
-   is
-   begin
-      Message.Label := Op_Surface_Create;
-      Message.Words := (others => 0);
-      Message.Words (0) := Width;
-      Message.Words (1) := Height;
-      Message.Caps  := (others => 0);
-      Message.Caps (0) := Queue_Cap;
-      Message.Caps (1) := Ntfn_Cap;
+    function Surface_Create
+      (EP             : U64;
+       Width, Height  : U64;
+       Queue_Cap      : U64 := 0;
+       Ntfn_Cap       : U64 := 0;
+       Id, Pages      : out U64;
+       Grant_W        : out U64;
+       Grant_H        : out U64;
+       Flags          : U64 := 0) return U64
+    is
+    begin
+       Message.Label := Op_Surface_Create;
+       Message.Words := (others => 0);
+       Message.Words (0) := Width;
+       Message.Words (1) := Height;
+       Message.Words (2) := Flags;
+       Message.Caps  := (others => 0);
+       Message.Caps (0) := Queue_Cap;
+       Message.Caps (1) := Ntfn_Cap;
       if IPC_Call (EP) /= IPC_Ok then
          return Status_Device;
       end if;
@@ -57,14 +59,38 @@ package body Akernel_User.Window is
       return Call (EP);
    end Surface_Set_Buffer;
 
-   function Surface_Commit_Buffer (EP : U64; Id : U64) return U64 is
-   begin
-      Message.Label := Op_Surface_Commit_Buffer;
-      Message.Words := (others => 0);
-      Message.Words (0) := Id;
-      Message.Caps  := (others => 0);
-      return Call (EP);
-   end Surface_Commit_Buffer;
+    function Surface_Commit_Buffer (EP : U64; Id : U64) return U64 is
+    begin
+       Message.Label := Op_Surface_Commit_Buffer;
+       Message.Words := (others => 0);
+       Message.Words (0) := Id;
+       Message.Caps  := (others => 0);
+       return Call (EP);
+    end Surface_Commit_Buffer;
+
+    function Surface_Resize
+      (EP             : U64;
+       Id             : U64;
+       Width, Height  : U64;
+       Pages          : out U64;
+       Grant_W        : out U64;
+       Grant_H        : out U64) return U64
+    is
+    begin
+       Message.Label := Op_Surface_Resize;
+       Message.Words := (others => 0);
+       Message.Words (0) := Id;
+       Message.Words (1) := Width;
+       Message.Words (2) := Height;
+       Message.Caps  := (others => 0);
+       if IPC_Call (EP) /= IPC_Ok then
+          return Status_Device;
+       end if;
+       Pages   := Message.Words (1);
+       Grant_W := Message.Words (2);
+       Grant_H := Message.Words (3);
+       return Message.Words (0);
+    end Surface_Resize;
 
    function Surface_Set_Title
      (EP : U64; Id : U64; S : String) return U64

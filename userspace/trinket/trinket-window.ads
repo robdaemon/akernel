@@ -29,16 +29,20 @@ package Trinket.Window is
 
    type Window is limited private;
 
-   function Open
-     (W         : in out Window;
-      Bureau_EP : U64;
-      Req_W     : U64;
-      Req_H     : U64;
-      Title     : String;
-      Root      : Widgets.Any_Widget) return Boolean;
-   --  False on any setup failure (nothing left mapped/created
-   --  that Close wouldn't release anyway — process teardown
-   --  reclaims).
+    function Open
+      (W         : in out Window;
+       Bureau_EP : U64;
+       Req_W     : U64;
+       Req_H     : U64;
+       Title     : String;
+       Root      : Widgets.Any_Widget;
+       Resizable : Boolean := True) return Boolean;
+    --  False on any setup failure (nothing left mapped/created
+    --  that Close wouldn't release anyway — process teardown
+    --  reclaims). Resizable (v5) opts into the zoom gadget: the
+    --  window then answers Bureau's kind-5 resize events by
+    --  reallocating its surface and re-laying out the widget
+    --  tree. Group-based proportional layouts zoom for free.
 
    procedure Run (W : in out Window);
    --  Event loop: returns when Bureau delivers the close-gadget
@@ -79,24 +83,29 @@ package Trinket.Window is
 
 private
 
-   type Syscall_Handle_Array is array (0 .. 3) of U64;
+    --  16 chunks x 64 pages = 4 MiB — half the reserved 8 MiB
+    --  Surf_VA window; a zoomed pane at 1024x768 (1016x721) needs
+    --  12 chunks. Headroom landed WITH the v5 zoom consumer.
+    type Syscall_Handle_Array is array (0 .. 15) of U64;
 
-   type Window is limited record
-      EP           : U64 := 0;
-      Id           : U64 := 0;
-      Sink_EP      : U64 := 0;
-      Ntfn_Cap     : U64 := 0;
-      Queue_Cap    : U64 := 0;
-      AppQ_Cap     : U64 := 0;
-      Chunk_Caps   : Syscall_Handle_Array;
-      Root         : Widgets.Any_Widget := null;
-      Cnv          : Canvas;
-      Opened       : Boolean := False;
-      Quit_Wanted  : Boolean := False;
-      Prev_Buttons : U64 := 0;
-      On_Menu      : Menu_Callback := null;
-      On_App       : App_Port.Msg_Callback := null;
-      App_Port     : Trinket.App_Port.Port;
-   end record;
+    type Window is limited record
+       EP           : U64 := 0;
+       Id           : U64 := 0;
+       Sink_EP      : U64 := 0;
+       Ntfn_Cap     : U64 := 0;
+       Queue_Cap    : U64 := 0;
+       AppQ_Cap     : U64 := 0;
+       Chunk_Caps   : Syscall_Handle_Array;
+       N_Chunks     : Natural := 0;
+       Surf_Pages   : U64 := 0;
+       Root         : Widgets.Any_Widget := null;
+       Cnv          : Canvas;
+       Opened       : Boolean := False;
+       Quit_Wanted  : Boolean := False;
+       Prev_Buttons : U64 := 0;
+       On_Menu      : Menu_Callback := null;
+       On_App       : App_Port.Msg_Callback := null;
+       App_Port     : Trinket.App_Port.Port;
+    end record;
 
 end Trinket.Window;

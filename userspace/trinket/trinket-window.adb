@@ -20,25 +20,122 @@ package body Trinket.Window is
    Menu_VA  : constant U64 := 16#5F10_0000#;  --  m61 menu page
    AppQ_VA  : constant U64 := 16#5F20_0000#;  --  m68 app port page
 
-   Chunk_Pages : constant U64 := 64;  --  per Mem_Alloc chunk
-   Max_Chunks  : constant U64 := 4;
+    Chunk_Pages : constant U64 := 64;  --  per Mem_Alloc chunk
+    Max_Chunks  : constant U64 := 16;
 
-   type Word_Array is array (U64 range 0 .. 511) of U64
-     with Volatile_Components;
+    type Word_Array is array (U64 range 0 .. 511) of U64
+      with Volatile_Components;
 
-   function Open
-     (W         : in out Window;
-      Bureau_EP : U64;
-      Req_W     : U64;
-      Req_H     : U64;
-      Title     : String;
-      Root      : Widgets.Any_Widget) return Boolean
-   is
-      Pages   : U64;
-      Result  : U64;
-      Q_Mint  : U64;
-      N_Mint  : U64;
-   begin
+    --  Alloc/map/mint/push the surface chunk caps (<= 64 pages
+    --  each) and commit. Used by Open and the v5 resize handler;
+    --  on entry Bureau must hold NO buffer for W.Id (fresh create
+    --  or post-resize teardown).
+    function Push_Surface (W : in out Window; Pages : U64) return Boolean is
+       Chunks : constant U64 :=
+         (Pages + Chunk_Pages - 1) / Chunk_Pages;
+       Minted : U64;
+       Left   : U64 := Pages;
+       This   : U64;
+       Result : U64;
+    begin
+       if Pages = 0 or else Pages > Chunk_Pages * Max_Chunks then
+          return False;
+       end if;
+       for I in 0 .. Chunks - 1 loop
+          This := U64'Min (Chunk_Pages, Left);
+          Left := Left - This;
+          W.Chunk_Caps (Natural (I)) := Mem_Alloc (This);
+          if W.Chunk_Caps (Natural (I)) = Syscall_Failed then
+             return False;
+          end if;
+          Result := Mem_Map
+            (Address_Space => Address_Space_Cap,
+             Cap           => W.Chunk_Caps (Natural (I)),
+             VA            => Surf_VA + I * Chunk_Pages * 4096,
+             Offset        => 0,
+             Length        => This * 4096,
+             Flags         => 3);
+          if Result /= 0 then
+             return False;
+          end if;
+          Minted := Cap_Mint
+            (W.Chunk_Caps (Natural (I)), Right_Map + Right_Read +
+             Right_Transfer, 0);
+          if Minted = Syscall_Failed then
+             return False;
+          end if;
+          Result := Win.Surface_Set_Buffer
+            (W.EP, W.Id, I, Minted);
+          Result := Cap_Delete (Minted);
+          if Result /= Win.Status_Ok then
+             return False;
+          end if;
+       end loop;
+       W.N_Chunks   := Natural (Chunks);
+       W.Surf_Pages := Pages;
+       return Win.Surface_Commit_Buffer (W.EP, W.Id) = Win.Status_Ok;
+    end Push_Surface;
+
+    --  v5 zoom ack: Bureau tore down its side of the buffer in
+    --  Op_Surface_Resize; drop ours, push a fresh buffer at the
+    --  granted size, re-layout the tree and repaint everything
+    --  (dirty flags don't track geometry moves).
+    procedure Handle_Resize (W : in out Window; New_W, New_H : U64) is
+       Pages  : U64;
+       GW     : U64;
+       GH     : U64;
+       Result : U64;
+    begin
+       if Win.Surface_Resize
+         (W.EP, W.Id, New_W, New_H, Pages, GW, GH) /= Win.Status_Ok
+       then
+          return;
+       end if;
+       for I in 0 .. W.N_Chunks - 1 loop
+          Result := Mem_Unmap
+            (Address_Space_Cap,
+             Surf_VA + U64 (I) * Chunk_Pages * 4096,
+             U64'Min (Chunk_Pages, W.Surf_Pages - U64 (I) * Chunk_Pages)
+               * 4096);
+          Result := Cap_Delete (W.Chunk_Caps (I));
+          W.Chunk_Caps (I) := 0;
+       end loop;
+       W.N_Chunks   := 0;
+       W.Surf_Pages := 0;
+       if not Push_Surface (W, Pages) then
+          Debug_Put_Line ("trinket: resize buffer failed");
+          return;
+       end if;
+       W.Cnv.W := GW;
+       W.Cnv.H := GH;
+       Reset_Clip (W.Cnv);
+       W.Root.W := GW;
+       W.Root.H := GH;
+       W.Root.Layout;
+       Trinket.Paint.Fill_Rect (W.Cnv, 0, 0, GW, GH, Face);
+       W.Root.Draw (W.Cnv);
+       W.Root.Clear_Dirty;
+       if Win.Surface_Update (W.EP, W.Id, 0, 0, GW, GH) /=
+         Win.Status_Ok
+       then
+          Debug_Put_Line ("trinket: update failed");
+       end if;
+    end Handle_Resize;
+
+    function Open
+      (W         : in out Window;
+       Bureau_EP : U64;
+       Req_W     : U64;
+       Req_H     : U64;
+       Title     : String;
+       Root      : Widgets.Any_Widget;
+       Resizable : Boolean := True) return Boolean
+    is
+       Pages   : U64;
+       Result  : U64;
+       Q_Mint  : U64;
+       N_Mint  : U64;
+    begin
       Fonts.Init;
       W.EP := Bureau_EP;
       W.Root := Root;
@@ -106,9 +203,10 @@ package body Trinket.Window is
       if Q_Mint = Syscall_Failed or else N_Mint = Syscall_Failed then
          return False;
       end if;
-      Result := Win.Surface_Create
-        (Bureau_EP, Req_W, Req_H, Q_Mint, N_Mint,
-         W.Id, Pages, W.Cnv.W, W.Cnv.H);
+       Result := Win.Surface_Create
+         (Bureau_EP, Req_W, Req_H, Q_Mint, N_Mint,
+          W.Id, Pages, W.Cnv.W, W.Cnv.H,
+          Flags => (if Resizable then Win.Flag_Resizable else 0));
       declare
          D1 : constant U64 := Cap_Delete (Q_Mint);
          D2 : constant U64 := Cap_Delete (N_Mint);
@@ -120,60 +218,17 @@ package body Trinket.Window is
          return False;
       end if;
 
-      if Pages > Chunk_Pages * Max_Chunks then
-         return False;
-      end if;
-      --  Chunked surface buffer: each chunk is its own memory
-      --  object (<= 64 pages), mapped contiguously; minted caps
-      --  go to Bureau in groups of 4, then one commit.
-      declare
-         Chunks   : constant U64 :=
-           (Pages + Chunk_Pages - 1) / Chunk_Pages;
-         Minted   : U64;
-         Left     : U64 := Pages;
-         This     : U64;
-      begin
-         for I in 0 .. Chunks - 1 loop
-            This := U64'Min (Chunk_Pages, Left);
-            Left := Left - This;
-            W.Chunk_Caps (Natural (I)) := Mem_Alloc (This);
-            if W.Chunk_Caps (Natural (I)) = Syscall_Failed then
-               return False;
-            end if;
-            Result := Mem_Map
-              (Address_Space => Address_Space_Cap,
-               Cap           => W.Chunk_Caps (Natural (I)),
-               VA            => Surf_VA + I * Chunk_Pages * 4096,
-               Offset        => 0,
-               Length        => This * 4096,
-               Flags         => 3);
-            if Result /= 0 then
-               return False;
-            end if;
-            Minted := Cap_Mint
-              (W.Chunk_Caps (Natural (I)), Right_Map + Right_Read +
-               Right_Transfer, 0);
-            if Minted = Syscall_Failed then
-               return False;
-            end if;
-            Result := Win.Surface_Set_Buffer
-              (Bureau_EP, W.Id, I, Minted);
-            Result := Cap_Delete (Minted);
-            if Result /= Win.Status_Ok then
-               return False;
-            end if;
-         end loop;
-      end;
-      if Win.Surface_Commit_Buffer (Bureau_EP, W.Id) /=
-        Win.Status_Ok
-      then
-         return False;
-      end if;
-      if Win.Surface_Set_Title (Bureau_EP, W.Id, Title) /=
-        Win.Status_Ok
-      then
-         return False;
-      end if;
+       --  Chunked surface buffer: each chunk is its own memory
+       --  object (<= 64 pages), mapped contiguously; minted caps
+       --  go to Bureau one per Set_Buffer call, then one commit.
+       if not Push_Surface (W, Pages) then
+          return False;
+       end if;
+       if Win.Surface_Set_Title (Bureau_EP, W.Id, Title) /=
+         Win.Status_Ok
+       then
+          return False;
+       end if;
 
       W.Cnv.Base := SSE.To_Address (SSE.Integer_Address (Surf_VA));
       Reset_Clip (W.Cnv);
@@ -279,13 +334,19 @@ package body Trinket.Window is
                           (Widgets.Move, X, Y);
                      end if;
                      W.Prev_Buttons := Btn;
-                  elsif Queue (Slot) = Win.Input_Event_Close then
-                     Done := True;
-                  elsif Queue (Slot) = Win.Input_Event_Menu then
-                     if W.On_Menu /= null then
-                        W.On_Menu (Val and 16#FFFF_FFFF#);
-                     end if;
-                  end if;
+                   elsif Queue (Slot) = Win.Input_Event_Close then
+                      Done := True;
+                   elsif Queue (Slot) = Win.Input_Event_Menu then
+                      if W.On_Menu /= null then
+                         W.On_Menu (Val and 16#FFFF_FFFF#);
+                      end if;
+                   elsif Queue (Slot) = Win.Input_Event_Resize then
+                      --  v5: the zoom gadget. Resize the surface
+                      --  and re-layout; only arrives when Open
+                      --  was called with Resizable => True.
+                      Handle_Resize (W, Win.Size_W (Val),
+                                     Win.Size_H (Val));
+                   end if;
                   Tail := Tail + 1;
                end loop;
                 Queue (Win.Input_Queue_Tail) := Tail;

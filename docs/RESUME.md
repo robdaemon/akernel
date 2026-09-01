@@ -44,6 +44,25 @@ per-milestone detail too.
 
 ## Recently shipped
 
+- **M81** — WB chrome + real zoom (commits 95292ac, 3f07002, and
+  the v5 commit closing this entry): screen-bar menus now REPLACE
+  the "Bureau" title (start at x=8); title gadgets are full
+  band-height and flush to the edges with WB glyphs (close box /
+  zoom square / depth squares); the depth gadget toggles
+  front/back with focus following (gadget gestures are eaten
+  wholesale — Eat_Gesture — so a send-to-back can't retarget a
+  held-button drag at the new front window). Trinket damage is
+  per-cluster (Dirty_List + merge, Dirty_Union fallback past 8).
+  Window protocol v5: Op_Surface_Create w2 flags (bit 0 =
+  resizable), Input_Event_Resize (kind 5, Pack_Size value),
+  Op_Surface_Resize (28) — Bureau asks, the client acks with a
+  fresh buffer cycle, geometry moves only at ack (no rendezvous;
+  non-complying clients leave the window untouched). Trinket
+  Open(Resizable => True default) reallocates + re-lays out;
+  raw clients (terminal/demo) get a ghosted inert zoom gadget.
+  Headroom in the same commits: Trinket chunks 4→16, bureau
+  Surf_Max_Objects 8→16 (a zoomed 1024x768 pane = 12 chunks).
+  Slot-reuse now also resets Menu_Count (latent leak).
 - **M79** — host file sharing via virtio-9p: `Drivers/Virtio9p`
   speaks 9P2000.L over a single virtqueue and serves the `Host:`
   volume (full read/write/create/delete/mkdir/rename/truncate).

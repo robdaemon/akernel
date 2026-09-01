@@ -91,6 +91,7 @@ Event kinds (`Akernel_User.Window`):
 | `Input_Event_Pointer` | 2 | `value` = packed `(x, y, buttons)` |
 | `Input_Event_Close` | 3 | close gadget clicked |
 | `Input_Event_Menu` | 4 | `value` = menu item id |
+| `Input_Event_Resize` | 5 | `value` = packed `(width, height)` — zoom gadget |
 
 ### Pointer event packing
 
@@ -102,6 +103,26 @@ bits 32..39  = buttons (bit 0 = left)
 
 `Trinket.Window.Run` converts the raw stream into `Press`/`Release`/
 `Move` calls by comparing the current and previous button states.
+
+### Resize event packing (v5)
+
+```
+bits 0..15   = requested content width
+bits 16..31  = requested content height
+```
+
+### Zoom / resize
+
+Windows opened with `Resizable => True` (the Trinket default) get a
+live zoom title gadget — Workbench style, toggling between the saved
+rect and the full screen below the bar. Bureau enqueues a kind-5
+event and applies the new geometry only when the client answers with
+`Op_Surface_Resize` plus a fresh `Set_Buffer`/`Commit_Buffer` cycle;
+`Trinket.Window.Run` handles all of it (realloc chunks, re-layout the
+widget tree, full repaint). Raw-protocol clients (terminal, demo)
+never opt in: their zoom gadget is ghosted and inert. Widget trees
+must tolerate re-layout at a new size — `Group`-based proportional
+layouts zoom for free.
 
 ### Pointer capture
 

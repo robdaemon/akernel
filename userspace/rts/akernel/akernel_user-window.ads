@@ -57,6 +57,30 @@ use type Akernel_User.Syscalls.U64;
 --    kind 4 = menu (value = item Id, milestone 61): a menu
 --    item was picked from the screen-bar menus this window
 --    declared with Op_Set_Menus.
+--    kind 5 = resize (v5; value = requested content size, Pack_Size
+--    packing): the zoom gadget was clicked. Only sent to windows
+--    created with Flag_Resizable. The client answers with
+--    Op_Surface_Resize + a fresh Set_Buffer/Commit_Buffer cycle
+--    (below); until it does, the window's geometry is unchanged.
+--
+--  Zoom / resize (v5): the zoom title gadget toggles a resizable
+--  window between its saved rect and the full screen below the
+--  bar. Bureau owns the target geometry (it applies the saved or
+--  full-screen position when the ack lands); the client owns the
+--  pixels. Handshake, no rendezvous: Bureau enqueues kind 5 and
+--  applies NOTHING until the client calls Op_Surface_Resize —
+--  a client that never answers leaves the window untouched.
+--    Op_Surface_Resize (28): w0 = surface id, w1 = content width,
+--      w2 = content height (the kind-5 values, echoed). Bureau
+--      clamps like create, tears down the old chunk mappings +
+--      caps (Destroy discipline), updates the frame (position
+--      from its pending zoom target), and replies w0 = status,
+--      w1 = pages needed, w2 = granted width, w3 = granted
+--      height. The client then reallocs its chunks and pushes
+--      them with the ordinary Set_Buffer/Commit_Buffer ops
+--      (Set_Buffer accepts caps again once the old buffer is
+--      torn down). Between resize and commit the pane draws
+--      blank, exactly like a not-yet-committed new window.
 --
 --  Menus (milestone 61, Amiga screen-bar lineage): menus are
 --  CHROME — the client declares a tree, Bureau renders the bar
@@ -90,7 +114,9 @@ use type Akernel_User.Syscalls.U64;
 --
 --  Message words (raw Message.Words):
 --    Op_Surface_Create (20): w0 = width, w1 = height (content
---      pixels requested); caps 0 = input queue memobj cap,
+--      pixels requested); w2 = flags (v5: bit 0 = Flag_Resizable,
+--      the client handles kind-5 resize events; zoom gadget is
+--      ghosted without it); caps 0 = input queue memobj cap,
 --      caps 1 = input notification cap (0/0 = no input).
 --      Reply w0 = status, w1 = surface id, w2 = pages needed,
 --      w3 = granted width, w4 = granted height.
@@ -129,16 +155,20 @@ use type Akernel_User.Syscalls.U64;
 package Akernel_User.Window is
    subtype U64 is Syscalls.U64;
 
-   Op_Surface_Create        : constant U64 := 20;
-   Op_Surface_Set_Buffer    : constant U64 := 21;
-   Op_Surface_Commit_Buffer : constant U64 := 22;
-   Op_Surface_Update        : constant U64 := 23;
-   Op_Surface_Destroy       : constant U64 := 24;
-   Op_Set_Title             : constant U64 := 25;
-   Op_Set_Focus             : constant U64 := 26;
-   Op_Set_Menus             : constant U64 := 27;
-   Op_Key                   : constant U64 := 30;
-   Op_Pointer               : constant U64 := 31;
+    Op_Surface_Create        : constant U64 := 20;
+    Op_Surface_Set_Buffer    : constant U64 := 21;
+    Op_Surface_Commit_Buffer : constant U64 := 22;
+    Op_Surface_Update        : constant U64 := 23;
+    Op_Surface_Destroy       : constant U64 := 24;
+    Op_Set_Title             : constant U64 := 25;
+    Op_Set_Focus             : constant U64 := 26;
+    Op_Set_Menus             : constant U64 := 27;
+    Op_Surface_Resize        : constant U64 := 28;  --  v5
+    Op_Key                   : constant U64 := 30;
+    Op_Pointer               : constant U64 := 31;
+
+    --  Op_Surface_Create w2 flags (v5).
+    Flag_Resizable : constant U64 := 1;
 
    Status_Ok        : constant U64 := 0;
    Status_No_Slot   : constant U64 := 1;
@@ -152,31 +182,40 @@ package Akernel_User.Window is
    Input_Queue_Tail   : constant := 1;  --  word index
    Input_Queue_First  : constant := 2;  --  first event word
    Input_Queue_Events : constant := 255;  --  (512 - 2) / 2
-   Input_Event_Key    : constant U64 := 1;
-   Input_Event_Pointer : constant U64 := 2;
-   Input_Event_Close  : constant U64 := 3;
-   Input_Event_Menu   : constant U64 := 4;
-   Input_Signal_Bit   : constant U64 := 1;
+    Input_Event_Key    : constant U64 := 1;
+    Input_Event_Pointer : constant U64 := 2;
+    Input_Event_Close  : constant U64 := 3;
+    Input_Event_Menu   : constant U64 := 4;
+    Input_Event_Resize : constant U64 := 5;  --  v5, Pack_Size value
+    Input_Signal_Bit   : constant U64 := 1;
 
-   --  Pointer event value packing (content-relative).
-   function Pack_Pointer (X, Y, Buttons : U64) return U64 is
-     ((X and 16#FFFF#) or ((Y and 16#FFFF#) * 2**16)
-      or ((Buttons and 16#FF#) * 2**32));
-   function Pointer_X (V : U64) return U64 is (V and 16#FFFF#);
-   function Pointer_Y (V : U64) return U64 is
-     ((V / 2**16) and 16#FFFF#);
-   function Pointer_Buttons (V : U64) return U64 is
-     ((V / 2**32) and 16#FF#);
+    --  Pointer event value packing (content-relative).
+    function Pack_Pointer (X, Y, Buttons : U64) return U64 is
+      ((X and 16#FFFF#) or ((Y and 16#FFFF#) * 2**16)
+       or ((Buttons and 16#FF#) * 2**32));
+    function Pointer_X (V : U64) return U64 is (V and 16#FFFF#);
+    function Pointer_Y (V : U64) return U64 is
+      ((V / 2**16) and 16#FFFF#);
+    function Pointer_Buttons (V : U64) return U64 is
+      ((V / 2**32) and 16#FF#);
 
-   --  Client-side helpers (raw IPC_Call; replies are words-only).
-   function Surface_Create
-     (EP             : U64;
-      Width, Height  : U64;
-      Queue_Cap      : U64 := 0;
-      Ntfn_Cap       : U64 := 0;
-      Id, Pages      : out U64;
-      Grant_W        : out U64;
-      Grant_H        : out U64) return U64;
+    --  Resize event value packing (v5): content pixel size.
+    function Pack_Size (W, H : U64) return U64 is
+      ((W and 16#FFFF#) or ((H and 16#FFFF#) * 2**16));
+    function Size_W (V : U64) return U64 is (V and 16#FFFF#);
+    function Size_H (V : U64) return U64 is
+      ((V / 2**16) and 16#FFFF#);
+
+    --  Client-side helpers (raw IPC_Call; replies are words-only).
+    function Surface_Create
+      (EP             : U64;
+       Width, Height  : U64;
+       Queue_Cap      : U64 := 0;
+       Ntfn_Cap       : U64 := 0;
+       Id, Pages      : out U64;
+       Grant_W        : out U64;
+       Grant_H        : out U64;
+       Flags          : U64 := 0) return U64;  --  v5: Flag_Resizable
    function Surface_Set_Title
      (EP : U64; Id : U64; S : String) return U64;
    function Surface_Set_Menus
@@ -192,8 +231,17 @@ package Akernel_User.Window is
       C1   : U64 := 0;
       C2   : U64 := 0;
       C3   : U64 := 0) return U64;
-   function Surface_Commit_Buffer (EP : U64; Id : U64) return U64;
-   function Surface_Update
+    function Surface_Commit_Buffer (EP : U64; Id : U64) return U64;
+    function Surface_Resize
+      (EP             : U64;
+       Id             : U64;
+       Width, Height  : U64;
+       Pages          : out U64;
+       Grant_W        : out U64;
+       Grant_H        : out U64) return U64;
+    --  v5: answer a kind-5 resize event. Tears down the current
+    --  buffer server-side; follow with Set_Buffer/Commit_Buffer.
+    function Surface_Update
      (EP      : U64;
       Id      : U64;
       X, Y, W : U64;

@@ -99,11 +99,15 @@ procedure Bureau is
 
    package Win renames Akernel_User.Window;
 
-   --  4 boot windows (demo/tdemo/fileman/terminal) + headroom —
-   --  4 was SILENTLY FULL at boot (a 5th window, e.g. Edit from
-   --  the shell, got Status_No_Slot; the m34/m38 table burn).
-   Max_Win : constant := 6;
-   Surf_Max_Objects : constant := 8;
+    --  4 boot windows (demo/tdemo/fileman/terminal) + headroom —
+    --  4 was SILENTLY FULL at boot (a 5th window, e.g. Edit from
+    --  the shell, got Status_No_Slot; the m34/m38 table burn).
+    Max_Win : constant := 6;
+    --  16 chunks = 4 MiB = exactly the Surf_Slot_Stride window.
+    --  Headroom added WITH the v5 zoom consumer: a zoomed pane
+    --  (1016x721 @ 1024x768) needs 12 chunks; 8 silently
+    --  rejected the resize with Status_No_Slot.
+    Surf_Max_Objects : constant := 16;
    type Cap_Set is array (0 .. Surf_Max_Objects - 1) of U64;
 
    --  Milestone 61: per-window menu tree, COPIED out of the
@@ -148,11 +152,24 @@ procedure Bureau is
       Ntfn_Cap  : U64 := 0;
       Title    : String (1 .. 40) := (others => ' ');
       Title_Len : Natural := 0;
-      --  Milestone 61: declared menus (Op_Set_Menus).
-      Menu_Count : Natural := 0;
-      Menus      : Menu_Table;
-      Items      : Item_Table;
-   end record;
+       --  Milestone 61: declared menus (Op_Set_Menus).
+       Menu_Count : Natural := 0;
+       Menus      : Menu_Table;
+       Items      : Item_Table;
+       --  v5 zoom: Resizable = client handles kind-5 resize
+       --  events (create flags bit 0). Zoomed/Save_* = the
+       --  toggle's saved rect; Pend_* + Resize_Pending = the
+       --  target position awaiting the client's
+       --  Op_Surface_Resize ack (geometry is applied ONLY at
+       --  ack — a client that never answers leaves the window
+       --  untouched).
+       Resizable      : Boolean := False;
+       Zoomed         : Boolean := False;
+       Resize_Pending : Boolean := False;
+       Save_X, Save_Y : U64 := 0;
+       Save_PW, Save_PH : U64 := 0;
+       Pend_X, Pend_Y : U64 := 0;
+    end record;
 
    Wins : array (1 .. Max_Win) of Window_Rec;
    Z    : array (1 .. Max_Win) of Natural := (others => 0);
@@ -388,17 +405,20 @@ procedure Bureau is
     type Gadget_Kind is (Gad_Close, Gad_Zoom, Gad_Depth);
 
     procedure Draw_Gadget
-      (GX, GY, Size : U64; Kind : Gadget_Kind)
+      (GX, GY, Size : U64; Kind : Gadget_Kind;
+       Dim : Boolean := False)
     is
        GS : constant U64 := Size / 2 - 2;  --  glyph box size
        CX : constant U64 := GX + (Size - GS) / 2;
        CY : constant U64 := GY + (Size - GS) / 2;
+       --  Ghosted (non-resizable) gadgets draw the glyph dim.
+       GC : constant Pixel := (if Dim then Title_Gray else Text_Dark);
        procedure Outline (X0, Y0, S : U64) is
        begin
-          Fill_Rect (X0, Y0, X0 + S, Y0 + 1, Text_Dark);
-          Fill_Rect (X0, Y0 + S - 1, X0 + S, Y0 + S, Text_Dark);
-          Fill_Rect (X0, Y0, X0 + 1, Y0 + S, Text_Dark);
-          Fill_Rect (X0 + S - 1, Y0, X0 + S, Y0 + S, Text_Dark);
+          Fill_Rect (X0, Y0, X0 + S, Y0 + 1, GC);
+          Fill_Rect (X0, Y0 + S - 1, X0 + S, Y0 + S, GC);
+          Fill_Rect (X0, Y0, X0 + 1, Y0 + S, GC);
+          Fill_Rect (X0 + S - 1, Y0, X0 + S, Y0 + S, GC);
        end Outline;
     begin
        Fill_Rect (GX, GY, GX + Size, GY + Size, Win_Face);
@@ -450,7 +470,7 @@ procedure Bureau is
       Draw_Gadget (FX + Frame, Title_Y, Title_H, Gad_Close);
       if FW >= 2 * Frame + 3 * Title_H then
          Draw_Gadget (FX + FW - Frame - 2 * Title_H, Title_Y,
-                      Title_H, Gad_Zoom);
+                      Title_H, Gad_Zoom, Dim => not Wins (S).Resizable);
          Draw_Gadget (FX + FW - Frame - Title_H, Title_Y,
                       Title_H, Gad_Depth);
       end if;
@@ -834,6 +854,7 @@ procedure Bureau is
     --  moves the focus — the point can land inside the NEW front
     --  window's content).
     procedure Forward_Close (S : Natural);
+    procedure Forward_Resize (S : Natural; New_W, New_H : U64);
     procedure Pointer_Press (PX, PY : U64) is
     begin
        for I in reverse 1 .. Z_N loop
@@ -878,9 +899,10 @@ procedure Bureau is
                 if PY < Wins (S).Y + Frame + Title_H then
                    --  Title band: the LEFT gadget is close
                    --  (CLOSEWINDOW to the client, no drag); the
-                   --  zoom gadget is inert until the resize
-                   --  handshake lands; anywhere else grabs the
-                   --  window. Gadgets are full band height.
+                   --  right pair is zoom (v5 resize handshake)
+                   --  and depth (handled above, pre-raise);
+                   --  anywhere else grabs the window. Gadgets
+                   --  are full band height.
                    if PX >= Wins (S).X + Frame
                      and then PX < Wins (S).X + Frame + Title_H
                      and then PY >= Wins (S).Y + Frame
@@ -894,7 +916,38 @@ procedure Bureau is
                        - Title_H
                      and then PY >= Wins (S).Y + Frame
                    then
-                      Eat_Gesture := True;  --  zoom: inert here
+                      --  Zoom: toggle between the saved rect and
+                      --  the full screen below the bar. Bureau
+                      --  records the target and ASKS the client
+                      --  (kind 5, no rendezvous); geometry moves
+                      --  only when the client's Op_Surface_Resize
+                      --  ack lands. One pending resize at a time.
+                      Eat_Gesture := True;
+                      if Wins (S).Resizable
+                        and then not Wins (S).Resize_Pending
+                        and then Wins (S).Queue_Cap /= 0
+                      then
+                         if Wins (S).Zoomed then
+                            Wins (S).Pend_X := Wins (S).Save_X;
+                            Wins (S).Pend_Y := Wins (S).Save_Y;
+                            Forward_Resize
+                              (S, Wins (S).Save_PW,
+                               Wins (S).Save_PH);
+                         else
+                            Wins (S).Save_X  := Wins (S).X;
+                            Wins (S).Save_Y  := Wins (S).Y;
+                            Wins (S).Save_PW := Wins (S).PW;
+                            Wins (S).Save_PH := Wins (S).PH;
+                            Wins (S).Pend_X := 0;
+                            Wins (S).Pend_Y := Bar_H + 1;
+                            Forward_Resize
+                              (S,
+                               Width - 2 * Frame,
+                               Height - Bar_H - 1 - 2 * Frame
+                                 - Title_H);
+                         end if;
+                         Wins (S).Resize_Pending := True;
+                      end if;
                    else
                       Drag_Slot := S;
                       Drag_DX := PX - Wins (S).X;
@@ -972,10 +1025,45 @@ procedure Bureau is
       Q (Win.Input_Queue_Head) := Head + 1;
       Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
                           Win.Input_Signal_Bit);
-      if Res /= 0 then
-         Debug_Put_Line ("bureau input signal failed");
-      end if;
-   end Forward_Close;
+       if Res /= 0 then
+          Debug_Put_Line ("bureau input signal failed");
+       end if;
+    end Forward_Close;
+
+    --  Enqueue a resize request (kind 5, value = Pack_Size of the
+    --  requested content size) into slot S's input queue and
+    --  signal. v5 zoom handshake: the client answers with
+    --  Op_Surface_Resize + a fresh buffer cycle; Bureau applies
+    --  the geometry only then. Same drop-new/shared-memory
+    --  discipline as keys, close and menu.
+    procedure Forward_Resize (S : Natural; New_W, New_H : U64) is
+       Q  : Word_Array
+         with Address => System.Storage_Elements.To_Address
+           (System.Storage_Elements.Integer_Address (Queue_VA (S)));
+       Head : U64;
+       Tail : U64;
+       Slot : U64;
+       Res  : U64;
+    begin
+       if Wins (S).Queue_Cap = 0 then
+          return;
+       end if;
+       Head := Q (Win.Input_Queue_Head);
+       Tail := Q (Win.Input_Queue_Tail);
+       if Head - Tail >= Win.Input_Queue_Events then
+          return;  --  full: drop
+       end if;
+       Slot := Win.Input_Queue_First
+         + (Head mod Win.Input_Queue_Events) * 2;
+       Q (Slot)     := Win.Input_Event_Resize;
+       Q (Slot + 1) := Win.Pack_Size (New_W, New_H);
+       Q (Win.Input_Queue_Head) := Head + 1;
+       Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
+                           Win.Input_Signal_Bit);
+       if Res /= 0 then
+          Debug_Put_Line ("bureau input signal failed");
+       end if;
+    end Forward_Resize;
 
    ------------------------------------------------------------------
    --  Milestone 61: menu actions
@@ -1394,10 +1482,17 @@ begin
                   Wins (Slot).Got      := 0;
                   Wins (Slot).Mapped   := False;
                   Wins (Slot).Caps     := (others => 0);
-                  Wins (Slot).Queue_Cap := Message.Caps (0);
-                  Wins (Slot).Ntfn_Cap  := Message.Caps (1);
-                  Wins (Slot).Title    := (others => ' ');
-                  Wins (Slot).Title_Len := 0;
+                   Wins (Slot).Queue_Cap := Message.Caps (0);
+                   Wins (Slot).Ntfn_Cap  := Message.Caps (1);
+                   Wins (Slot).Title    := (others => ' ');
+                   Wins (Slot).Title_Len := 0;
+                   --  Slot reuse must not leak the previous
+                   --  window's menus or zoom state.
+                   Wins (Slot).Menu_Count := 0;
+                   Wins (Slot).Resizable :=
+                     (Message.Words (2) and Win.Flag_Resizable) /= 0;
+                   Wins (Slot).Zoomed := False;
+                   Wins (Slot).Resize_Pending := False;
                   --  v3: map the client's input queue RW (the
                   --  one-page memobj arrives with Map+Read+
                   --  Write+Transfer).
@@ -1527,7 +1622,86 @@ begin
             end if;
          end;
 
-      elsif Label = Win.Op_Surface_Destroy then
+       elsif Label = Win.Op_Surface_Resize then
+          --  v5 zoom ack (or a client-initiated resize): tear
+          --  down the old buffer with Destroy's discipline, apply
+          --  the pending zoom geometry if there is one, repaint
+          --  the old-union-new frame band. The pane draws blank
+          --  until the client commits a fresh buffer.
+          declare
+             S : constant Natural := Slot_Of (Message.Words (0));
+          begin
+             if S = 0 then
+                Win_Reply (Reply_H, Label, Win.Status_Bad_Id,
+                           0, 0, 0, 0);
+             else
+                declare
+                   PW : constant U64 := U64'Min
+                     (Message.Words (1), Width - 2 * Frame);
+                   PH : constant U64 := U64'Min
+                     (Message.Words (2), Height - 2 * Frame - Title_H);
+                   FX : constant U64 := Wins (S).X;
+                   FY : constant U64 := Wins (S).Y;
+                   FW : constant U64 := Wins (S).FW;
+                   FH : constant U64 := Wins (S).FH;
+                begin
+                   if (PW * PH * 4 + 4095) / 4096 >
+                     U64 (Surf_Max_Objects) * 64
+                   then
+                      Win_Reply (Reply_H, Label, Win.Status_No_Slot,
+                                 0, 0, 0, 0);
+                   else
+                      if Wins (S).Mapped then
+                         for I in 0 .. Wins (S).Got - 1 loop
+                            This := U64'Min
+                              (Wins (S).Pages - U64 (I) * 64, 64);
+                            if Mem_Unmap
+                              (Address_Space_Cap,
+                               Surf_VA (S) + U64 (I) * 64 * 4096,
+                               This * 4096) /= 0
+                            then
+                               Debug_Put_Line ("bureau unmap failed");
+                            end if;
+                         end loop;
+                      end if;
+                      for I in 0 .. Surf_Max_Objects - 1 loop
+                         if Wins (S).Caps (I) /= 0 then
+                            Result := Cap_Delete (Wins (S).Caps (I));
+                            Wins (S).Caps (I) := 0;
+                         end if;
+                      end loop;
+                      Wins (S).Got    := 0;
+                      Wins (S).Mapped := False;
+                      Wins (S).PW     := PW;
+                      Wins (S).PH     := PH;
+                      Wins (S).FW     := PW + 2 * Frame;
+                      Wins (S).FH     := PH + 2 * Frame + Title_H;
+                      Wins (S).Pages  := (PW * PH * 4 + 4095) / 4096;
+                      if Wins (S).Resize_Pending then
+                         Wins (S).X := Wins (S).Pend_X;
+                         Wins (S).Y := Wins (S).Pend_Y;
+                         Wins (S).Zoomed := not Wins (S).Zoomed;
+                         Wins (S).Resize_Pending := False;
+                      end if;
+                      --  Keep the frame on-screen: an in-place
+                      --  GROW can push the right/bottom edge off.
+                      Wins (S).X := U64'Min
+                        (Wins (S).X, Width - Wins (S).FW);
+                      Wins (S).Y := U64'Min
+                        (Wins (S).Y, Height - Wins (S).FH);
+                      Composite_Band
+                        (U64'Min (FX, Wins (S).X),
+                         U64'Min (FY, Wins (S).Y),
+                         U64'Max (FX + FW, Wins (S).X + Wins (S).FW),
+                         U64'Max (FY + FH, Wins (S).Y + Wins (S).FH));
+                      Win_Reply (Reply_H, Label, Win.Status_Ok,
+                                 Wins (S).Pages, PW, PH, 0);
+                   end if;
+                end;
+             end if;
+          end;
+
+       elsif Label = Win.Op_Surface_Destroy then
          declare
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
