@@ -50,6 +50,13 @@ procedure Init is
    --  kept by the device manager.
    FAT32_EP : Akernel_User.Syscalls.U64 := 0;
 
+   --  BeFS driver endpoint (milestone 82c): Receive side granted
+   --  (bfs_server token) to System/Bfs, Send side pushed to the
+   --  file server as Op_Add_FS (device BD1, label Befs) after the
+   --  driver spawns. The driver's part1 token grants it the
+   --  badged Send cap for GPT partition 2.
+   BFS_EP : Akernel_User.Syscalls.U64 := 0;
+
    --  Partition service endpoint minted at boot: Receive side
    --  granted (part_server token) to System/Partmgr; Send sides
    --  granted badged 16#1000#+N by the partN tokens so clients
@@ -352,6 +359,32 @@ procedure Init is
       end if;
    end Push_Fat32_Mount;
 
+   --  Send Op_Add_FS (device "BD1", label "Befs") with the BeFS
+   --  driver's service endpoint (milestone 82c). Case-sensitive:
+   --  BeFS names are. Read-only mount for now.
+   procedure Push_Bfs_Mount is
+      use Akernel_User.Syscalls;
+      Dev   : constant String := "BD1";
+      Lab   : constant String := "Befs";
+      Chars : constant String := Dev & Lab;
+   begin
+      Message.Label := 6;  --  Files.Op_Add_FS
+      Message.Words := (others => 0);
+      Message.Words (0) := U64 (Dev'Length);
+      Message.Words (1) := U64 (Lab'Length);
+      Message.Words (2) := 0;  --  case-sensitive
+      for P in 1 .. Chars'Length loop
+         Message.Words (3 + (P - 1) / 8) :=
+           Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Chars (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Message.Caps := (0 => BFS_EP, others => 0);
+      if IPC_Call (FS_EP) /= IPC_Ok then
+         Debug_Put_Line ("bfs mount push failed");
+      end if;
+   end Push_Bfs_Mount;
+
    --  Send Op_Add_FS (device "Proc", label "Proc") with the
    --  procfs server's service endpoint (Send side, transferred
    --  in cap slot 0) so the VFS mounts the introspection volume.
@@ -487,6 +520,7 @@ procedure Init is
       Result      : Akernel_User.Syscalls.U64;
        Is_FS       : Boolean := False;
        Is_Fat32    : Boolean := False;
+       Is_Bfs      : Boolean := False;
        Is_Procfs   : Boolean := False;
        Is_Netserv  : Boolean := False;
        Wants_Names : Boolean := False;
@@ -599,6 +633,9 @@ procedure Init is
          elsif Token_Equals (Token, Length, "fat32_server") then
             Is_Fat32 := True;
             Grant (FAT32_EP, Akernel_User.Syscalls.Right_Receive, 0);
+         elsif Token_Equals (Token, Length, "bfs_server") then
+            Is_Bfs := True;
+            Grant (BFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "part_server") then
             Partmgr_Seen := True;
             Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
@@ -698,6 +735,10 @@ procedure Init is
             Push_Fat32_Mount;
          end if;
 
+         if Is_Bfs then
+            Push_Bfs_Mount;
+         end if;
+
           if Is_Procfs then
              Push_Procfs_Mount;
           end if;
@@ -773,6 +814,7 @@ begin
         ("init: FS endpoint identity stamp failed");
    end if;
    FAT32_EP := Akernel_User.Syscalls.EP_Create;
+   BFS_EP := Akernel_User.Syscalls.EP_Create;
    PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
     PROCFS_EP := Akernel_User.Syscalls.EP_Create;
     LIBMAN_EP := Akernel_User.Syscalls.EP_Create;

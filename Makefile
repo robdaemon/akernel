@@ -48,6 +48,7 @@ UDP_TEST_ELF := bin/userspace/udp_test.elf
 TCP_TEST_ELF := bin/userspace/tcp_test.elf
 GSOCK_TEST_ELF := bin/userspace/gsock_test.elf
 DHCP_TEST_ELF := bin/userspace/dhcp_test.elf
+BFS_ELF := bin/userspace/bfs.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
@@ -71,7 +72,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
@@ -174,6 +175,7 @@ netserv: $(LWIP_STAMP)
 
 
 
+
 #  72 MiB GPT data disk (host sgdisk + mkfs.vfat --offset +
 #  mtools @@offset): partition 1 at sector 2048, 60 MiB FAT32 with
 #  README.TXT, BIG.BIN (byte i = (i*7+3) mod 256, 64 KiB
@@ -250,6 +252,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Init $(INIT_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Fileserver $(FILESERVER_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Fat32 $(FAT32_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Bfs $(BFS_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Partmgr $(PARTMGR_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Procfs $(PROCFS_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Netserv $(NETSERV_ELF)
@@ -298,6 +301,7 @@ ifeq ($(INITRD_MODE),test)
 endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part0 fat32_server' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 17 System/Bfs console part1 bfs_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 10 System/Netserv console fs netdev net_server net_register' >> $(INITRD_ROOT)/System/Manifest
 ifeq ($(INITRD_MODE),test)

@@ -1,0 +1,321 @@
+--  akernel BeFS server (milestone 82c): pure-Ada read-only BeFS
+--  (Bfs_Engine) over the partition endpoint, behind the file
+--  server's VFS. This unit is the wire-protocol front — console,
+--  block RPC bounce buffer, fs protocol dispatch — in the same
+--  shape as fat32.adb.
+--
+--  Handles: 1 = console endpoint, 2 = partN endpoint (badged
+--  partition send cap), 3 = svc EP.
+--
+--  Read-only: write-family ops answer Status_Bad_Args.
+
+with Akernel_User.Console;
+with Akernel_User.Syscalls;
+with Bfs_Engine;
+with Interfaces;
+with System;
+with System.Storage_Elements;
+
+procedure Bfs is
+   package Syscalls renames Akernel_User.Syscalls;
+   use type Syscalls.U64;
+   use System.Storage_Elements;
+
+   subtype U64 is Syscalls.U64;
+
+   function Shl (Value : U64; Amount : Natural) return U64
+     renames Interfaces.Shift_Left;
+
+   Console_Cap : constant U64 := 1;
+   Blk_EP      : constant U64 := 2;
+   Svc_EP      : constant U64 := 3;
+
+   Blk_Info  : constant U64 := 0;
+   Blk_Flush : constant U64 := 4;
+
+   Op_Stat        : constant U64 := 1;
+   Op_Open        : constant U64 := 2;
+   Op_Read        : constant U64 := 3;
+   Op_Write       : constant U64 := 7;
+   Op_Delete      : constant U64 := 8;
+   Op_Truncate    : constant U64 := 9;
+   Op_Mkdir       : constant U64 := 10;
+   Op_Rmdir       : constant U64 := 11;
+   Op_Sync        : constant U64 := 12;
+   Op_ReadDir     : constant U64 := 13;
+   Op_Rename      : constant U64 := 16;
+   Op_Volume_Info : constant U64 := 17;
+
+   Status_Ok           : constant U64 := 0;
+   Status_Not_Found    : constant U64 := 1;
+   Status_Bad_Args     : constant U64 := 3;
+   Status_Out_Of_Range : constant U64 := 4;
+
+   --  Bounce page for block RPCs (shared with the engine).
+   Blk_Buf_VA  : constant U64 := 16#5380_0000#;
+   Blk_Buf_Cap : U64 := 0;
+
+   --  Mapping window for the client's read buffer mem object.
+   Buf_Pages  : constant U64 := 4;
+   Buf_Win_VA : constant U64 := 16#5400_0000#;
+   Buf_Bytes  : constant U64 := Buf_Pages * Syscalls.Page_Size;
+
+   Reply_H : U64 := 0;
+
+   procedure Fail (Msg : String) is
+   begin
+      Akernel_User.Console.Put_Line (Msg);
+      loop
+         null;
+      end loop;
+   end Fail;
+
+   procedure Reply2 (Status : U64; Value : U64) is
+   begin
+      Syscalls.Message.Words (0) := Status;
+      Syscalls.Message.Words (1) := Value;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs reply failed");
+      end if;
+   end Reply2;
+
+   --  Unpack the path from message words First .. (First + 3).
+   function Path_Of (First : Natural) return String is
+      Name : String (1 .. 32) := (others => Character'Val (0));
+      Len  : Natural := 0;
+   begin
+      for P in 0 .. 31 loop
+         declare
+            Ch : constant Character :=
+              Character'Val (Natural
+                ((Syscalls.Message.Words (First + P / 8)
+                    / Shl (1, (P mod 8) * 8)) and 16#FF#));
+         begin
+            exit when Ch = Character'Val (0);
+            Len := Len + 1;
+            Name (Len) := Ch;
+         end;
+      end loop;
+      return Name (1 .. Len);
+   end Path_Of;
+
+   ------------------------------------------------------------------
+   --  Handlers
+   ------------------------------------------------------------------
+
+   procedure Handle_Stat_Or_Open is
+      --  Capture the op BEFORE any engine call: block RPCs
+      --  overwrite Syscalls.Message.
+      Is_Open : constant Boolean :=
+        Syscalls.Message.Label = Op_Open;
+      Size   : U64;
+      Is_Dir : Boolean;
+      RC     : U64;
+   begin
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         if Path'Length = 0 then
+            Reply2 (Status_Bad_Args, 0);
+            return;
+         end if;
+         RC := Bfs_Engine.Stat (Path, Size, Is_Dir);
+      end;
+      if RC /= Status_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+      if Is_Dir and then Is_Open then
+         Reply2 (Status_Bad_Args, 0);  --  no dir open
+         return;
+      end if;
+      Syscalls.Message.Words (4) := (if Is_Dir then 1 else 0);
+      Reply2 (Status_Ok, Size);
+   end Handle_Stat_Or_Open;
+
+   procedure Handle_Read is
+      Offset : constant U64 := Syscalls.Message.Words (0);
+      Length : constant U64 := Syscalls.Message.Words (1);
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Count  : U64 := 0;
+      Status : U64 := Status_Ok;
+      Mapped : Boolean := False;
+   begin
+      if Buf = 0 or else Length = 0 then
+         Status := Status_Bad_Args;
+      else
+         declare
+            Path : constant String := Path_Of (2);
+            Len  : U64;
+         begin
+            if Path'Length = 0 then
+               Status := Status_Bad_Args;
+            elsif Syscalls.Mem_Map
+              (Address_Space => Syscalls.Address_Space_Cap,
+               Cap           => Buf,
+               VA            => Buf_Win_VA,
+               Offset        => 0,
+               Length        => Buf_Bytes,
+               Flags         => 3) /= 0
+            then
+               Status := Status_Not_Found;
+            else
+               Mapped := True;
+               Len := U64'Min (Length, Buf_Bytes);
+               Status := Bfs_Engine.Read
+                 (Path, Offset,
+                  To_Address (Integer_Address (Buf_Win_VA)), Len);
+               if Status = Status_Ok then
+                  Count := Len;
+               end if;
+            end if;
+         end;
+      end if;
+
+      if Buf /= 0 then
+         if Mapped
+           and then Syscalls.Mem_Unmap
+             (Address_Space => Syscalls.Address_Space_Cap,
+              VA            => Buf_Win_VA,
+              Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+         end if;
+         if Syscalls.Cap_Delete (Buf) /= 0 then
+            Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+         end if;
+      end if;
+      Reply2 (Status, Count);
+   end Handle_Read;
+
+   --  Op_ReadDir: words 0..3 = path ("" = root), word 4 = index.
+   --  Reply: w0 = status, w1 = size, w2 = is_dir, w3..5 = name.
+   procedure Handle_Read_Dir is
+      Idx      : constant U64 := Syscalls.Message.Words (4);
+      Name     : String (1 .. 24) := (others => Character'Val (0));
+      Name_Len : Natural;
+      Size     : U64;
+      Is_Dir   : Boolean;
+      RC       : U64;
+   begin
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         RC := Bfs_Engine.Read_Dir (Path, Idx, Name, Name_Len,
+                                    Size, Is_Dir);
+      end;
+      if RC /= Status_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      Syscalls.Message.Words (0) := Status_Ok;
+      Syscalls.Message.Words (1) := Size;
+      Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+      for W in 3 .. 5 loop
+         Syscalls.Message.Words (W) := 0;
+      end loop;
+      for P in 1 .. Name_Len loop
+         Syscalls.Message.Words (3 + (P - 1) / 8) :=
+           Syscalls.Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Name (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs readdir reply failed");
+      end if;
+   end Handle_Read_Dir;
+
+   procedure Handle_Volume_Info is
+      Total : U64;
+      Free  : U64;
+      Block : U64;
+   begin
+      Bfs_Engine.Volume_Info (Total, Free, Block);
+      if not Bfs_Engine.Mounted then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+      Syscalls.Message.Words (0) := Status_Ok;
+      Syscalls.Message.Words (1) := Total;
+      Syscalls.Message.Words (2) := Free;
+      Syscalls.Message.Words (3) := Block;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs volume info reply failed");
+      end if;
+   end Handle_Volume_Info;
+
+begin
+   Akernel_User.Console.Set_Endpoint (Console_Cap);
+   Akernel_User.Console.Put_Line ("bfs starting");
+
+   Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
+   if Blk_Buf_Cap = Syscalls.Syscall_Failed
+     or else Syscalls.Mem_Map
+       (Address_Space => Syscalls.Address_Space_Cap,
+        Cap           => Blk_Buf_Cap,
+        VA            => Blk_Buf_VA,
+        Offset        => 0,
+        Length        => Syscalls.Page_Size,
+        Flags         => 3) /= 0
+   then
+      Fail ("bfs bounce alloc failed");
+   end if;
+
+   --  Partition probe (proves the endpoint is live), then mount.
+   Syscalls.Message.Label := Blk_Info;
+   Syscalls.Message.Caps := (others => 0);
+   if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
+     or else Syscalls.Message.Words (0) /= 0
+   then
+      Fail ("bfs blk probe failed");
+   end if;
+
+   Bfs_Engine.Init (Blk_EP, Blk_Buf_Cap);
+   if not Bfs_Engine.Mounted then
+      Fail ("bfs no filesystem on partition");
+   end if;
+
+   Akernel_User.Console.Put_Line ("bfs online");
+
+   loop
+      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs recv failed");
+      end if;
+
+      if Syscalls.Message.Label = Op_Stat
+        or else Syscalls.Message.Label = Op_Open
+      then
+         Handle_Stat_Or_Open;
+      elsif Syscalls.Message.Label = Op_Read then
+         Handle_Read;
+      elsif Syscalls.Message.Label = Op_ReadDir then
+         Handle_Read_Dir;
+      elsif Syscalls.Message.Label = Op_Volume_Info then
+         Handle_Volume_Info;
+      elsif Syscalls.Message.Label = Op_Sync then
+         Syscalls.Message.Label := Blk_Flush;
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Call (Blk_EP) = Syscalls.IPC_Ok
+           and then Syscalls.Message.Words (0) = 0
+         then
+            Reply2 (Status_Ok, 0);
+         else
+            Reply2 (Status_Bad_Args, 0);
+         end if;
+      elsif Syscalls.Message.Label = Op_Write
+        or else Syscalls.Message.Label = Op_Delete
+        or else Syscalls.Message.Label = Op_Truncate
+        or else Syscalls.Message.Label = Op_Mkdir
+        or else Syscalls.Message.Label = Op_Rmdir
+        or else Syscalls.Message.Label = Op_Rename
+      then
+         Reply2 (Status_Bad_Args, 0);  --  read-only mount
+      else
+         Reply2 (Status_Bad_Args, 0);
+      end if;
+   end loop;
+end Bfs;

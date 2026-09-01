@@ -579,6 +579,222 @@ begin
       Status        : U64;
       Tries         : Natural := 0;
       Match         : Boolean;
+
+      --  m82c: BD1 BeFS volume tests.  These live in their own
+      --  procedure so their locals do NOT inflate this block's
+      --  static frame — sibling declare-block locals accumulate
+      --  in the parent frame, and the 12-page user stack (hard
+      --  capped by the IPC buffer at 0x6FFF_0000) overflowed by
+      --  ~0x50 bytes inside the ZCX unwinder with this section
+      --  inline.  See Stack_Pages history in
+      --  src/kernel/kernel-processes.adb.
+      procedure Bfs_Tests is
+      begin
+         --  Stat/read through file server -> Bfs_Engine ->
+         --  block driver.  The mount is pushed asynchronously
+         --  by init; wait for it.
+         Check (Await_Volume ("Befs:README.TXT"),
+                "bfs volume appears");
+         Status := Akernel_User.Files.Stat ("BD1:README.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 36,
+                "bfs stat readme size");
+
+         Status := Akernel_User.Files.Stat ("Befs:README.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs volume label resolves");
+
+         Status := Akernel_User.Files.Read
+           ("BD1:README.TXT", 0, Buf'Address, 64, Count);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Count = 36;
+         declare
+            Text : constant String :=
+              "Hello from the akernel BeFS volume.";
+         begin
+            for I in 0 .. 34 loop
+               Match := Match
+                 and then Buf (I) =
+                   Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+            end loop;
+            Match := Match and then Buf (35) = 10;
+         end;
+         Check (Match, "bfs readme content ok");
+
+         --  FRAGMENT.BIN: byte i = (i*5+1) mod 256, 2560 bytes —
+         --  two direct runs separated by a deliberate free hole,
+         --  so reads must cross the run boundary (mkbefs fixture).
+         Status := Akernel_User.Files.Stat ("BD1:FRAGMENT.BIN", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 2560,
+                "bfs stat fragment size");
+
+         Status := Akernel_User.Files.Read
+           ("BD1:FRAGMENT.BIN", 0, Big_Buf'Address, 512, Count);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Count = 512;
+         for J in 0 .. 511 loop
+            Match := Match
+              and then Big_Buf (J) =
+                Interfaces.Unsigned_8 ((J * 5 + 1) mod 256);
+         end loop;
+         Check (Match, "bfs fragment head ok");
+
+         --  Read spanning the hole: offset 2048 lands in the
+         --  second run, 1000 straddles run1 -> run2.
+         Status := Akernel_User.Files.Read
+           ("BD1:FRAGMENT.BIN", 1000, Big_Buf'Address, 256, Count);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Count = 256;
+         for J in 0 .. 255 loop
+            Match := Match
+              and then Big_Buf (J) =
+                Interfaces.Unsigned_8 (((1000 + J) * 5 + 1) mod 256);
+         end loop;
+         Check (Match, "bfs fragment hole-crossing read ok");
+
+         Status := Akernel_User.Files.Read
+           ("BD1:FRAGMENT.BIN", 2048, Big_Buf'Address, 512, Count);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Count = 512;
+         for J in 0 .. 511 loop
+            Match := Match
+              and then Big_Buf (J) =
+                Interfaces.Unsigned_8 (((2048 + J) * 5 + 1) mod 256);
+         end loop;
+         Check (Match, "bfs fragment tail ok");
+
+         --  Read at EOF must come back empty, past EOF rejected.
+         Status := Akernel_User.Files.Read
+           ("BD1:FRAGMENT.BIN", 2560, Buf'Address, 64, Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 0,
+                "bfs read at eof empty");
+
+         Status := Akernel_User.Files.Stat ("BD1:EMPTY.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 0,
+                "bfs empty file size");
+
+         --  Case sensitivity: BeFS is case-sensitive, so a
+         --  lowercase probe must NOT resolve (contrast with FAT32).
+         Status := Akernel_User.Files.Stat ("BD1:readme.txt", Size);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs names case-sensitive");
+
+         Status := Akernel_User.Files.Stat ("BD1:NOSUCH.BIN", Size);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs unknown file rejected");
+
+         --  Nested path through the SUBDIR btree.
+         Status := Akernel_User.Files.Stat
+           ("BD1:SUBDIR/HELLO.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 24,
+                "bfs subdir stat ok");
+
+         Status := Akernel_User.Files.Read
+           ("BD1:SUBDIR/HELLO.TXT", 0, Buf'Address, 64, Count);
+         Match := Status = Akernel_User.Files.Status_Ok
+           and then Count = 24;
+         declare
+            Text : constant String := "Subdir hello from BeFS!";
+         begin
+            for I in 0 .. 22 loop
+               Match := Match
+                 and then Buf (I) =
+                   Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+            end loop;
+            Match := Match and then Buf (23) = 10;
+         end;
+         Check (Match, "bfs subdir read ok");
+
+         --  Root enumeration: btree-sorted fixture names after
+         --  the "." / ".." entries (EMPTY.TXT, FRAGMENT.BIN,
+         --  README.TXT, SUBDIR).
+         declare
+            Ent     : String (1 .. 24);
+            Ent_L   : Natural;
+            Ent_Dir : Boolean;
+            Ent_Sz  : U64;
+            Seen    : Natural := 0;
+         begin
+            for Index in 0 .. 40 loop
+               Status := Akernel_User.Files.Read_Dir
+                 ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+               exit when Status /= Akernel_User.Files.Status_Ok;
+               if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT" then
+                  Check (not Ent_Dir and then Ent_Sz = 36,
+                         "bfs readdir readme entry ok");
+                  Seen := Seen + 1;
+               elsif Ent_L = 6 and then Ent (1 .. 6) = "SUBDIR" then
+                  Check (Ent_Dir, "bfs readdir subdir is-dir");
+                  Seen := Seen + 1;
+               elsif Ent_L = 12
+                 and then Ent (1 .. 12) = "FRAGMENT.BIN"
+               then
+                  Seen := Seen + 1;
+               elsif Ent_L = 9 and then Ent (1 .. 9) = "EMPTY.TXT" then
+                  Seen := Seen + 1;
+               end if;
+            end loop;
+            Check (Seen = 4, "bfs readdir finds all root entries");
+         end;
+
+         --  Directory open is rejected, directory stat answers
+         --  is-dir (wire contract: stat succeeds on dirs).
+         Status := Akernel_User.Files.Open ("BD1:SUBDIR", Size);
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs open dir rejected");
+
+         declare
+            WD, WT : U64;
+            Dir_D  : Boolean;
+         begin
+            Status := Akernel_User.Files.Stat_Ex
+              ("BD1:SUBDIR", Size, WD, WT, Dir_D);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Dir_D,
+                   "bfs dir stat reports is-dir");
+         end;
+
+         --  Read-only mount: every mutating op answers Bad_Args.
+         Status := Akernel_User.Files.Write
+           ("BD1:NEWFILE.TXT", 0, Buf'Address, 4, Count);
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs write rejected");
+
+         Status := Akernel_User.Files.Delete ("BD1:README.TXT");
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs delete rejected");
+
+         Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs mkdir rejected");
+
+         Status := Akernel_User.Files.Rename
+           ("BD1:README.TXT", "BD1:R.TXT");
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs rename rejected");
+
+         Status := Akernel_User.Files.Sync;
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs sync ok");
+
+         declare
+            Total : U64;
+            Free  : U64;
+            Block : U64;
+         begin
+            Status := Akernel_User.Files.Volume_Info
+              ("BD1:", Total, Free, Block);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Total = 8192 * 1024
+                   and then Block = 1024
+                   and then Free < Total,
+                   "bfs volume info ok");
+         end;
+      end Bfs_Tests;
    begin
       Akernel_User.Files.Bind (FS_EP);
 
@@ -1600,6 +1816,12 @@ begin
                 and then GCount = 12 and then RMatch,
                 "gen file f42 content reads");
       end;
+
+      --  BeFS volume (BD1, System/Bfs behind the VFS; m82b
+      --  fixture on GPT partition 2, m82c pure-Ada read-only
+      --  server): the tests live in Bfs_Tests (declared above)
+      --  so their locals stay out of this block's static frame.
+      Bfs_Tests;
 
       --  Spawn v2: stage an ELF into a memory object via the file
       --  server, spawn from the object cap (no boot-file cap
