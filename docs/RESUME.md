@@ -113,6 +113,20 @@ M82e R/W + journal; M82f indices/query discussion.
   (.init_array), vtable dispatch, and operator new/delete over
   newlib malloc in-guest: 1554 PASS / 0 FAIL.
 
+- **M82b done** (this commit): tools/mkbefs.py generates a valid
+  8 MiB BeFS image from scratch (superblock, allocation bitmap,
+  empty 512-block log, inodes with small_data attributes, data
+  streams with direct block runs, single-leaf btrees, populated
+  name index + empty APP_SIG/last_modified/size indices); fixture
+  tree = README.TXT (BEOS:TYPE + META:comment attrs), EMPTY.TXT,
+  FRAGMENT.BIN (two runs, deliberate free hole), SUBDIR/HELLO.TXT.
+  tools/befs_dump.py is the read-only lister / ground truth (and
+  the M82c parsing reference). disk.img grew to 72 MiB with GPT
+  partition 2 (8 MiB, Haiku's registered BeFS type GUID) at sector
+  124928, befs.img dd'd in at the offset sgdisk reports. fuzz.adb
+  part_query now expects 2 partitions; virtio_blk capacity check is
+  147456 sectors. 1555 PASS / 0 FAIL.
+
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working
 on M80. Otherwise: the open candidates below.

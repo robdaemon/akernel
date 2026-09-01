@@ -648,12 +648,13 @@ begin
       --  Block volume (WD0, virtio-blk behind Op_Add_Block): the
       --  raw device resolves as "disk" and reads come through the
       --  file server -> block driver RPC chain. The image is a
-      --  64 MiB GPT-partitioned disk (partition 1 = FAT32).
+      --  72 MiB GPT-partitioned disk (partition 1 = FAT32,
+      --  partition 2 = m82b BeFS fixture).
       --  The mount is pushed asynchronously by init; wait for it.
       Check (Await_Volume ("WD0:disk"), "blk volume appears");
       Status := Akernel_User.Files.Stat ("WD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
-             and then Size = 131072 * 512,
+             and then Size = 147456 * 512,
              "blk volume stat ok");
 
       Status := Akernel_User.Files.Stat ("Disk:disk", Size);
@@ -699,7 +700,9 @@ begin
 
       --  Partition query op (part0 token = handle 7, badge
       --  16#1000#): slot 0 is the FAT32 partition at LBA 2048,
-      --  122880 sectors; the image has exactly one partition.
+      --  122880 sectors; slot 1 is the m82b BeFS fixture partition
+      --  (8 MiB at the next 2048-sector-aligned boundary). The image
+      --  has exactly two partitions.
       declare
          Part_EP : constant U64 := 7;  --  manifest grant order (part0)
       begin
@@ -712,7 +715,7 @@ begin
                 and then Akernel_User.Syscalls.Message.Words (0) = 0
                 and then Akernel_User.Syscalls.Message.Words (1) = 2048
                 and then Akernel_User.Syscalls.Message.Words (2) = 122880
-                and then Akernel_User.Syscalls.Message.Words (3) = 1,
+                and then Akernel_User.Syscalls.Message.Words (3) = 2,
                 "part query slot 0 ok");
 
          Akernel_User.Syscalls.Message.Label := 3;
@@ -721,8 +724,20 @@ begin
          Akernel_User.Syscalls.Message.Caps := (others => 0);
          Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
          Check (Status = Akernel_User.Syscalls.IPC_Ok
+                and then Akernel_User.Syscalls.Message.Words (0) = 0
+                and then Akernel_User.Syscalls.Message.Words (1) = 124928
+                and then Akernel_User.Syscalls.Message.Words (2) = 16384
+                and then Akernel_User.Syscalls.Message.Words (3) = 2,
+                "part query slot 1 befs ok");
+
+         Akernel_User.Syscalls.Message.Label := 3;
+         Akernel_User.Syscalls.Message.Words := (others => 0);
+         Akernel_User.Syscalls.Message.Words (0) := 2;
+         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Akernel_User.Syscalls.IPC_Ok
                 and then Akernel_User.Syscalls.Message.Words (0) = 1
-                and then Akernel_User.Syscalls.Message.Words (3) = 1,
+                and then Akernel_User.Syscalls.Message.Words (3) = 2,
                 "part query empty slot rejected");
       end;
 
