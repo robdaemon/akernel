@@ -10,7 +10,9 @@
 /share/
 **/bin/
 **/obj/
+
 .opencode/
+.vscode/
 
 # Native/bare-metal binaries and objects
 *.elf
