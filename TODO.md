@@ -1,7 +1,5 @@
-init concerns - too much code for specific servers. How do we make this more generic?
-
-kernel-scheduler.adb has arch specific code in it (references to SBI)
-
-The rts is riscv specific too.
-
-/*  no reverse DNS on slirp */ - bad assumption, locking the RTS to qemu
+- init concerns - too much code for specific servers. How do we make this more generic?
+- kernel-scheduler.adb has arch specific code in it (references to SBI)
+- The rts is riscv specific too.
+- /*  no reverse DNS on slirp */ - bad assumption, locking the RTS to qemu
+- ping does not accept hostnames
