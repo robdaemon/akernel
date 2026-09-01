@@ -5,6 +5,11 @@ QEMU_SMP ?= 4
 #  /usr/sbin on Debian-derived systems; ensure that directory is on
 #  PATH for recipes even when the invoking shell omits it.
 export PATH := /usr/local/sbin:/usr/sbin:/sbin:$(PATH)
+#  Milestone 82a: the xPack stamp rule drops a riscv64-elf-g++
+#  wrapper here (gprbuild finds a C++ compiler for the target by
+#  name). Prepend unconditionally; the wrapper exists once the
+#  cxx_test crate's stamp dependency has run.
+export PATH := $(CURDIR)/third_party/toolchains/cxxbin:$(PATH)
 #  Manifest mode: interactive (default, `make run` — no test
 #  programs) vs test (`make test` — Fuzz/Spin slots boot).
 #  The initrd regenerates on every build (FORCE below) so a
@@ -48,6 +53,7 @@ UDP_TEST_ELF := bin/userspace/udp_test.elf
 TCP_TEST_ELF := bin/userspace/tcp_test.elf
 GSOCK_TEST_ELF := bin/userspace/gsock_test.elf
 DHCP_TEST_ELF := bin/userspace/dhcp_test.elf
+CXX_TEST_ELF := bin/userspace/cxx_test.elf
 VIRTIO_RNG_ELF := bin/userspace/virtio_rng.elf
 VIRTIO_BLK_ELF := bin/userspace/virtio_blk.elf
 VIRTIO_NET_ELF := bin/userspace/virtio_net.elf
@@ -71,7 +77,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test cxx_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
 DISK_CRATES_LIBS := testlib
@@ -152,6 +158,51 @@ $(LWIP_STAMP): $(LWIP_TARBALL) $(wildcard third_party/patches/lwip-*.patch)
 	touch $@
 
 netserv: $(LWIP_STAMP)
+
+#  Third-party toolchain fetch (milestone 82a): the freestanding
+#  C++ cross compiler. Alire's gnat_riscv64_elf ships no g++, so
+#  vendored C++ (the Haiku BFS port, M82) is compiled by xPack
+#  riscv-none-elf-gcc — same GCC major (15) as the Ada toolchain
+#  (15.3.1) and identical rv64imafdc/lp64d ISA attributes.
+#  Build-time only: C++ objects still link against the 15.3.1
+#  newlib via the Ada-driven link; xPack contributes at most
+#  libgcc.a routines (GCC Runtime Library Exception). Nothing
+#  from xPack is committed (third_party/ is gitignored).
+XPACK_VER := 15.2.0-1
+XPACK_TARBALL := third_party/download/xpack-riscv-none-elf-gcc-$(XPACK_VER)-linux-x64.tar.gz
+XPACK_SHA256 := aaaa8060c914851a3e5ee1ba82cc3d6f80972f90638a05c6e823a37557a33758
+XPACK_DIR := third_party/toolchains/xpack-riscv-none-elf-gcc-$(XPACK_VER)
+XPACK_STAMP := third_party/toolchains/.stamp-xpack-$(XPACK_VER)
+XPACK_GXX := $(CURDIR)/$(XPACK_DIR)/bin/riscv-none-elf-g++
+export XPACK_GXX
+
+$(XPACK_TARBALL):
+	mkdir -p third_party/download
+	curl -sL --fail --max-time 900 -o $@.tmp \
+	  https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v$(XPACK_VER)/xpack-riscv-none-elf-gcc-$(XPACK_VER)-linux-x64.tar.gz
+	echo "$(XPACK_SHA256)  $@.tmp" | sha256sum -c -
+	mv $@.tmp $@
+
+$(XPACK_STAMP): $(XPACK_TARBALL)
+	rm -rf $(XPACK_DIR) third_party/toolchains/.xpack-extract
+	mkdir -p third_party/toolchains/.xpack-extract
+	tar xzf $(XPACK_TARBALL) -C third_party/toolchains/.xpack-extract
+	mv third_party/toolchains/.xpack-extract/xpack-riscv-none-elf-gcc-$(XPACK_VER) $(XPACK_DIR)
+	rmdir third_party/toolchains/.xpack-extract
+	mkdir -p third_party/toolchains/cxxbin
+	{ printf '#!/bin/sh\n'; \
+	  printf '#  m82a: gprconfig probes the target triplet via\n'; \
+	  printf '#  -dumpmachine; xPack reports riscv-none-elf (its multilib\n'; \
+	  printf '#  covers rv32+rv64), which fails the riscv64-elf project\n'; \
+	  printf '#  target match. Report the project triplet; all other\n'; \
+	  printf '#  invocations pass through to the real g++.\n'; \
+	  printf 'if [ "$$1" = "-dumpmachine" ]; then echo riscv64-elf; exit 0; fi\n'; \
+	  printf 'exec "%s" "$$@"\n' $(XPACK_GXX); \
+	} > third_party/toolchains/cxxbin/riscv64-elf-g++
+	chmod +x third_party/toolchains/cxxbin/riscv64-elf-g++
+	touch $@
+
+cxx_test: $(XPACK_STAMP)
 
 
 
@@ -271,6 +322,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Tcp_Test $(TCP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Gsock_Test $(GSOCK_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Dhcp_Test $(DHCP_TEST_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Cxx_Test $(CXX_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -298,6 +350,7 @@ ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 13 Tests/Tcp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 14 Tests/Gsock_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 15 Tests/Dhcp_Test console fs net' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 16 Tests/Cxx_Test console' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' '# file Tests/Echo_Server' >> $(INITRD_ROOT)/System/Manifest
 	cd $(INITRD_ROOT) && find . -print | sort | cpio --quiet -o -H newc > ../../$(INITRD_CPIO)

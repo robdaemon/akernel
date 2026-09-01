@@ -1,0 +1,57 @@
+<?xml version="1.0" ?>
+<gprconfig>
+   <!--  Milestone 82a: gprbuild knowledge-base addition for the
+         vendored xPack riscv-none-elf-g++, reached through the
+         riscv64-elf-g++ wrapper that the root Makefile's XPACK
+         stamp rule drops in third_party/toolchains/cxxbin/ (on
+         PATH for crate builds). The stock KB's G++ description
+         matches only UNPREFIXED g++ names, so autoconfiguration
+         never sees a C++ compiler for the riscv64-elf target; the
+         wrapper answers -dumpmachine with riscv64-elf and
+         cross.xml aliases the riscv elf triplets.  -->
+   <compiler_description>
+      <name>AKERNEL-GXX</name>
+      <executable prefix="1">(riscv64-elf-)g\+\+</executable>
+      <version>
+         <external>$EXEC -v</external>
+         <grep regexp="^gcc \S+ (\S+)" group="1"></grep>
+      </version>
+      <languages>C++</languages>
+      <target>
+         <external>$EXEC -dumpmachine</external>
+         <grep regexp="[^\r\n]+"></grep>
+      </target>
+   </compiler_description>
+
+   <!--  Same driver wiring as cpp.xml's stock G++ block (which
+         matches only compiler names G++/G++_Pro).  -->
+   <configuration>
+      <compilers>
+         <compiler name="^AKERNEL-GXX$" language="C++" />
+      </compilers>
+      <config>
+   package Compiler is
+      for Driver              ("C++") use "${PATH(c++)}${EXEC(c++)}";
+   end Compiler;
+      </config>
+   </configuration>
+
+   <!--  The compilation model (cpp.xml's second G++ block): without
+         it gprbuild invokes the driver in LINK mode.  -->
+   <configuration>
+      <compilers>
+         <compiler name="^AKERNEL-GXX$" language="C++" />
+      </compilers>
+      <config>
+   package Compiler is
+      for Leading_Required_Switches   ("C++") use
+        ("-c", "-x", "c++") &amp;
+        Compiler'Leading_Required_Switches ("C++");
+      for Dependency_Switches ("C++") use ("-MMD", "-MF", "");
+      for Include_Switches_Via_Spec ("C++") use ("cc1plus", "-I");
+      for Max_Command_Line_Length use "8192";
+      for Response_File_Format    ("C++") use "GCC_GNU";
+   end Compiler;
+      </config>
+   </configuration>
+</gprconfig>
