@@ -231,13 +231,21 @@ procedure Bureau is
    Drag_Slot : Natural := 0;
    Drag_DX   : U64 := 0;
    Drag_DY   : U64 := 0;
-   --  Pointer capture (milestone 57, protocol v4): a press inside
-   --  a window's CONTENT captures the pointer — moves and the
-   --  final release keep flowing to that window (coordinates
-   --  clamped to content bounds) until buttons go 0, so a client
-   --  drag (scrollbar knob, text selection) survives leaving the
-   --  content and the release can never be lost.
-   Capture   : Natural := 0;
+    --  Pointer capture (milestone 57, protocol v4): a press inside
+    --  a window's CONTENT captures the pointer — moves and the
+    --  final release keep flowing to that window (coordinates
+    --  clamped to content bounds) until buttons go 0, so a client
+    --  drag (scrollbar knob, text selection) survives leaving the
+    --  content and the release can never be lost.
+    Capture   : Natural := 0;
+    --  Gadget presses are Bureau's: set by Pointer_Press on a
+    --  close/depth/zoom press, cleared when buttons go 0. While
+    --  set, nothing is captured or forwarded — a send-to-back
+    --  moves the focus, and without this the REST of the gesture
+    --  (moves with button 1 still held) would retarget at the new
+    --  front window, whose client would synthesize a press edge
+    --  it never earned.
+    Eat_Gesture : Boolean := False;
 
    ------------------------------------------------------------------
    --  Milestone 61: Amiga screen-bar menus. The RIGHT mouse button
@@ -373,11 +381,41 @@ procedure Bureau is
       Fill_Rect (X1 - 1, Y0, X1, Y1, Lo);        --  right
    end Bevel;
 
-   procedure Draw_Gadget (GX, GY, Size : U64) is
-   begin
-      Fill_Rect (GX, GY, GX + Size, GY + Size, Win_Face);
-      Bevel (GX, GY, GX + Size, GY + Size);
-   end Draw_Gadget;
+    --  WB-style gadget glyphs so the three title gadgets read
+    --  apart: close = raised mini-box, zoom = single square
+    --  outline, depth = two overlapping squares (front one
+    --  filled, lower-left).
+    type Gadget_Kind is (Gad_Close, Gad_Zoom, Gad_Depth);
+
+    procedure Draw_Gadget
+      (GX, GY, Size : U64; Kind : Gadget_Kind)
+    is
+       GS : constant U64 := Size / 2 - 2;  --  glyph box size
+       CX : constant U64 := GX + (Size - GS) / 2;
+       CY : constant U64 := GY + (Size - GS) / 2;
+       procedure Outline (X0, Y0, S : U64) is
+       begin
+          Fill_Rect (X0, Y0, X0 + S, Y0 + 1, Text_Dark);
+          Fill_Rect (X0, Y0 + S - 1, X0 + S, Y0 + S, Text_Dark);
+          Fill_Rect (X0, Y0, X0 + 1, Y0 + S, Text_Dark);
+          Fill_Rect (X0 + S - 1, Y0, X0 + S, Y0 + S, Text_Dark);
+       end Outline;
+    begin
+       Fill_Rect (GX, GY, GX + Size, GY + Size, Win_Face);
+       Bevel (GX, GY, GX + Size, GY + Size);
+       case Kind is
+          when Gad_Close =>
+             Fill_Rect (CX, CY, CX + GS, CY + GS, Win_Face);
+             Bevel (CX, CY, CX + GS, CY + GS);
+          when Gad_Zoom =>
+             Outline (CX, CY, GS);
+          when Gad_Depth =>
+             Outline (CX + 3, CY - 1, GS);   --  back, upper-right
+             Fill_Rect (CX - 1, CY + 1, CX - 1 + GS, CY + 1 + GS,
+                        Win_Face);
+             Outline (CX - 1, CY + 1, GS);   --  front, lower-left
+       end case;
+    end Draw_Gadget;
 
    ------------------------------------------------------------------
    --  Band compositor: desktop -> windows (bottom to top) -> bar
@@ -402,12 +440,20 @@ procedure Bureau is
       --  Frame: 2px dark border + raised bevel ring.
       Fill_Rect (FX, FY, FX + FW, FY + FH, Border);
       Bevel (FX + 2, FY + 2, FX + FW - 2, FY + FH - 2);
-      --  Title bar + gadgets + title text.
+      --  Title bar + gadgets + title text. Gadgets are the full
+      --  title-band height, flush against the frame's inner
+      --  edges (Workbench): close left; zoom + depth right,
+      --  depth outermost. Silly-narrow windows skip the right
+      --  pair rather than overlap the title.
       Fill_Rect (FX + Frame, Title_Y,
                  FX + FW - Frame, Title_Y + Title_H, Title_C);
-      Draw_Gadget (FX + Frame + 2, Title_Y + 2, Title_H - 4);
-      Draw_Gadget (FX + FW - Frame - Title_H + 2, Title_Y + 2,
-                   Title_H - 4);
+      Draw_Gadget (FX + Frame, Title_Y, Title_H, Gad_Close);
+      if FW >= 2 * Frame + 3 * Title_H then
+         Draw_Gadget (FX + FW - Frame - 2 * Title_H, Title_Y,
+                      Title_H, Gad_Zoom);
+         Draw_Gadget (FX + FW - Frame - Title_H, Title_Y,
+                      Title_H, Gad_Depth);
+      end if;
       if Wins (S).Title_Len > 0 then
          Draw_Text (FX + Frame + Title_H + 8, Title_Y + 2,
                     Wins (S).Title (1 .. Wins (S).Title_Len),
@@ -557,20 +603,25 @@ procedure Bureau is
             end if;
          end;
       end loop;
-      --  Screen bar (always on top) + right-side depth gadget,
-      --  RTC clock beside it (milestone 61), then the menu
-      --  titles/dropdown when one is active.
-      Fill_Rect (0, 0, Width, Bar_H, Bar_Face);
-      Fill_Rect (0, Bar_H, Width, Bar_H + 1, Bevel_Lo);
-      if Bar_Ack then
-         Fill_Rect (4, 1, 60, Bar_H - 1, Title_Blue);
-         Draw_Text (8, 5, "Bureau", Title_Text, Title_Blue,
-                    Stretch => 1);
-      else
-         Draw_Text (8, 5, "Bureau", Text_Dark, Bar_Face,
-                    Stretch => 1);
-      end if;
-      Draw_Gadget (Width - 24, 1, 16);
+       --  Screen bar (always on top) + right-side depth gadget,
+       --  RTC clock beside it (milestone 61), then the menu
+       --  titles/dropdown when one is active. While a menu is
+       --  open the "Bureau" screen title is REPLACED by the menu
+       --  titles (Workbench: the bar shows menus, not the screen
+       --  name); Bar_Ack only exists when no menu can open.
+       Fill_Rect (0, 0, Width, Bar_H, Bar_Face);
+       Fill_Rect (0, Bar_H, Width, Bar_H + 1, Bevel_Lo);
+       if Menu_Mode = M_Hidden then
+          if Bar_Ack then
+             Fill_Rect (4, 1, 60, Bar_H - 1, Title_Blue);
+             Draw_Text (8, 5, "Bureau", Title_Text, Title_Blue,
+                        Stretch => 1);
+          else
+             Draw_Text (8, 5, "Bureau", Text_Dark, Bar_Face,
+                        Stretch => 1);
+          end if;
+       end if;
+       Draw_Gadget (Width - 24, 1, 16, Gad_Depth);
       Draw_Text (Width - Clock_X0, 5, Clock_Text,
                  Text_Dark, Bar_Face, Stretch => 1);
       Draw_Menus;
@@ -639,11 +690,30 @@ procedure Bureau is
       if Idx = 0 then
          return;
       end if;
-      for I in Idx .. Z_N - 1 loop
-         Z (I) := Z (I + 1);
-      end loop;
-      Z (Z_N) := S;
-   end Raise_Slot;
+       for I in Idx .. Z_N - 1 loop
+          Z (I) := Z (I + 1);
+       end loop;
+       Z (Z_N) := S;
+    end Raise_Slot;
+
+    --  Move a slot to the bottom of the z-order (depth gadget).
+    procedure Lower_Slot (S : Natural) is
+       Idx : Natural := 0;
+    begin
+       for I in 1 .. Z_N loop
+          if Z (I) = S then
+             Idx := I;
+             exit;
+          end if;
+       end loop;
+       if Idx = 0 then
+          return;
+       end if;
+       for I in reverse 2 .. Idx loop
+          Z (I) := Z (I - 1);
+       end loop;
+       Z (1) := S;
+    end Lower_Slot;
 
    procedure Focus_Slot (S : Natural) is
       Old : constant Natural := Focus;
@@ -756,47 +826,86 @@ procedure Bureau is
       Composite_Band (X0, Y0, X1, Y1);
    end Drag_Move;
 
-   --  Click-to-focus (slice b): button0 press inside a window
-   --  raises it to the top and gives it the keys; a press in
-   --  the title band also grabs the window for dragging.
-   procedure Forward_Close (S : Natural);
-   procedure Pointer_Press (PX, PY : U64) is
-   begin
-      for I in reverse 1 .. Z_N loop
-         declare
-            S : constant Natural := Z (I);
-         begin
-            if PX >= Wins (S).X
-              and then PX < Wins (S).X + Wins (S).FW
-              and then PY >= Wins (S).Y
-              and then PY < Wins (S).Y + Wins (S).FH
-            then
-               if I /= Z_N then
-                  Raise_Slot (S);
-                  Repaint_Window (S);
-               end if;
-               Focus_Slot (S);
-               if PY < Wins (S).Y + Frame + Title_H then
-                  --  Title band: the LEFT gadget is close
-                  --  (CLOSEWINDOW to the client, no drag);
-                  --  anywhere else grabs the window.
-                  if PX >= Wins (S).X + Frame + 2
-                    and then PX < Wins (S).X + Frame + 2 + Title_H - 4
-                    and then PY >= Wins (S).Y + Frame + 2
-                    and then PY < Wins (S).Y + Frame + 2 + Title_H - 4
-                  then
-                     Forward_Close (S);
-                  else
-                     Drag_Slot := S;
-                     Drag_DX := PX - Wins (S).X;
-                     Drag_DY := PY - Wins (S).Y;
-                  end if;
-               end if;
-               return;
-            end if;
-         end;
-      end loop;
-   end Pointer_Press;
+    --  Click-to-focus (slice b): button0 press inside a window
+    --  raises it to the top and gives it the keys; a press in
+    --  the title band also grabs the window for dragging.
+    --  Gadget presses are Bureau's own: they set Eat_Gesture so
+    --  the gesture is never captured or forwarded (a send-to-back
+    --  moves the focus — the point can land inside the NEW front
+    --  window's content).
+    procedure Forward_Close (S : Natural);
+    procedure Pointer_Press (PX, PY : U64) is
+    begin
+       for I in reverse 1 .. Z_N loop
+          declare
+             S : constant Natural := Z (I);
+          begin
+             if PX >= Wins (S).X
+               and then PX < Wins (S).X + Wins (S).FW
+               and then PY >= Wins (S).Y
+               and then PY < Wins (S).Y + Wins (S).FH
+             then
+                --  Depth gadget (right, outermost): WB toggle
+                --  semantics — already at the back pops the
+                --  window to the front, otherwise it drops
+                --  behind everything. Handled BEFORE the raise
+                --  below: a send-to-back must not raise first.
+                if Wins (S).FW >= 2 * Frame + 3 * Title_H
+                  and then PY >= Wins (S).Y + Frame
+                  and then PY < Wins (S).Y + Frame + Title_H
+                  and then PX >= Wins (S).X + Wins (S).FW - Frame
+                    - Title_H
+                  and then PX < Wins (S).X + Wins (S).FW - Frame
+                then
+                   Eat_Gesture := True;
+                   if Z (1) = S then
+                      Raise_Slot (S);
+                      Focus_Slot (S);
+                   else
+                      Lower_Slot (S);
+                      if Z_N > 0 then
+                         Focus_Slot (Z (Z_N));
+                      end if;
+                   end if;
+                   Repaint_Window (S);
+                   return;
+                end if;
+                if I /= Z_N then
+                   Raise_Slot (S);
+                   Repaint_Window (S);
+                end if;
+                Focus_Slot (S);
+                if PY < Wins (S).Y + Frame + Title_H then
+                   --  Title band: the LEFT gadget is close
+                   --  (CLOSEWINDOW to the client, no drag); the
+                   --  zoom gadget is inert until the resize
+                   --  handshake lands; anywhere else grabs the
+                   --  window. Gadgets are full band height.
+                   if PX >= Wins (S).X + Frame
+                     and then PX < Wins (S).X + Frame + Title_H
+                     and then PY >= Wins (S).Y + Frame
+                   then
+                      Eat_Gesture := True;
+                      Forward_Close (S);
+                   elsif Wins (S).FW >= 2 * Frame + 3 * Title_H
+                     and then PX >= Wins (S).X + Wins (S).FW - Frame
+                       - 2 * Title_H
+                     and then PX < Wins (S).X + Wins (S).FW - Frame
+                       - Title_H
+                     and then PY >= Wins (S).Y + Frame
+                   then
+                      Eat_Gesture := True;  --  zoom: inert here
+                   else
+                      Drag_Slot := S;
+                      Drag_DX := PX - Wins (S).X;
+                      Drag_DY := PY - Wins (S).Y;
+                   end if;
+                end if;
+                return;
+             end if;
+          end;
+       end loop;
+    end Pointer_Press;
 
    --  Enqueue one focused key into the focused window's input
    --  queue and signal its notification (v3: shared memory +
@@ -905,9 +1014,9 @@ procedure Bureau is
 
    --  Lay out the bar title cells (fixed while a menu is open:
    --  focus cannot change — every pointer event is consumed).
-   procedure Menu_Layout is
-      X : U64 := 64;  --  after the "Bureau" screen title
-   begin
+    procedure Menu_Layout is
+       X : U64 := 8;  --  in place of the hidden "Bureau" title
+    begin
       for M in 1 .. Wins (Menu_Slot).Menu_Count loop
          Title_X (M) := X;
          Title_W (M) :=
@@ -1669,8 +1778,8 @@ begin
             Buttons : constant U64 := Message.Words (2);
             LMB : constant Boolean := (Buttons and 1) /= 0;
             LMB_Was : constant Boolean := (Prev_Buttons and 1) /= 0;
-            RMB : constant Boolean := (Buttons and 2) /= 0;
-            RMB_Was : constant Boolean := (Prev_Buttons and 2) /= 0;
+             RMB : constant Boolean := (Buttons and 2) /= 0;
+             RMB_Was : constant Boolean := (Prev_Buttons and 2) /= 0;
          begin
             --  Erase first: a drag repaint would make the
             --  saved under-rect stale.
@@ -1728,25 +1837,26 @@ begin
                Bar_Ack := False;
                Composite_Band (0, 0, 64, Bar_H + 1);
             end if;
-            if (Buttons and 1) = 1
-              and then (Prev_Buttons and 1) = 0
-            then
-               Pointer_Press (NX, NY);
-               --  v4: a press inside the focused window's content
-               --  captures the pointer until release. Title-band
-               --  presses (drag/close) do NOT capture — Bureau
-               --  owns those.
-               if Focus /= 0 and then Wins (Focus).Queue_Cap /= 0
-                 and then Drag_Slot = 0
-                 and then NX >= Wins (Focus).X + Frame
-                 and then NX < Wins (Focus).X + Frame +
-                   Wins (Focus).PW
-                 and then NY >= Wins (Focus).Y + Frame + Title_H
-                 and then NY < Wins (Focus).Y + Frame + Title_H +
-                   Wins (Focus).PH
-               then
-                  Capture := Focus;
-               end if;
+             if (Buttons and 1) = 1
+               and then (Prev_Buttons and 1) = 0
+             then
+                Pointer_Press (NX, NY);
+                --  v4: a press inside the focused window's content
+                --  captures the pointer until release. Title-band
+                --  presses (drag/close/depth/zoom) do NOT capture
+                --  — Bureau owns those.
+                if not Eat_Gesture
+                  and then Focus /= 0 and then Wins (Focus).Queue_Cap /= 0
+                  and then Drag_Slot = 0
+                  and then NX >= Wins (Focus).X + Frame
+                  and then NX < Wins (Focus).X + Frame +
+                    Wins (Focus).PW
+                  and then NY >= Wins (Focus).Y + Frame + Title_H
+                  and then NY < Wins (Focus).Y + Frame + Title_H +
+                    Wins (Focus).PH
+                then
+                   Capture := Focus;
+                end if;
             elsif (Buttons and 1) = 1 and then Drag_Slot /= 0 then
                Drag_Move (NX, NY);
             elsif (Buttons and 1) = 0 then
@@ -1754,16 +1864,21 @@ begin
             end if;
             Prev_Buttons := Buttons;
             Cursor_Draw (NX, NY);
-            --  Focused-client delivery happens after focus/
-            --  raise/drag so a content click lands with the new
-            --  focus already in place. Shared-mem enqueue +
-            --  signal only — never a rendezvous.
-            Forward_Pointer (NX, NY, Buttons);
-            --  v4: the release event above is the LAST captured
-            --  delivery; clear capture after it.
-            if (Buttons and 1) = 0 then
-               Capture := 0;
-            end if;
+             --  Focused-client delivery happens after focus/
+             --  raise/drag so a content click lands with the new
+             --  focus already in place. Shared-mem enqueue +
+             --  signal only — never a rendezvous. Gadget
+             --  gestures stay Bureau's.
+             if not Eat_Gesture then
+                Forward_Pointer (NX, NY, Buttons);
+             end if;
+             --  v4: the release event above is the LAST captured
+             --  delivery; clear capture after it. A gadget
+             --  gesture ends here too.
+             if (Buttons and 1) = 0 then
+                Capture := 0;
+                Eat_Gesture := False;
+             end if;
             end if;
          end;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
