@@ -90,7 +90,7 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  adaint.c __gnat_rename patch silently never linked).
 RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
-.PHONY: all kernel rts userspace $(CRATES) initrd run test clean clean-kernel clean-rts clean-userspace clean-initrd new-crate FORCE
+.PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
@@ -318,7 +318,10 @@ endif
 $(INIT_ELF):
 	$(MAKE) -C userspace/init
 
-run: all $(DISK_IMG)
+#  SKIP_DISK=1 skips the disk-image dependency (test-replay
+#  injects a dirty journal into the built image; a rebuild would
+#  wipe it).
+run: all $(if $(SKIP_DISK),,$(DISK_IMG))
 	$(QEMU) \
 	  -semihosting \
 	  -machine virt,iommu-sys=on \
@@ -356,9 +359,36 @@ test:
 	  test ! -e $(SHARE_DIR)/host_delete_me.txt || { echo "FAIL host share guest delete not visible on host"; ST=1; }; \
 	fi; \
 	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
+	BEFS_START=$$(sgdisk -i 2 $(DISK_IMG) | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
+	python3 tools/befs_dump.py $(DISK_IMG) $$((BEFS_START * 512)) > $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs post-test dump unparsable"; ST=1; }; \
+	grep -q "(empty)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs log not checkpointed after test"; ST=1; }; \
+	grep -q "README.TXT  (36 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs README missing after test"; ST=1; }; \
+	grep -q "HELLO.TXT  (24 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs HELLO missing after test"; ST=1; }; \
+	grep -q "  name: 5 entries" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs name index out of sync after test"; ST=1; }; \
+	if [ $$ST -eq 0 ]; then echo "befs post-test image check ok"; fi; \
 	exit $$ST
 
 clean: clean-kernel clean-rts clean-userspace clean-initrd
+
+#  m82e: journal replay end-to-end. Injects a pending transaction
+#  into the BeFS partition (tools/befs_mkdirty.py — README.TXT's
+#  own data block re-journaled with identical content, superblock
+#  DIRT), boots the fuzz suite: the mount must replay it
+#  ("bfs: journal replayed"), every check must pass unchanged, and
+#  the image must be checkpointed clean afterwards.
+test-replay: $(DISK_IMG)
+	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
+	PID=$$!; \
+	BEFS_START=$$(sgdisk -i 2 $(DISK_IMG) | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
+	python3 tools/befs_mkdirty.py $(DISK_IMG) $$((BEFS_START * 512)) || { kill $$PID; exit 1; }; \
+	$(MAKE) run INITRD_MODE=test SKIP_DISK=1 > $(INITRD_OUT)/replay.log 2>&1; \
+	kill $$PID 2>/dev/null; wait $$PID 2>/dev/null; \
+	grep -q "bfs: journal replayed" $(INITRD_OUT)/replay.log || { echo "FAIL journal replay not observed"; exit 1; }; \
+	grep -q "fuzz complete" $(INITRD_OUT)/replay.log || { echo "FAIL fuzz suite did not complete"; exit 1; }; \
+	test "$$(grep -c '^FAIL' $(INITRD_OUT)/replay.log)" = 0 || { echo "FAIL fuzz checks failed after replay"; exit 1; }; \
+	BEFS_START=$$(sgdisk -i 2 $(DISK_IMG) | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
+	python3 tools/befs_dump.py $(DISK_IMG) $$((BEFS_START * 512)) | grep -q "(empty)" || { echo "FAIL log not clean after replay"; exit 1; }; \
+	echo "journal replay test ok"
 
 clean-kernel:
 	alr clean

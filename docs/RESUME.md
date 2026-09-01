@@ -99,7 +99,7 @@ block_cache API churn between the pinned snapshot and master).
 Plan: M82a C++ toolchain gate (built, proven, then dropped with the
 vendoring route); M82b host-side mkbefs fixture + second GPT
 partition; M82c pure-Ada BFS server (read-only); M82d attribute
-ops on the wire (19/20, done); M82e R/W + journal; M82f
+ops on the wire (19/20, done); M82e R/W + journal (done); M82f
 indices/query discussion.
 
 - **M82a reverted**: the xPack g++ gate was built and proven
@@ -139,7 +139,7 @@ indices/query discussion.
   frame and inline tests overflowed the 12-page user stack inside
   the ZCX unwinder. 1577 PASS / 0 FAIL.
 
-- **M82d done** (this commit): attribute ops on the wire,
+- **M82d done**: attribute ops on the wire,
   append-only — Op_Attr_List = 19 (path words 0..3, index w4 ->
   status, type fourcc, data size, name[24]) and Op_Attr_Read = 20
   (path words 0..3, attr name words 4..5, buffer cap -> status,
@@ -161,6 +161,57 @@ indices/query discussion.
   whole-attr reads of BEOS:TYPE/META:comment/root be:volume_id,
   empty list, unknown attr/file, fat rejection). 1591 PASS /
   0 FAIL.
+
+- **M82e done** (this commit): journaled write path. Every
+  mutating wire op is ONE journal transaction, WAL-ordered in
+  Haiku's log format (Journal.cpp): modified blocks snapshot into
+  the transaction, a run_array block {count, max_runs=127, merged
+  sorted destination runs} + contents land in the 512-block log at
+  log_end, the superblock goes DIRT ('DIRT' at 512+84) with the
+  new log_end, blocks write to their destinations, then the
+  superblock goes CLEN with log_start = log_end (immediate
+  checkpoint — the log never accumulates). Mount replays a
+  non-empty log (log offsets are positions within the log area,
+  mod log length) before serving. Block allocator = first-fit over
+  bitmap block 1 (bit i = block i, lsb-first) with a scan hint;
+  used_blocks persists in the clean superblock write (engine-side
+  Used_Pending delta folds in at commit). Btrees stay SINGLE-LEAF
+  (no node splits): leaf insert/remove decode-sort-rebuild the
+  node, duplicate keys allowed after existing equals (the name
+  index needs them); a leaf without room fails the op with
+  Bad_Args — fixture-scale directories never approach it. File
+  data lives in the 12 direct runs only (indirect streams refuse
+  delete/truncate, growth past 12 runs fails). Ops: Write
+  (create-in-parent like fat32, no sparse, RMW partial blocks,
+  grow-by-whole-runs with merge-when-contiguous), Delete, Truncate,
+  Mkdir, Rmdir (empty-only), Rename (move across dirs, ".." fixup,
+  own-subtree guard via ".." walk, small_data name attr rebuilt
+  in place). Create/delete/rename keep the NAME index in sync
+  (mtime/size indices still untouched — M82f material). Timestamps
+  from Syscalls.Read_Clock (secs << 16; fixture epoch when no
+  RTC). KEY BUG found by the fuzz round: uncommitted block
+  modifications lived only in evictable cache slots, so a mid-
+  transaction re-read could pull stale disk contents — Get_Block
+  now overlays the open transaction's snapshots onto fresh disk
+  reads. fuzz Bfs_Tests grew the idempotent write block (leftover
+  cleanup first, full cleanup at the end; free-space must round-
+  trip exactly = no leaked blocks): create-by-write, append,
+  sparse rejection, bad-parent rejection, mkdir/dup-mkdir,
+  nested write + readdir, rmdir non-empty rejection, delete,
+  rename, cross-dir move with content intact, subtree-move
+  rejection, truncate, fixture-intact re-check. `make test` now
+  host-validates the mutated image with tools/befs_dump.py
+  (parsable, log empty, README/HELLO intact, name index back to
+  5 entries). New `make test-replay`: tools/befs_mkdirty.py
+  injects a pending transaction (README's data block re-journaled
+  with identical content, superblock DIRT) into the built image,
+  boots the suite with SKIP_DISK=1 (new `run` escape hatch — the
+  image rule's phony crate deps would otherwise rebuild it and
+  wipe the injection), and requires "bfs: journal replayed" +
+  0 FAIL + clean log afterwards. NOTE: `make test`/`run` always
+  rebuild disk.img (phony deps), so each boot starts from a fresh
+  fixture — fuzz idempotency is belt-and-braces. 1614 PASS /
+  0 FAIL, replay test green.
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working

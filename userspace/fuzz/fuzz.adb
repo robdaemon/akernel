@@ -580,7 +580,7 @@ begin
       Tries         : Natural := 0;
       Match         : Boolean;
 
-      --  m82c: BD1 BeFS volume tests.  These live in their own
+      --  m82c/m82e: BD1 BeFS volume tests.  These live in their own
       --  procedure so their locals do NOT inflate this block's
       --  static frame — sibling declare-block locals accumulate
       --  in the parent frame, and the 12-page user stack (hard
@@ -758,24 +758,238 @@ begin
                    "bfs dir stat reports is-dir");
          end;
 
-         --  Read-only mount: every mutating op answers Bad_Args.
-         Status := Akernel_User.Files.Write
-           ("BD1:NEWFILE.TXT", 0, Buf'Address, 4, Count);
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
-                "bfs write rejected");
+         --  Write path (m82e): journaled create/write/rename/
+         --  delete/truncate through the same wire ops. The block
+         --  is idempotent across runs: leftovers from a previous
+         --  boot are removed first, and everything created here
+         --  is deleted again at the end (the free-space counter
+         --  must round-trip exactly — no leaked blocks).
+         declare
+            Free_Before : U64 := 0;
+            Total_T     : U64;
+            Block_T     : U64;
+         begin
+            Status := Akernel_User.Files.Volume_Info
+              ("BD1:", Total_T, Free_Before, Block_T);
 
-         Status := Akernel_User.Files.Delete ("BD1:README.TXT");
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
-                "bfs delete rejected");
+            --  Cleanup of possible leftovers (statuses ignored).
+            Status := Akernel_User.Files.Delete ("BD1:AKFILE.TXT");
+            Status := Akernel_User.Files.Delete
+              ("BD1:MKTEST/INNER.TXT");
+            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+            Status := Akernel_User.Files.Delete
+              ("BD1:RENDIR/MOVED.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:REN.B");
+            Status := Akernel_User.Files.Rmdir ("BD1:RENDIR");
 
-         Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
-                "bfs mkdir rejected");
+            --  Create-by-write, then read back.
+            declare
+               Payload : constant String := "AKBEFS!";
+            begin
+               for I in 0 .. 6 loop
+                  Buf (I) := Interfaces.Unsigned_8
+                    (Character'Pos (Payload (I + 1)));
+               end loop;
+            end;
+            Status := Akernel_User.Files.Write
+              ("BD1:AKFILE.TXT", 0, Buf'Address, 7, Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Count = 7,
+                   "bfs write creates file");
 
-         Status := Akernel_User.Files.Rename
-           ("BD1:README.TXT", "BD1:R.TXT");
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
-                "bfs rename rejected");
+            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Size = 7,
+                   "bfs created file stats");
+
+            Status := Akernel_User.Files.Read
+              ("BD1:AKFILE.TXT", 0, Buf'Address, 16, Count);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 7;
+            declare
+               Payload : constant String := "AKBEFS!";
+            begin
+               for I in 0 .. 6 loop
+                  Match := Match
+                    and then Buf (I) = Interfaces.Unsigned_8
+                      (Character'Pos (Payload (I + 1)));
+               end loop;
+            end;
+            Check (Match, "bfs created file reads back");
+
+            --  Extend at EOF (append into the same block).
+            Status := Akernel_User.Files.Write
+              ("BD1:AKFILE.TXT", 7, Buf'Address, 7, Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Count = 7,
+                   "bfs append ok");
+            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Size = 14,
+                   "bfs appended size");
+
+            --  Sparse write rejected (offset past EOF).
+            Status := Akernel_User.Files.Write
+              ("BD1:AKFILE.TXT", 100, Buf'Address, 4, Count);
+            Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+                   "bfs sparse write rejected");
+
+            --  Write into a missing directory rejected.
+            Status := Akernel_User.Files.Write
+              ("BD1:NOSUCH/F.TXT", 0, Buf'Address, 4, Count);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs write with bad parent rejected");
+
+            --  Mkdir, nested file, readdir, rmdir lifecycle.
+            Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs mkdir ok");
+            Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "bfs mkdir existing rejected");
+
+            Status := Akernel_User.Files.Write
+              ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 7, Count);
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs nested write ok");
+
+            declare
+               Ent     : String (1 .. 24);
+               Ent_L   : Natural;
+               Ent_Dir : Boolean;
+               Ent_Sz  : U64;
+            begin
+               Status := Akernel_User.Files.Read_Dir
+                 ("BD1:MKTEST", 0, Ent, Ent_L, Ent_Dir, Ent_Sz);
+               Check (Status = Akernel_User.Files.Status_Ok
+                      and then Ent_L = 9
+                      and then Ent (1 .. 9) = "INNER.TXT"
+                      and then not Ent_Dir and then Ent_Sz = 7,
+                      "bfs mkdir entry visible in readdir");
+            end;
+
+            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "bfs rmdir non-empty rejected");
+
+            Status := Akernel_User.Files.Delete
+              ("BD1:MKTEST/INNER.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs delete ok");
+            Status := Akernel_User.Files.Stat
+              ("BD1:MKTEST/INNER.TXT", Size);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs deleted file gone");
+
+            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs rmdir empty ok");
+
+            --  Rename in place, then move across directories.
+            Status := Akernel_User.Files.Rename
+              ("BD1:AKFILE.TXT", "BD1:REN.B");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs rename ok");
+            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs rename source gone");
+            Status := Akernel_User.Files.Stat ("BD1:REN.B", Size);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Size = 14,
+                   "bfs rename target keeps data");
+
+            Status := Akernel_User.Files.Mkdir ("BD1:RENDIR");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs mkdir for move ok");
+            Status := Akernel_User.Files.Rename
+              ("BD1:REN.B", "BD1:RENDIR/MOVED.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs move across dirs ok");
+
+            Status := Akernel_User.Files.Read
+              ("BD1:RENDIR/MOVED.TXT", 0, Buf'Address, 16, Count);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 14;
+            declare
+               Payload : constant String := "AKBEFS!AKBEFS!";
+            begin
+               for I in 0 .. 13 loop
+                  Match := Match
+                    and then Buf (I) = Interfaces.Unsigned_8
+                      (Character'Pos (Payload (I + 1)));
+               end loop;
+            end;
+            Check (Match, "bfs moved file content intact");
+
+            --  A directory cannot move into its own subtree.
+            Status := Akernel_User.Files.Rename
+              ("BD1:RENDIR", "BD1:RENDIR/SUB");
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "bfs rename into own subtree rejected");
+
+            --  Truncate to zero.
+            Status := Akernel_User.Files.Truncate
+              ("BD1:RENDIR/MOVED.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs truncate ok");
+            Status := Akernel_User.Files.Stat
+              ("BD1:RENDIR/MOVED.TXT", Size);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Size = 0,
+                   "bfs truncated size zero");
+
+            --  Final cleanup: the volume returns to fixture state.
+            Status := Akernel_User.Files.Delete
+              ("BD1:RENDIR/MOVED.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs moved file deleted");
+            Status := Akernel_User.Files.Rmdir ("BD1:RENDIR");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs rendir removed");
+
+            --  No leaked blocks: free space round-trips.
+            declare
+               Total2 : U64;
+               Free2  : U64;
+               Block2 : U64;
+            begin
+               Status := Akernel_User.Files.Volume_Info
+                 ("BD1:", Total2, Free2, Block2);
+               Check (Status = Akernel_User.Files.Status_Ok
+                      and then Free_Before /= 0
+                      and then Free2 = Free_Before,
+                      "bfs write path leaks no blocks");
+            end;
+
+            --  The fixture tree survived all mutations.
+            declare
+               Ent     : String (1 .. 24);
+               Ent_L   : Natural;
+               Ent_Dir : Boolean;
+               Ent_Sz  : U64;
+               Seen    : Natural := 0;
+            begin
+               for Index in 0 .. 40 loop
+                  Status := Akernel_User.Files.Read_Dir
+                    ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+                  exit when Status /= Akernel_User.Files.Status_Ok;
+                  if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT"
+                  then
+                     Seen := Seen + 1;
+                  elsif Ent_L = 6 and then Ent (1 .. 6) = "SUBDIR" then
+                     Seen := Seen + 1;
+                  elsif Ent_L = 12
+                    and then Ent (1 .. 12) = "FRAGMENT.BIN"
+                  then
+                     Seen := Seen + 1;
+                  elsif Ent_L = 9 and then Ent (1 .. 9) = "EMPTY.TXT"
+                  then
+                     Seen := Seen + 1;
+                  end if;
+               end loop;
+               Check (Seen = 4, "bfs fixture intact after writes");
+            end;
+         end;
 
          Status := Akernel_User.Files.Sync;
          Check (Status = Akernel_User.Files.Status_Ok,

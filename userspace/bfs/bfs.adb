@@ -1,13 +1,11 @@
---  akernel BeFS server (milestone 82c): pure-Ada read-only BeFS
---  (Bfs_Engine) over the partition endpoint, behind the file
---  server's VFS. This unit is the wire-protocol front — console,
---  block RPC bounce buffer, fs protocol dispatch — in the same
---  shape as fat32.adb.
+--  akernel BeFS server (milestone 82c read, 82e journaled write):
+--  pure-Ada BeFS (Bfs_Engine) over the partition endpoint, behind
+--  the file server's VFS. This unit is the wire-protocol front —
+--  console, block RPC bounce buffer, fs protocol dispatch — in
+--  the same shape as fat32.adb.
 --
 --  Handles: 1 = console endpoint, 2 = partN endpoint (badged
 --  partition send cap), 3 = svc EP.
---
---  Read-only: write-family ops answer Status_Bad_Args.
 
 with Akernel_User.Console;
 with Akernel_User.Syscalls;
@@ -19,6 +17,7 @@ with System.Storage_Elements;
 procedure Bfs is
    package Syscalls renames Akernel_User.Syscalls;
    use type Syscalls.U64;
+   use type Interfaces.Unsigned_8;
    use System.Storage_Elements;
 
    subtype U64 is Syscalls.U64;
@@ -349,7 +348,150 @@ procedure Bfs is
       end if;
    end Handle_Attr_Read;
 
-   procedure Handle_Volume_Info is
+    ------------------------------------------------------------------
+    --  Write path (m82e)
+    ------------------------------------------------------------------
+
+    --  Op_Write: word 0 = offset, word 1 = length, words 2..5 =
+    --  path, cap slot 0 = buffer mem object (the bytes move FROM
+    --  it). Creates missing files when the parent resolves.
+    procedure Handle_Write is
+       Offset : constant U64 := Syscalls.Message.Words (0);
+       Length : constant U64 := Syscalls.Message.Words (1);
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Count  : U64 := 0;
+       Status : U64 := Status_Ok;
+       Mapped : Boolean := False;
+    begin
+       if Buf = 0 or else Length = 0 then
+          Status := Status_Bad_Args;
+       else
+          declare
+             Path : constant String := Path_Of (2);
+             Len  : U64;
+          begin
+             if Path'Length = 0 then
+                Status := Status_Bad_Args;
+             elsif Syscalls.Mem_Map
+               (Address_Space => Syscalls.Address_Space_Cap,
+                Cap           => Buf,
+                VA            => Buf_Win_VA,
+                Offset        => 0,
+                Length        => Buf_Bytes,
+                Flags         => 3) /= 0
+             then
+                Status := Status_Not_Found;
+             else
+                Mapped := True;
+                Len := U64'Min (Length, Buf_Bytes);
+                Status := Bfs_Engine.Write
+                  (Path, Offset,
+                   To_Address (Integer_Address (Buf_Win_VA)), Len);
+                if Status = Status_Ok then
+                   Count := Len;
+                end if;
+             end if;
+          end;
+       end if;
+
+       if Buf /= 0 then
+          if Mapped
+            and then Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+          end if;
+       end if;
+       Reply2 (Status, Count);
+    end Handle_Write;
+
+    --  Path-only mutating ops: Delete, Truncate, Mkdir, Rmdir.
+    procedure Handle_Path_Op is
+       Op : constant U64 := Syscalls.Message.Label;
+       RC : U64;
+    begin
+       declare
+          Path : constant String := Path_Of (0);
+       begin
+          if Path'Length = 0 then
+             Reply2 (Status_Bad_Args, 0);
+             return;
+          end if;
+          if Op = Op_Delete then
+             RC := Bfs_Engine.Delete (Path);
+          elsif Op = Op_Truncate then
+             RC := Bfs_Engine.Truncate (Path);
+          elsif Op = Op_Mkdir then
+             RC := Bfs_Engine.Mkdir (Path);
+          else
+             RC := Bfs_Engine.Rmdir (Path);
+          end if;
+       end;
+       Reply2 (RC, 0);
+    end Handle_Path_Op;
+
+    --  Op_Rename: FROM path in words 0..5, bare TO path NUL-
+    --  terminated in the buffer (cap slot 0), same as fat32.
+    procedure Handle_Rename is
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Status : U64 := Status_Ok;
+       Mapped : Boolean := False;
+       Win    : array (0 .. 47) of Interfaces.Unsigned_8
+         with Address => To_Address (Integer_Address (Buf_Win_VA));
+    begin
+       declare
+          From   : constant String := Path_Of (0);
+          To     : String (1 .. 32);
+          To_Len : Natural := 0;
+       begin
+          if From'Length = 0 or else Buf = 0 then
+             Status := Status_Bad_Args;
+          elsif Syscalls.Mem_Map
+            (Address_Space => Syscalls.Address_Space_Cap,
+             Cap           => Buf,
+             VA            => Buf_Win_VA,
+             Offset        => 0,
+             Length        => Buf_Bytes,
+             Flags         => 3) /= 0
+          then
+             Status := Status_Not_Found;
+          else
+             Mapped := True;
+             for I in 0 .. 31 loop
+                exit when Win (I) = Interfaces.Unsigned_8 (0);
+                To_Len := To_Len + 1;
+                To (To_Len) := Character'Val (Natural (Win (I)));
+             end loop;
+             if To_Len = 0 then
+                Status := Status_Bad_Args;
+             else
+                Status := Bfs_Engine.Rename (From, To (1 .. To_Len));
+             end if;
+          end if;
+       end;
+
+       if Buf /= 0 then
+          if Mapped
+            and then Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+          end if;
+       end if;
+       Reply2 (Status, 0);
+    end Handle_Rename;
+
+    procedure Handle_Volume_Info is
       Total : U64;
       Free  : U64;
       Block : U64;
@@ -431,14 +573,16 @@ begin
          else
             Reply2 (Status_Bad_Args, 0);
          end if;
-      elsif Syscalls.Message.Label = Op_Write
-        or else Syscalls.Message.Label = Op_Delete
+      elsif Syscalls.Message.Label = Op_Write then
+         Handle_Write;
+      elsif Syscalls.Message.Label = Op_Delete
         or else Syscalls.Message.Label = Op_Truncate
         or else Syscalls.Message.Label = Op_Mkdir
         or else Syscalls.Message.Label = Op_Rmdir
-        or else Syscalls.Message.Label = Op_Rename
       then
-         Reply2 (Status_Bad_Args, 0);  --  read-only mount
+         Handle_Path_Op;
+      elsif Syscalls.Message.Label = Op_Rename then
+         Handle_Rename;
       else
          Reply2 (Status_Bad_Args, 0);
       end if;
