@@ -63,7 +63,7 @@ Abstract root. Concrete widgets override `Draw`; containers override
 | `On_Pointer (W : access Widget; K : Pointer_Kind; PX, PY : U64) return Boolean` | pointer event; default unconsumed |
 | `On_Key (W : access Widget; Code : U64) return Boolean` | key event; default unconsumed |
 | `Inside (W : Widget; PX, PY : U64) return Boolean` | hit test against `W`'s rect |
-| `Dirty_Union` / `Clear_Dirty` / `Intersects` | damage-band bookkeeping |
+| `Dirty_List` / `Dirty_Union` / `Clear_Dirty` / `Intersects` | damage-band bookkeeping |
 
 `Pointer_Kind` is `Move`, `Press`, or `Release`.
 

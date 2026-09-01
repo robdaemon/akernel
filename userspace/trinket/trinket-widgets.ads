@@ -6,8 +6,9 @@ with Trinket.Images;
 --
 --  Geometry: X/Y/W/H are window-content-absolute, assigned by the
 --  parent's Layout. Damage: a widget sets Dirty when its look
---  changes; the window unions dirty rects, clips, redraws, and
---  pushes one Surface_Update band per frame.
+--  changes; the window collects the dirty rects (Dirty_List,
+--  union fallback), clips, redraws, and pushes one Surface_Update
+--  per band.
 package Trinket.Widgets is
    use type Trinket.U64;
 
@@ -38,11 +39,30 @@ package Trinket.Widgets is
 
    function Inside (W : Widget; PX, PY : U64) return Boolean;
 
-   function Dirty_Union
-     (W : Widget; X0, Y0, X1, Y1 : out U64) return Boolean;
-   --  True + union rect when this subtree has dirty widgets.
+    function Dirty_Union
+      (W : Widget; X0, Y0, X1, Y1 : out U64) return Boolean;
+    --  True + union rect when this subtree has dirty widgets.
 
-   procedure Clear_Dirty (W : in out Widget);
+    --  Fine-grained damage: Dirty_List appends each dirty
+    --  widget's rect instead of unioning the whole subtree —
+    --  two distant dirty widgets no longer repaint everything
+    --  between them (the old union made a maximized window copy
+    --  near its whole pane when e.g. text + scrollbar were dirty
+    --  together). Intersecting rects merge; more than
+    --  Max_Damage disjoint rects sets Overflow and the caller
+    --  falls back to Dirty_Union (one band, the old behavior).
+    type Rect is record
+       X0, Y0, X1, Y1 : U64;
+    end record;
+    Max_Damage : constant := 8;
+    type Rect_Array is array (1 .. Max_Damage) of Rect;
+    procedure Dirty_List
+      (W        : Widget;
+       Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean);
+
+    procedure Clear_Dirty (W : in out Widget);
 
    function Intersects (W : Widget; C : Canvas) return Boolean;
 
@@ -187,8 +207,13 @@ package Trinket.Widgets is
       return Boolean;
    overriding function On_Key
      (W : access Group; Code : U64) return Boolean;
-   overriding function Dirty_Union
-     (W : Group; X0, Y0, X1, Y1 : out U64) return Boolean;
-   overriding procedure Clear_Dirty (W : in out Group);
+    overriding function Dirty_Union
+      (W : Group; X0, Y0, X1, Y1 : out U64) return Boolean;
+    overriding procedure Dirty_List
+      (W        : Group;
+       Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean);
+    overriding procedure Clear_Dirty (W : in out Group);
 
 end Trinket.Widgets;

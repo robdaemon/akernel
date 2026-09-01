@@ -186,30 +186,49 @@ package body Trinket.Window is
       return True;
    end Open;
 
-   procedure Flush_Dirty (W : in out Window) is
-      X0, Y0, X1, Y1 : U64;
-      Any : constant Boolean :=
-        W.Root.Dirty_Union (X0, Y0, X1, Y1);
-   begin
-      if not Any then
-         return;
-      end if;
-      W.Cnv.CX0 := X0;
-      W.Cnv.CY0 := Y0;
-      W.Cnv.CX1 := X1;
-      W.Cnv.CY1 := Y1;
-      --  Repaint the band: face-fill it first so shrinking or
-      --  moved content leaves no trails.
-      Trinket.Paint.Fill_Rect (W.Cnv, X0, Y0, X1, Y1, Face);
-      W.Root.Draw (W.Cnv);
-      W.Root.Clear_Dirty;
-      Reset_Clip (W.Cnv);
-      if Win.Surface_Update
-        (W.EP, W.Id, X0, Y0, X1 - X0, Y1 - Y0) /= Win.Status_Ok
-      then
-         Debug_Put_Line ("trinket: update failed");
-      end if;
-   end Flush_Dirty;
+    procedure Flush_Dirty (W : in out Window) is
+       Rects : Widgets.Rect_Array;
+       N     : Natural := 0;
+       Ovfl  : Boolean := False;
+       X0, Y0, X1, Y1 : U64;
+    begin
+       --  Fine-grained damage: one band per dirty widget cluster.
+       --  Overflow (more than Max_Damage disjoint dirty rects)
+       --  degrades to the old single union band.
+       W.Root.Dirty_List (Rects, N, Ovfl);
+       if Ovfl then
+          if not W.Root.Dirty_Union (X0, Y0, X1, Y1) then
+             return;  --  unreachable (Ovfl implies dirty)
+          end if;
+          N := 1;
+          Rects (1) := (X0, Y0, X1, Y1);
+       end if;
+       if N = 0 then
+          return;
+       end if;
+       for I in 1 .. N loop
+          X0 := Rects (I).X0;
+          Y0 := Rects (I).Y0;
+          X1 := Rects (I).X1;
+          Y1 := Rects (I).Y1;
+          W.Cnv.CX0 := X0;
+          W.Cnv.CY0 := Y0;
+          W.Cnv.CX1 := X1;
+          W.Cnv.CY1 := Y1;
+          --  Repaint the band: face-fill it first so shrinking or
+          --  moved content leaves no trails. The tree redraws
+          --  clipped, so overlapping bands land identical pixels.
+          Trinket.Paint.Fill_Rect (W.Cnv, X0, Y0, X1, Y1, Face);
+          W.Root.Draw (W.Cnv);
+          if Win.Surface_Update
+            (W.EP, W.Id, X0, Y0, X1 - X0, Y1 - Y0) /= Win.Status_Ok
+          then
+             Debug_Put_Line ("trinket: update failed");
+          end if;
+       end loop;
+       W.Root.Clear_Dirty;
+       Reset_Clip (W.Cnv);
+    end Flush_Dirty;
 
    procedure Run (W : in out Window) is
       Queue : Word_Array

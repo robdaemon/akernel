@@ -45,8 +45,42 @@ package body Trinket.Widgets is
       W.Dirty := True;
    end Set_Image;
 
-   function Max (A, B : U64) return U64 is (if A > B then A else B);
-   function Min (A, B : U64) return U64 is (if A < B then A else B);
+    function Max (A, B : U64) return U64 is (if A > B then A else B);
+    function Min (A, B : U64) return U64 is (if A < B then A else B);
+
+    --  Damage-list append with in-place merge: a rect that
+    --  intersects an existing entry unions into it (single pass —
+    --  a merge that bridges a THIRD entry is left as-is; the
+    --  overlap repaints identically, just twice). A full list
+    --  sets Overflow; the caller degrades to Dirty_Union.
+    procedure Add_Rect
+      (Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean;
+       X0, Y0, X1, Y1 : U64) is
+    begin
+       if Overflow then
+          return;
+       end if;
+       for I in 1 .. N loop
+          if X0 < Rects (I).X1 and then X1 > Rects (I).X0
+            and then Y0 < Rects (I).Y1 and then Y1 > Rects (I).Y0
+          then
+             Rects (I).X0 := Min (Rects (I).X0, X0);
+             Rects (I).Y0 := Min (Rects (I).Y0, Y0);
+             Rects (I).X1 := Max (Rects (I).X1, X1);
+             Rects (I).Y1 := Max (Rects (I).Y1, Y1);
+             return;
+          end if;
+       end loop;
+       if N = Max_Damage then
+          Overflow := True;
+          return;
+       end if;
+       N := N + 1;
+       Rects (N) := (X0, Y0, X1, Y1);
+    end Add_Rect;
+
 
    procedure Layout (W : in out Widget) is
       pragma Unreferenced (W);
@@ -73,16 +107,28 @@ package body Trinket.Widgets is
      (PX >= W.X and then PX < W.X + W.W
       and then PY >= W.Y and then PY < W.Y + W.H);
 
-   function Dirty_Union
-     (W : Widget; X0, Y0, X1, Y1 : out U64) return Boolean
-   is
-   begin
-      if W.Dirty then
-         X0 := W.X;  Y0 := W.Y;  X1 := W.X + W.W;  Y1 := W.Y + W.H;
-         return True;
-      end if;
-      return False;
-   end Dirty_Union;
+    function Dirty_Union
+      (W : Widget; X0, Y0, X1, Y1 : out U64) return Boolean
+    is
+    begin
+       if W.Dirty then
+          X0 := W.X;  Y0 := W.Y;  X1 := W.X + W.W;  Y1 := W.Y + W.H;
+          return True;
+       end if;
+       return False;
+    end Dirty_Union;
+
+    procedure Dirty_List
+      (W        : Widget;
+       Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean) is
+    begin
+       if W.Dirty then
+          Add_Rect (Rects, N, Overflow, W.X, W.Y, W.X + W.W,
+                    W.Y + W.H);
+       end if;
+    end Dirty_List;
 
    procedure Clear_Dirty (W : in out Widget) is
    begin
@@ -749,8 +795,26 @@ package body Trinket.Widgets is
             Any := True;
          end if;
       end loop;
-      return Any;
-   end Dirty_Union;
+       return Any;
+    end Dirty_Union;
+
+    procedure Dirty_List
+      (W        : Group;
+       Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean) is
+    begin
+       if W.Dirty then
+          --  A dirty group redraws its whole extent; the kids sit
+          --  inside it, so their rects would only merge away.
+          Add_Rect (Rects, N, Overflow, W.X, W.Y, W.X + W.W,
+                    W.Y + W.H);
+          return;
+       end if;
+       for I in 1 .. W.N loop
+          W.Kids (I).Dirty_List (Rects, N, Overflow);
+       end loop;
+    end Dirty_List;
 
    procedure Clear_Dirty (W : in out Group) is
    begin

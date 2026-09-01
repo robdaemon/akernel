@@ -6,8 +6,8 @@ with Trinket.App_Port;
 --  protocol v3 dance — input queue memobj, thread-bound
 --  notification, surface chunk caps, commit — plus the event
 --  loop: input events dispatch into the widget tree, dirty
---  widgets union into one damage band, Surface_Update pushes
---  it. A Trinket program is:
+--  widgets collect into per-cluster damage bands (union
+--  fallback past Max_Damage), Surface_Update pushes each. A Trinket program is:
 --
 --     Win : Trinket.Window.Window;
 --     ...

@@ -39,15 +39,17 @@ calling `Root.Draw`.
 A widget sets `Dirty := True` whenever its appearance changes. Before
 each blocking input receive, `Trinket.Window.Flush_Dirty`:
 
-1. Calls `Root.Dirty_Union` to get one bounding rectangle covering all
-   dirty widgets.
-2. Fills that rectangle with `Trinket.Face` to erase old pixels.
-3. Calls `Root.Draw` with the canvas clipped to the damage band.
-4. Calls `Root.Clear_Dirty`.
-5. Sends one `Op_Surface_Update` RPC for the band.
+1. Calls `Root.Dirty_List` to collect each dirty widget's rect,
+   merging intersecting ones into clusters (max `Max_Damage` = 8;
+   overflow degrades to the `Dirty_Union` bounding rectangle).
+2. Per cluster: fills the rect with `Trinket.Face` to erase old
+   pixels, calls `Root.Draw` with the canvas clipped to it, and sends
+   one `Op_Surface_Update` RPC.
+3. Calls `Root.Clear_Dirty` once all bands are pushed.
 
-Containers override `Dirty_Union` to union their children's dirty
-rectangles and `Clear_Dirty` to recurse. Widgets should mark themselves
+Containers override `Dirty_List`/`Dirty_Union` to recurse into their
+children (a dirty group contributes its whole extent — the kids sit
+inside it) and `Clear_Dirty` to recurse. Widgets should mark themselves
 dirty when state changes; the window coalesces updates automatically.
 
 ## Paint primitives

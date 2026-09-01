@@ -113,13 +113,17 @@ widgets track drags and receive the final release.
 
 ## Dirty flush
 
-`Flush_Dirty` asks the root widget for the union of all dirty rects,
-sets the canvas clip to that band, fills it with `Face`, then calls
-`Root.Draw`. After drawing it clears the dirty flags and sends one
-`Op_Surface_Update` RPC for the band.
+`Flush_Dirty` collects the dirty rects with `Root.Dirty_List`
+(intersecting rects merge into clusters), then per cluster: sets the
+canvas clip, fills it with `Face`, calls `Root.Draw` (clipped to the
+cluster), and sends one `Op_Surface_Update` RPC. Dirty flags are
+cleared once at the end.
 
-Multiple dirty widgets are therefore coalesced into a single
-`surface update` per event loop iteration.
+Multiple dirty widgets are therefore pushed as several narrow bands
+per event loop iteration instead of one bounding band — two distant
+dirty widgets no longer repaint everything between them. More than
+`Max_Damage` (8) disjoint dirty rects overflows the list and degrades
+to the old single `Dirty_Union` band.
 
 ## Menus
 
