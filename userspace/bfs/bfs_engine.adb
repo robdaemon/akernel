@@ -23,6 +23,7 @@ with System.Storage_Elements;
 package body Bfs_Engine is
    package Syscalls renames Akernel_User.Syscalls;
    use type Syscalls.U64;
+   use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_16;
    use type Interfaces.Unsigned_32;
    use System.Storage_Elements;
@@ -672,6 +673,152 @@ package body Bfs_Engine is
       end loop;
       return Status_Not_Found;
    end Read_Dir;
+
+   ------------------------------------------------------------------
+   --  Attributes (small_data region of the inode, m82d)
+   ------------------------------------------------------------------
+
+   --  Entry layout (tools/mkbefs.py, Haiku Inode::AddSmallData):
+   --  le32 type, le16 name_size (no NUL), le16 data_size, name
+   --  bytes, 3 pad bytes (NUL + 2), data bytes, 1 pad byte. A
+   --  zeroed header (name_size = 0) ends the list; the region
+   --  runs from offset 232 to the end of the inode block.
+   Small_Data_Off : constant U64 := 232;
+
+   --  Every file inode carries a NAME pseudo-attribute first
+   --  (type FILE_NAME_TYPE 'CSTR', name_size = 1, name byte
+   --  0x13 = FILE_NAME_NAME, data = the file name) so the name
+   --  index can back-refer. Like Haiku's attribute iterator and
+   --  tools/befs_dump.py, it is NOT a user-visible attribute:
+   --  both walks below skip it.
+   File_Name_Name : constant U8 := 16#13#;
+
+   --  True when the small_data entry at Pos is the internal
+   --  name pseudo-attribute.
+   function Is_Name_Attr (Slot : Natural; Pos : U64; NLen : U64)
+                          return Boolean is
+     (NLen = 1 and then Cache_Data (Slot, Pos + 8) = File_Name_Name);
+
+   function Attr_List (Path : String; Index : U64;
+                       Name : out String; Name_Len : out Natural;
+                       Attr_Type : out U64; Data_Size : out U64)
+                       return U64
+   is
+      Info : Inode_Info;
+      Root : Boolean;
+      Pos  : U64;
+      NLen : U64;
+      DLen : U64;
+      Seen : U64 := 0;
+   begin
+      Name_Len := 0;
+      Attr_Type := 0;
+      Data_Size := 0;
+      if not Is_Mounted or else not Lookup (Path, Info, Root) then
+         return Status_Not_Found;
+      end if;
+      declare
+         Slot : constant Natural := Get_Block (Info.Block);
+      begin
+         if Slot = Cache_Slots then
+            return Status_Not_Found;
+         end if;
+         Pos := Small_Data_Off;
+         while Pos + 8 <= Block_Size loop
+            NLen := U64 (LE16 (Slot, Pos + 4));
+            DLen := U64 (LE16 (Slot, Pos + 6));
+            exit when NLen = 0;
+            exit when Pos + 8 + NLen + 3 + DLen + 1 > Block_Size;
+            if not Is_Name_Attr (Slot, Pos, NLen) then
+               if Seen = Index then
+                  Attr_Type := U64 (LE32 (Slot, Pos));
+                  Data_Size := DLen;
+                  for I in 0 .. NLen - 1 loop
+                     exit when I >= U64 (Name'Length);
+                     Name_Len := Name_Len + 1;
+                     Name (Name'First + Name_Len - 1) :=
+                       Character'Val (Natural
+                         (Cache_Data (Slot, Pos + 8 + I)));
+                  end loop;
+                  Put_Block (Slot);
+                  return Status_Ok;
+               end if;
+               Seen := Seen + 1;
+            end if;
+            Pos := Pos + 8 + NLen + 3 + DLen + 1;
+         end loop;
+         Put_Block (Slot);
+      end;
+      return Status_Not_Found;
+   end Attr_List;
+
+   function Attr_Read (Path : String; Attr : String;
+                       Buf : System.Address; Buf_Len : U64;
+                       Count : out U64; Data_Size : out U64;
+                       Attr_Type : out U64) return U64
+   is
+      Info  : Inode_Info;
+      Root  : Boolean;
+      Pos   : U64;
+      NLen  : U64;
+      DLen  : U64;
+      Match : Boolean;
+   begin
+      Count := 0;
+      Data_Size := 0;
+      Attr_Type := 0;
+      if not Is_Mounted or else not Lookup (Path, Info, Root) then
+         return Status_Not_Found;
+      end if;
+      declare
+         Slot : constant Natural := Get_Block (Info.Block);
+      begin
+         if Slot = Cache_Slots then
+            return Status_Not_Found;
+         end if;
+         Pos := Small_Data_Off;
+         while Pos + 8 <= Block_Size loop
+            NLen := U64 (LE16 (Slot, Pos + 4));
+            DLen := U64 (LE16 (Slot, Pos + 6));
+            exit when NLen = 0;
+            exit when Pos + 8 + NLen + 3 + DLen + 1 > Block_Size;
+            if not Is_Name_Attr (Slot, Pos, NLen)
+              and then NLen = U64 (Attr'Length)
+            then
+               Match := True;
+               for I in 0 .. NLen - 1 loop
+                  if Cache_Data (Slot, Pos + 8 + I) /=
+                    U8 (Character'Pos (Attr (Attr'First + Natural (I))))
+                  then
+                     Match := False;
+                     exit;
+                  end if;
+               end loop;
+               if Match then
+                  Attr_Type := U64 (LE32 (Slot, Pos));
+                  Data_Size := DLen;
+                  Count := U64'Min (DLen, Buf_Len);
+                  if Count > 0 then
+                     declare
+                        Dst : Byte_Array (0 .. Count - 1)
+                          with Address => Buf;
+                     begin
+                        for I in Dst'Range loop
+                           Dst (I) :=
+                             Cache_Data (Slot, Pos + 8 + NLen + 3 + I);
+                        end loop;
+                     end;
+                  end if;
+                  Put_Block (Slot);
+                  return Status_Ok;
+               end if;
+            end if;
+            Pos := Pos + 8 + NLen + 3 + DLen + 1;
+         end loop;
+         Put_Block (Slot);
+      end;
+      return Status_Not_Found;
+   end Attr_Read;
 
    procedure Volume_Info (Total, Free, Block : out U64) is
    begin

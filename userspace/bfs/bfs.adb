@@ -45,6 +45,8 @@ procedure Bfs is
    Op_ReadDir     : constant U64 := 13;
    Op_Rename      : constant U64 := 16;
    Op_Volume_Info : constant U64 := 17;
+   Op_Attr_List   : constant U64 := 19;
+   Op_Attr_Read   : constant U64 := 20;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -228,6 +230,125 @@ procedure Bfs is
       end if;
    end Handle_Read_Dir;
 
+   --  Op_Attr_List (m82d): words 0..3 = path ("" = root), word 4
+   --  = attribute index. Reply: w0 = status, w1 = type code,
+   --  w2 = data size, w3..5 = attr name (24 chars).
+   procedure Handle_Attr_List is
+      Idx      : constant U64 := Syscalls.Message.Words (4);
+      Name     : String (1 .. 24) := (others => Character'Val (0));
+      Name_Len : Natural;
+      AType    : U64;
+      DSize    : U64;
+      RC       : U64;
+   begin
+      declare
+         Path : constant String := Path_Of (0);
+      begin
+         RC := Bfs_Engine.Attr_List (Path, Idx, Name, Name_Len,
+                                     AType, DSize);
+      end;
+      if RC /= Status_Ok then
+         Reply2 (Status_Not_Found, 0);
+         return;
+      end if;
+
+      Syscalls.Message.Words (0) := Status_Ok;
+      Syscalls.Message.Words (1) := AType;
+      Syscalls.Message.Words (2) := DSize;
+      for W in 3 .. 5 loop
+         Syscalls.Message.Words (W) := 0;
+      end loop;
+      for P in 1 .. Name_Len loop
+         Syscalls.Message.Words (3 + (P - 1) / 8) :=
+           Syscalls.Message.Words (3 + (P - 1) / 8)
+             or Shl (U64 (Character'Pos (Name (P))),
+                     ((P - 1) mod 8) * 8);
+      end loop;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs attrlist reply failed");
+      end if;
+   end Handle_Attr_List;
+
+   --  Op_Attr_Read (m82d): words 0..3 = path, words 4..5 = attr
+   --  name (16 chars), cap slot 0 = buffer memobj. Reply: w0 =
+   --  status, w1 = count copied, w2 = attr total size, w3 = type
+   --  code.
+   procedure Handle_Attr_Read is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Count  : U64 := 0;
+      DSize  : U64 := 0;
+      AType  : U64 := 0;
+      Status : U64 := Status_Ok;
+      Mapped : Boolean := False;
+   begin
+      if Buf = 0 then
+         Status := Status_Bad_Args;
+      else
+         declare
+            Path : constant String := Path_Of (0);
+            Attr : String (1 .. 16) := (others => Character'Val (0));
+            ALen : Natural := 0;
+         begin
+            for P in 0 .. 15 loop
+               declare
+                  Ch : constant Character :=
+                    Character'Val (Natural
+                      ((Syscalls.Message.Words (4 + P / 8)
+                          / Shl (1, (P mod 8) * 8)) and 16#FF#));
+               begin
+                  exit when Ch = Character'Val (0);
+                  ALen := ALen + 1;
+                  Attr (ALen) := Ch;
+               end;
+            end loop;
+            if ALen = 0 then  --  path "" = volume root, like ReadDir
+               Status := Status_Bad_Args;
+            elsif Syscalls.Mem_Map
+              (Address_Space => Syscalls.Address_Space_Cap,
+               Cap           => Buf,
+               VA            => Buf_Win_VA,
+               Offset        => 0,
+               Length        => Buf_Bytes,
+               Flags         => 3) /= 0
+            then
+               Status := Status_Not_Found;
+            else
+               Mapped := True;
+               Status := Bfs_Engine.Attr_Read
+                 (Path, Attr (1 .. ALen),
+                  To_Address (Integer_Address (Buf_Win_VA)), Buf_Bytes,
+                  Count, DSize, AType);
+            end if;
+         end;
+      end if;
+
+      if Buf /= 0 then
+         if Mapped
+           and then Syscalls.Mem_Unmap
+             (Address_Space => Syscalls.Address_Space_Cap,
+              VA            => Buf_Win_VA,
+              Length        => Buf_Bytes) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("bfs: attr buffer unmap failed");
+         end if;
+         if Syscalls.Cap_Delete (Buf) /= 0 then
+            Akernel_User.Console.Put_Line
+              ("bfs: attr buffer cap delete failed");
+         end if;
+      end if;
+
+      Syscalls.Message.Words (0) := Status;
+      Syscalls.Message.Words (1) := Count;
+      Syscalls.Message.Words (2) := DSize;
+      Syscalls.Message.Words (3) := AType;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+         Fail ("bfs attrread reply failed");
+      end if;
+   end Handle_Attr_Read;
+
    procedure Handle_Volume_Info is
       Total : U64;
       Free  : U64;
@@ -294,6 +415,10 @@ begin
          Handle_Read;
       elsif Syscalls.Message.Label = Op_ReadDir then
          Handle_Read_Dir;
+      elsif Syscalls.Message.Label = Op_Attr_List then
+         Handle_Attr_List;
+      elsif Syscalls.Message.Label = Op_Attr_Read then
+         Handle_Attr_Read;
       elsif Syscalls.Message.Label = Op_Volume_Info then
          Handle_Volume_Info;
       elsif Syscalls.Message.Label = Op_Sync then

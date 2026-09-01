@@ -27,9 +27,29 @@ package Bfs_Engine is
                   return U64;
 
    --  Reads up to Len bytes at Offset into Buf; Len is clamped to
-   --  the remaining file size. Status 4 when Offset >= file size.
+   --  the remaining file size. Offset past the file size answers
+   --  status 4; Offset exactly at EOF answers ok with Len = 0.
    function Read (Path : String; Offset : U64; Buf : System.Address;
                   Len : in out U64) return U64;
+
+   --  Attribute enumeration (m82d): Index-th small_data attribute
+   --  of the inode at Path. Attr_Type is the BeOS fourcc, Data_Size
+   --  the data byte count; Name takes up to Name'Length chars.
+   --  Status 1 when Path (or index) does not exist.
+   function Attr_List (Path : String; Index : U64;
+                       Name : out String; Name_Len : out Natural;
+                       Attr_Type : out U64; Data_Size : out U64)
+                       return U64;
+
+   --  Whole-attribute read (m82d): the attribute named Attr of the
+   --  inode at Path, copied into Buf (Buf_Len bytes max). Count =
+   --  bytes copied, Data_Size = full attribute size (truncation is
+   --  Count < Data_Size), Attr_Type = the fourcc. Status 1 when
+   --  the path or the attribute does not exist.
+   function Attr_Read (Path : String; Attr : String;
+                       Buf : System.Address; Buf_Len : U64;
+                       Count : out U64; Data_Size : out U64;
+                       Attr_Type : out U64) return U64;
 
    --  Index-th visible entry ("." and ".." skipped). Name is NUL
    --  padding aside, up to 24 chars (wire limit).

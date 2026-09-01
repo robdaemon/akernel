@@ -219,6 +219,113 @@ package body Akernel_User.Files is
       return True;
    end Ensure_Buffer;
 
+   function Attr_List
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Attr_Type    : out U64;
+      Attr_Size    : out U64) return U64
+   is
+      Q   : String (1 .. 32);
+      Len : Natural;
+      Ch  : Character;
+   begin
+      Out_Name_Len := 0;
+      Attr_Type := 0;
+      Attr_Size := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_Attr_List;
+      Syscalls.Message.Words := (others => 0);
+      Pack_Name (Q (1 .. Len), 0, 3);
+      Syscalls.Message.Words (4) := Index;
+      Syscalls.Message.Caps := (others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Attr_Type := Syscalls.Message.Words (1);
+         Attr_Size := Syscalls.Message.Words (2);
+         for P in 0 .. 23 loop
+            exit when P >= Out_Name'Length;
+            Ch := Character'Val (Natural
+              ((Syscalls.Message.Words (3 + P / 8)
+                  / Shift_Left (1, (P mod 8) * 8)) and 16#FF#));
+            exit when Ch = Character'Val (0);
+            Out_Name_Len := Out_Name_Len + 1;
+            Out_Name (Out_Name'First + Out_Name_Len - 1) := Ch;
+         end loop;
+      end if;
+
+      return Syscalls.Message.Words (0);
+   end Attr_List;
+
+   function Attr_Read
+     (Name      : String;
+      Attr      : String;
+      Dest      : System.Address;
+      Length    : U64;
+      Count     : out U64;
+      Attr_Size : out U64;
+      Attr_Type : out U64) return U64
+   is
+      Status : U64;
+      Q      : String (1 .. 32);
+      Len    : Natural;
+      Src    : Byte_Array (0 .. Buf_Bytes - 1)
+        with Address => To_Address (Integer_Address (Buffer_VA));
+      Dst    : Byte_Array (0 .. Length - 1)
+        with Address => Dest;
+   begin
+      Count := 0;
+      Attr_Size := 0;
+      Attr_Type := 0;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0
+        or else Len = 0
+        or else Attr'Length = 0
+        or else Attr'Length > 16  --  words 4..5 on the wire
+        or else Length = 0
+      then
+         return Status_Bad_Args;
+      end if;
+
+      if not Ensure_Buffer then
+         return Status_Not_Found;
+      end if;
+
+      Syscalls.Message.Label := Op_Attr_Read;
+      Syscalls.Message.Words := (others => 0);
+      Pack_Name (Q (1 .. Len), 0, 3);
+      Pack_Name (Attr, 4, 5);
+      Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      Status := Syscalls.Message.Words (0);
+      if Status /= Status_Ok then
+         return Status;
+      end if;
+
+      Count := Syscalls.Message.Words (1);
+      Attr_Size := Syscalls.Message.Words (2);
+      Attr_Type := Syscalls.Message.Words (3);
+      if Count > 0 then
+         for I in 0 .. Count - 1 loop
+            Dst (I) := Src (I);
+         end loop;
+      end if;
+      return Status_Ok;
+   end Attr_Read;
+
    function Open (Name : String; Size : out U64) return U64 is
       Q   : String (1 .. 48);
       Len : Natural;

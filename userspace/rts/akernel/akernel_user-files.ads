@@ -99,6 +99,30 @@ package Akernel_User.Files is
    Op_Rename   : constant U64 := 16;
    Op_Volume_Info : constant U64 := 17;
    Op_Close    : constant U64 := 18;
+   Op_Attr_List : constant U64 := 19;
+   Op_Attr_Read : constant U64 := 20;
+   --    Op_Attr_List = 19  words 0..3 = path (32 chars, "" =
+   --                      volume root), word 4 = attribute index
+   --                      -> (status, attr type code, attr data
+   --                      size, attr name[24] in words 3..5).
+   --                      Stateless like Op_ReadDir: index N
+   --                      returns the N-th attribute;
+   --                      Status_Not_Found ends the enumeration.
+   --                      FS-driver volumes only; every other
+   --                      volume answers Not_Found (behaves like
+   --                      an empty attribute list). Type codes
+   --                      are BeOS fourccs ('MIMS' MIME string,
+   --                      'CSTR' C string, 'ULLG' u64, ...).
+   --    Op_Attr_Read = 20  words 0..3 = path (32 chars), words
+   --                      4..5 = attr name (16 chars) + buffer
+   --                      memory cap in cap slot 0 -> (status,
+   --                      count copied, attr total size, type
+   --                      code). Whole-attribute read: count =
+   --                      min(attr size, buffer bytes); truncation
+   --                      is detectable as count < size. Only
+   --                      small_data attributes today (the BeFS
+   --                      server is read-only and the fixture's
+   --                      attrs all live in the inode).
    --    Op_Close = 18   words 0..5 = name[48] -> (status, 0). On
    --                      a PIPE: name: writer EOF — no more
    --                      data is coming; reads keep draining
@@ -227,6 +251,36 @@ package Akernel_User.Files is
       Dest   : System.Address;
       Length : U64;
       Count  : out U64) return U64;
+
+   --  Attribute enumeration (milestone 82d): Index-th attribute
+   --  of the file at Name (volume qualified). Returns a protocol
+   --  status; Status_Not_Found = no more attributes. Attr name
+   --  comes back in Out_Name (caller buffer >= 24); Attr_Type is
+   --  the BeOS fourcc ('MIMS', 'CSTR', 'ULLG', ...), Attr_Size
+   --  the data length in bytes. Volumes without attribute
+   --  support answer Not_Found at index 0 (empty list).
+   function Attr_List
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Attr_Type    : out U64;
+      Attr_Size    : out U64) return U64;
+
+   --  Attribute read (milestone 82d): the whole attribute Attr
+   --  of Name into Dest (Length bytes max through the shared
+   --  client buffer, allocated on first use like Open). Count
+   --  returns the bytes actually read; Attr_Size the attribute's
+   --  full size (truncation = Count < Attr_Size); Attr_Type the
+   --  fourcc. Attr names are limited to 16 chars on the wire.
+   function Attr_Read
+     (Name      : String;
+      Attr      : String;
+      Dest      : System.Address;
+      Length    : U64;
+      Count     : out U64;
+      Attr_Size : out U64;
+      Attr_Type : out U64) return U64;
 
    --  Write Length bytes from the caller's buffer (Buffer_Address
    --  must be an 8-page memory object) at Offset into Name; Count

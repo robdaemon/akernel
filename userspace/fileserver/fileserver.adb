@@ -879,6 +879,111 @@ procedure Fileserver is
       end if;
    end Handle_Read_Dir;
 
+   --  Op_Attr_List (milestone 82d): words 0..3 = volume-qualified
+   --  path, word 4 = attribute index; FS-driver volumes only (the
+   --  wire format matches the fs driver's: path portion repacked
+   --  into words 0..3, index back into word 4). The reply rides
+   --  through unchanged: w0 = status, w1 = attr type code, w2 =
+   --  attr data size, words 3..5 = attr name. Volumes without
+   --  attribute support answer Not_Found (empty list semantics).
+   procedure Handle_Attr_List is
+      Name : String (1 .. 32);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+      Idx  : U64;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
+   begin
+      if not Name_Of (0, 3, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+      if V = 0 or else not Volumes (V).Is_FS then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+
+      Idx := Syscalls.Message.Words (4);
+      Syscalls.Message.Label := Files.Op_Attr_List;
+      Pack_Path (Exp, Pos, E_Len, 0, 3);
+      Syscalls.Message.Words (4) := Idx;
+      Syscalls.Message.Caps := (others => 0);
+      if Forward_To_FS (V, Syscalls.Message.Badge) then
+         --  Relay the fs driver's reply words untouched.
+         Syscalls.Message.Caps := (others => 0);
+         if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+            Syscalls.Debug_Put_Line ("fileserver attrlist reply failed");
+            Syscalls.Process_Exit;
+         end if;
+      else
+         Reply2 (Files.Status_Not_Found, 0);
+      end if;
+   end Handle_Attr_List;
+
+   --  Op_Attr_Read (milestone 82d): words 0..3 = volume-qualified
+   --  path, words 4..5 = attr name (16 chars), cap slot 0 = the
+   --  client's buffer memobj, forwarded like Op_Read (the fs
+   --  driver maps, fills and cap_deletes its own copy; ours is
+   --  deleted at op end). The reply rides through unchanged:
+   --  w0 = status, w1 = count copied, w2 = attr total size,
+   --  w3 = type code. Volumes without attribute support answer
+   --  Bad_Args.
+   procedure Handle_Attr_Read is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Name   : String (1 .. 32);
+      Len    : Natural;
+      Pos    : Natural;
+      V      : Natural;
+      Status : U64 := Files.Status_Ok;
+      Done   : Boolean := False;  --  forwarded: reply already sent
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+   begin
+      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+         Status := Files.Status_Bad_Args;
+      else
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+         elsif not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+         else
+            --  Pack_Path touches words 0..3 only; the attr name
+            --  in words 4..5 rides through to the fs driver.
+            Pack_Path (Exp, Pos, E_Len, 0, 3);
+            Syscalls.Message.Label := Files.Op_Attr_Read;
+            Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
+               --  Relay the fs driver's reply words untouched.
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Syscalls.Debug_Put_Line
+                    ("fileserver attrread reply failed");
+                  Syscalls.Process_Exit;
+               end if;
+               Done := True;
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end if;
+
+      --  Every Op_Attr_Read transfers the client's buffer cap
+      --  into this table; drop it or leak a slot per op.
+      if Buf /= 0
+        and then Syscalls.Cap_Delete (Buf) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: attr buffer cap delete failed");
+      end if;
+      if not Done then
+         Reply2 (Status, 0);
+      end if;
+   end Handle_Attr_Read;
+
    procedure Handle_Stat_Or_Open is
       Name : String (1 .. 48);
       Len  : Natural;
@@ -2207,6 +2312,18 @@ begin
             Reply2 (Files.Status_Not_Ready, 0);
          else
             Handle_Read_Dir;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Attr_List then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Attr_List;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Attr_Read then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Attr_Read;
          end if;
       else
          Reply2 (Files.Status_Bad_Args, 0);

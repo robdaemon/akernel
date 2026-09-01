@@ -99,7 +99,7 @@ block_cache API churn between the pinned snapshot and master).
 Plan: M82a C++ toolchain gate (built, proven, then dropped with the
 vendoring route); M82b host-side mkbefs fixture + second GPT
 partition; M82c pure-Ada BFS server (read-only); M82d attribute
-ops on the wire (append-only 19+); M82e R/W + journal; M82f
+ops on the wire (19/20, done); M82e R/W + journal; M82f
 indices/query discussion.
 
 - **M82a reverted**: the xPack g++ gate was built and proven
@@ -138,6 +138,29 @@ indices/query discussion.
   because sibling declare-block locals accumulate in the parent
   frame and inline tests overflowed the 12-page user stack inside
   the ZCX unwinder. 1577 PASS / 0 FAIL.
+
+- **M82d done** (this commit): attribute ops on the wire,
+  append-only — Op_Attr_List = 19 (path words 0..3, index w4 ->
+  status, type fourcc, data size, name[24]) and Op_Attr_Read = 20
+  (path words 0..3, attr name words 4..5, buffer cap -> status,
+  count, full size, type; whole-attribute read). Client API
+  Akernel_User.Files.Attr_List/Attr_Read; fileserver forwards both
+  verbatim for Is_FS volumes (non-FS: Not_Found empty-list for
+  list, Bad_Args for read); fat32 rejects both via its default
+  branch. Bfs_Engine walks the inode small_data region at 232
+  ([type u32][name_size u16][data_size u16][name][NUL+2 pad]
+  [data][NUL], name_size 0 ends). KEY FORMAT FACT: every file
+  inode carries a NAME pseudo-attribute FIRST (type 'CSTR'
+  FILE_NAME_TYPE, name_size 1, name byte 0x13 FILE_NAME_NAME,
+  data = the file name) so the name index can back-refer; like
+  Haiku's attribute iterator and befs_dump.py, both walks skip it
+  (this cost a long debugging session: the engine was right and
+  the test expectations were wrong — console IPC clobbers
+  Syscalls.Message, which made mid-handler debug prints lie).
+  fuzz Bfs_Tests grew 12 attr checks (list order/types/sizes,
+  whole-attr reads of BEOS:TYPE/META:comment/root be:volume_id,
+  empty list, unknown attr/file, fat rejection). 1591 PASS /
+  0 FAIL.
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working

@@ -794,6 +794,137 @@ begin
                    and then Free < Total,
                    "bfs volume info ok");
          end;
+
+         --  Attributes (m82d, ops 19/20): README.TXT carries
+         --  BEOS:TYPE ('MIMS' "text/plain") and META:comment
+         --  ('CSTR' "fixture comment") in its inode small_data.
+         declare
+            AN     : String (1 .. 24);
+            AN_L   : Natural;
+            AType  : U64;
+            ASize  : U64;
+         begin
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:README.TXT", 0, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then AN_L = 9 and then AN (1 .. 9) = "BEOS:TYPE"
+                   and then AType = 16#4D49_4D53# and then ASize = 10,
+                   "bfs attr list first entry");
+
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:README.TXT", 1, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then AN_L = 12
+                   and then AN (1 .. 12) = "META:comment"
+                   and then AType = 16#4353_5452# and then ASize = 15,
+                   "bfs attr list second entry");
+
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:README.TXT", 2, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs attr list ends");
+
+            --  The root inode carries be:volume_id ('ULLG').
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:", 0, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then AN_L = 12
+                   and then AN (1 .. 12) = "be:volume_id"
+                   and then AType = 16#554C_4C47# and then ASize = 8,
+                   "bfs attr list root volume id");
+
+            --  HELLO.TXT has no attributes at all (the internal
+            --  name pseudo-attribute is skipped, like Haiku's
+            --  attribute iterator and tools/befs_dump.py).
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:SUBDIR/HELLO.TXT", 0, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs attr list empty file");
+
+            Status := Akernel_User.Files.Attr_List
+              ("BD1:NOSUCH.BIN", 0, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs attr list unknown file");
+
+            --  FAT32 has no attributes: the op forwards verbatim
+            --  and the fat32 server rejects unknown labels.
+            Status := Akernel_User.Files.Attr_List
+              ("BD0:README.TXT", 0, AN, AN_L, AType, ASize);
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "fat attr list rejected");
+         end;
+
+         --  Attribute reads through the client bounce buffer.
+         declare
+            AType  : U64;
+            ASize  : U64;
+         begin
+            Status := Akernel_User.Files.Attr_Read
+              ("BD1:README.TXT", "BEOS:TYPE", Buf'Address, 64,
+               Count, ASize, AType);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 10 and then ASize = 10
+              and then AType = 16#4D49_4D53#;
+            declare
+               Text : constant String := "text/plain";
+            begin
+               for I in 0 .. 9 loop
+                  Match := Match
+                    and then Buf (I) =
+                      Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+               end loop;
+            end;
+            Check (Match, "bfs attr read mime ok");
+
+            Status := Akernel_User.Files.Attr_Read
+              ("BD1:README.TXT", "META:comment", Buf'Address, 64,
+               Count, ASize, AType);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 15 and then ASize = 15
+              and then AType = 16#4353_5452#;
+            declare
+               Text : constant String := "fixture comment";
+            begin
+               for I in 0 .. 14 loop
+                  Match := Match
+                    and then Buf (I) =
+                      Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
+               end loop;
+            end;
+            Check (Match, "bfs attr read comment ok");
+
+            --  be:volume_id rides the root inode as a little-
+            --  endian u64: 0x004D3832_42454653 on disk.
+            Status := Akernel_User.Files.Attr_Read
+              ("BD1:", "be:volume_id", Buf'Address, 64,
+               Count, ASize, AType);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 8 and then ASize = 8
+              and then AType = 16#554C_4C47#;
+            declare
+               Expect : constant array (0 .. 7) of
+                 Interfaces.Unsigned_8 :=
+                   (16#53#, 16#46#, 16#45#, 16#42#,
+                    16#32#, 16#38#, 16#4D#, 16#00#);
+            begin
+               for I in 0 .. 7 loop
+                  Match := Match and then Buf (I) = Expect (I);
+               end loop;
+            end;
+            Check (Match, "bfs attr read volume id ok");
+
+            Status := Akernel_User.Files.Attr_Read
+              ("BD1:README.TXT", "NOSUCH", Buf'Address, 64,
+               Count, ASize, AType);
+            Check (Status = Akernel_User.Files.Status_Not_Found,
+                   "bfs attr read unknown rejected");
+
+            Status := Akernel_User.Files.Attr_Read
+              ("BD0:README.TXT", "BEOS:TYPE", Buf'Address, 64,
+               Count, ASize, AType);
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "fat attr read rejected");
+         end;
       end Bfs_Tests;
    begin
       Akernel_User.Files.Bind (FS_EP);
