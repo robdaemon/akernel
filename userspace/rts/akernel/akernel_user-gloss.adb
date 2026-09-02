@@ -8,6 +8,7 @@ with Akernel_User.Console;
 with Akernel_User.CLI;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
+with Akernel_User.Tables;
 
 package body Akernel_User.Gloss is
 
@@ -100,10 +101,12 @@ package body Akernel_User.Gloss is
 
    ----------------------------------------------------------------------
    --  fd table (library level — never on the stack). fds 0..2 are
-   --  the console; 3..Last_FD are path-backed files.
+   --  the console; fds >= 3 are path-backed files. m80f: chunk-
+   --  appended (Akernel_User.Tables); the chunk index IS the fd
+   --  (POSIX lowest-free-fd allocation preserved; slots 1..2 are
+   --  padded on first allocation so the first file fd is 3).
 
    First_File_FD : constant := 3;
-   Last_FD       : constant := 18;
 
    type FD_Rec is record
       Used     : Boolean := False;
@@ -115,7 +118,9 @@ package body Akernel_User.Gloss is
       Path_Len : Natural := 0;
    end record;
 
-   FDs : array (First_File_FD .. Last_FD) of FD_Rec;
+   package FD_Tab is new Akernel_User.Tables (FD_Rec);
+   function FDs (I : Natural) return FD_Tab.Element_Access
+     renames FD_Tab.Ref;
 
    --  Lazy endpoint binding. This package is linked via ld -u (no
    --  program withs it), so its body never elaborates under the
@@ -284,8 +289,7 @@ package body Akernel_User.Gloss is
 
    --  Directory walks over the stateless by-index Op_ReadDir.
    --  adaint.c's AKERNEL_NO_DIRENT branch calls these; DIR* is the
-   --  slot index + 1 (0/NULL = open failed).
-   Max_Open_Dirs : constant := 8;
+   --  slot index + 1 (0/NULL = open failed). m80f: chunk-appended.
 
    type Dir_Rec is record
       Used : Boolean := False;
@@ -293,7 +297,9 @@ package body Akernel_User.Gloss is
       Len  : Natural := 0;
       Next : U64 := 0;
    end record;
-   Dir_Slots : array (1 .. Max_Open_Dirs) of Dir_Rec;
+   package Dir_Tab is new Akernel_User.Tables (Dir_Rec);
+   function Dir_Slots (I : Natural) return Dir_Tab.Element_Access
+     renames Dir_Tab.Ref;
 
    function Akernel_Opendir
      (Name : Interfaces.C.Strings.chars_ptr) return C_Int;
@@ -308,7 +314,7 @@ package body Akernel_User.Gloss is
       if P'Length = 0 or else P'Length > 256 then
          return -1;
       end if;
-      for I in Dir_Slots'Range loop
+      for I in 1 .. Dir_Tab.Last loop
          if not Dir_Slots (I).Used then
             Dir_Slots (I).Used := True;
             Dir_Slots (I).Len  := P'Length;
@@ -318,7 +324,19 @@ package body Akernel_User.Gloss is
             return C_Int (I - 1);
          end if;
       end loop;
-      return -1;
+      declare
+         Slot : constant Natural := Dir_Tab.Append;  --  0 = OOM
+      begin
+         if Slot = 0 then
+            return -1;
+         end if;
+         Dir_Slots (Slot).Used := True;
+         Dir_Slots (Slot).Len  := P'Length;
+         Dir_Slots (Slot).Next := 0;
+         Dir_Slots (Slot).Path := (others => ' ');
+         Dir_Slots (Slot).Path (1 .. P'Length) := P;
+         return C_Int (Slot - 1);
+      end;
    end Akernel_Opendir;
 
    --  Copies the next entry name (NUL-terminated) into Buf; returns
@@ -342,7 +360,7 @@ package body Akernel_User.Gloss is
       Slot   : Natural;
       Out_B  : String (1 .. Ent'Length + 1) with Address => Buf;
    begin
-      if D < 0 or else Natural (D) >= Max_Open_Dirs then
+      if D < 0 or else Natural (D) >= Dir_Tab.Last then
          return -1;
       end if;
       Slot := Natural (D) + 1;
@@ -368,7 +386,7 @@ package body Akernel_User.Gloss is
 
    function Akernel_Closedir (D : C_Int) return C_Int is
    begin
-      if D < 0 or else Natural (D) >= Max_Open_Dirs then
+      if D < 0 or else Natural (D) >= Dir_Tab.Last then
          return -1;
       end if;
       Dir_Slots (Natural (D) + 1).Used := False;
@@ -504,12 +522,23 @@ package body Akernel_User.Gloss is
          return -1;
       end if;
 
-      for I in FDs'Range loop
+      for I in First_File_FD .. FD_Tab.Last loop
          if not FDs (I).Used then
             Slot := I;
             exit;
          end if;
       end loop;
+      if Slot = 0 then
+         --  Grow: pad slots 1..2 once (fds 0..2 are the console,
+         --  the chunk index is the fd), then append.
+         while FD_Tab.Last < First_File_FD - 1 loop
+            if FD_Tab.Append = 0 then
+               Fail (EMFILE);
+               return -1;
+            end if;
+         end loop;
+         Slot := FD_Tab.Append;   --  0 = arena OOM
+      end if;
       if Slot = 0 then
          Fail (EMFILE);
          return -1;
@@ -552,7 +581,7 @@ package body Akernel_User.Gloss is
          end if;
       end if;
 
-      FDs (Slot) :=
+      FDs (Slot).all :=
         (Used     => True,
          Readable => (F and O_ACCMODE) /= O_WRONLY,
          Writable => (F and O_ACCMODE) /= 0,
@@ -571,7 +600,7 @@ package body Akernel_User.Gloss is
    begin
       if FD < C_Int (First_File_FD) then
          return 0;  --  console fds: nothing to do
-      elsif FD > C_Int (Last_FD)
+      elsif FD > C_Int (FD_Tab.Last)
         or else not FDs (Natural (FD)).Used
       then
          Fail (EBADF);
@@ -605,7 +634,7 @@ package body Akernel_User.Gloss is
       Ensure_Bound;
       if FD < C_Int (First_File_FD) then
          return 0;  --  stdin: EOF (no console input endpoint yet)
-      elsif FD > C_Int (Last_FD)
+      elsif FD > C_Int (FD_Tab.Last)
         or else not FDs (Natural (FD)).Used
         or else not FDs (Natural (FD)).Readable
       then
@@ -614,7 +643,7 @@ package body Akernel_User.Gloss is
       end if;
 
       declare
-         F : FD_Rec renames FDs (Natural (FD));
+         F : FD_Rec renames FDs (Natural (FD)).all;
       begin
          St := Files.Read
            (F.Path (1 .. F.Path_Len), F.Offset, Buf, N, Count);
@@ -652,7 +681,7 @@ package body Akernel_User.Gloss is
       if FD = 1 or else FD = 2 then
          Write_Console (Buf, N);
          return C_Int (N);
-      elsif FD < C_Int (First_File_FD) or else FD > C_Int (Last_FD)
+      elsif FD < C_Int (First_File_FD) or else FD > C_Int (FD_Tab.Last)
         or else not FDs (Natural (FD)).Used
         or else not FDs (Natural (FD)).Writable
       then
@@ -661,7 +690,7 @@ package body Akernel_User.Gloss is
       end if;
 
       declare
-         F : FD_Rec renames FDs (Natural (FD));
+         F : FD_Rec renames FDs (Natural (FD)).all;
       begin
          while Done < N loop
             declare
@@ -699,7 +728,7 @@ package body Akernel_User.Gloss is
       Whence : C_Int) return U64
    is
    begin
-      if FD < C_Int (First_File_FD) or else FD > C_Int (Last_FD)
+      if FD < C_Int (First_File_FD) or else FD > C_Int (FD_Tab.Last)
         or else not FDs (Natural (FD)).Used
       then
          Fail (EBADF);
@@ -707,7 +736,7 @@ package body Akernel_User.Gloss is
       end if;
 
       declare
-         F : FD_Rec renames FDs (Natural (FD));
+         F : FD_Rec renames FDs (Natural (FD)).all;
          Base : U64;
          Sz   : U64;
       begin
@@ -767,14 +796,14 @@ package body Akernel_User.Gloss is
       if FD >= 0 and then FD < C_Int (First_File_FD) then
          Fill_Stat (S, 0, True);
          return 0;
-      elsif FD > C_Int (Last_FD)
+      elsif FD > C_Int (FD_Tab.Last)
         or else not FDs (Natural (FD)).Used
       then
          Fail (EBADF);
          return -1;
       end if;
       declare
-         F : FD_Rec renames FDs (Natural (FD));
+         F : FD_Rec renames FDs (Natural (FD)).all;
       begin
          if Files.Stat (F.Path (1 .. F.Path_Len), Sz)
               = Files.Status_Ok
@@ -1208,7 +1237,7 @@ package body Akernel_User.Gloss is
       pragma Unreferenced (Cmd, Arg);
    begin
       if FD < C_Int (First_File_FD)
-        or else (FD <= C_Int (Last_FD)
+        or else (FD <= C_Int (FD_Tab.Last)
                  and then FDs (Natural (FD)).Used)
       then
          return 0;

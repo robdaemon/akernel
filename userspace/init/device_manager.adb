@@ -3,6 +3,7 @@ with System;
 with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Files;
+with Akernel_User.Tables;
 with Device_Tree;
 
 package body Device_Manager is
@@ -14,7 +15,6 @@ package body Device_Manager is
 
    subtype U32 is Interfaces.Unsigned_32;
 
-   Max_Lines       : constant := 8;
    Max_Token       : constant := 64;
    First_Driver_Id : constant U64 := 16;
 
@@ -55,8 +55,18 @@ package body Device_Manager is
       Vid        : U32 := 0;
    end record;
 
-   Lines      : array (1 .. Max_Lines) of Driver_Line;
-   Line_Count : Natural := 0;
+   --  m80f: chunk-appended (Akernel_User.Tables); append-only
+   --  manifest table, so Last doubles as the old Line_Count.
+   package Line_Tab is new Akernel_User.Tables (Driver_Line);
+   function Lines (I : Natural) return Line_Tab.Element_Access
+     renames Line_Tab.Ref;
+   function Line_Count return Natural is (Line_Tab.Last);
+
+   --  m80f: chunk-appended; Last doubles as the old Input_Count.
+   package In_Tab is new Akernel_User.Tables (U64);
+   function Input_Svc (I : Natural) return In_Tab.Element_Access
+     renames In_Tab.Ref;
+   function Input_Count return Natural is (In_Tab.Last);
 
    Console_Handle  : U64 := 0;
    Resource_Handle : U64 := 0;
@@ -79,8 +89,6 @@ package body Device_Manager is
    --  since window protocol v2 (clients hand their input
    --  endpoint over at Surface_Create).
    Seat_Config_Label : constant U64 := U64'Last - 2;
-   Input_Svc     : array (0 .. 3) of U64 := (others => 0);
-   Input_Count   : Natural := 0;
    --  Class-16 (GPU) display endpoint, recorded at spawn; the
    --  display stack (Bureau + terminal) launches from the Sys
    --  filesystem in Start_Display once init has the FS chain
@@ -234,11 +242,15 @@ package body Device_Manager is
          if Have
            and then not Token_Equals (Token, Length, "#")
            and then Token_Equals (Token, Length, "driver")
-           and then Line_Count < Max_Lines
          then
-            Line_Count := Line_Count + 1;
             declare
-               L : Driver_Line renames Lines (Line_Count);
+               Idx : constant Natural := Line_Tab.Append;
+            begin
+            if Idx = 0 then
+               Debug_Put_Line ("devmgr: driver line DROPPED (table arena OOM)");
+            else
+            declare
+               L : Driver_Line renames Lines (Idx).all;
             begin
                Next_Token (Line_End, Pos, Token, Length, Have);
                if Have then
@@ -284,6 +296,8 @@ package body Device_Manager is
                   L.Class_Id := Parse_U32 (Token, Length, Valid);
                end if;
             end;
+            end if;
+            end;
          end if;
 
          Line_Start := Line_End + 1;
@@ -320,7 +334,7 @@ package body Device_Manager is
       MMIO_Cap   : U64;
       IRQ_Source : U64)
    is
-      L : Driver_Line renames Lines (Line_Index);
+      L : Driver_Line renames Lines (Line_Index).all;
       Image_Cap   : constant U64 := Boot_Cap (L.Path (1 .. L.Path_Len));
       Grant_Count : U64 := 0;
       IRQ_Cap     : U64;
@@ -740,7 +754,7 @@ package body Device_Manager is
       Bar_Seen   : Bar_Flags;
       IRQ_Source : U64)
    is
-      L : Driver_Line renames Lines (Line_Index);
+      L : Driver_Line renames Lines (Line_Index).all;
       Image_Cap   : constant U64 := Boot_Cap (L.Path (1 .. L.Path_Len));
       Grant_Count : U64 := 0;
       Region_Cap  : U64;
@@ -824,9 +838,16 @@ package body Device_Manager is
       if L.Class_Id = 9 and then Np_EP = 0 then
          Np_EP := Svc_EP;
       end if;
-      if L.Class_Id = 18 and then Input_Count < 4 then
-         Input_Svc (Input_Count) := Svc_EP;
-         Input_Count := Input_Count + 1;
+      if L.Class_Id = 18 then
+         declare
+            Slot : constant Natural := In_Tab.Append;
+         begin
+            if Slot /= 0 then
+               Input_Svc (Slot).all := Svc_EP;
+            else
+               Log ("devmgr: input service DROPPED (table arena OOM)");
+            end if;
+         end;
       end if;
       Log ("devmgr: spawned " & L.Path (1 .. L.Path_Len));
 
@@ -970,7 +991,7 @@ package body Device_Manager is
       end if;
 
       --  Seat wiring: the input drivers learn Bureau.
-      for I in 0 .. Input_Count - 1 loop
+      for I in 1 .. In_Tab.Last loop
          Sink := Cap_Mint (Bureau_Svc, Right_Send + Right_Transfer,
                            0);
          if Sink = Syscall_Failed then
@@ -980,7 +1001,7 @@ package body Device_Manager is
             Message.Words := (others => 0);
             Message.Caps := (others => 0);
             Message.Caps (0) := Sink;
-            if IPC_Call (Input_Svc (I)) /= IPC_Ok
+            if IPC_Call (Input_Svc (I).all) /= IPC_Ok
               or else Message.Words (0) /= 0
             then
                Log ("devmgr: seat push failed");
@@ -1280,7 +1301,7 @@ package body Device_Manager is
             if Vid /= 16#FFFF# and then Vid /= 0 then
                for I in 1 .. Line_Count loop
                   declare
-                     L : Driver_Line renames Lines (I);
+                     L : Driver_Line renames Lines (I).all;
                   begin
                      if L.Probe = Probe_PCI
                        and then L.Vid = Vid
@@ -1343,7 +1364,7 @@ package body Device_Manager is
 
       for I in 1 .. Line_Count loop
          declare
-            L : Driver_Line renames Lines (I);
+            L : Driver_Line renames Lines (I).all;
             Matches : Boolean := False;
          begin
             for C in 1 .. Info.Compatible_Count loop

@@ -31,6 +31,7 @@
 --  room fails the op with Bad_Args.
 
 with Akernel_User.Console;
+with Akernel_User.Tables;
 with Interfaces;
 with System.Storage_Elements;
 
@@ -2026,9 +2027,16 @@ package body Bfs_Engine is
    --  and bodies live with the query section near the end.
    ------------------------------------------------------------------
 
-    Live_Max : constant := 4;   --  concurrent subscriptions
+    --  m80f: the subscription table is chunk-appended
+    --  (Akernel_User.Tables); the before/after diff machinery
+    --  passes match sets around BY VALUE, so it keeps a fixed
+    --  64-wide bitset — Live_Width is now the (generous) policy
+    --  cap on concurrent subscriptions, not a storage bound.
+    --  The full-queue Ev_Resync stays as the queue-depth
+    --  backstop regardless.
+    Live_Width : constant := 64;   --  concurrent subscriptions
 
-    type Pend_Bits is array (0 .. Live_Max - 1) of Boolean;
+    type Pend_Bits is array (0 .. Live_Width - 1) of Boolean;
     No_Bits : constant Pend_Bits := (others => False);
 
     function Live_Eval (Name : String; Info : Inode_Info)
@@ -4001,8 +4009,11 @@ package body Bfs_Engine is
        Resync : Boolean := False;
     end record;
 
-    type Live_Table is array (0 .. Live_Max - 1) of Live_Sub;
-    Subs : Live_Table;
+    --  m80f: chunk-appended; the wrapper keeps the existing
+    --  0-based slot numbering (wire handle = slot + 1).
+    package Live_Tab is new Akernel_User.Tables (Live_Sub);
+    function Subs (I : Natural) return Live_Tab.Element_Access is
+      (Live_Tab.Ref (I + 1));
 
     --  Events captured by the in-flight mutation op, delivered by
     --  Trans_Commit (4 covers the write/truncate/rename diffs).
@@ -4026,7 +4037,7 @@ package body Bfs_Engine is
     is
        R : Pend_Bits := No_Bits;
     begin
-       for S in 0 .. Live_Max - 1 loop
+       for S in Integer range 0 .. Live_Tab.Last - 1 loop
           if Subs (S).Active and then Subs (S).Root /= 0 then
              R (S) := Eval_Node (Subs (S).Nodes'Access,
                                  Subs (S).Root, Name, Info);
@@ -4044,7 +4055,7 @@ package body Bfs_Engine is
        Any : Boolean := False;
        P   : Live_Path;
     begin
-       for S in 0 .. Live_Max - 1 loop
+       for S in Integer range 0 .. Live_Tab.Last - 1 loop
           Any := Any or else Match (S);
        end loop;
        if not Any then
@@ -4070,7 +4081,7 @@ package body Bfs_Engine is
        A_RM : Boolean := False;
        A_AD : Boolean := False;
     begin
-       for S in 0 .. Live_Max - 1 loop
+       for S in Integer range 0 .. Live_Tab.Last - 1 loop
           if Subs (S).Active then
              RM (S) := Was (S) and not Now (S);
              AD (S) := Now (S) and not Was (S);
@@ -4092,7 +4103,7 @@ package body Bfs_Engine is
     begin
        for R of Pend loop
           exit when not R.Any;
-          for S in 0 .. Live_Max - 1 loop
+          for S in Integer range 0 .. Live_Tab.Last - 1 loop
              if Subs (S).Active and then R.Match (S) then
                 if Subs (S).Ev_N < Live_Ev_Max then
                    Subs (S).Ev (Subs (S).Ev_N) :=
@@ -4119,7 +4130,7 @@ package body Bfs_Engine is
                         Handle : out U64) return U64
     is
        Root_N : Natural;
-       Slot   : Natural := Live_Max;
+       Slot   : Integer := -1;
     begin
        Handle := 0;
        if not Is_Mounted or else Name_Index = 0
@@ -4128,14 +4139,21 @@ package body Bfs_Engine is
        then
           return Status_Not_Found;
        end if;
-       for I in 0 .. Live_Max - 1 loop
+       for I in Integer range 0 .. Live_Tab.Last - 1 loop
           if not Subs (I).Active then
              Slot := I;
              exit;
           end if;
        end loop;
-       if Slot = Live_Max then
-          return Status_Bad_Args;  --  subscription table full
+       if Slot < 0 then
+          --  Grow; the 64-wide diff bitset is the policy cap.
+          if Live_Tab.Last >= Live_Width then
+             return Status_Bad_Args;  --  subscription policy cap
+          end if;
+          Slot := Live_Tab.Append - 1;  --  wrapper is 0-based
+          if Slot < 0 then
+             return Status_Bad_Args;  --  arena OOM
+          end if;
        end if;
        --  Parse with the one-shot parser, then snapshot the AST.
        Pred_Count := 0;
@@ -4151,9 +4169,9 @@ package body Bfs_Engine is
        then
           return Status_Bad_Args;
        end if;
-       Subs (Slot) := (Active => True, Ntfn => Ntfn_Cap,
-                       Root => Root_N, Nodes => Pred_Nodes,
-                       others => <>);
+       Subs (Slot).all := (Active => True, Ntfn => Ntfn_Cap,
+                           Root => Root_N, Nodes => Pred_Nodes,
+                           others => <>);
        Handle := U64 (Slot) + 1;
        return Status_Ok;
     end Live_Open;
@@ -4167,7 +4185,7 @@ package body Bfs_Engine is
     begin
        Kind := 0;
        Path_Len := 0;
-       if Handle = 0 or else Handle > U64 (Live_Max) then
+       if Handle = 0 or else Handle > U64 (Live_Tab.Last) then
           return Status_Bad_Args;
        end if;
        declare
@@ -4205,7 +4223,7 @@ package body Bfs_Engine is
     procedure Live_Close (Handle : U64) is
        Unused : U64;
     begin
-       if Handle >= 1 and then Handle <= U64 (Live_Max) then
+       if Handle >= 1 and then Handle <= U64 (Live_Tab.Last) then
           declare
              H : constant Natural := Natural (Handle) - 1;
           begin

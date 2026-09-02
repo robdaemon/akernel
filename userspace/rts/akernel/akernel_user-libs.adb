@@ -3,6 +3,7 @@ with System;
 with System.Storage_Elements;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
+with Akernel_User.Tables;
 
 use System.Storage_Elements;
 
@@ -21,8 +22,8 @@ package body Akernel_User.Libs is
 
    --  Per-process open table: needed only so Close_Library knows
    --  whether a handle was obtained through the shared manager or
-   --  by a private spawn.
-   Max_Open : constant := 16;
+   --  by a private spawn. m80f: chunk-appended; Cap = 0 is the
+   --  free marker (matches the zeroed default).
    Max_Name : constant := 64;
 
    type Open_Source is (From_Libman, From_Self);
@@ -34,7 +35,9 @@ package body Akernel_User.Libs is
       Source   : Open_Source := From_Self;
    end record;
 
-   Open_Table : array (1 .. Max_Open) of Open_Entry;
+   package Open_Tab is new Akernel_User.Tables (Open_Entry);
+   function Open_Table (I : Natural) return Open_Tab.Element_Access
+     renames Open_Tab.Ref;
 
    --  Manager request labels (must match userspace/libman).
    Req_Open  : constant U64 := 1;
@@ -79,7 +82,7 @@ package body Akernel_User.Libs is
 
    function Find_Entry (Cap : U64) return Natural is
    begin
-      for I in Open_Table'Range loop
+      for I in 1 .. Open_Tab.Last loop
          if Open_Table (I).Cap = Cap then
             return I;
          end if;
@@ -94,7 +97,7 @@ package body Akernel_User.Libs is
    is
       Len : constant Natural := Natural'Min (Name'Length, Max_Name);
    begin
-      for I in Open_Table'Range loop
+      for I in 1 .. Open_Tab.Last loop
          if Open_Table (I).Cap = 0 then
             Open_Table (I).Name_Len := Len;
             if Len > 0 then
@@ -106,12 +109,26 @@ package body Akernel_User.Libs is
             return True;
          end if;
       end loop;
-      return False;
+      declare
+         Slot : constant Natural := Open_Tab.Append;  --  0 = OOM
+      begin
+         if Slot = 0 then
+            return False;
+         end if;
+         Open_Table (Slot).Name_Len := Len;
+         if Len > 0 then
+            Open_Table (Slot).Name (1 .. Len) :=
+              Name (Name'First .. Name'First + Len - 1);
+         end if;
+         Open_Table (Slot).Cap := Cap;
+         Open_Table (Slot).Source := Source;
+         return True;
+      end;
    end Add_Entry;
 
    procedure Remove_Entry (Cap : U64) is
    begin
-      for I in Open_Table'Range loop
+      for I in 1 .. Open_Tab.Last loop
          if Open_Table (I).Cap = Cap then
             Open_Table (I).Cap := 0;
             Open_Table (I).Name_Len := 0;

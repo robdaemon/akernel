@@ -3,6 +3,7 @@ with Akernel_User.MMIO;
 with Akernel_User.Syscalls;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
+with Akernel_User.Tables;
 
 --  Console server, spawned by init's device manager as an ordinary
 --  driver (`driver ns16550a Drivers/Serial none 0`): class 0 gets
@@ -147,7 +148,9 @@ procedure Serial is
 
    --  Per-client line buffers (line-atomic writes): a client's
    --  bytes only reach the UART on newline or a full buffer.
-   Max_Clients : constant := 8;
+   --  m80f: chunk-appended table (Akernel_User.Tables); fresh
+   --  chunk slots are zeroed, so appends must stamp the
+   --  Badge = U64'Last free marker before use.
    Line_Max    : constant := 160;
 
    type Client_Line is record
@@ -156,13 +159,17 @@ procedure Serial is
       Len   : Natural := 0;
    end record;
 
-   Lines : array (1 .. Max_Clients) of Client_Line;
+   package Line_Tab is new Akernel_User.Tables (Client_Line);
+   function Lines (I : Natural) return Line_Tab.Element_Access
+     renames Line_Tab.Ref;
 
    --  Output sinks (Op_Attach_Sink): endpoint Send caps the
-   --  console mirrors every flushed line to. Bounded; a failing
+   --  console mirrors every flushed line to. m80f: chunk-appended
+   --  (0 = free slot, matching the zeroed default); a failing
    --  sink is dropped and its cap deleted.
-   Max_Sinks : constant := 2;
-   Sinks : array (1 .. Max_Sinks) of U64 := (others => 0);
+   package Sink_Tab is new Akernel_User.Tables (U64);
+   function Sinks (I : Natural) return Sink_Tab.Element_Access
+     renames Sink_Tab.Ref;
 
    --  Stream-write S to one sink; returns False on any IPC
    --  failure (caller drops the sink). Use Send, not Call: the sink
@@ -194,11 +201,11 @@ procedure Serial is
 
    procedure Mirror_To_Sinks (S : String) is
    begin
-      for I in Sinks'Range loop
-         if Sinks (I) /= 0 then
-            if not Sink_Write (Sinks (I), S) then
-               Result := Cap_Delete (Sinks (I));
-               Sinks (I) := 0;
+      for I in 1 .. Sink_Tab.Last loop
+         if Sinks (I).all /= 0 then
+            if not Sink_Write (Sinks (I).all, S) then
+               Result := Cap_Delete (Sinks (I).all);
+               Sinks (I).all := 0;
             end if;
          end if;
       end loop;
@@ -217,7 +224,7 @@ procedure Serial is
       Slot : Natural := 0;
       Free : Natural := 0;
    begin
-      for I in Lines'Range loop
+      for I in 1 .. Line_Tab.Last loop
          if Lines (I).Badge = Badge then
             Slot := I;
             exit;
@@ -227,6 +234,12 @@ procedure Serial is
       end loop;
 
       if Slot = 0 then
+         if Free = 0 then
+            Free := Line_Tab.Append;   --  0 = arena OOM
+            if Free /= 0 then
+               Lines (Free).Badge := U64'Last;  --  free marker
+            end if;
+         end if;
          if Free = 0 then
             --  Table full: bypass buffering rather than drop bytes.
            UART_Put_Char (Ch);
@@ -343,15 +356,26 @@ begin
             --  Send cap. Reply Count: 0 = attached, 1 = rejected.
             if Caps (0) /= 0 then
                Response.Count := 1;
-               for I in Sinks'Range loop
-                  if Sinks (I) = 0 then
-                     Sinks (I) := Caps (0);
+               for I in 1 .. Sink_Tab.Last loop
+                  if Sinks (I).all = 0 then
+                     Sinks (I).all := Caps (0);
                      Response.Count := 0;
                      exit;
                   end if;
                end loop;
                if Response.Count = 1 then
-                  --  No slot: drop the transferred cap or leak it.
+                  declare
+                     Slot : constant Natural := Sink_Tab.Append;
+                  begin
+                     if Slot /= 0 then
+                        Sinks (Slot).all := Caps (0);
+                        Response.Count := 0;
+                     end if;
+                  end;
+               end if;
+               if Response.Count = 1 then
+                  --  No slot (arena OOM): drop the transferred
+                  --  cap or leak it.
                   Result := Cap_Delete (Caps (0));
                end if;
             else

@@ -4,6 +4,7 @@ with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Display;
 with Akernel_User.Window;
+with Akernel_User.Tables;
 with Font8x8;
 
 --  Bureau: the compositor / window server. Spawned by the device
@@ -19,8 +20,9 @@ with Font8x8;
 --  frames with Op_Present. Workbench-3.x-style gadtools look:
 --  gray palette, white/dark 3D bevels, blue ACTIVE title bar.
 --
---  Window protocol v2 (milestone 30, slice a): up to Max_Win
---  windows. Each client Surface_Create takes a slot with its own
+--  Window protocol v2 (milestone 30, slice a): window slots are
+--  chunk-appended (m80f) up to the surface-region capacity. Each
+--  client Surface_Create takes a slot with its own
 --  geometry (cascade placement), surface chunk caps, input
 --  endpoint (focused keys) and title. Compositing is band-based:
 --  every change repaints a clipped absolute band in z-order
@@ -39,10 +41,17 @@ procedure Bureau is
 
    Buf_VA   : constant U64 := 16#6000_0000#;
    --  Per-slot client surface maps: 4 MiB stride starting here.
+   --  m80f region plan: the surface window runs 0x6800..0x6E00
+   --  (96 MiB = 24 slots), queues moved to 0x6E00 (1 MiB of
+   --  one-page maps), menus to 0x6E10. Past 24 windows the
+   --  4 MiB-stride formula needs a new region (and M80g's
+   --  1920x1080 surfaces need an 8.5+ MiB stride anyway) —
+   --  Max_Win_Slots derives from the region so the table cap
+   --  can never outrun the VA window.
    Surf_VA0 : constant U64 := 16#6800_0000#;
    Surf_Slot_Stride : constant U64 := 16#40_0000#;
    --  Per-slot client input-queue maps (v3): one page each.
-   Queue_VA0 : constant U64 := 16#6A00_0000#;
+   Queue_VA0 : constant U64 := 16#6E00_0000#;
 
    Max_W : constant := 1024;
    Max_H : constant := 768;
@@ -99,10 +108,12 @@ procedure Bureau is
 
    package Win renames Akernel_User.Window;
 
-    --  4 boot windows (demo/tdemo/fileman/terminal) + headroom —
-    --  4 was SILENTLY FULL at boot (a 5th window, e.g. Edit from
-    --  the shell, got Status_No_Slot; the m34/m38 table burn).
-    Max_Win : constant := 6;
+    --  m80f: was 4 boot windows (demo/tdemo/fileman/terminal) +
+    --  headroom, then 6 — the table is now chunk-appended
+    --  (Akernel_User.Tables) and the cap is the surface-region
+    --  capacity below, not an arbitrary count.
+    Max_Win_Slots : constant Natural :=
+      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  24
     --  16 chunks = 4 MiB = exactly the Surf_Slot_Stride window.
     --  Headroom added WITH the v5 zoom consumer: a zoomed pane
     --  (1016x721 @ 1024x768) needs 12 chunks; 8 silently
@@ -171,15 +182,19 @@ procedure Bureau is
        Pend_X, Pend_Y : U64 := 0;
     end record;
 
-   Wins : array (1 .. Max_Win) of Window_Rec;
-   Z    : array (1 .. Max_Win) of Natural := (others => 0);
+   package Win_Tab is new Akernel_User.Tables (Window_Rec);
+   function Wins (S : Natural) return Win_Tab.Element_Access
+     renames Win_Tab.Ref;
+   package Z_Tab is new Akernel_User.Tables (Natural);
+   function Z (I : Natural) return Z_Tab.Element_Access
+     renames Z_Tab.Ref;
    Z_N  : Natural := 0;                 --  used entries in Z
    Focus : Natural := 0;                --  slot with the keys
    Next_Id : U64 := 0;
 
    function Slot_Of (Id : U64) return Natural is
    begin
-      for S in 1 .. Max_Win loop
+      for S in 1 .. Win_Tab.Last loop
          if Wins (S).Used and then Wins (S).Id = Id then
             return S;
          end if;
@@ -283,7 +298,7 @@ procedure Bureau is
    Title_X     : array (1 .. Max_Menus) of U64 := (others => 0);
    Title_W     : array (1 .. Max_Menus) of U64 := (others => 0);
    --  Scratch map for the client's serialized menu page.
-   Menu_VA : constant U64 := 16#6A10_0000#;
+   Menu_VA : constant U64 := 16#6E10_0000#;
 
    procedure Open_Menu;
    procedure Dismiss_Menu;
@@ -513,7 +528,7 @@ procedure Bureau is
    Panel_Top : constant := Bar_H + 2;
 
    function Panel_W return U64 is
-      W : Window_Rec renames Wins (Menu_Slot);
+      W : Window_Rec renames Wins (Menu_Slot).all;
       M : Menu_Rec renames W.Menus (Active_Menu);
       Max_L : Natural := 0;
    begin
@@ -543,7 +558,7 @@ procedure Bureau is
          return;
       end if;
       declare
-         W : Window_Rec renames Wins (Menu_Slot);
+         W : Window_Rec renames Wins (Menu_Slot).all;
       begin
       for M in 1 .. W.Menu_Count loop
          if M = Active_Menu then
@@ -612,7 +627,7 @@ procedure Bureau is
       Fill_Rect (0, 0, Width, Height, Desktop);
       for I in 1 .. Z_N loop
          declare
-            S : constant Natural := Z (I);
+            S : constant Natural := Z (I).all;
          begin
             if Wins (S).X < Clip_X1
               and then Wins (S).X + Wins (S).FW > Clip_X0
@@ -702,7 +717,7 @@ procedure Bureau is
       Idx : Natural := 0;
    begin
       for I in 1 .. Z_N loop
-         if Z (I) = S then
+         if Z (I).all = S then
             Idx := I;
             exit;
          end if;
@@ -711,9 +726,9 @@ procedure Bureau is
          return;
       end if;
        for I in Idx .. Z_N - 1 loop
-          Z (I) := Z (I + 1);
+          Z (I).all := Z (I + 1).all;
        end loop;
-       Z (Z_N) := S;
+       Z (Z_N).all := S;
     end Raise_Slot;
 
     --  Move a slot to the bottom of the z-order (depth gadget).
@@ -721,7 +736,7 @@ procedure Bureau is
        Idx : Natural := 0;
     begin
        for I in 1 .. Z_N loop
-          if Z (I) = S then
+          if Z (I).all = S then
              Idx := I;
              exit;
           end if;
@@ -730,9 +745,9 @@ procedure Bureau is
           return;
        end if;
        for I in reverse 2 .. Idx loop
-          Z (I) := Z (I - 1);
+          Z (I).all := Z (I - 1).all;
        end loop;
-       Z (1) := S;
+       Z (1).all := S;
     end Lower_Slot;
 
    procedure Focus_Slot (S : Natural) is
@@ -859,7 +874,7 @@ procedure Bureau is
     begin
        for I in reverse 1 .. Z_N loop
           declare
-             S : constant Natural := Z (I);
+             S : constant Natural := Z (I).all;
           begin
              if PX >= Wins (S).X
                and then PX < Wins (S).X + Wins (S).FW
@@ -879,13 +894,13 @@ procedure Bureau is
                   and then PX < Wins (S).X + Wins (S).FW - Frame
                 then
                    Eat_Gesture := True;
-                   if Z (1) = S then
+                   if Z (1).all = S then
                       Raise_Slot (S);
                       Focus_Slot (S);
                    else
                       Lower_Slot (S);
                       if Z_N > 0 then
-                         Focus_Slot (Z (Z_N));
+                         Focus_Slot (Z (Z_N).all);
                       end if;
                    end if;
                    Repaint_Window (S);
@@ -1144,7 +1159,7 @@ procedure Bureau is
    --  items can never go hot); anywhere else just clears the
    --  hot row. Repaints the bar + panel union on any change.
    procedure Menu_Hover (PX, PY : U64) is
-      W : Window_Rec renames Wins (Menu_Slot);
+      W : Window_Rec renames Wins (Menu_Slot).all;
       New_Active : Natural := Active_Menu;
       New_Hot    : Natural := 0;
       Old_Bottom : U64 := Bar_H + 1;
@@ -1430,7 +1445,7 @@ begin
    Update_Clock;
    Cursor_Draw (Width / 2, Height / 2);
 
-   --  Window-protocol service loop (v2: up to Max_Win slots).
+   --  Window-protocol service loop (v2: slots chunk-appended, m80f).
    loop
       if IPC_Recv (Win_Svc, Reply_H) /= IPC_Ok then
          Debug_Put_Line ("bureau recv failed");
@@ -1444,12 +1459,22 @@ begin
             PW   : U64;
             PH   : U64;
          begin
-            for S in 1 .. Max_Win loop
+            for S in 1 .. Win_Tab.Last loop
                if not Wins (S).Used then
                   Slot := S;
                   exit;
                end if;
             end loop;
+            if Slot = 0 and then Win_Tab.Last < Max_Win_Slots then
+               Slot := Win_Tab.Append;   --  0 = arena OOM
+               --  Keep a Z slot per window slot (zeroed default;
+               --  entries are rewritten on use).
+               if Slot /= 0 and then Z_Tab.Last < Win_Tab.Last
+                 and then Z_Tab.Append = 0
+               then
+                  Slot := 0;   --  Z arena OOM: leave slot unused
+               end if;
+            end if;
             if Slot = 0 then
                Win_Reply (Reply_H, Label, Win.Status_No_Slot, 0, 0, 0, 0);
             elsif Message.Words (0) = 0 or else Message.Words (1) = 0
@@ -1515,7 +1540,7 @@ begin
                      end if;
                   end if;
                   Z_N := Z_N + 1;
-                  Z (Z_N) := Slot;
+                  Z (Z_N).all := Slot;
                   Focus_Slot (Slot);
                   --  A new window takes the focus: any open menu
                   --  belonged to the previous owner.
@@ -1755,9 +1780,9 @@ begin
                   end if;
                   --  Remove from the z-order.
                   for I in 1 .. Z_N loop
-                     if Z (I) = S then
+                     if Z (I).all = S then
                         for J in I .. Z_N - 1 loop
-                           Z (J) := Z (J + 1);
+                           Z (J).all := Z (J + 1).all;
                         end loop;
                         Z_N := Z_N - 1;
                         exit;
@@ -1766,7 +1791,7 @@ begin
                   if Focus = S then
                      Focus := 0;
                      if Z_N > 0 then
-                        Focus_Slot (Z (Z_N));
+                        Focus_Slot (Z (Z_N).all);
                      end if;
                   end if;
                   Composite_Band (FX, FY, FX + FW, FY + FH);

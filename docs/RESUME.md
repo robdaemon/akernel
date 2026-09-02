@@ -426,6 +426,35 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   program .elfs — now a normal prereq. 1719 PASS / 0 FAIL,
   SMP4 and SMP1.
 
+- **M80f done** (this commit): remaining server tables ->
+  Akernel_User.Tables. serial Lines (appends stamp the U64'Last
+  free marker — zeroed chunk slots would alias badge 0) and
+  Sinks; devmgr Lines (append-only manifest table; Last doubles
+  as Line_Count) and Input_Svc (0..3 -> growable), both with a
+  LOUD drop print on arena OOM instead of the silent manifest
+  overflow; shell Jobs (job numbers user-visible via jobs/wait/
+  kill — chunk-append keeps them stable; allocate = free slot,
+  then steal oldest Done, then grow); libman Entries + client
+  Akernel_User.Libs Open_Table (Cap=0 free markers match the
+  zeroed default); gloss FDs (the chunk index IS the fd —
+  lowest-free-fd semantics preserved, slots 1..2 padded once so
+  the first file fd stays 3) and Dir_Slots (DIR* = index); bfs
+  live-query Subs growable with the diff machinery decoupled to
+  a fixed 64-wide match bitset (Live_Width is now a generous
+  POLICY cap; Ev_Resync stays the queue-depth backstop) — the
+  0-based slot numbering survives via a Ref (I + 1) wrapper;
+  bureau Wins + Z chunk-appended, capped by the surface-region
+  capacity (Surf 0x6800..0x6E00 = 24 slots at the 4 MiB stride,
+  queues moved to 0x6E00, menu scratch to 0x6E10;
+  Max_Win_Slots derives from the region so the table can never
+  outrun the VA window; >24 windows and 1920x1080 surfaces are
+  M80g's region rework, documented in the layout comment).
+  Flake note: fuzz "thread_regs frame fields sane" failed once
+  in four runs (racy blocked-thread register dump — the echo
+  server must be parked in Receive when dumped; retry loop is
+  bounded at 256 yields), green on re-run and at SMP1.
+  1717 PASS SMP4 / 1719 SMP1, 0 FAIL both.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide

@@ -3,6 +3,7 @@ with System;
 with System.Storage_Elements;
 with Akernel_User.Syscalls;
 with Akernel_User.Files;
+with Akernel_User.Tables;
 
 --  Library manager (milestone 65 Tier-1 follow-up).
 --  Amiga-style shared-library list: a single library server is
@@ -24,7 +25,6 @@ procedure Libman is
    --  manager never served a request (m75 found this).
 
    Max_Name      : constant := 64;
-   Max_Libraries : constant := 16;
 
    type Library_Entry is record
       Name_Len    : Natural := 0;
@@ -36,8 +36,11 @@ procedure Libman is
       Process_Cap : U64 := 0;  --  to reap after expunge
    end record;
 
-   type Entry_Table is array (1 .. Max_Libraries) of Library_Entry;
-   Entries : Entry_Table;
+   --  m80f: chunk-appended (Akernel_User.Tables); Name_Len = 0 is
+   --  the free marker (matches the zeroed default).
+   package Ent_Tab is new Akernel_User.Tables (Library_Entry);
+   function Entries (I : Natural) return Ent_Tab.Element_Access
+     renames Ent_Tab.Ref;
 
    --  Request labels on the manager's service endpoint.
    Label_Req_Open  : constant U64 := 1;
@@ -68,7 +71,7 @@ procedure Libman is
 
    function Entry_By_Name (Name : String) return Natural is
    begin
-      for I in Entries'Range loop
+      for I in 1 .. Ent_Tab.Last loop
          if Entries (I).Name_Len = Name'Length
            and then Entries (I).Name_Len > 0
            and then Entries (I).Name (1 .. Entries (I).Name_Len) = Name
@@ -81,16 +84,16 @@ procedure Libman is
 
    function Free_Entry return Natural is
    begin
-      for I in Entries'Range loop
+      for I in 1 .. Ent_Tab.Last loop
          if Entries (I).Name_Len = 0 then
             return I;
          end if;
       end loop;
-      return 0;
+      return Ent_Tab.Append;   --  0 = arena OOM
    end Free_Entry;
 
    procedure Expunge (Index : Natural) is
-      E : Library_Entry renames Entries (Index);
+      E : Library_Entry renames Entries (Index).all;
       Code : U64 := 0;
       Discard : U64;
    begin

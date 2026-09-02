@@ -6,6 +6,7 @@ with Akernel_User.Streams;
 with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.CLI;
+with Akernel_User.Tables;
 with Scripting;
 with Scripting.Exec;
 with Scripting.Interp;
@@ -137,13 +138,18 @@ procedure Shell is
    --  exit code in the Done state until `wait` claims it —
    --  `jobs` reporting done must not destroy a code a later
    --  wait wants (the Script4 burn). `run` allocates a Free
-   --  slot, then steals the oldest Done slot, then fails.
+   --  slot, then steals the oldest Done slot, then fails
+   --  (m80f: grows instead — see the table below).
    --  `wait [n]` blocks on one (or all) and yields the exit
    --  code as the command RC so scripts compose with failat.
    --  Exiting the shell with live jobs warns once; the second
    --  exit abandons them (children are independent processes —
    --  Amiga RUN'd tasks survive the shell).
-   Max_Jobs : constant := 8;
+   --  m80f: chunk-appended (Akernel_User.Tables); job numbers are
+   --  user-visible (jobs/wait/kill), chunk-append keeps them
+   --  stable. Job_Free slots are all-zero (fresh chunks read as
+   --  free). Allocation: free slot, then steal the oldest Done
+   --  slot, then grow.
    type Job_State is (Job_Free, Job_Active, Job_Done);
    type Job_Rec is record
       State  : Job_State := Job_Free;
@@ -155,7 +161,9 @@ procedure Shell is
       Cmd    : String (1 .. 64) := (others => ' ');
       Len    : Natural := 0;
    end record;
-   Jobs        : array (1 .. Max_Jobs) of Job_Rec;
+   package Job_Tab is new Akernel_User.Tables (Job_Rec);
+   function Jobs (J : Natural) return Job_Tab.Element_Access
+     renames Job_Tab.Ref;
    Exit_Warned : Boolean := False;
 
    procedure Harvest (Loud : Boolean) is
@@ -163,7 +171,7 @@ procedure Shell is
       Dead : U64;
       Done : Boolean;
    begin
-      for J in Jobs'Range loop
+      for J in 1 .. Job_Tab.Last loop
          if Jobs (J).State = Job_Active then
             --  Poll every stage; stages exit in any order. The
             --  job's RC is the LAST stage's code, captured
@@ -206,8 +214,8 @@ procedure Shell is
    function Jobs_Active return Natural is
       N : Natural := 0;
    begin
-      for J of Jobs loop
-         if J.State = Job_Active then
+      for J in 1 .. Job_Tab.Last loop
+         if Jobs (J).State = Job_Active then
             N := N + 1;
          end if;
       end loop;
@@ -265,7 +273,7 @@ procedure Shell is
       declare
          Slot : Natural := 0;
       begin
-         for J in Jobs'Range loop
+         for J in 1 .. Job_Tab.Last loop
             if Jobs (J).State = Job_Free then
                Slot := J;
                exit;
@@ -274,7 +282,7 @@ procedure Shell is
          if Slot = 0 then
             --  No Free slot: steal the oldest Done one (its
             --  unclaimed exit code is discarded — documented).
-            for J in Jobs'Range loop
+            for J in 1 .. Job_Tab.Last loop
                if Jobs (J).State = Job_Done then
                   Slot := J;
                   exit;
@@ -282,7 +290,11 @@ procedure Shell is
             end loop;
          end if;
          if Slot = 0 then
-            Akernel_User.Console.Put_Line ("run: job table full (8)");
+            Slot := Job_Tab.Append;   --  grow; 0 = arena OOM
+         end if;
+         if Slot = 0 then
+            Akernel_User.Console.Put_Line
+              ("run: job table allocation failed");
             return Akernel_User.CLI.RC_Error;
          end if;
          --  Spawn into LOCAL stage bookkeeping; the slot is only
@@ -363,7 +375,7 @@ procedure Shell is
          declare
             Any : Boolean := False;
          begin
-            for J in Jobs'Range loop
+            for J in 1 .. Job_Tab.Last loop
                Any := Any or else Jobs (J).State /= Job_Free;
             end loop;
             if not Any then
@@ -373,7 +385,7 @@ procedure Shell is
          --  Bare wait: every known job, slot order; RC = the
          --  last job's exit code. Done jobs hand their code
          --  over without blocking.
-         for J in Jobs'Range loop
+         for J in 1 .. Job_Tab.Last loop
             if Jobs (J).State /= Job_Free then
                Reap_Job (J, RC);
             end if;
@@ -381,7 +393,9 @@ procedure Shell is
          return RC;
       end if;
       N := Parse_Nat (Args);
-      if N not in Jobs'Range or else Jobs (N).State = Job_Free then
+      if N < 1 or else N > Job_Tab.Last
+        or else Jobs (N).State = Job_Free
+      then
          --  Milestone 59: C:Wait (the clock command) shares the
          --  name. When the argument names no live or completed
          --  job, the C: command wins (Amiga precedence) —
@@ -480,7 +494,7 @@ procedure Shell is
                      & "'");
                   return Akernel_User.CLI.RC_Error;
                end if;
-               if N not in Jobs'Range
+               if N < 1 or else N > Job_Tab.Last
                  or else Jobs (N).State /= Job_Active
                then
                   Akernel_User.Console.Put_Line
