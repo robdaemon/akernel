@@ -5,6 +5,7 @@ with System.Storage_Elements;
 with Akernel_User.Console;
 with Akernel_User.Syscalls;
 with Akernel_User.Files;
+with Akernel_User.Tables;
 
 --  Netserv (milestones 71b/71c/72): the IPv4 network stack server.
 --  Sits between Drivers/VirtioNet (frame protocol: Op_Info /
@@ -194,24 +195,29 @@ package body Netserv_Engine is
    Ping_Timeout : constant U64 := 5 * Tick_Hz;
 
     --  Fixed VA windows (below the IPC buffer at 16#6FFF_0000#,
-    --  clear of the Files client buffer at 16#4400_0000#):
+    --  clear of the Files client buffer at 16#4400_0000# and the
+    --  sbrk arena at 16#5200_0000#):
     --  16#5400_0000# driver RX ring (5 pages), 16#5410_0000# TX
-    --  staging (1 page), 16#5420_0000# + (id-1)*1 MiB the eight
-    --  socket ring pairs (2 pages each), 16#54A0_0000# the Net:
-    --  volume client-buffer window (8 pages). m72b adds the
-    --  ticker thread at 16#54B0_0000# (stack) / 16#54C0_0000#
-    --  (IPC buffer) / 16#54D0_0000# (TLS).
+    --  staging (1 page), 16#5420_0000# + (id-1)*64 KiB the socket
+    --  ring pairs (2 pages each), 16#5B00_0000# the Net: volume
+    --  client-buffer window (8 pages). m72b adds the ticker
+    --  thread at 16#5B10_0000# (stack) / 16#5B20_0000# (IPC
+    --  buffer) / 16#5B30_0000# (TLS). m80e grew the sock-ring
+    --  window from 8 MiB to 86 MiB (1376 pairs at 64 KiB stride)
+    --  to sit above the 0x58 trinket window of OTHER processes
+    --  (windows are per-process; netserv maps nothing in
+    --  16#5500_0000#..16#5B00_0000#).
     Ring_VA    : constant U64 := 16#5400_0000#;
     Ring_Pages : constant U64 := 5;   --  4 KiB header + 8 slots
     Ring_Bytes : constant U64 := Ring_Pages * Syscalls.Page_Size;
     Tx_VA      : constant U64 := 16#5410_0000#;
     Sock_VA_Base   : constant U64 := 16#5420_0000#;
     Sock_VA_Stride : constant U64 := 16#1_0000#;
-    Buf_Win_VA     : constant U64 := 16#54A0_0000#;
+    Buf_Win_VA     : constant U64 := 16#5B00_0000#;
     Buf_Bytes      : constant U64 := 8 * Syscalls.Page_Size;
-    Ticker_Stack_Top : constant U64 := 16#54B0_1000#;
-    Ticker_IPC_VA    : constant U64 := 16#54C0_0000#;
-    Ticker_TLS_VA    : constant U64 := 16#54D0_0000#;
+    Ticker_Stack_Top : constant U64 := 16#5B10_1000#;
+    Ticker_IPC_VA    : constant U64 := 16#5B20_0000#;
+    Ticker_TLS_VA    : constant U64 := 16#5B30_0000#;
 
     --  Bound-notification signal bits: bit 0 = driver RX kick
     --  (virtio_net signals the value 1), bit 2 = 50 ms ticker.
@@ -546,7 +552,11 @@ package body Netserv_Engine is
     --  a duplicate marker when a reset follows an orderly FIN.
     --  m73: 8 -> 16; concurrent GNAT.Sockets programs (gsock_test
     --  alongside tcp/udp/net tests) transiently overflowed 8.
-    Max_Socks : constant := 16;
+    --  m80e: the table is now an Akernel_User.Tables chunk chain
+    --  in the shared arena; sock ids are stable chunk indices
+    --  (the badge is the id), so the client-visible numbering is
+    --  unchanged. Max_Sock_Ids bounds live ring windows (see the
+    --  VA layout above); the arena directory allows far more.
 
     type Sock_State is record
        Used       : Boolean := False;
@@ -571,8 +581,36 @@ package body Netserv_Engine is
        Eof_Done      : Boolean := False;
     end record;
 
-    Socks      : array (1 .. Max_Socks) of Sock_State;
-    Next_Ephem : U32 := 49152;
+   package Sock_Tab is new Akernel_User.Tables (Sock_State);
+
+   --  Live ring windows cap concurrent socks at this many ids;
+   --  chunk-append keeps id allocation dense below the cap, so
+   --  ids beyond it are only reachable while the window is full
+   --  of parked (ring-less) accepts — Op_Accept's map then fails
+   --  loudly rather than clobbering the windows above.
+   Max_Sock_Ids : constant Natural :=
+     Natural ((Buf_Win_VA - Sock_VA_Base) / Sock_VA_Stride);
+
+   function Socks (I : Natural) return Sock_Tab.Element_Access
+     renames Sock_Tab.Ref;
+
+   --  First invalid chunk index (invalid elements are all-zero);
+   --  appends a fresh chunk element when the chain has none free.
+   --  0 = table full or window cap reached.
+   function Alloc_Sock return Natural is
+   begin
+      for I in 1 .. Sock_Tab.Last loop
+         if not Socks (I).Used then
+            return I;
+         end if;
+      end loop;
+      if Sock_Tab.Last >= Max_Sock_Ids then
+         return 0;
+      end if;
+      return Sock_Tab.Append;
+   end Alloc_Sock;
+
+   Next_Ephem : U32 := 49152;
 
     --  Pending ARP resolves (m72b): lwIP queues an unresolved
     --  datagram on its ARP entry and reports nothing on failure,
@@ -586,16 +624,18 @@ package body Netserv_Engine is
        Deadline : U64 := 0;
     end record;
 
-     Pend : array (1 .. Max_Socks) of Pend_Rec;
+     package Pend_Tab is new Akernel_User.Tables (Pend_Rec);
+     function Pend (I : Natural) return Pend_Tab.Element_Access
+       renames Pend_Tab.Ref;
 
      --  Outstanding Op_Resolve queries (m78a): lwIP's dns.c owns
      --  the wire state (retries and the final timeout fire off the
      --  ticker's sys_check_timeouts), this table parks the
      --  one-shot reply cap until the glue callback records the
-     --  outcome (Done + Result; Result 0 = lookup failed). Sized
-     --  to lwIP's DNS_TABLE_SIZE default; an extra in-flight query
-     --  would be rejected by dns_enqueue anyway.
-     Max_Pending_Resolves : constant := 4;
+     --  outcome (Done + Result; Result 0 = lookup failed). m80e:
+     --  chunk-appended; the effective bound is lwIP's
+     --  DNS_TABLE_SIZE (dns_enqueue rejects an extra in-flight
+     --  query and the glue reports the error).
 
      type Resolve_Rec is record
         Used    : Boolean := False;
@@ -604,7 +644,9 @@ package body Netserv_Engine is
         Result  : U32 := 0;
      end record;
 
-     Resolves : array (1 .. Max_Pending_Resolves) of Resolve_Rec;
+     package Res_Tab is new Akernel_User.Tables (Resolve_Rec);
+     function Resolves (I : Natural) return Res_Tab.Element_Access
+       renames Res_Tab.Ref;
 
      --  Hostname scratch for Op_Resolve (single-threaded): the
      --  client's name bytes plus a NUL for the C side. 256 covers
@@ -948,7 +990,7 @@ package body Netserv_Engine is
      (Dst_Port : U32; Src_IP : U32; Src_Port : U32) return Natural
    is
    begin
-      for I in 1 .. Max_Socks loop
+      for I in 1 .. Sock_Tab.Last loop
          if Socks (I).Used
            and then Socks (I).Proto = Proto_Udp
            and then Socks (I).Bound
@@ -996,7 +1038,7 @@ package body Netserv_Engine is
       Len      : U32)
    is
    begin
-      if Id >= 1 and then Id <= U32 (Max_Socks)
+      if Id >= 1 and then Id <= U32 (Sock_Tab.Last)
         and then Socks (Natural (Id)).Used
         and then Socks (Natural (Id)).Proto = Proto_Udp
       then
@@ -1042,7 +1084,7 @@ package body Netserv_Engine is
                return 1;
             end if;
             Id := Natural (Ident);
-            if Id in 1 .. Max_Socks
+            if Id in 1 .. Sock_Tab.Last
               and then Socks (Id).Used
               and then Socks (Id).Proto = Proto_Icmp
             then
@@ -1067,7 +1109,7 @@ package body Netserv_Engine is
 
    procedure Aknet_On_Dns_Reply (Slot : U32; Ip : U32) is
    begin
-      if Slot >= 1 and then Slot <= U32 (Max_Pending_Resolves)
+      if Slot >= 1 and then Slot <= U32 (Res_Tab.Last)
         and then Resolves (Natural (Slot)).Used
       then
          Resolves (Natural (Slot)).Done := True;
@@ -1223,22 +1265,17 @@ package body Netserv_Engine is
       Listener : constant Natural := Natural (Id);
       Child    : Natural := 0;
    begin
-      if Listener < 1 or else Listener > Max_Socks
+      if Listener < 1 or else Listener > Sock_Tab.Last
         or else not Socks (Listener).Used
         or else not Socks (Listener).Listening
       then
          return 1;
       end if;
-      for I in 1 .. Max_Socks loop
-         if not Socks (I).Used then
-            Child := I;
-            exit;
-         end if;
-      end loop;
+      Child := Alloc_Sock;
       if Child = 0 then
          return 1;
       end if;
-      Socks (Child) :=
+      Socks (Child).all :=
         (Used       => True,
          Proto      => Proto_Tcp,
          Bound      => True,
@@ -1270,7 +1307,7 @@ package body Netserv_Engine is
 
    procedure Aknet_On_Tcp_Connected (Id : U32; Err : Int) is
    begin
-      if Id < 1 or else Id > U32 (Max_Socks)
+      if Id < 1 or else Id > U32 (Sock_Tab.Last)
         or else not Socks (Natural (Id)).Used
         or else Socks (Natural (Id)).Proto /= Proto_Tcp
         or else Socks (Natural (Id)).Conn_State /= Conn_Connecting
@@ -1297,11 +1334,11 @@ package body Netserv_Engine is
      (Id : U32; P : System.Address) return Int
    is
    begin
-      if Id < 1 or else Id > U32 (Max_Socks) then
+      if Id < 1 or else Id > U32 (Sock_Tab.Last) then
          return 0;
       end if;
       declare
-         S : Sock_State renames Socks (Natural (Id));
+         S : Sock_State renames Socks (Natural (Id)).all;
       begin
          if not S.Used or else S.Proto /= Proto_Tcp
            or else not S.Claimed
@@ -1325,11 +1362,11 @@ package body Netserv_Engine is
 
    procedure Aknet_On_Tcp_Eof (Id : U32) is
    begin
-      if Id < 1 or else Id > U32 (Max_Socks) then
+      if Id < 1 or else Id > U32 (Sock_Tab.Last) then
          return;
       end if;
       declare
-         S : Sock_State renames Socks (Natural (Id));
+         S : Sock_State renames Socks (Natural (Id)).all;
       begin
          if not S.Used or else S.Proto /= Proto_Tcp
            or else S.Eof_Done
@@ -1355,11 +1392,11 @@ package body Netserv_Engine is
 
    procedure Aknet_On_Tcp_Err (Id : U32; Err : Int) is
    begin
-      if Id < 1 or else Id > U32 (Max_Socks) then
+      if Id < 1 or else Id > U32 (Sock_Tab.Last) then
          return;
       end if;
       declare
-         S : Sock_State renames Socks (Natural (Id));
+         S : Sock_State renames Socks (Natural (Id)).all;
       begin
          if not S.Used or else S.Proto /= Proto_Tcp then
             return;
@@ -1408,7 +1445,7 @@ package body Netserv_Engine is
 
    procedure Aknet_On_Tcp_Sent (Id : U32; Len : U32) is
    begin
-      if Id >= 1 and then Id <= U32 (Max_Socks)
+      if Id >= 1 and then Id <= U32 (Sock_Tab.Last)
         and then Socks (Natural (Id)).Used
         and then Socks (Natural (Id)).Proto = Proto_Tcp
         and then Socks (Natural (Id)).Conn_State = Conn_Up
@@ -1462,7 +1499,7 @@ package body Netserv_Engine is
    procedure Track_Pending (Id : Natural; Ip : U32) is
       Free : Natural := 0;
    begin
-      for I in Pend'Range loop
+      for I in 1 .. Pend_Tab.Last loop
          if Pend (I).Used
            and then Pend (I).Sock = Id
            and then Pend (I).Ip = Ip
@@ -1473,8 +1510,11 @@ package body Netserv_Engine is
             Free := I;
          end if;
       end loop;
+      if Free = 0 then
+         Free := Pend_Tab.Append;   --  0 = arena OOM: drop, lwIP's
+      end if;                       --  ARP queue still holds the frame
       if Free /= 0 then
-         Pend (Free) :=
+         Pend (Free).all :=
            (Used     => True,
             Sock     => Id,
             Ip       => Ip,
@@ -1484,14 +1524,14 @@ package body Netserv_Engine is
 
    procedure Check_Pending is
    begin
-      for I in Pend'Range loop
+      for I in 1 .. Pend_Tab.Last loop
          if Pend (I).Used then
             if Aknet_Arp_Resolved (Pend (I).Ip) /= 0 then
                Pend (I).Used := False;
             elsif Syscalls.Read_Time > Pend (I).Deadline then
                Pend (I).Used := False;
                if Pend (I).Sock >= 1
-                 and then Pend (I).Sock <= Max_Socks
+                 and then Pend (I).Sock <= Sock_Tab.Last
                  and then Socks (Pend (I).Sock).Used
                then
                   Flag_Error (Pend (I).Sock, 2);
@@ -1503,7 +1543,7 @@ package body Netserv_Engine is
 
    procedure Scrub_Pending (Id : Natural) is
    begin
-      for I in Pend'Range loop
+      for I in 1 .. Pend_Tab.Last loop
          if Pend (I).Used and then Pend (I).Sock = Id then
             Pend (I).Used := False;
          end if;
@@ -1725,12 +1765,7 @@ package body Netserv_Engine is
          Reply (Status_Bad_Args, 0);
          return;
       end if;
-      for I in 1 .. Max_Socks loop
-         if not Socks (I).Used then
-            Id := I;
-            exit;
-         end if;
-      end loop;
+      Id := Alloc_Sock;
       if Id = 0 then
          R := Syscalls.Cap_Delete (Ring);
          R := Syscalls.Cap_Delete (Ntf);
@@ -1781,12 +1816,12 @@ package body Netserv_Engine is
       end;
 
       Scrub_Pending (Id);
-      Socks (Id) := (Used     => True,
-                     Proto    => U8 (Pro),
-                     Ring_Cap => Ring,
-                     Ntfn_Cap => Ntf,
-                     Pcb      => Pcb,
-                     others   => <>);
+      Socks (Id).all := (Used     => True,
+                         Proto    => U8 (Pro),
+                         Ring_Cap => Ring,
+                         Ntfn_Cap => Ntf,
+                         Pcb      => Pcb,
+                         others   => <>);
       --  Caps do not travel in replies; the id is the reply and
       --  the client mints its own badged cap on the endpoint.
       Reply (Status_Ok, U64 (Id));
@@ -1798,7 +1833,7 @@ package body Netserv_Engine is
    function Port_In_Use
      (Proto : U8; P : U32; Except : Natural) return Boolean is
    begin
-      for I in 1 .. Max_Socks loop
+      for I in 1 .. Sock_Tab.Last loop
          if I /= Except
            and then Socks (I).Used
            and then Socks (I).Proto = Proto
@@ -2003,7 +2038,7 @@ package body Netserv_Engine is
          Reply (Status_Bad_Args, 0);
          return;
       end if;
-      for I in 1 .. Max_Socks loop
+      for I in 1 .. Sock_Tab.Last loop
          if Socks (I).Used
            and then Socks (I).Parent = Id
            and then not Socks (I).Claimed
@@ -2068,7 +2103,7 @@ package body Netserv_Engine is
       --  is the parked-accept backlog.
       if Socks (Id).Listening then
          Rx_Level := 0;
-         for I in 1 .. Max_Socks loop
+         for I in 1 .. Sock_Tab.Last loop
             if Socks (I).Used
               and then Socks (I).Parent = Id
               and then not Socks (I).Claimed
@@ -2108,13 +2143,13 @@ package body Netserv_Engine is
          --  Unclaimed children were never seen by the client:
          --  close them out. Claimed ones live on with their
          --  client (POSIX semantics); drop the back-pointer.
-         for I in 1 .. Max_Socks loop
+         for I in 1 .. Sock_Tab.Last loop
             if Socks (I).Used and then Socks (I).Parent = Id then
                if Socks (I).Claimed then
                   Socks (I).Parent := 0;
                else
                   Free_Pcb (Proto_Tcp, Socks (I).Pcb, I);
-                  Socks (I) := (others => <>);
+                  Socks (I).all := (others => <>);
                end if;
             end if;
          end loop;
@@ -2132,7 +2167,7 @@ package body Netserv_Engine is
       if Socks (Id).Ntfn_Cap /= 0 then
          R := Syscalls.Cap_Delete (Socks (Id).Ntfn_Cap);
       end if;
-      Socks (Id) := (others => <>);
+      Socks (Id).all := (others => <>);
       Reply (Status_Ok, 0);
    end Handle_Sock_Close;
 
@@ -2142,7 +2177,7 @@ package body Netserv_Engine is
    --  ACK-driven cases; this bounds the rest at 50 ms).
    procedure Tick_Tcp is
    begin
-      for I in 1 .. Max_Socks loop
+      for I in 1 .. Sock_Tab.Last loop
          if Socks (I).Used and then Socks (I).Proto = Proto_Tcp then
             if Socks (I).Conn_State = Conn_Connecting
               and then Syscalls.Read_Time > Socks (I).Conn_Deadline
@@ -2286,12 +2321,15 @@ package body Netserv_Engine is
          Reply (Status_Bad_Args, 0);
          return;
       end if;
-      for I in 1 .. Max_Pending_Resolves loop
+      for I in 1 .. Res_Tab.Last loop
          if not Resolves (I).Used then
             Slot := I;
             exit;
          end if;
       end loop;
+      if Slot = 0 then
+         Slot := Res_Tab.Append;
+      end if;
       if Slot = 0 then
          R := Syscalls.Cap_Delete (Buf);
          Reply (Status_Not_Ready, 0);
@@ -2327,8 +2365,8 @@ package body Netserv_Engine is
       --  Slot occupied BEFORE the glue call (the m72c Conn_State
       --  rule): the callback must always find a live slot, and a
       --  cache hit returns 1 instead of calling back.
-      Resolves (Slot) := (Used => True, Done => False,
-                          Reply_H => 0, Result => 0);
+      Resolves (Slot).all := (Used => True, Done => False,
+                              Reply_H => 0, Result => 0);
       Rc := Aknet_Dns_Resolve (Resolve_Name'Address, U32 (Slot), Ip);
       if Rc > 0 then
          --  Cache hit: answered inline.
@@ -2461,7 +2499,7 @@ package body Netserv_Engine is
    function Live_Socks return U64 is
       N : U64 := 0;
    begin
-      for I in 1 .. Max_Socks loop
+      for I in 1 .. Sock_Tab.Last loop
          if Socks (I).Used then
             N := N + 1;
          end if;
@@ -2485,7 +2523,7 @@ package body Netserv_Engine is
                       & " tx " & Dec (U32 (Tx_Frames))
                       & " dropped " & Dec (U32 (Ring_Hdr (2))));
             Put_Line ("sockets " & Dec (U32 (Live_Socks))
-                      & "/" & Dec (U32 (Max_Socks)));
+                      & "/" & Dec (U32 (Sock_Tab.Last)));
          when Nf_Address =>
             Put_Line (Ip_Image (My_IP));
          when Nf_Gateway =>
@@ -2516,7 +2554,7 @@ package body Netserv_Engine is
             --  netstat-style (m72c): id, lwIP state, local and
             --  peer endpoints; a parked (not yet Op_Accept'ed)
             --  child is marked.
-            for I in 1 .. Max_Socks loop
+            for I in 1 .. Sock_Tab.Last loop
                if Socks (I).Used
                  and then Socks (I).Proto = Proto_Tcp
                then
@@ -3126,7 +3164,7 @@ package body Netserv_Engine is
             elsif L = Op_Resolve and then Badge = 0 then
                Handle_Resolve;
             elsif L >= Op_Bind and then L <= Op_Accept
-              and then Badge >= 1 and then Badge <= U64 (Max_Socks)
+              and then Badge >= 1 and then Badge <= U64 (Sock_Tab.Last)
               and then Socks (Natural (Badge)).Used
             then
                Id := Natural (Badge);
@@ -3183,7 +3221,7 @@ package body Netserv_Engine is
          --  err callbacks (synchronous on a hairpin, off the
          --  frame drain on the wire) or the tick's timeout abort
          --  have set the outcome; reply with 0 / 4 / 5.
-         for I in 1 .. Max_Socks loop
+         for I in 1 .. Sock_Tab.Last loop
             if Socks (I).Used and then Socks (I).Reply_Stash /= 0
             then
                if Socks (I).Conn_State = Conn_Up then
@@ -3200,7 +3238,7 @@ package body Netserv_Engine is
          --  Complete deferred Op_Resolves (m78a): the glue
          --  callback (tick, frame drain, hairpin) recorded the
          --  outcome; reply (status, ip).
-         for I in 1 .. Max_Pending_Resolves loop
+         for I in 1 .. Res_Tab.Last loop
             if Resolves (I).Used and then Resolves (I).Done
               and then Resolves (I).Reply_H /= 0
             then

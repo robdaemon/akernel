@@ -397,17 +397,40 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   not 15 — the 60-chunk directory bound is policy, not geometry.
   1714 PASS SMP4 / 1716 SMP1, 0 FAIL both.
 
+- **M80e done** (this commit): network tables + s-osinte thread
+  tables growable. netserv: Socks/Pend/Resolves are
+  Akernel_User.Tables chunk chains (sock ids stay stable chunk
+  indices — the badge is the id); Alloc_Sock appends when no
+  free slot, capped at Max_Sock_Ids = the ring-window capacity;
+  the sock-ring VA window grew 8 MiB -> 86 MiB (0x5420_0000..
+  0x5B00_0000, 1376 pairs at the existing 64 KiB stride), with
+  Buf_Win/ticker moved to 0x5B00/0x5B10/0x5B20/0x5B30. Glue:
+  AKNET_MAX_SOCKS=8 listen-pcb array replaced by a malloc'd
+  id->pcb list (open candidate 3 retires). lwIP: pools were
+  already malloc-backed (MEMP_MEM_MALLOC=1); DNS_TABLE_SIZE
+  4 -> 16 is the effective concurrent-resolve bound. Client RTS
+  Akernel_User.Sockets: ring stride 1 MiB -> 64 KiB, ring window
+  0x4A00..0x5100 (1792 pairs), Resolve_VA moved to 0x5100_0000,
+  slot table via the helper. s-osinte: the mod-64 Descriptor/
+  ATCB/Priority arrays (two live threads with congruent cap
+  handles silently clobbered each other) replaced by a growable
+  search table keyed by the exact cap handle — pages of 128
+  entries mapped on demand at the new 0x5300_0000 window,
+  linear search; no initializers anywhere (GNARL env-task setup
+  calls in BEFORE body elaboration in some binder orders — an
+  initializer would wipe a live table; BSS zero is the initial
+  state). Debugging notes: own-address-space authority is cap
+  255, NOT 0 (the pre-existing TLS map in Thread_Create passes
+  0 and silently no-ops; left as-is); Makefile's crate -> RTS
+  dependency was order-only, so RTS rebuilds never relinked
+  program .elfs — now a normal prereq. 1719 PASS / 0 FAIL,
+  SMP4 and SMP1.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
-3. **Glue listen-table sizing** — `AKNET_MAX_SOCKS=8` in
-   aknet_glue.c vs netserv's `Max_Socks=16`: socket ids 9..16 get
-   no listen-table entry (harmless today — the `id <= 8` guards
-   just skip, and listeners in the 9..16 range only lose
-   `tcp_accepted` backlog accounting). Subsumed by M80e
-   (`docs/LIMIT_FIXES.md`) if that lands first.
 
 Deferred (not candidates): socket servers (finger etc.), external
 ICMP (slirp does not forward it — tests target the gateway by

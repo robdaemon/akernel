@@ -118,7 +118,11 @@ $(RTS_LIB): $(RTS_GPR) $(RTS_SRCS)
 	   alr exec -- riscv64-elf-ar d $$RTS_LIBDIR/libgnat.a "$${base}.o"; \
 	done
 
-$(CRATES): | $(RTS_LIB)
+#  NOT order-only: gprbuild does not see the RTS archives as
+#  dependencies of a crate's .elf, so an order-only prereq leaves
+#  stale binaries linked against the previous RTS (the m80e
+#  debugging trap: rebuilt s-osinte.o, untouched fuzz.elf).
+$(CRATES): $(RTS_LIB)
 	$(MAKE) -C userspace/$@
 
 #  Third-party fetch-at-build (milestone 72): vendored C libraries

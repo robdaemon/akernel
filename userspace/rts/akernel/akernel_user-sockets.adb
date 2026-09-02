@@ -1,5 +1,6 @@
 with System.Machine_Code;
 with System.Storage_Elements;
+with Akernel_User.Tables;
 
 package body Akernel_User.Sockets is
    use type U32;
@@ -20,21 +21,29 @@ package body Akernel_User.Sockets is
    --  ring-pair object and the notification live as long as the
    --  socket.  m73: 4 -> 8; a GNAT.Sockets program easily holds a
    --  UDP pair plus a listener, connector and accepted child at
-   --  once (gsock_test), four was tight.
-   Max_Socks : constant := 8;
+   --  once (gsock_test), four was tight.  m80e: chunk-appended
+   --  table (Akernel_User.Tables); the VA window below caps live
+   --  rings at Max_Client_Socks.
 
    Ring_Pages : constant U64 := 2;
    Ring_Bytes : constant U64 := Ring_Pages * Syscalls.Page_Size;
 
    --  Fixed VA window (clear of the Files buffer at
    --  16#4400_0000#, the args page at 16#4800_0000#, the link
-   --  base at 16#4600_0000# and thread stacks at 16#6F00_0000#).
+   --  base at 16#4600_0000#, the sbrk arena at 16#5200_0000#
+   --  and thread stacks at 16#6F00_0000#).  m80e: ring stride
+   --  1 MiB -> 64 KiB (two pages fit with 60 KiB spare) and the
+   --  resolve page moved above the window; 0x4A00..0x5100 =
+   --  112 MiB = 1792 concurrent client rings.
    Ring_VA_Base : constant U64 := 16#4A00_0000#;
-   Ring_VA_Stride : constant U64 := 16#10_0000#;
+   Ring_VA_Stride : constant U64 := 16#1_0000#;
 
-   --  m78a: one-page hostname buffer for Op_Resolve, right above
-   --  the eight ring pairs (they end at 16#4A80_0000#).
-   Resolve_VA : constant U64 := 16#4A80_0000#;
+   --  m78a: one-page hostname buffer for Op_Resolve, above the
+   --  ring window (m80e: was right after the eighth 1 MiB ring).
+   Resolve_VA : constant U64 := 16#5100_0000#;
+
+   Max_Client_Socks : constant Natural :=
+     Natural ((Resolve_VA - Ring_VA_Base) / Ring_VA_Stride);
 
    Slots        : constant U64 := 4;
    Slot_Size    : constant U64 := 1008;
@@ -60,7 +69,9 @@ package body Akernel_User.Sockets is
       VA       : U64 := 0;
    end record;
 
-   Socks : array (1 .. Max_Socks) of Client_Sock;
+   package Client_Tab is new Akernel_User.Tables (Client_Sock);
+   function Socks (I : Natural) return Client_Tab.Element_Access
+     renames Client_Tab.Ref;
    Net_EP : U64 := 0;
 
    function To_Addr (VA : U64) return System.Address is
@@ -69,7 +80,7 @@ package body Akernel_User.Sockets is
 
    function Find (Handle : U64) return Natural is
    begin
-      for I in Socks'Range loop
+      for I in 1 .. Client_Tab.Last loop
          if Socks (I).Used and then Socks (I).Sock_Cap = Handle then
             return I;
          end if;
@@ -109,12 +120,15 @@ package body Akernel_User.Sockets is
       then
          return Status_Bad_Args;
       end if;
-      for I in Socks'Range loop
+      for I in 1 .. Client_Tab.Last loop
          if not Socks (I).Used then
             Idx := I;
             exit;
          end if;
       end loop;
+      if Idx = 0 and then Client_Tab.Last < Max_Client_Socks then
+         Idx := Client_Tab.Append;   --  0 = arena OOM
+      end if;
       if Idx = 0 then
          return Status_Not_Ready;
       end if;
@@ -278,12 +292,15 @@ package body Akernel_User.Sockets is
       if Find (Handle) = 0 then
          return Status_Bad_Args;
       end if;
-      for I in Socks'Range loop
+      for I in 1 .. Client_Tab.Last loop
          if not Socks (I).Used then
             Idx := I;
             exit;
          end if;
       end loop;
+      if Idx = 0 and then Client_Tab.Last < Max_Client_Socks then
+         Idx := Client_Tab.Append;   --  0 = arena OOM
+      end if;
       if Idx = 0 then
          return Status_Not_Ready;
       end if;
@@ -571,7 +588,7 @@ package body Akernel_User.Sockets is
       Result := Syscalls.Cap_Delete (Socks (Idx).Ring_Cap);
       Result := Syscalls.Cap_Delete (Socks (Idx).Ntfn_Cap);
       Result := Syscalls.Cap_Delete (Socks (Idx).Sock_Cap);
-      Socks (Idx) := (others => <>);
+      Socks (Idx).all := (others => <>);
       return Status;
    end Close;
 

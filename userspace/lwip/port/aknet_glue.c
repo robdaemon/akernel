@@ -30,6 +30,7 @@
  *  (every destination is "on-link"). */
 
 #include "lwip/opt.h"
+#include <stdlib.h>   /*  malloc/free for the listen-pcb list */
 #include "lwip/def.h"
 #include "lwip/pbuf.h"
 #include "lwip/netif.h"
@@ -581,9 +582,62 @@ extern void  aknet_on_tcp_eof (u32_t id);
 extern void  aknet_on_tcp_sent (u32_t id, u32_t len);
 extern void  aknet_on_tcp_err (u32_t id, int err);
 
-#define AKNET_MAX_SOCKS 8
+/*  m80e: the listen-pcb side table was a fixed AKNET_MAX_SOCKS
+ *  array; with the Ada socket table now chunk-appended, listeners
+ *  get unbounded ids, so track (id, listen pcb) pairs in a small
+ *  malloc'd list (only LISTEN sockets ever enter it). */
+struct listen_ent
+{
+   u32_t           id;
+   struct tcp_pcb *pcb;
+   struct listen_ent *next;
+};
 
-static struct tcp_pcb *aknet_listen_pcbs[AKNET_MAX_SOCKS + 1];
+static struct listen_ent *aknet_listen_pcbs;
+
+static struct tcp_pcb *
+aknet_listen_find (u32_t id)
+{
+   struct listen_ent *e;
+
+   for (e = aknet_listen_pcbs; e != NULL; e = e->next)
+      if (e->id == id)
+         return e->pcb;
+   return NULL;
+}
+
+static void
+aknet_listen_add (u32_t id, struct tcp_pcb *pcb)
+{
+   struct listen_ent *e = malloc (sizeof *e);
+
+   if (e == NULL)
+      return;   /*  tcp_accepted bookkeeping is skipped; the
+                      listener still works (lwIP just keeps one
+                      backlog slot longer). */
+   e->id   = id;
+   e->pcb  = pcb;
+   e->next = aknet_listen_pcbs;
+   aknet_listen_pcbs = e;
+}
+
+static void
+aknet_listen_del (u32_t id)
+{
+   struct listen_ent **pp = &aknet_listen_pcbs;
+
+   while (*pp != NULL)
+      {
+         if ((*pp)->id == id)
+            {
+               struct listen_ent *dead = *pp;
+               *pp = dead->next;
+               free (dead);
+               return;
+            }
+         pp = &(*pp)->next;
+      }
+}
 
 static err_t aknet_tcp_rx_cb (void *arg, struct tcp_pcb *tpcb,
                               struct pbuf *p, err_t err);
@@ -608,9 +662,11 @@ aknet_tcp_accept_cb (void *arg, struct tcp_pcb *newpcb, err_t err)
    if (aknet_on_tcp_accept (id, newpcb) != 0)
       return ERR_ABRT;
    /*  The Ada side parked the pcb; free a lwIP backlog slot. */
-   if (id >= 1 && id <= AKNET_MAX_SOCKS
-       && aknet_listen_pcbs[id] != NULL)
-      tcp_accepted (aknet_listen_pcbs[id]);
+   {
+      struct tcp_pcb *lp = aknet_listen_find (id);
+      if (lp != NULL)
+         tcp_accepted (lp);
+   }
    return ERR_OK;
 }
 
@@ -681,8 +737,7 @@ aknet_tcp_listen (struct tcp_pcb **ppcb, u32_t id)
    if (l == NULL)
       return ERR_MEM;
    *ppcb = l;
-   if (id >= 1 && id <= AKNET_MAX_SOCKS)
-      aknet_listen_pcbs[id] = l;
+   aknet_listen_add (id, l);
    tcp_accept (l, aknet_tcp_accept_cb);
    return 0;
 }
@@ -742,8 +797,7 @@ aknet_tcp_close (struct tcp_pcb *pcb, u32_t id)
 {
    err_t e;
 
-   if (id >= 1 && id <= AKNET_MAX_SOCKS)
-      aknet_listen_pcbs[id] = NULL;   /*  harmless for non-listeners */
+   aknet_listen_del (id);   /*  harmless for non-listeners */
    tcp_arg (pcb, NULL);
    /*  tcp_recv/sent/err assert on LISTEN pcbs (and the default
        LWIP_PLATFORM_ASSERT aborts): a listener only ever got

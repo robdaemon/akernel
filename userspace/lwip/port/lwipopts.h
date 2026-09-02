@@ -74,6 +74,11 @@
 #define PBUF_POOL_SIZE                  16
 #define PBUF_POOL_BUFSIZE               1600
 
+/*  dns.c's static resolve table bounds concurrent Op_Resolves
+ *  (m80e: netserv's own resolve table is chunk-appended, this is
+ *  the effective bound; dns_enqueue rejects beyond it). */
+#define DNS_TABLE_SIZE                  16
+
 /*  Stats feed Net:status; nothing prints them from inside lwIP. */
 #define LWIP_STATS                      1
 #define LWIP_STATS_DISPLAY              0

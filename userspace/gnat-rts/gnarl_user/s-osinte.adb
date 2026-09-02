@@ -96,20 +96,133 @@ package body System.OS_Interface is
    Next_TLS_VA    : U64;
    Next_IPC_VA    : U64;
 
-   Max_Threads     : constant := 64;
-   Descriptor_Table : array (0 .. Max_Threads - 1) of Thread_Id;
-   pragma Suppress_Initialization (Descriptor_Table);
-   ATCB_Table       : array (0 .. Max_Threads - 1) of System.Address;
-   pragma Suppress_Initialization (ATCB_Table);
-   Priority_Table   : array (0 .. Max_Threads - 1) of Integer;
-   pragma Suppress_Initialization (Priority_Table);
+   --  m80e: the descriptor/ATCB/priority tables were three arrays
+   --  indexed by (cap mod 64); two live threads with kernel cap
+   --  handles congruent mod 64 silently clobbered each other.
+   --  Replaced by a growable search table keyed by the exact cap
+   --  handle: pages of 128 entries mapped on demand in a dedicated
+   --  VA window (clear of the sbrk arena at 0x5200_0000, the
+   --  trinket window at 0x5800_0000 and the 0x6F00_0000 thread
+   --  stack/TLS/IPC span), searched linearly (live thread counts
+   --  are small). Kernel handle reuse after thread exit is safe:
+   --  Thread_Create and Set_ATCB rewrite every field of a reused
+   --  entry before any read can observe it.
+   Thr_Tab_VA    : constant U64 := 16#5300_0000#;
+   Thr_Per_Page  : constant := 128;   --  one 4 KiB page exactly
+   Thr_Max_Pages : constant := 64;    --  8192 entries (kernel: 512)
+
+   type Thread_Entry is record
+      Cap        : U64 := 0;   --  0 = free slot
+      Descriptor : Thread_Id := Null_Thread_Id;
+      ATCB       : System.Address := System.Null_Address;
+      Priority   : Integer := 0;
+   end record;
+
+   type Thr_Page is array (0 .. Thr_Per_Page - 1) of Thread_Entry;
+   type Thr_Page_Access is access all Thr_Page;
+
+   function To_Thr_Page is new Ada.Unchecked_Conversion
+     (Source => System.Address, Target => Thr_Page_Access);
+
+   function Page_At (P : Natural) return Thr_Page_Access is
+     (To_Thr_Page
+        (U64_To_Address (Thr_Tab_VA + U64 (P) * To_U64 (Page_Size))));
+
+   --  NO initializers here: GNARL's env-task setup calls into this
+   --  package (Initialize/Set_ATCB) BEFORE the body elaborates in
+   --  some programs' binder order, and an explicit initializer
+   --  would then WIPE a live table (Thr_Pages back to 0 with the
+   --  page already mapped — the m80e boot wedge). The loader zeroes
+   --  BSS, which is the correct initial state.
+   Thr_Page_Caps : array (0 .. Thr_Max_Pages - 1) of U64;
+   pragma Suppress_Initialization (Thr_Page_Caps);
+   Thr_Pages     : Natural;   --  pages mapped so far (BSS: 0)
+
+   --  Exact-match search. Found = False when Cap is not in the
+   --  table (reads then fall back to null/zero defaults).
+   procedure Find_Entry
+     (Cap : U64; P, S : out Natural; Found : out Boolean) is
+   begin
+      P := 0;
+      S := 0;
+      Found := False;
+      for Page in Integer range 0 .. Thr_Pages - 1 loop
+         for Slot in 0 .. Thr_Per_Page - 1 loop
+            if Page_At (Natural (Page)) (Slot).Cap = Cap then
+               P := Natural (Page);
+               S := Slot;
+               Found := True;
+               return;
+            end if;
+         end loop;
+      end loop;
+   end Find_Entry;
+
+   --  Find-or-create: exact match, else the first free slot, else
+   --  a freshly mapped page. Ok = False only on VA-window/memory
+   --  exhaustion (unreachable in practice: the kernel caps live
+   --  threads at 512 and handles are reused after exit).
+   procedure Locate
+     (Cap : U64; P, S : out Natural; Ok : out Boolean)
+   is
+      Free_P : Integer := -1;
+      Free_S : Natural := 0;
+      New_Cap : U64;
+      Ignore  : U64;
+   begin
+      P := 0;
+      S := 0;
+      Ok := False;
+      for Page in Integer range 0 .. Thr_Pages - 1 loop
+         for Slot in 0 .. Thr_Per_Page - 1 loop
+            declare
+               E : Thread_Entry renames Page_At (Natural (Page)) (Slot);
+            begin
+               if E.Cap = Cap then
+                  P := Natural (Page);
+                  S := Slot;
+                  Ok := True;
+                  return;
+               elsif E.Cap = 0 and then Free_P < 0 then
+                  Free_P := Page;
+                  Free_S := Slot;
+               end if;
+            end;
+         end loop;
+      end loop;
+      if Free_P < 0 then
+         if Thr_Pages >= Thr_Max_Pages then
+            return;
+         end if;
+         New_Cap := Raw_Mem_Alloc (1);
+         if New_Cap = U64'Last then
+            return;
+         end if;
+         --  Own-address-space authority is uniform-ABI cap 255
+         --  (Akernel_User.Syscalls.Address_Space_Cap).
+         if Raw_Mem_Map
+              (Address_Space => 255,
+               Cap           => New_Cap,
+               VA            => Thr_Tab_VA
+                 + U64 (Thr_Pages) * To_U64 (Page_Size),
+               Offset        => 0,
+               Length        => To_U64 (Page_Size),
+               Flags         => 3) /= 0
+         then
+            return;
+         end if;
+         Thr_Page_Caps (Thr_Pages) := New_Cap;
+         Free_P := Integer (Thr_Pages);
+         Free_S := 0;
+         Thr_Pages := Thr_Pages + 1;
+      end if;
+      P := Natural (Free_P);
+      S := Free_S;
+      Page_At (P) (S).Cap := Cap;
+      Ok := True;
+   end Locate;
 
    function Kernel_Id return U64 is (Raw_Thread_Self);
-
-   function Table_Index (Id : U64) return Natural is
-   begin
-      return Natural (Id mod U64 (Max_Threads));
-   end Table_Index;
 
    function TLS_Size return System.Storage_Elements.Storage_Offset is
       use System.Storage_Elements;
@@ -200,13 +313,18 @@ package body System.OS_Interface is
       Id : constant U64 := Kernel_Id;
       Old    : aliased U64 := 0;
       Ignore : U64;
+      P, S   : Natural;
+      Ok     : Boolean;
    begin
       Next_Stack_VA := 16#6F00_0000#;
       Next_TLS_VA   := 16#6F10_0000#;
       Next_IPC_VA   := 16#6FFE_0000#;
 
       Environment_Thread.Cap := Id;
-      Descriptor_Table (Table_Index (Id)) := Environment_Thread;
+      Locate (Id, P, S, Ok);
+      if Ok then
+         Page_At (P) (S).Descriptor := Environment_Thread;
+      end if;
 
       --  Sync the runtime's priority bookkeeping with the kernel:
       --  threads spawn at kernel priority 0 whatever the ATCB's
@@ -225,7 +343,10 @@ package body System.OS_Interface is
             New_Priority => Old,
             Old_Priority => Old'Address);
       end if;
-      Priority_Table (Table_Index (Id)) := Integer (Old);
+      Locate (Id, P, S, Ok);
+      if Ok then
+         Page_At (P) (S).Priority := Integer (Old);
+      end if;
       pragma Unreferenced (Main_Priority);
    end Initialize;
 
@@ -331,8 +452,17 @@ package body System.OS_Interface is
       --  new thread; keep the runtime's bookkeeping in sync or the
       --  first lock boost/restore on the new thread would leave
       --  its kernel priority at the clamped ceiling.
-      Priority_Table (Table_Index (Thread_Cap)) :=
-        Integer'Min (Priority, 127);
+      declare
+         P, S : Natural;
+         Ok   : Boolean;
+      begin
+         Locate (Thread_Cap, P, S, Ok);
+         if Ok then
+            Page_At (P) (S).Descriptor := Null_Thread_Id;
+            Page_At (P) (S).ATCB := System.Null_Address;
+            Page_At (P) (S).Priority := Integer'Min (Priority, 127);
+         end if;
+      end;
 
       Next_Stack_VA := Stack_Top + To_U64 (Page_Size);
       if TLS_Size > 0 then
@@ -349,37 +479,64 @@ package body System.OS_Interface is
    end Thread_Create;
 
    function Thread_Self return Thread_Id is
+      P, S  : Natural;
+      Found : Boolean;
    begin
-      return Descriptor_Table (Table_Index (Kernel_Id));
+      Find_Entry (Kernel_Id, P, S, Found);
+      if Found then
+         return Page_At (P) (S).Descriptor;
+      end if;
+      return Null_Thread_Id;
    end Thread_Self;
 
    procedure Set_ATCB (Id : Thread_Id; ATCB : System.Address) is
-      Idx : constant Natural := Table_Index (Id.Cap);
+      P, S : Natural;
+      Ok   : Boolean;
    begin
-      Descriptor_Table (Idx) := Id;
-      ATCB_Table (Idx) := ATCB;
+      Locate (Id.Cap, P, S, Ok);
+      if Ok then
+         Page_At (P) (S).Descriptor := Id;
+         Page_At (P) (S).ATCB := ATCB;
+      end if;
    end Set_ATCB;
 
    function Get_ATCB return System.Address is
+      P, S  : Natural;
+      Found : Boolean;
    begin
-      return ATCB_Table (Table_Index (Kernel_Id));
+      Find_Entry (Kernel_Id, P, S, Found);
+      if Found then
+         return Page_At (P) (S).ATCB;
+      end if;
+      return System.Null_Address;
    end Get_ATCB;
 
    procedure Set_Priority (Priority : Integer) is
       Id  : constant U64 := Kernel_Id;
       Old : aliased U64 := 0;
       Ignore : U64;
+      P, S : Natural;
+      Ok   : Boolean;
    begin
       Ignore := Raw_Set_Priority
         (Target       => U64'Last,
          New_Priority => To_U64 (System.Storage_Elements.Storage_Offset (Priority)),
          Old_Priority => Old'Address);
-      Priority_Table (Table_Index (Id)) := Priority;
+      Locate (Id, P, S, Ok);
+      if Ok then
+         Page_At (P) (S).Priority := Priority;
+      end if;
    end Set_Priority;
 
    function Get_Priority (Id : Thread_Id) return Integer is
+      P, S  : Natural;
+      Found : Boolean;
    begin
-      return Priority_Table (Table_Index (Id.Cap));
+      Find_Entry (Id.Cap, P, S, Found);
+      if Found then
+         return Page_At (P) (S).Priority;
+      end if;
+      return 0;
    end Get_Priority;
 
    procedure Sleep is
