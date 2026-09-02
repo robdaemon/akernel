@@ -15,10 +15,10 @@
 --  contents, the superblock goes DIRT with the new log_end, the
 --  blocks land at their real offsets, then the superblock goes
 --  CLEN with log_start = log_end (immediate checkpoint). Block
---  allocation is first-fit over bitmap block 1; btrees are
---  single-leaf only (no node splits — a full leaf answers
---  Bad_Args, fixture-scale directories stay far below that); file
---  data lives in the 12 direct runs only (no indirect streams).
+--  allocation is first-fit over bitmap block 1; btrees split full
+--  nodes up to depth 3 (m82h) — removed entries never free nodes
+--  (no merge, free-node list stays -1); file data lives in the 12
+--  direct runs only (no indirect streams).
 --
 --  Status returns mirror the fs wire protocol: 0 ok, 1 not found,
 --  3 bad args, 4 out of range.
@@ -58,10 +58,22 @@ package Bfs_Engine is
    --  bytes copied, Data_Size = full attribute size (truncation is
    --  Count < Data_Size), Attr_Type = the fourcc. Status 1 when
    --  the path or the attribute does not exist.
-   function Attr_Read (Path : String; Attr : String;
-                       Buf : System.Address; Buf_Len : U64;
-                       Count : out U64; Data_Size : out U64;
-                       Attr_Type : out U64) return U64;
+    function Attr_Read (Path : String; Attr : String;
+                        Buf : System.Address; Buf_Len : U64;
+                        Count : out U64; Data_Size : out U64;
+                        Attr_Type : out U64) return U64;
+
+    --  Attribute write (m82h): insert or replace the small_data
+    --  attribute Attr of the inode at Path with Len bytes from
+    --  Buf and fourcc Attr_Type; Len = 0 REMOVES the attribute
+    --  (Buf and Attr_Type ignored). Journaled like every other
+    --  mutation. Status 1 when the path (or, for removal, the
+    --  attribute) does not exist; status 3 for over-long
+    --  names/data, the internal name pseudo-attribute, a corrupt
+    --  small_data region, or no room in the inode.
+    function Attr_Write (Path : String; Attr : String;
+                         Attr_Type : U64; Buf : System.Address;
+                         Len : U64) return U64;
 
     --  Index-th visible entry ("." and ".." skipped). Name is NUL
     --  padding aside, up to 24 chars (wire limit).
@@ -77,7 +89,8 @@ package Bfs_Engine is
     --  not exist and the parent directory resolves (Offset must be
     --  0 then). No sparse writes: Offset past the file size answers
     --  status 4. Growth allocates whole blocks into the direct
-    --  runs; a file needing more than 12 runs answers status 3.
+    --  runs, then the indirect array (m82h; one 128-entry index
+    --  block — a full array answers status 3).
     function Write (Path : String; Offset : U64; Buf : System.Address;
                     Len : in out U64) return U64;
 

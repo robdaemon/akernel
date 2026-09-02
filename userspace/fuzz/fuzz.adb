@@ -589,6 +589,9 @@ begin
       --  inline.  See Stack_Pages history in
       --  src/kernel/kernel-processes.adb.
       procedure Live_Query_Tests;
+      procedure Btree_Split_Tests;
+      procedure Indirect_Stream_Tests;
+      procedure Attr_Write_Tests;
       procedure Bfs_Tests is
       begin
          --  Stat/read through file server -> Bfs_Engine ->
@@ -1308,6 +1311,9 @@ begin
                    "fat attr read rejected");
          end;
          Live_Query_Tests;
+         Btree_Split_Tests;
+         Indirect_Stream_Tests;
+         Attr_Write_Tests;
       end Bfs_Tests;
 
       --  Live queries (m82g): subscribe with a notification
@@ -1471,6 +1477,417 @@ begin
              Check (Cap_Delete (Ntf) = 0,
                     "live query ntfn released");
       end Live_Query_Tests;
+
+      --  Multi-leaf btree writes (m82h): enough creates to split
+      --  the root directory leaf and all three indices past one
+      --  node (root split, depth 2), duplicate keys straddling
+      --  the size-index split, then a delete-all round trip.
+      --  Separate procedure for its own stack frame (the m82g
+      --  lesson). disk.img is rebuilt per boot, so no leftover
+      --  cleanup is needed; removed entries intentionally leak
+      --  their tree nodes (no merge-on-remove), bounded-checked
+      --  below.
+      procedure Btree_Split_Tests is
+         Name   : String (1 .. 24);
+         N_Len  : Natural := 0;
+         Free_0 : U64 := 0;
+         Free_1 : U64 := 0;
+         Tot    : U64;
+         Blk_T  : U64;
+         Ent    : String (1 .. 24);
+         Ent_L  : Natural;
+         Ent_D  : Boolean;
+         Ent_S  : U64;
+         Seen   : Natural;
+         Fails  : Natural;
+
+         procedure SP_Name (I : Natural) is
+         begin
+            Name (1 .. 6) := "BD1:SP";
+            Name (7) := Character'Val (Character'Pos ('0') + I / 10);
+            Name (8) := Character'Val
+              (Character'Pos ('0') + I mod 10);
+            Name (9 .. 12) := ".TXT";
+            N_Len := 12;
+         end SP_Name;
+
+         procedure Dup_Name (I : Natural) is
+         begin
+            Name (1 .. 5) := "BD1:D";
+            Name (6) := Character'Val (Character'Pos ('0') + I / 10);
+            Name (7) := Character'Val
+              (Character'Pos ('0') + I mod 10);
+            N_Len := 7;
+         end Dup_Name;
+      begin
+         Status := Akernel_User.Files.Volume_Info
+           ("BD1:", Tot, Free_0, Blk_T);
+         Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
+
+         --  56 root files: ~90 dir entries of ~46 bytes and 60+
+         --  entries in each index overflow every single leaf; the
+         --  size index split lands INSIDE the run of 84 equal
+         --  keys (int64 duplicate straddle).
+         Fails := 0;
+         for I in 0 .. 55 loop
+            SP_Name (I);
+            Status := Akernel_User.Files.Write
+              (Name (1 .. N_Len), 0, Buf'Address, 1, Count);
+            if Status /= Akernel_User.Files.Status_Ok
+              or else Count /= 1
+            then
+               Fails := Fails + 1;
+            end if;
+         end loop;
+         Check (Fails = 0, "bfs split: 56 creates ok");
+
+         Status := Akernel_User.Files.Stat ("BD1:SP00.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 1,
+                "bfs split: first file stats");
+         Status := Akernel_User.Files.Stat ("BD1:SP55.TXT", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 1,
+                "bfs split: last file stats");
+
+         --  Directory listing walks the whole leaf chain.
+         Seen := 0;
+         for Index in 0 .. 90 loop
+            Status := Akernel_User.Files.Read_Dir
+              ("BD1:", U64 (Index), Ent, Ent_L, Ent_D, Ent_S);
+            exit when Status /= Akernel_User.Files.Status_Ok;
+            if Ent_L = 8 and then Ent (1 .. 2) = "SP" then
+               Seen := Seen + 1;
+            end if;
+         end loop;
+         Check (Seen = 56, "bfs split: leaf chain lists all");
+
+         --  Name index across leaves: SP40.TXT .. SP49.TXT.
+         declare
+            QP  : String (1 .. 24);
+            QL  : Natural;
+            QSz : U64;
+            QD  : Boolean;
+         begin
+            Seen := 0;
+            loop
+               Status := Akernel_User.Files.Query
+                 ("BD1:", "name==""SP4*.TXT""", U64 (Seen),
+                  QP, QL, QSz, QD);
+               exit when Status /= Akernel_User.Files.Status_Ok;
+               exit when QL /= 8 or else QP (1 .. 3) /= "SP4";
+               Seen := Seen + 1;
+            end loop;
+            Check (Seen = 10, "bfs split: index query across leaves");
+         end;
+
+         --  28 same-named files in 28 dirs: duplicate keys in
+         --  the name index; removals exercise Match_Value and the
+         --  duplicate left-chain walk.
+         Fails := 0;
+         for I in 0 .. 27 loop
+            Dup_Name (I);
+            Status := Akernel_User.Files.Mkdir (Name (1 .. N_Len));
+            if Status /= Akernel_User.Files.Status_Ok then
+               Fails := Fails + 1;
+            end if;
+            Name (8 .. 16) := "/SAME.TXT";
+            Status := Akernel_User.Files.Write
+              (Name (1 .. 16), 0, Buf'Address, 1, Count);
+            if Status /= Akernel_User.Files.Status_Ok
+              or else Count /= 1
+            then
+               Fails := Fails + 1;
+            end if;
+         end loop;
+         Check (Fails = 0, "bfs split: duplicate-name creates ok");
+
+         Fails := 0;
+         for I in 0 .. 27 loop
+            Dup_Name (I);
+            Name (8 .. 16) := "/SAME.TXT";
+            Status := Akernel_User.Files.Delete (Name (1 .. 16));
+            if Status /= Akernel_User.Files.Status_Ok then
+               Fails := Fails + 1;
+            end if;
+            Status := Akernel_User.Files.Rmdir (Name (1 .. 7));
+            if Status /= Akernel_User.Files.Status_Ok then
+               Fails := Fails + 1;
+            end if;
+         end loop;
+         Check (Fails = 0, "bfs split: duplicate-name deletes ok");
+
+         Fails := 0;
+         for I in 0 .. 55 loop
+            SP_Name (I);
+            Status := Akernel_User.Files.Delete (Name (1 .. N_Len));
+            if Status /= Akernel_User.Files.Status_Ok then
+               Fails := Fails + 1;
+            end if;
+         end loop;
+         Check (Fails = 0, "bfs split: 56 deletes ok");
+
+         --  The fixture entries survived the splits.
+         declare
+            QP  : String (1 .. 24);
+            QL  : Natural;
+            QSz : U64;
+            QD  : Boolean;
+         begin
+            Status := Akernel_User.Files.Query
+              ("BD1:", "name==""README.TXT""", 0, QP, QL, QSz, QD);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then QL = 10
+                   and then QP (1 .. 10) = "README.TXT",
+                   "bfs split: fixture entry survives");
+         end;
+
+         --  Removed entries never free their tree nodes (no
+         --  merge-on-remove): the leak is bounded by the grown
+         --  root/index trees (~11 blocks observed; Free is in
+         --  BYTES, so the bound is 24 blocks in bytes).
+         Status := Akernel_User.Files.Volume_Info
+           ("BD1:", Tot, Free_1, Blk_T);
+         Akernel_User.Console.Put_Line
+           ("bfs split: free before/after" & U64'Image (Free_0)
+            & U64'Image (Free_1));
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Free_0 /= 0
+                and then Free_1 <= Free_0
+                and then Free_1 + 24 * 1024 >= Free_0,
+                "bfs split: leak bounded to tree nodes");
+      end Btree_Split_Tests;
+
+      --  Indirect stream growth (m82h): two files grown one
+      --  block at a time in alternation; first-fit allocation
+      --  interleaves their blocks so neither can merge runs —
+      --  the 12 direct slots fill and the remaining 16 blocks
+      --  land in the indirect array. Deletion frees everything
+      --  (exact free-space round trip). Separate procedure for
+      --  its own stack frame.
+      procedure Indirect_Stream_Tests is
+         WBuf   : array (0 .. 1023) of Interfaces.Unsigned_8;
+         Free_0 : U64 := 0;
+         Free_1 : U64 := 0;
+         Tot    : U64;
+         Blk_T  : U64;
+         Fails  : Natural;
+         Match  : Boolean;
+
+         --  Read 1024 bytes at Off and verify they are all C.
+         procedure Check_Block (Path : String; Off : U64;
+                                C : Character; Msg : String) is
+         begin
+            Status := Akernel_User.Files.Read
+              (Path, Off, WBuf'Address, 1024, Count);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = 1024;
+            for I in 0 .. 1023 loop
+               Match := Match
+                 and then WBuf (I) =
+                   Interfaces.Unsigned_8 (Character'Pos (C));
+            end loop;
+            Check (Match, Msg);
+         end Check_Block;
+      begin
+         Status := Akernel_User.Files.Volume_Info
+           ("BD1:", Tot, Free_0, Blk_T);
+         Fails := 0;
+         for K in 0 .. 27 loop
+            for I in 0 .. 1023 loop
+               WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('A'));
+            end loop;
+            Status := Akernel_User.Files.Write
+              ("BD1:FZA.BIN", U64 (K) * 1024, WBuf'Address, 1024,
+               Count);
+            if Status /= Akernel_User.Files.Status_Ok
+              or else Count /= 1024
+            then
+               Akernel_User.Console.Put_Line
+                 ("bfs indirect: write A K=" & U64'Image (U64 (K))
+                  & " status" & U64'Image (Status));
+               Fails := Fails + 1;
+            end if;
+            for I in 0 .. 1023 loop
+               WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('B'));
+            end loop;
+            Status := Akernel_User.Files.Write
+              ("BD1:FZB.BIN", U64 (K) * 1024, WBuf'Address, 1024,
+               Count);
+            if Status /= Akernel_User.Files.Status_Ok
+              or else Count /= 1024
+            then
+               Akernel_User.Console.Put_Line
+                 ("bfs indirect: write B K=" & U64'Image (U64 (K))
+                  & " status" & U64'Image (Status));
+               Fails := Fails + 1;
+            end if;
+         end loop;
+         Check (Fails = 0, "bfs indirect: interleaved grows ok");
+
+         Status := Akernel_User.Files.Stat ("BD1:FZA.BIN", Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 28 * 1024,
+                "bfs indirect: size crosses into indirect");
+
+         --  Read back: direct run, first indirect run, last
+         --  indirect run.
+         Check_Block ("BD1:FZA.BIN", 0, 'A',
+                      "bfs indirect: direct block reads back");
+         Check_Block ("BD1:FZA.BIN", 12 * 1024, 'A',
+                      "bfs indirect: first indirect run reads back");
+         Check_Block ("BD1:FZB.BIN", 27 * 1024, 'B',
+                      "bfs indirect: last indirect run reads back");
+
+         Status := Akernel_User.Files.Delete ("BD1:FZA.BIN");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs indirect: file A deleted");
+         Status := Akernel_User.Files.Delete ("BD1:FZB.BIN");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs indirect: file B deleted");
+         Status := Akernel_User.Files.Volume_Info
+           ("BD1:", Tot, Free_1, Blk_T);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Free_0 /= 0
+                and then Free_1 = Free_0,
+                "bfs indirect: blocks round-trip exactly");
+      end Indirect_Stream_Tests;
+
+      --  Attribute writes (m82h): insert / replace / remove
+      --  small_data attributes through Op_Attr_Write, read back
+      --  with Attr_Read, visible to queries; fat32 rejects.
+      --  Separate procedure for its own stack frame.
+      procedure Attr_Write_Tests is
+         AType : U64;
+         ASize : U64;
+         AN    : String (1 .. 24);
+         AN_L  : Natural;
+
+         --  Write V as attribute Attr of BD1:FZATTR.TXT
+         --  (type 'CSTR'); Status left for the caller's Check.
+         procedure Put_Attr (Attr : String; V : String) is
+         begin
+            for I in 0 .. V'Length - 1 loop
+               Buf (I) := Interfaces.Unsigned_8
+                 (Character'Pos (V (V'First + I)));
+            end loop;
+            Status := Akernel_User.Files.Attr_Write
+              ("BD1:FZATTR.TXT", Attr, 16#4353_5452#,
+               Buf'Address, U64 (V'Length));
+         end Put_Attr;
+
+         --  Attr must read back as V with type 'CSTR'.
+         procedure Check_Attr (Attr : String; V : String;
+                               Msg : String) is
+         begin
+            Status := Akernel_User.Files.Attr_Read
+              ("BD1:FZATTR.TXT", Attr, Buf'Address, 64,
+               Count, ASize, AType);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = U64 (V'Length)
+              and then ASize = U64 (V'Length)
+              and then AType = 16#4353_5452#;
+            for I in 0 .. V'Length - 1 loop
+               Match := Match
+                 and then Buf (I) = Interfaces.Unsigned_8
+                   (Character'Pos (V (V'First + I)));
+            end loop;
+            Check (Match, Msg);
+         end Check_Attr;
+      begin
+         Status := Akernel_User.Files.Write
+           ("BD1:FZATTR.TXT", 0, Buf'Address, 4, Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 4,
+                "bfs attrw: target created");
+
+         --  Insert, then read back.
+         Put_Attr ("META:test", "hello");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: insert ok");
+         Check_Attr ("META:test", "hello",
+                     "bfs attrw: insert reads back");
+
+         --  Replace with a longer, then a shorter value (tail
+         --  shifts both ways).
+         Put_Attr ("META:test", "world!!");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: grow replace ok");
+         Check_Attr ("META:test", "world!!",
+                     "bfs attrw: grow replace reads back");
+         Put_Attr ("META:test", "hi");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: shrink replace ok");
+         Check_Attr ("META:test", "hi",
+                     "bfs attrw: shrink replace reads back");
+
+         --  Second attribute: enumeration sees both (the name
+         --  pseudo-attribute is skipped).
+         Put_Attr ("META:two", "22");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: second insert ok");
+         Status := Akernel_User.Files.Attr_List
+           ("BD1:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then AN_L = 9 and then AN (1 .. 9) = "META:test"
+                and then ASize = 2,
+                "bfs attrw: list first attr");
+         Status := Akernel_User.Files.Attr_List
+           ("BD1:FZATTR.TXT", 1, AN, AN_L, AType, ASize);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then AN_L = 8 and then AN (1 .. 8) = "META:two"
+                and then ASize = 2,
+                "bfs attrw: list second attr");
+
+         --  Queries evaluate the fresh attribute.
+         declare
+            QP  : String (1 .. 24);
+            QL  : Natural;
+            QSz : U64;
+            QD  : Boolean;
+         begin
+            Status := Akernel_User.Files.Query
+              ("BD1:", "META:test==""hi""", 0, QP, QL, QSz, QD);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then QL = 10
+                   and then QP (1 .. 10) = "FZATTR.TXT",
+                   "bfs attrw: query sees new attr");
+         end;
+
+         --  Remove: the remaining attribute's bytes survive the
+         --  tail shift.
+         Status := Akernel_User.Files.Attr_Write
+           ("BD1:FZATTR.TXT", "META:test", 0, Buf'Address, 0);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: remove ok");
+         Status := Akernel_User.Files.Attr_Read
+           ("BD1:FZATTR.TXT", "META:test", Buf'Address, 64,
+            Count, ASize, AType);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs attrw: removed attr gone");
+         Check_Attr ("META:two", "22",
+                     "bfs attrw: survivor intact after remove");
+         Status := Akernel_User.Files.Attr_List
+           ("BD1:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then AN_L = 8 and then AN (1 .. 8) = "META:two",
+                "bfs attrw: list after remove");
+
+         --  Removing an absent attribute and writing on fat32
+         --  both fail cleanly.
+         Status := Akernel_User.Files.Attr_Write
+           ("BD1:FZATTR.TXT", "META:nosuch", 0, Buf'Address, 0);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs attrw: remove absent rejected");
+         Status := Akernel_User.Files.Attr_Write
+           ("BD0:README.TXT", "META:x", 0, Buf'Address, 0);
+         Check (Status = Akernel_User.Files.Status_Bad_Args,
+                "bfs attrw: fat attr write rejected");
+
+         Status := Akernel_User.Files.Delete ("BD1:FZATTR.TXT");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs attrw: cleanup ok");
+      end Attr_Write_Tests;
    begin
       Akernel_User.Files.Bind (FS_EP);
 

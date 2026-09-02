@@ -101,10 +101,11 @@ package Akernel_User.Files is
    Op_Close    : constant U64 := 18;
    Op_Attr_List : constant U64 := 19;
    Op_Attr_Read : constant U64 := 20;
-   Op_Query     : constant U64 := 21;
-   Op_Query_Open  : constant U64 := 22;
-   Op_Query_Poll  : constant U64 := 23;
-   Op_Query_Close : constant U64 := 24;
+    Op_Query     : constant U64 := 21;
+    Op_Query_Open  : constant U64 := 22;
+    Op_Query_Poll  : constant U64 := 23;
+    Op_Query_Close : constant U64 := 24;
+    Op_Attr_Write  : constant U64 := 25;
    --    Op_Attr_List = 19  words 0..3 = path (32 chars, "" =
    --                      volume root), word 4 = attribute index
    --                      -> (status, attr type code, attr data
@@ -153,6 +154,18 @@ package Akernel_User.Files is
     --                      the buffer). Status_Not_Found = queue
     --                      empty.
     --    Op_Query_Close = 24  word 4 = handle -> (status, 0).
+    --    Op_Attr_Write = 25  words 0..3 = path (32 chars), words
+    --                      4..5 = attr name (16 chars) + buffer
+    --                      memory cap in cap slot 0 -> (status, 0).
+    --                      Buffer layout: le64 type fourcc @0,
+    --                      le64 data length @8, data bytes @16.
+    --                      Insert or replace the small_data
+    --                      attribute; length 0 REMOVES it (type
+    --                      ignored). Status_Not_Found = path (or,
+    --                      for removal, the attribute) missing;
+    --                      Status_Bad_Args = name too long or no
+    --                      small_data room. FS-driver volumes only;
+    --                      others answer Bad_Args.
    --    Op_Close = 18   words 0..5 = name[48] -> (status, 0). On
    --                      a PIPE: name: writer EOF — no more
    --                      data is coming; reads keep draining
@@ -303,14 +316,29 @@ package Akernel_User.Files is
    --  returns the bytes actually read; Attr_Size the attribute's
    --  full size (truncation = Count < Attr_Size); Attr_Type the
    --  fourcc. Attr names are limited to 16 chars on the wire.
-   function Attr_Read
-     (Name      : String;
-      Attr      : String;
-      Dest      : System.Address;
-      Length    : U64;
-      Count     : out U64;
-      Attr_Size : out U64;
-      Attr_Type : out U64) return U64;
+    function Attr_Read
+      (Name      : String;
+       Attr      : String;
+       Dest      : System.Address;
+       Length    : U64;
+       Count     : out U64;
+       Attr_Size : out U64;
+       Attr_Type : out U64) return U64;
+
+    --  Attribute write (milestone 82h): insert or replace the
+    --  small_data attribute Attr of Name with the Length bytes at
+    --  Buffer_Address and fourcc Attr_Type. Length = 0 REMOVES the
+    --  attribute (Buffer_Address and Attr_Type ignored). Attr
+    --  names are limited to 16 chars on the wire.
+    --  Status_Not_Found = the path (or, for removal, the
+    --  attribute) does not exist; Status_Bad_Args = over-long
+    --  name/data or no small_data room in the inode.
+    function Attr_Write
+      (Name           : String;
+       Attr           : String;
+       Attr_Type      : U64;
+       Buffer_Address : System.Address;
+       Length         : U64) return U64;
 
     --  One-shot query (milestone 82f): Index-th entry on the
     --  volume of Name (only the volume prefix is used) matching

@@ -22,6 +22,9 @@ procedure Bfs is
 
    subtype U64 is Syscalls.U64;
 
+   --  Byte overlay for the client buffer window (attr header).
+   type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
+
    function Shl (Value : U64; Amount : Natural) return U64
      renames Interfaces.Shift_Left;
 
@@ -46,6 +49,7 @@ procedure Bfs is
     Op_Volume_Info : constant U64 := 17;
     Op_Attr_List   : constant U64 := 19;
     Op_Attr_Read   : constant U64 := 20;
+    Op_Attr_Write  : constant U64 := 25;
      Op_Query       : constant U64 := 21;
      Op_Query_Open  : constant U64 := 22;
      Op_Query_Poll  : constant U64 := 23;
@@ -413,6 +417,92 @@ procedure Bfs is
        end if;
        Reply2 (Status, Count);
     end Handle_Write;
+
+    --  Op_Attr_Write (m82h): words 0..3 = path, words 4..5 = attr
+    --  name (16 chars), cap slot 0 = buffer mem object holding
+    --  le64 type fourcc @0, le64 data length @8, then the data
+    --  bytes. Length 0 removes the attribute. Reply: w0 = status.
+    procedure Handle_Attr_Write is
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Status : U64 := Status_Ok;
+       Mapped : Boolean := False;
+    begin
+       if Buf = 0 then
+          Status := Status_Bad_Args;
+       else
+          declare
+             Path : constant String := Path_Of (0);
+             Attr : String (1 .. 16) := (others => Character'Val (0));
+             ALen  : Natural := 0;
+             AType : U64 := 0;
+             DLen  : U64 := 0;
+          begin
+             for P in 0 .. 15 loop
+                declare
+                   Ch : constant Character :=
+                     Character'Val (Natural
+                       ((Syscalls.Message.Words (4 + P / 8)
+                           / Shl (1, (P mod 8) * 8)) and 16#FF#));
+                begin
+                   exit when Ch = Character'Val (0);
+                   ALen := ALen + 1;
+                   Attr (ALen) := Ch;
+                end;
+             end loop;
+             if ALen = 0 then
+                Status := Status_Bad_Args;
+             elsif Syscalls.Mem_Map
+               (Address_Space => Syscalls.Address_Space_Cap,
+                Cap           => Buf,
+                VA            => Buf_Win_VA,
+                Offset        => 0,
+                Length        => Buf_Bytes,
+                Flags         => 3) /= 0
+             then
+                Status := Status_Not_Found;
+             else
+                Mapped := True;
+                declare
+                   Win : Byte_Array (0 .. 15)
+                     with Address =>
+                       To_Address (Integer_Address (Buf_Win_VA));
+                begin
+                   for I in 0 .. 7 loop
+                      AType := AType
+                        or Shl (U64 (Win (U64 (I))), I * 8);
+                      DLen := DLen
+                        or Shl (U64 (Win (U64 (8 + I))), I * 8);
+                   end loop;
+                end;
+                if DLen > Buf_Bytes - 16 then
+                   Status := Status_Bad_Args;
+                else
+                   Status := Bfs_Engine.Attr_Write
+                     (Path, Attr (1 .. ALen), AType,
+                      To_Address (Integer_Address (Buf_Win_VA + 16)),
+                      DLen);
+                end if;
+             end if;
+          end;
+       end if;
+
+       if Buf /= 0 then
+          if Mapped
+            and then Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line
+               ("bfs: attr buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line
+               ("bfs: attr buffer cap delete failed");
+          end if;
+       end if;
+       Reply2 (Status, 0);
+    end Handle_Attr_Write;
 
     --  Path-only mutating ops: Delete, Truncate, Mkdir, Rmdir.
     procedure Handle_Path_Op is
@@ -789,6 +879,8 @@ begin
          Handle_Attr_List;
       elsif Syscalls.Message.Label = Op_Attr_Read then
          Handle_Attr_Read;
+      elsif Syscalls.Message.Label = Op_Attr_Write then
+         Handle_Attr_Write;
       elsif Syscalls.Message.Label = Op_Volume_Info then
          Handle_Volume_Info;
       elsif Syscalls.Message.Label = Op_Sync then

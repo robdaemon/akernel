@@ -102,7 +102,8 @@ partition; M82c pure-Ada BFS server (read-only); M82d attribute
 ops on the wire (19/20, done); M82e R/W + journal (done); M82f
 indices/query (done — one-shot queries); M82g (done — buffer-carried
 result paths, size/mtime index sync, live queries with ntfn
-doorbells).
+doorbells); M82h (done — multi-leaf btree splits, indirect stream
+growth, attribute writes).
 
 - **M82a reverted**: the xPack g++ gate was built and proven
   (cxx_test: static ctors, vtables, new/delete in-guest) but the
@@ -292,8 +293,69 @@ doorbells).
   streams__write's prologue, 240 bytes of headroom left) — the
   tests live in their own Live_Query_Tests procedure now, called
   after the big declare blocks close. The kernel's fatal trap
-  dump grew sp/ra/proc lines (sbi_asm trap_frame_get_sp/ra) to
-  diagnose (b) — kept as permanent diagnostics.
+   dump grew sp/ra/proc lines (sbi_asm trap_frame_get_sp/ra) to
+   diagnose (b) — kept as permanent diagnostics.
+
+- **M82h done** (this commit): BeFS scale — the M82e "single-leaf,
+  direct-runs only, append-only attrs" limits are gone. (1) Multi-
+  leaf btree WRITES: Leaf_Max 24 -> 64 (1024-byte node capacity,
+  real key sizes), block cache 16 -> 24 slots, scratch leaves moved
+  to package state. New engine machinery: Tree_Descend (internal
+  entries route right-of-separator: first separator STRICTLY
+  greater than the target, else the overflow link; links/child
+  pointers are STREAM OFFSETS, leaf values are inode blocks),
+  Tree_Insert (in-place when the leaf fits, else split: lower half
+  moves to a NEW LEFT node, push up (first key of the upper half,
+  left node) — the separator is COPIED for leaves, DROPPED for
+  internal nodes where its value becomes the left half's overflow;
+  root split allocates a new root, depth caps at 3 = loud
+  Bad_Args), Tree_Locate/Tree_Remove (duplicates land rightmost;
+  Tree_Locate walks LEFT while the left neighbor's last key equals
+  the target — splits can straddle equals), Tree_Alloc_Node
+  (appends a block to the stream's direct runs, patches inode
+  @72/@168/@208). No merge-on-remove (nodes leak until the whole
+  stream is freed — Haiku-compatible layout, self-consistent
+  split convention; the split test's free-space check uses a
+  24-block bound with a printed delta instead of exact round-
+  trip). tools/befs_dump.py walks multi-level btrees now (first-
+  child descent by depth + right-link leaf chains). (2) Indirect
+  stream growth: Stream_Read's indirect path was fixed to Haiku
+  semantics (index blocks hold 128 VARIABLE-length block_runs;
+  coverage accumulates from Max_Direct; max_indirect = absolute
+  end) — the old fixed-length reading was never fixture-exercised.
+  Indirect_Append grows into ONE index block (full array = loud
+  Bad_Args; double-indirect still rejected by Delete/Truncate);
+  once a file goes indirect its direct range never grows again;
+  Free_Stream frees indirect data runs + the index block, so
+  free-space round-trips EXACTLY. (3) Attribute writes,
+  Op_Attr_Write = 25: path words 0..3, attr name (<= 16 chars)
+  words 4..5, buffer cap carries le64 type @0 + le64 length @8 +
+  data @16 (the IPC message has only 6 words — hence the buffer
+  header); length 0 REMOVES. Bfs_Engine.Attr_Write insert/replace/
+  remove in the small_data region with tail shifts (the 8-byte
+  zeroed terminator rides the tail), guards the name pseudo-attr
+  (1-char 0x13) and rejects data > Block_Size; live queries get
+  Was/Now diffing like the other mutations; single transaction.
+  fuzz: Btree_Split_Tests (56 SP files + 28 duplicate-name dirs
+  force multiple splits incl. an internal-node split at depth 2;
+  query over the split index; leak-bound check), Indirect_Stream_
+  Tests (two files interleaved 28 KiB -> 12 direct + 16 indirect
+  runs each; readback spot-checks; exact free round-trip),
+  Attr_Write_Tests (18 checks: insert/replace grow+shrink/readback,
+  list order, query sees fresh attr, remove + survivor intact,
+  remove-absent Not_Found, fat32 Bad_Args). 1712 PASS / 0 FAIL;
+  test-replay green. KEY BUGS: Hdr_Put64 on a header field writes
+  only the le32 half where the next field starts at +4 (max_depth
+  @8 clobbers data_type @12 otherwise — Hdr_Put32 for those);
+  sparse writes (offset > EOF) are rejected, so the interleaved
+  indirect test must append at exactly EOF; `make test` is ~6.5
+  min now (the split test made the suite slower) — capture to a
+  log, don't treat long runs as wedges. DEFERRED: **M82i** long
+  request paths (255) via the client buffer (wire caps qualified
+  paths at 32 chars; M82g did reply paths only); **M83** IPC
+  buffer relocation + main-stack growth (48 KiB stack discipline
+  is the recurring cost center — big engine records are package
+  state by necessity now).
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working

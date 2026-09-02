@@ -125,7 +125,7 @@ package body Bfs_Engine is
     --  Block cache: 16 slots of one block each. Writes always go
     --  through the journal transaction below: modify the slot,
     --  Trans_Add snapshots it, Trans_Commit does the WAL dance.
-    Cache_Slots : constant := 16;
+    Cache_Slots : constant := 24;
     Cache_Num   : array (0 .. Cache_Slots - 1) of U64 :=
       (others => U64'Last);
     Cache_Refs  : array (0 .. Cache_Slots - 1) of Natural :=
@@ -822,36 +822,59 @@ package body Bfs_Engine is
             Covered := Covered + U64 (R.Length) * Block_Size;
          end loop;
 
-         --  Indirect run: fixed-length runs (Indirect.Length) in a
-         --  block_run array spanning the indirect blocks.
+         --  Indirect range (Haiku FindBlockRun semantics): the
+         --  indirect run covers Indirect.Length contiguous INDEX
+         --  blocks, each holding Block_Size/8 VARIABLE-length
+         --  block_runs; coverage accumulates from Max_Direct.
+         --  (m82h fixes the m82c fixed-length misreading, never
+         --  exercised by the fixture.)
          if not Found
            and then Info.Max_Indir > 0
            and then Info.Indirect.Length > 0
+           and then P >= Info.Max_Direct
            and then P < Info.Max_Indir
          then
             declare
-               Run_Bytes : constant U64 :=
-                 U64 (Info.Indirect.Length) * Block_Size;
-               Rel       : constant U64 := P - Info.Max_Direct;
-               Run_Idx   : constant U64 := Rel / Run_Bytes;
-               Per_Block : constant U64 := Block_Size / 8;
-               Ind_Slot  : constant Natural := Get_Block
-                 (To_Block (Info.Indirect) + Run_Idx / Per_Block);
+               Base      : U64 := Info.Max_Direct;
+               RLen      : U64 := 0;
+               RStart    : U64 := 0;
+               Hit       : Boolean := False;
+               Done_Runs : Boolean := False;
             begin
-               if Ind_Slot = Cache_Slots then
-                  return Done;
-               end if;
-               declare
-                  R : constant Block_Run := Run_At
-                    (Ind_Slot, (Run_Idx mod Per_Block) * 8);
-               begin
-                  Put_Block (Ind_Slot);
-                  if R.Length = 0 then
-                     return Done;
-                  end if;
-                  In_Run := Rel mod Run_Bytes;
-                  Chunk := U64'Min (Len - Done, Run_Bytes - In_Run);
-                  Block := To_Block (R) + In_Run / Block_Size;
+               for BI in 0 .. U64 (Info.Indirect.Length) - 1 loop
+                  exit when Hit or else Done_Runs;
+                  declare
+                     Ind_Slot : constant Natural := Get_Block
+                       (To_Block (Info.Indirect) + BI);
+                  begin
+                     if Ind_Slot = Cache_Slots then
+                        return Done;
+                     end if;
+                     for J in 0 .. (Block_Size / 8) - 1 loop
+                        declare
+                           R : constant Block_Run :=
+                             Run_At (Ind_Slot, J * 8);
+                        begin
+                           if R.Length = 0 then
+                              Done_Runs := True;
+                              exit;
+                           end if;
+                           RLen := U64 (R.Length) * Block_Size;
+                           if P < Base + RLen then
+                              RStart := To_Block (R);
+                              Hit := True;
+                              exit;
+                           end if;
+                           Base := Base + RLen;
+                        end;
+                     end loop;
+                     Put_Block (Ind_Slot);
+                  end;
+               end loop;
+               if Hit then
+                  In_Run := P - Base;
+                  Chunk := U64'Min (Len - Done, RLen - In_Run);
+                  Block := RStart + In_Run / Block_Size;
                   while Chunk > 0 loop
                      declare
                         Skip : constant U64 := In_Run mod Block_Size;
@@ -869,7 +892,7 @@ package body Bfs_Engine is
                      end;
                   end loop;
                   Found := True;
-               end;
+               end if;
             end;
          end if;
 
@@ -880,11 +903,70 @@ package body Bfs_Engine is
       return Done;
    end Stream_Read;
 
-   ------------------------------------------------------------------
-   --  B+tree iteration (leaf chain from the leftmost leaf)
-   ------------------------------------------------------------------
+    --  Physical block holding stream offset P, through the direct
+    --  runs and the indirect array (Haiku variable-length
+    --  semantics); U64'Last when uncovered.
+    function Data_Block (Info : Inode_Info; P : U64) return U64
+    is
+       Covered : U64 := 0;
+    begin
+       for R of Info.Direct loop
+          exit when R.Length = 0;
+          if P < Covered + U64 (R.Length) * Block_Size then
+             return To_Block (R) + (P - Covered) / Block_Size;
+          end if;
+          Covered := Covered + U64 (R.Length) * Block_Size;
+       end loop;
+       if Info.Max_Indir > 0
+         and then Info.Indirect.Length > 0
+         and then P >= Info.Max_Direct
+         and then P < Info.Max_Indir
+       then
+          declare
+             Base : U64 := Info.Max_Direct;
+             Hit  : U64 := U64'Last;
+             Done_Runs : Boolean := False;
+          begin
+             for BI in 0 .. U64 (Info.Indirect.Length) - 1 loop
+                exit when Hit /= U64'Last or else Done_Runs;
+                declare
+                   Ind_Slot : constant Natural := Get_Block
+                     (To_Block (Info.Indirect) + BI);
+                begin
+                   if Ind_Slot = Cache_Slots then
+                      return U64'Last;
+                   end if;
+                   for J in 0 .. (Block_Size / 8) - 1 loop
+                      declare
+                         R : constant Block_Run :=
+                           Run_At (Ind_Slot, J * 8);
+                      begin
+                         if R.Length = 0 then
+                            Done_Runs := True;
+                            exit;
+                         end if;
+                         if P < Base + U64 (R.Length) * Block_Size then
+                            Hit := To_Block (R)
+                              + (P - Base) / Block_Size;
+                            exit;
+                         end if;
+                         Base := Base + U64 (R.Length) * Block_Size;
+                      end;
+                   end loop;
+                   Put_Block (Ind_Slot);
+                end;
+             end loop;
+             return Hit;
+          end;
+       end if;
+       return U64'Last;
+    end Data_Block;
 
-   type Tree_It is record
+    ------------------------------------------------------------------
+    --  B+tree iteration (leaf chain from the leftmost leaf)
+    ------------------------------------------------------------------
+
+    type Tree_It is record
       Stream   : Inode_Info;
       Node     : Byte_Array (0 .. Block_Size - 1);
       Key_Idx  : U64;
@@ -1016,13 +1098,34 @@ package body Bfs_Engine is
     end Tree_Next;
 
     ------------------------------------------------------------------
-    --  Single-leaf btree mutation (m82e; no node splits)
+    --  Multi-level btree mutation (m82h; m82e was single-leaf).
+    --
+    --  Node layout is shared between leaves and internal nodes:
+    --  28-byte header (left/right/overflow links, key count and
+    --  total key bytes), then keys, 8-aligned u16 key lengths and
+    --  int64 values. Leaf values are inode blocks; internal node
+    --  values are STREAM OFFSETS of child nodes. Internal entry
+    --  (k_i, v_i) means: child v_i covers keys in [k_{i-1}, k_i);
+    --  the overflow link is the rightmost child (keys >= k_last).
+    --  Descent follows the first separator strictly greater than
+    --  the target, else the overflow link. Splits move the lower
+    --  half into a NEW LEFT node (Haiku's _SplitNode shape) and
+    --  push the first key of the upper half to the parent (copied
+    --  for leaves, dropped from the level for internal nodes). A
+    --  full root allocates a new root one level up; max_depth is
+    --  capped at 3 (loud Bad_Args beyond). Removed entries never
+    --  free nodes (no merge, free-node list stays -1) — a
+    --  documented small leak per delete-heavy tree.
     ------------------------------------------------------------------
 
     subtype Block_Buf is Byte_Array (0 .. Block_Size - 1);
 
     function Buf_LE16 (B : Block_Buf; Off : U64) return U64 is
       (U64 (B (Off)) + Interfaces.Shift_Left (U64 (B (Off + 1)), 8));
+
+    function Buf_LE32 (B : Block_Buf; Off : U64) return U64 is
+      (Buf_LE16 (B, Off)
+         + Interfaces.Shift_Left (Buf_LE16 (B, Off + 2), 16));
 
     function Buf_LE64 (B : Block_Buf; Off : U64) return U64 is
        V : U64 := 0;
@@ -1033,6 +1136,15 @@ package body Bfs_Engine is
        end loop;
        return V;
     end Buf_LE64;
+
+    procedure Put_Buf_LE64 (B : in out Block_Buf; Off : U64; V : U64)
+    is
+    begin
+       for I in 0 .. 7 loop
+          B (Off + U64 (I)) :=
+            U8 (Interfaces.Shift_Right (V, 8 * I) and 16#FF#);
+       end loop;
+    end Put_Buf_LE64;
 
     --  Physical block of stream offset Off through the direct runs.
     function Stream_Block (Info : Inode_Info; Off : U64) return U64 is
@@ -1048,16 +1160,20 @@ package body Bfs_Engine is
       return U64'Last;
     end Stream_Block;
 
-    --  Decoded leaf: keys as raw bytes, sorted; duplicate keys
+    --  Decoded node: keys as raw bytes, sorted; duplicate keys
     --  allowed (the name index has one entry per same-named file).
-    Leaf_Max     : constant := 24;
+    --  Leaf_Max caps entries per node (covers a physically full
+    --  1024-byte node of int64 keys = 55 entries); scratch rows
+    --  hold one extra entry for the split combine step.
+    Leaf_Max     : constant := 64;
     Leaf_Key_Max : constant := 64;
-    type Leaf_KL_Array   is array (0 .. Leaf_Max - 1) of Natural;
+    Scratch_Cap  : constant := Leaf_Max + 1;
+    type Leaf_KL_Array   is array (0 .. Scratch_Cap - 1) of Natural;
     type Leaf_Key_Row    is array (U64 range 0 .. Leaf_Key_Max - 1)
        of U8;
-    type Leaf_Keys_Array is array (0 .. Leaf_Max - 1)
+    type Leaf_Keys_Array is array (0 .. Scratch_Cap - 1)
        of Leaf_Key_Row;
-    type Leaf_Vals_Array is array (0 .. Leaf_Max - 1) of U64;
+    type Leaf_Vals_Array is array (0 .. Scratch_Cap - 1) of U64;
     type Leaf_Entries is record
        N    : Natural := 0;
        KL   : Leaf_KL_Array := (others => 0);
@@ -1065,84 +1181,105 @@ package body Bfs_Engine is
        Vals : Leaf_Vals_Array := (others => 0);
     end record;
 
-    --  Bytewise key order: shorter-is-less on equal prefix.
-    function Key_Less (E : Leaf_Entries; I : Natural; Key : String)
-                       return Boolean
-    is
-       K : Natural := 0;
-    begin
-       while K < E.KL (I) and then K < Key'Length loop
-          if E.Keys (I)(U64 (K)) /=
-            U8 (Character'Pos (Key (Key'First + K)))
-          then
-             return E.Keys (I)(U64 (K))
-               < U8 (Character'Pos (Key (Key'First + K)));
-          end if;
-          K := K + 1;
-       end loop;
-       return E.KL (I) < Key'Length;
-    end Key_Less;
+    --  The record is ~5 KiB: package state, not stack (the 48 KiB
+    --  process stack ceiling bit in m82g). The server is
+    --  single-threaded and leaf ops never nest; split needs two
+    --  (combined set + a half).
+    Leaf_Scratch   : Leaf_Entries;
+    Leaf_Scratch_B : Leaf_Entries;
 
-    function Key_Equal (E : Leaf_Entries; I : Natural; Key : String)
-                        return Boolean is
-    begin
-       if E.KL (I) /= Key'Length then
-          return False;
-       end if;
-       for K in 0 .. Key'Length - 1 loop
-          if E.Keys (I)(U64 (K)) /=
-            U8 (Character'Pos (Key (Key'First + K)))
-          then
-             return False;
-          end if;
-       end loop;
-       return True;
-    end Key_Equal;
+    --  Search key: raw bytes plus a numeric flag (int64 index keys
+    --  are 8-byte little-endian values compared numerically).
+    type Search_Key is record
+       Bytes   : Leaf_Key_Row := (others => 0);
+       Len     : Natural := 0;
+       Num     : U64 := 0;
+       Numeric : Boolean := False;
+    end record;
 
-    --  Load the tree's single leaf into Node; Node_Block is its
-    --  physical block. False when the tree is not a single leaf
-    --  (multi-leaf/internal trees are beyond m82e).
-    function Leaf_Load (Dir : Inode_Info; Node : out Block_Buf;
-                        Node_Block : out U64) return Boolean
-    is
-       Hdr : Block_Buf;
-       Got : U64;
-       Root_Off : U64;
+    function SK_Str (S : String) return Search_Key is
+       K : Search_Key;
     begin
-       Node_Block := U64'Last;
-       Got := Stream_Read (Dir, 0, Hdr (Hdr'First)'Address, Block_Size);
-       if Got /= Block_Size
-         or else U32 (Buf_LE64 (Hdr, 0) and 16#FFFF_FFFF#) /= Btree_Magic
-       then
-          return False;
-       end if;
-       Root_Off := Buf_LE64 (Hdr, 16);
-       Node_Block := Stream_Block (Dir, Root_Off);
-       if Node_Block = U64'Last then
-          return False;
-       end if;
-       declare
-          Slot : constant Natural := Get_Block (Node_Block);
-       begin
-          if Slot = Cache_Slots then
-             Node_Block := U64'Last;
-             return False;
-          end if;
-          for I in Node'Range loop
-             Node (I) := Cache_Data (Slot, I);
+       K.Len := S'Length;
+       for I in 0 .. S'Length - 1 loop
+          K.Bytes (U64 (I)) := U8 (Character'Pos (S (S'First + I)));
+       end loop;
+       return K;
+    end SK_Str;
+
+    function SK_Int (V : U64) return Search_Key is
+       K : Search_Key;
+    begin
+       K.Len := 8;
+       K.Num := V;
+       K.Numeric := True;
+       for I in 0 .. 7 loop
+          K.Bytes (U64 (I)) :=
+            U8 (Interfaces.Shift_Right (V, 8 * I) and 16#FF#);
+       end loop;
+       return K;
+    end SK_Int;
+
+    function SK_Entry (E : Leaf_Entries; I : Natural; Numeric : Boolean)
+                       return Search_Key is
+       K : Search_Key;
+    begin
+       K.Len := E.KL (I);
+       K.Bytes := E.Keys (I);
+       K.Numeric := Numeric;
+       if Numeric and then K.Len = 8 then
+          for B in 0 .. 7 loop
+             K.Num := K.Num or Interfaces.Shift_Left
+               (U64 (E.Keys (I)(U64 (B))), 8 * B);
           end loop;
-          Put_Block (Slot);
-       end;
-       --  Single leaf: left, right and overflow links all -1.
-       if Buf_LE64 (Node, 0) /= Btree_Null
-         or else Buf_LE64 (Node, 8) /= Btree_Null
-         or else Buf_LE64 (Node, 16) /= Btree_Null
-       then
-          Node_Block := U64'Last;
-          return False;
        end if;
-       return True;
-    end Leaf_Load;
+       return K;
+    end SK_Entry;
+
+    --  Entry I's key as a little-endian int64 (KL must be 8).
+    function Entry_Num (E : Leaf_Entries; I : Natural) return U64
+    is
+       V : U64 := 0;
+    begin
+       for K in 0 .. 7 loop
+          V := V or Interfaces.Shift_Left
+            (U64 (E.Keys (I)(U64 (K))), 8 * K);
+       end loop;
+       return V;
+    end Entry_Num;
+
+    --  Compare search key K against entry I's key: -1 / 0 / +1.
+    --  String order is bytewise with shorter-is-less on equal
+    --  prefix; numeric order is by value.
+    function SK_Cmp (K : Search_Key; E : Leaf_Entries; I : Natural)
+                     return Integer
+    is
+       L : constant Natural := Natural'Min (K.Len, E.KL (I));
+    begin
+       if K.Numeric then
+          if E.KL (I) /= 8 then
+             return 1;   --  malformed entry sorts first
+          elsif K.Num < Entry_Num (E, I) then
+             return -1;
+          elsif K.Num > Entry_Num (E, I) then
+             return 1;
+          end if;
+          return 0;
+       end if;
+       for J in 0 .. L - 1 loop
+          if K.Bytes (U64 (J)) < E.Keys (I)(U64 (J)) then
+             return -1;
+          elsif K.Bytes (U64 (J)) > E.Keys (I)(U64 (J)) then
+             return 1;
+          end if;
+       end loop;
+       if K.Len < E.KL (I) then
+          return -1;
+       elsif K.Len > E.KL (I) then
+          return 1;
+       end if;
+       return 0;
+    end SK_Cmp;
 
     procedure Leaf_Decode (Node : Block_Buf; E : out Leaf_Entries)
     is
@@ -1233,256 +1370,653 @@ package body Bfs_Engine is
        return True;
     end Leaf_Store;
 
-    --  Would Key fit into the tree's single leaf?
-    function Leaf_Can_Fit (Dir : Inode_Info; Key : String)
-                           return Boolean
+    --  Would one more entry of Add_Len key bytes fit into E's
+    --  node (byte budget + entry cap)?
+    function Node_Fits (E : Leaf_Entries; Add_Len : Natural)
+                        return Boolean
     is
-       Node  : Block_Buf;
-       NBlk  : U64;
-       E     : Leaf_Entries;
-       KTotal : U64 := 0;
+       KT : U64 := U64 (Add_Len);
+    begin
+       if E.N = Leaf_Max then
+          return False;
+       end if;
+       for I in 0 .. E.N - 1 loop
+          KT := KT + U64 (E.KL (I));
+       end loop;
+       return ((28 + KT + 7) and not 7)
+         + 10 * U64 (E.N + 1) <= Block_Size;
+    end Node_Fits;
+
+    --  Encoded size of entries Lo .. Hi - 1 as a node.
+    function Entries_Bytes (C : Leaf_Entries; Lo, Hi : Natural)
+                            return U64
+    is
+       KT : U64 := 0;
+    begin
+       for I in Lo .. Hi - 1 loop
+          KT := KT + U64 (C.KL (I));
+       end loop;
+       return ((28 + KT + 7) and not 7) + 10 * U64 (Hi - Lo);
+    end Entries_Bytes;
+
+    --  Split point M for the combined entry set C: entries
+    --  0 .. M - 1 go to the new left node, M .. C.N - 1 stay.
+    --  Greedy half-node fill, verified; falls back to the first
+    --  point where both halves encode. 0 = no legal split.
+    function Split_Point (C : Leaf_Entries) return Natural is
+       M : Natural := 1;
+    begin
+       while M < C.N - 1
+         and then Entries_Bytes (C, 0, M) < Block_Size / 2
+       loop
+          M := M + 1;
+       end loop;
+       if M <= Leaf_Max and then C.N - M <= Leaf_Max
+         and then Entries_Bytes (C, 0, M) <= Block_Size
+         and then Entries_Bytes (C, M, C.N) <= Block_Size
+       then
+          return M;
+       end if;
+       for Try in 1 .. C.N - 1 loop
+          if Try <= Leaf_Max and then C.N - Try <= Leaf_Max
+            and then Entries_Bytes (C, 0, Try) <= Block_Size
+            and then Entries_Bytes (C, Try, C.N) <= Block_Size
+          then
+             return Try;
+          end if;
+       end loop;
+       return 0;
+    end Split_Point;
+
+    procedure Entry_Set (E : in out Leaf_Entries; I : Natural;
+                         K : Search_Key; V : U64) is
+    begin
+       E.KL (I) := K.Len;
+       E.Keys (I) := K.Bytes;
+       E.Vals (I) := V;
+    end Entry_Set;
+
+    --  Shift entries Pos .. E.N - 1 one up and insert (K, V).
+    --  Caller guarantees E.N < Scratch_Cap.
+    procedure Entry_Insert_At (E : in out Leaf_Entries; Pos : Natural;
+                               K : Search_Key; V : U64) is
+    begin
+       for I in reverse Pos + 1 .. E.N loop
+          E.KL (I) := E.KL (I - 1);
+          E.Keys (I) := E.Keys (I - 1);
+          E.Vals (I) := E.Vals (I - 1);
+       end loop;
+       Entry_Set (E, Pos, K, V);
+       E.N := E.N + 1;
+    end Entry_Insert_At;
+
+    --  Leaf_Encode resets the links to -1; restore them after.
+    procedure Set_Links (Node : in out Block_Buf;
+                         Left, Right, Overflow : U64) is
+    begin
+       Put_Buf_LE64 (Node, 0, Left);
+       Put_Buf_LE64 (Node, 8, Right);
+       Put_Buf_LE64 (Node, 16, Overflow);
+    end Set_Links;
+
+    --  Parsed btree header (stream offset 0).
+    type Tree_Ctx is record
+       Dir     : Inode_Info;
+       Depth   : U64;   --  max_number_of_levels @8
+       Root    : U64;   --  root node stream offset @16
+       Total   : U64;   --  next free stream offset @32
+       Hdr_Blk : U64;   --  physical block of the header
+    end record;
+
+    function Tree_Open (Dir : Inode_Info; Ctx : out Tree_Ctx)
+                        return Boolean
+    is
+       Hdr : Block_Buf;
+       Got : U64;
+    begin
+       Got := Stream_Read (Dir, 0, Hdr (Hdr'First)'Address, Block_Size);
+       if Got /= Block_Size
+         or else U32 (Buf_LE32 (Hdr, 0)) /= Btree_Magic
+       then
+          return False;
+       end if;
+       Ctx.Dir     := Dir;
+       Ctx.Depth   := Buf_LE32 (Hdr, 8);
+       Ctx.Root    := Buf_LE64 (Hdr, 16);
+       Ctx.Total   := Buf_LE64 (Hdr, 32);
+       Ctx.Hdr_Blk := Stream_Block (Dir, 0);
+       return Ctx.Hdr_Blk /= U64'Last;
+    end Tree_Open;
+
+    --  Load the node at stream offset Off through the cache;
+    --  Blk is its physical block.
+    function Node_Load (Ctx : Tree_Ctx; Off : U64;
+                        Node : out Block_Buf; Blk : out U64)
+                        return Boolean
+    is
+    begin
+       Blk := Stream_Block (Ctx.Dir, Off);
+       if Blk = U64'Last then
+          return False;
+       end if;
+       declare
+          Slot : constant Natural := Get_Block (Blk);
+       begin
+          if Slot = Cache_Slots then
+             Blk := U64'Last;
+             return False;
+          end if;
+          for I in Node'Range loop
+             Node (I) := Cache_Data (Slot, I);
+          end loop;
+          Put_Block (Slot);
+       end;
+       return True;
+    end Node_Load;
+
+    --  Write one header field (root pointer / total size / depth)
+    --  through cache + transaction.
+    function Hdr_Put64 (Ctx : Tree_Ctx; Off : U64; V : U64)
+                        return Boolean
+    is
+       Slot : constant Natural := Get_Block (Ctx.Hdr_Blk);
+    begin
+       if Slot = Cache_Slots then
+          return False;
+       end if;
+       Put_LE64 (Slot, Off, V);
+       Trans_Add (Slot);
+       Put_Block (Slot);
+       return True;
+    end Hdr_Put64;
+
+    function Hdr_Put32 (Ctx : Tree_Ctx; Off : U64; V : U32)
+                        return Boolean
+    is
+       Slot : constant Natural := Get_Block (Ctx.Hdr_Blk);
+    begin
+       if Slot = Cache_Slots then
+          return False;
+       end if;
+       Put_LE32 (Slot, Off, V);
+       Trans_Add (Slot);
+       Put_Block (Slot);
+       return True;
+    end Hdr_Put32;
+
+    --  Descent path from root to leaf: Path (0) is the root,
+    --  Path (PLen - 1) the leaf. Idx records the separator index
+    --  followed at internal levels (= entry count: overflow link).
+    Path_Max : constant := 4;   --  depth cap 3: root + 2 + leaf
+    type Path_Elem is record
+       Off : U64 := 0;
+       Idx : Natural := 0;
+    end record;
+    type Tree_Path is array (0 .. Path_Max - 1) of Path_Elem;
+
+    --  Follow the first separator STRICTLY greater than K, else
+    --  the overflow link (rightmost child), down to the leaf.
+    procedure Tree_Descend (Ctx : Tree_Ctx; K : Search_Key;
+                            Path : out Tree_Path; PLen : out Natural;
+                            Leaf : out Block_Buf; Leaf_Blk : out U64;
+                            Ok : out Boolean)
+    is
+       Off : U64 := Ctx.Root;
+       E   : Leaf_Entries renames Leaf_Scratch;
+       Idx : Natural;
+    begin
+       Ok := False;
+       PLen := 0;
+       Leaf_Blk := U64'Last;
+       loop
+          if PLen = Path_Max then
+             return;   --  deeper than the cap: refuse
+          end if;
+          if not Node_Load (Ctx, Off, Leaf, Leaf_Blk) then
+             return;
+          end if;
+          Path (PLen).Off := Off;
+          Path (PLen).Idx := 0;
+          PLen := PLen + 1;
+          exit when Buf_LE64 (Leaf, 16) = Btree_Null;   --  leaf
+          Leaf_Decode (Leaf, E);
+          Idx := 0;
+          while Idx < E.N and then SK_Cmp (K, E, Idx) >= 0 loop
+             Idx := Idx + 1;
+          end loop;
+          Path (PLen - 1).Idx := Idx;
+          Off := (if Idx < E.N then E.Vals (Idx)
+                  else Buf_LE64 (Leaf, 16));
+       end loop;
+       Ok := True;
+    end Tree_Descend;
+
+    --  Allocate a fresh node at the stream's total_size, growing
+    --  the stream (direct runs) by one block when full. Updates
+    --  the header's total size; on growth the inode's runs,
+    --  max_direct_range and size are patched. All changes join
+    --  the open transaction.
+    function Tree_Alloc_Node (Ctx : in out Tree_Ctx; Off : out U64;
+                              Blk : out U64) return Boolean
+    is
+       Capacity  : U64 := 0;
+       Last_End  : U64 := 0;
+       Free_Idx  : Natural := 0;
+       Have_Free : Boolean := False;
+       St        : U64;
+       Slot      : Natural;
+    begin
+       Off := 0;
+       Blk := U64'Last;
+       for I in Ctx.Dir.Direct'Range loop
+          if Ctx.Dir.Direct (I).Length = 0 then
+             Free_Idx := I;
+             Have_Free := True;
+             exit;
+          end if;
+          Capacity := Capacity
+            + U64 (Ctx.Dir.Direct (I).Length) * Block_Size;
+          Last_End := To_Block (Ctx.Dir.Direct (I))
+            + U64 (Ctx.Dir.Direct (I).Length);
+       end loop;
+       if Ctx.Total + Block_Size > Capacity then
+          if not Alloc (1, St) then
+             return False;
+          end if;
+          if Capacity > 0 and then St = Last_End then
+             --  Contiguous with the last run: merge.
+             for I in reverse Ctx.Dir.Direct'Range loop
+                if Ctx.Dir.Direct (I).Length /= 0 then
+                   Ctx.Dir.Direct (I).Length :=
+                     Ctx.Dir.Direct (I).Length + 1;
+                   exit;
+                end if;
+             end loop;
+          elsif Have_Free then
+             Ctx.Dir.Direct (Free_Idx) :=
+               (AG => 0, Start => U16 (St), Length => 1);
+          else
+             Free (St, 1);
+             Akernel_User.Console.Put_Line
+               ("bfs: tree stream out of runs");
+             return False;
+          end if;
+          Slot := Get_Block (Ctx.Dir.Block);
+          if Slot = Cache_Slots then
+             return False;
+          end if;
+          for I in Ctx.Dir.Direct'Range loop
+             if Ctx.Dir.Direct (I).Length /= 0 then
+                Put_LE16 (Slot, 76 + 8 * U64 (I),
+                          Ctx.Dir.Direct (I).Start);
+                Put_LE16 (Slot, 78 + 8 * U64 (I),
+                          Ctx.Dir.Direct (I).Length);
+             end if;
+          end loop;
+          Put_LE64 (Slot, 168, Capacity + Block_Size);
+          Put_LE64 (Slot, 208, Capacity + Block_Size);
+          Trans_Add (Slot);
+          Put_Block (Slot);
+       end if;
+       Off := Ctx.Total;
+       Blk := Stream_Block (Ctx.Dir, Off);
+       if Blk = U64'Last then
+          return False;
+       end if;
+       Ctx.Total := Ctx.Total + Block_Size;
+       return Hdr_Put64 (Ctx, 32, Ctx.Total);
+    end Tree_Alloc_Node;
+
+    --  Locate the leaf + entry index of key K (and Value when
+    --  Match_Value). Duplicate keys can straddle a split boundary
+    --  to the LEFT of the descended leaf (inserts always land in
+    --  the rightmost leaf holding the key), so keep walking left
+    --  while the left neighbour's last key still equals K.
+    function Tree_Locate (Ctx : Tree_Ctx; K : Search_Key; Value : U64;
+                          Match_Value : Boolean;
+                          Buf : out Block_Buf; Blk : out U64;
+                          Idx : out Natural) return Boolean
+    is
+       Path  : Tree_Path;
+       PLen  : Natural;
+       Ok    : Boolean;
+       E     : Leaf_Entries renames Leaf_Scratch;
+       Left  : U64;
+       Steps : Natural := 0;
+    begin
+       Idx := 0;
+       Tree_Descend (Ctx, K, Path, PLen, Buf, Blk, Ok);
+       if not Ok then
+          return False;
+       end if;
+       loop
+          Leaf_Decode (Buf, E);
+          for I in 0 .. E.N - 1 loop
+             exit when SK_Cmp (K, E, I) < 0;   --  keys past K
+             if SK_Cmp (K, E, I) = 0
+               and then (not Match_Value or else E.Vals (I) = Value)
+             then
+                Idx := I;
+                return True;
+             end if;
+          end loop;
+          Left := Buf_LE64 (Buf, 0);
+          exit when Left = Btree_Null;
+          Steps := Steps + 1;
+          exit when Steps > 40;   --  sanity bound (corrupt guard)
+          declare
+             PBuf : Block_Buf;
+             PBlk : U64;
+          begin
+             if not Node_Load (Ctx, Left, PBuf, PBlk) then
+                return False;
+             end if;
+             Leaf_Decode (PBuf, E);
+             exit when E.N = 0
+               or else SK_Cmp (K, E, E.N - 1) /= 0;
+             Buf := PBuf;
+             Blk := PBlk;
+          end;
+       end loop;
+       return False;
+    end Tree_Locate;
+
+    --  Find the value of an entry whose key equals K.
+    function Tree_Find (Dir : Inode_Info; K : Search_Key;
+                        Value : out U64) return Boolean
+    is
+       Ctx : Tree_Ctx;
+       Buf : Block_Buf;
+       Blk : U64;
+       Idx : Natural;
+       E   : Leaf_Entries renames Leaf_Scratch;
+    begin
+       Value := 0;
+       if not Tree_Open (Dir, Ctx)
+         or else not Tree_Locate (Ctx, K, 0, False, Buf, Blk, Idx)
+       then
+          return False;
+       end if;
+       Leaf_Decode (Buf, E);
+       Value := E.Vals (Idx);
+       return True;
+    end Tree_Find;
+
+    --  Insert (K, Value) keeping sorted order (equal keys: after
+    --  existing ones). Splits full nodes: the lower half moves to
+    --  a fresh LEFT node, the first key of the upper half is
+    --  pushed to the parent (copied for leaves, dropped from the
+    --  level for internal nodes); a full root grows the tree one
+    --  level. False on corrupt trees, disk full, a tree stream
+    --  out of direct runs, or the depth cap (3).
+    function Tree_Insert (Dir : Inode_Info; K : Search_Key;
+                          Value : U64) return Boolean
+    is
+       Ctx     : Tree_Ctx;
+       Path    : Tree_Path;
+       PLen    : Natural;
+       Ok      : Boolean;
+       XBuf    : Block_Buf;   --  node being inserted into / split
+       X_Blk   : U64;
+       X_Off   : U64;
+       NewBuf  : Block_Buf;   --  fresh left node on a split
+       New_Off : U64;
+       New_Blk : U64;
+       E       : Leaf_Entries renames Leaf_Scratch;
+       C       : Leaf_Entries renames Leaf_Scratch_B;
+       Push    : Search_Key;
+       Push_V  : U64;
+       Sep     : Search_Key;
+       Pos     : Natural;
+       Level   : Integer;
+       M       : Natural;
+       Is_Leaf : Boolean;
+       L_Link  : U64;
+       R_Link  : U64;
+       O_Link  : U64;
+    begin
+       if not Tree_Open (Dir, Ctx) then
+          return False;
+       end if;
+       Tree_Descend (Ctx, K, Path, PLen, XBuf, X_Blk, Ok);
+       if not Ok then
+          return False;
+       end if;
+       X_Off := Path (PLen - 1).Off;
+       Level := PLen - 1;
+       Is_Leaf := True;
+       Push := K;
+       Push_V := Value;
+       Leaf_Decode (XBuf, E);
+       Pos := 0;
+       while Pos < E.N and then SK_Cmp (Push, E, Pos) >= 0 loop
+          Pos := Pos + 1;   --  duplicates go after existing keys
+       end loop;
+       loop
+          if Node_Fits (E, Push.Len) then
+             --  In-place insert; node links are preserved.
+             L_Link := Buf_LE64 (XBuf, 0);
+             R_Link := Buf_LE64 (XBuf, 8);
+             O_Link := Buf_LE64 (XBuf, 16);
+             Entry_Insert_At (E, Pos, Push, Push_V);
+             if not Leaf_Encode (E, XBuf) then
+                return False;
+             end if;
+             Set_Links (XBuf, L_Link, R_Link, O_Link);
+             return Leaf_Store (X_Blk, XBuf);
+          end if;
+          --  Split: combined set = E plus the new entry at Pos.
+          C := E;
+          Entry_Insert_At (C, Pos, Push, Push_V);
+          M := Split_Point (C);
+          if M = 0 then
+             Akernel_User.Console.Put_Line ("bfs: no legal tree split");
+             return False;
+          end if;
+          if Level = 0 and then Ctx.Depth >= 3 then
+             Akernel_User.Console.Put_Line ("bfs: tree depth cap hit");
+             return False;
+          end if;
+          if not Tree_Alloc_Node (Ctx, New_Off, New_Blk) then
+             return False;
+          end if;
+          L_Link := Buf_LE64 (XBuf, 0);
+          R_Link := Buf_LE64 (XBuf, 8);
+          O_Link := Buf_LE64 (XBuf, 16);
+          --  Lower half -> E (goes into NewBuf).
+          E.N := M;
+          for I in 0 .. M - 1 loop
+             E.KL (I) := C.KL (I);
+             E.Keys (I) := C.Keys (I);
+             E.Vals (I) := C.Vals (I);
+          end loop;
+          if Is_Leaf then
+             --  Upper half stays in X (compact C down). The
+             --  separator is its first key; it STAYS in the leaf
+             --  and is only copied up.
+             for I in M .. C.N - 1 loop
+                C.KL (I - M) := C.KL (I);
+                C.Keys (I - M) := C.Keys (I);
+                C.Vals (I - M) := C.Vals (I);
+             end loop;
+             C.N := C.N - M;
+             Sep := SK_Entry (C, 0, Push.Numeric);
+             if not Leaf_Encode (E, NewBuf)
+               or else not Leaf_Encode (C, XBuf)
+             then
+                return False;
+             end if;
+             Set_Links (NewBuf, L_Link, X_Off, Btree_Null);
+             Set_Links (XBuf, New_Off, R_Link, O_Link);
+             if not Leaf_Store (New_Blk, NewBuf)
+               or else not Leaf_Store (X_Blk, XBuf)
+             then
+                return False;
+             end if;
+             --  The old left neighbour's right link moves to the
+             --  new node.
+             if L_Link /= Btree_Null then
+                declare
+                   NBuf : Block_Buf;
+                   NBlk : U64;
+                begin
+                   if not Node_Load (Ctx, L_Link, NBuf, NBlk) then
+                      return False;
+                   end if;
+                   Put_Buf_LE64 (NBuf, 8, New_Off);
+                   if not Leaf_Store (NBlk, NBuf) then
+                      return False;
+                   end if;
+                end;
+             end if;
+          else
+             --  Internal split: entry M is DROPPED from the level
+             --  and pushed up; its value becomes the left half's
+             --  rightmost child (overflow link).
+             Sep := SK_Entry (C, M, Push.Numeric);
+             declare
+                Lo_Ovfl : constant U64 := C.Vals (M);
+             begin
+                for I in M + 1 .. C.N - 1 loop
+                   C.KL (I - M - 1) := C.KL (I);
+                   C.Keys (I - M - 1) := C.Keys (I);
+                   C.Vals (I - M - 1) := C.Vals (I);
+                end loop;
+                C.N := C.N - M - 1;
+                if not Leaf_Encode (E, NewBuf)
+                  or else not Leaf_Encode (C, XBuf)
+                then
+                   return False;
+                end if;
+                Set_Links (NewBuf, Btree_Null, Btree_Null, Lo_Ovfl);
+                Set_Links (XBuf, Btree_Null, Btree_Null, O_Link);
+             end;
+             if not Leaf_Store (New_Blk, NewBuf)
+               or else not Leaf_Store (X_Blk, XBuf)
+             then
+                return False;
+             end if;
+          end if;
+          if Level = 0 then
+             --  New root: one entry (separator -> left node),
+             --  overflow link = the old root.
+             declare
+                Left_Off : constant U64 := New_Off;
+             begin
+                if not Tree_Alloc_Node (Ctx, New_Off, New_Blk) then
+                   return False;
+                end if;
+                E.N := 1;
+                Entry_Set (E, 0, Sep, Left_Off);
+                if not Leaf_Encode (E, NewBuf) then
+                   return False;
+                end if;
+                Set_Links (NewBuf, Btree_Null, Btree_Null, X_Off);
+                if not Leaf_Store (New_Blk, NewBuf) then
+                   return False;
+                end if;
+                return Hdr_Put64 (Ctx, 16, New_Off)
+                  and then Hdr_Put32 (Ctx, 8, U32 (Ctx.Depth + 1));
+             end;
+          end if;
+          --  Push the separator into the parent at the descent
+          --  index; loop when the parent itself overflows.
+          Level := Level - 1;
+          X_Off := Path (Level).Off;
+          if not Node_Load (Ctx, X_Off, XBuf, X_Blk) then
+             return False;
+          end if;
+          Leaf_Decode (XBuf, E);
+          Pos := Path (Level).Idx;
+          Push := Sep;
+          Push_V := New_Off;
+          Is_Leaf := False;
+       end loop;
+    end Tree_Insert;
+
+    --  Remove the entry matching K (and Value when Match_Value).
+    --  No merge-on-remove: emptied nodes stay in the tree (their
+    --  blocks are only reclaimed with the whole stream).
+    function Tree_Remove (Dir : Inode_Info; K : Search_Key;
+                          Value : U64; Match_Value : Boolean)
+                          return Boolean
+    is
+       Ctx    : Tree_Ctx;
+       Buf    : Block_Buf;
+       Blk    : U64;
+       Idx    : Natural;
+       E      : Leaf_Entries renames Leaf_Scratch;
+       L_Link : U64;
+       R_Link : U64;
+       O_Link : U64;
+    begin
+       if not Tree_Open (Dir, Ctx)
+         or else not Tree_Locate (Ctx, K, Value, Match_Value,
+                                  Buf, Blk, Idx)
+       then
+          return False;
+       end if;
+       L_Link := Buf_LE64 (Buf, 0);
+       R_Link := Buf_LE64 (Buf, 8);
+       O_Link := Buf_LE64 (Buf, 16);
+       Leaf_Decode (Buf, E);
+       for I in Idx + 1 .. E.N - 1 loop
+          E.KL (I - 1) := E.KL (I);
+          E.Keys (I - 1) := E.Keys (I);
+          E.Vals (I - 1) := E.Vals (I);
+       end loop;
+       E.N := E.N - 1;
+       if not Leaf_Encode (E, Buf) then
+          return False;
+       end if;
+       Set_Links (Buf, L_Link, R_Link, O_Link);
+       return Leaf_Store (Blk, Buf);
+    end Tree_Remove;
+
+    --  String/int wrappers: directory and name-index trees take
+    --  raw name bytes; the size / last_modified indices (m82g)
+    --  take int64 keys compared numerically.
+
+    function Tree_Insert_Str (Dir : Inode_Info; Key : String;
+                              Value : U64) return Boolean is
     begin
        if Key'Length = 0 or else Key'Length > Leaf_Key_Max then
           return False;
        end if;
-       if not Leaf_Load (Dir, Node, NBlk) then
-          return False;
-       end if;
-       Leaf_Decode (Node, E);
-       if E.N = Leaf_Max then
-          return False;
-       end if;
-       for I in 0 .. E.N - 1 loop
-          KTotal := KTotal + U64 (E.KL (I));
-       end loop;
-       KTotal := KTotal + U64 (Key'Length);
-       return ((28 + KTotal + 7) and not 7)
-         + 2 * U64 (E.N + 1) + 8 * U64 (E.N + 1) <= Block_Size;
-    end Leaf_Can_Fit;
+       return Tree_Insert (Dir, SK_Str (Key), Value);
+    end Tree_Insert_Str;
 
-    --  Find the value of the FIRST entry whose key equals Key.
-    function Leaf_Find (Dir : Inode_Info; Key : String;
-                        Value : out U64) return Boolean
-    is
-       Node : Block_Buf;
-       NBlk : U64;
-       E    : Leaf_Entries;
+    function Tree_Insert_Int (Dir : Inode_Info; Key : U64;
+                              Value : U64) return Boolean is
     begin
-       Value := 0;
-       if not Leaf_Load (Dir, Node, NBlk) then
-          return False;
-       end if;
-       Leaf_Decode (Node, E);
-       for I in 0 .. E.N - 1 loop
-          if Key_Equal (E, I, Key) then
-             Value := E.Vals (I);
-             return True;
-          end if;
-       end loop;
-       return False;
-    end Leaf_Find;
+       return Tree_Insert (Dir, SK_Int (Key), Value);
+    end Tree_Insert_Int;
 
-    --  Insert Key/Value keeping sorted order (equal keys: after
-    --  existing ones). Callers pre-check Leaf_Can_Fit.
-    function Leaf_Insert (Dir : Inode_Info; Key : String; Value : U64)
-                          return Boolean
-    is
-       Node : Block_Buf;
-       NBlk : U64;
-       E    : Leaf_Entries;
-       Idx   : Natural := 0;
+    function Tree_Remove_Str (Dir : Inode_Info; Key : String;
+                              Value : U64; Match_Value : Boolean)
+                              return Boolean is
     begin
-       if not Leaf_Load (Dir, Node, NBlk) then
+       if Key'Length = 0 or else Key'Length > Leaf_Key_Max then
           return False;
        end if;
-       Leaf_Decode (Node, E);
-       if E.N = Leaf_Max then
-          return False;
-       end if;
-       while Idx < E.N and then Key_Less (E, Idx, Key) loop
-          Idx := Idx + 1;
-       end loop;
-       while Idx < E.N and then Key_Equal (E, Idx, Key) loop
-          Idx := Idx + 1;  --  duplicates go after existing keys
-       end loop;
-       for I in reverse Idx + 1 .. E.N loop
-          E.KL (I) := E.KL (I - 1);
-          E.Keys (I) := E.Keys (I - 1);
-          E.Vals (I) := E.Vals (I - 1);
-       end loop;
-       E.KL (Idx) := Key'Length;
-       E.Keys (Idx) := (others => 0);
-       for K in 0 .. Key'Length - 1 loop
-          E.Keys (Idx)(U64 (K)) :=
-            U8 (Character'Pos (Key (Key'First + K)));
-       end loop;
-       E.Vals (Idx) := Value;
-       E.N := E.N + 1;
-       if not Leaf_Encode (E, Node) then
-          return False;
-       end if;
-       return Leaf_Store (NBlk, Node);
-    end Leaf_Insert;
+       return Tree_Remove (Dir, SK_Str (Key), Value, Match_Value);
+    end Tree_Remove_Str;
 
-    --  Remove the entry matching Key (and Value when Match_Value).
-    function Leaf_Remove (Dir : Inode_Info; Key : String; Value : U64;
-                          Match_Value : Boolean) return Boolean
-    is
-       Node : Block_Buf;
-       NBlk : U64;
-       E    : Leaf_Entries;
-       Idx   : Natural := 0;
-       Hit  : Boolean := False;
+    function Tree_Remove_Int (Dir : Inode_Info; Key : U64;
+                              Value : U64) return Boolean is
     begin
-       if not Leaf_Load (Dir, Node, NBlk) then
-          return False;
-       end if;
-       Leaf_Decode (Node, E);
-       for I in 0 .. E.N - 1 loop
-          if Key_Equal (E, I, Key)
-            and then (not Match_Value or else E.Vals (I) = Value)
-          then
-             Idx := I;
-             Hit := True;
-             exit;
-          end if;
-       end loop;
-       if not Hit then
-          return False;
-       end if;
-       for I in Idx + 1 .. E.N - 1 loop
-          E.KL (I - 1) := E.KL (I);
-          E.Keys (I - 1) := E.Keys (I);
-          E.Vals (I - 1) := E.Vals (I);
-       end loop;
-       E.N := E.N - 1;
-       if not Leaf_Encode (E, Node) then
-          return False;
-       end if;
-       return Leaf_Store (NBlk, Node);
-    end Leaf_Remove;
+       return Tree_Remove (Dir, SK_Int (Key), Value, True);
+    end Tree_Remove_Int;
 
-    --  Int64-keyed leaf ops (m82g size / last_modified indices):
-    --  keys are fixed 8-byte little-endian values compared
-    --  numerically; duplicate (key, value) pairs allowed.
-
-    function Leaf_Key_Num (E : Leaf_Entries; I : Natural) return U64
-    is
-       V : U64 := 0;
+    function Tree_Find_Str (Dir : Inode_Info; Key : String;
+                            Value : out U64) return Boolean is
     begin
-       for K in 0 .. 7 loop
-          V := V or Interfaces.Shift_Left
-            (U64 (E.Keys (I)(U64 (K))), 8 * K);
-       end loop;
-       return V;
-    end Leaf_Key_Num;
-
-    function Leaf_Can_Fit_Int (Dir : Inode_Info) return Boolean
-    is
-       Node   : Block_Buf;
-       NBlk   : U64;
-       E      : Leaf_Entries;
-       KTotal : U64 := 0;
-    begin
-       if not Leaf_Load (Dir, Node, NBlk) then
+       if Key'Length = 0 or else Key'Length > Leaf_Key_Max then
+          Value := 0;
           return False;
        end if;
-       Leaf_Decode (Node, E);
-       if E.N = Leaf_Max then
-          return False;
-       end if;
-       for I in 0 .. E.N - 1 loop
-          KTotal := KTotal + U64 (E.KL (I));
-       end loop;
-       KTotal := KTotal + 8;
-       return ((28 + KTotal + 7) and not 7)
-         + 2 * U64 (E.N + 1) + 8 * U64 (E.N + 1) <= Block_Size;
-    end Leaf_Can_Fit_Int;
-
-    function Leaf_Insert_Int (Dir : Inode_Info; Key : U64;
-                              Value : U64) return Boolean
-    is
-       Node : Block_Buf;
-       NBlk : U64;
-       E    : Leaf_Entries;
-       Idx  : Natural := 0;
-    begin
-       if not Leaf_Load (Dir, Node, NBlk) then
-          return False;
-       end if;
-       Leaf_Decode (Node, E);
-       if E.N = Leaf_Max then
-          return False;
-       end if;
-       while Idx < E.N
-         and then E.KL (Idx) = 8
-         and then Leaf_Key_Num (E, Idx) < Key
-       loop
-          Idx := Idx + 1;
-       end loop;
-       while Idx < E.N
-         and then E.KL (Idx) = 8
-         and then Leaf_Key_Num (E, Idx) = Key
-       loop
-          Idx := Idx + 1;  --  duplicates go after existing keys
-       end loop;
-       for I in reverse Idx + 1 .. E.N loop
-          E.KL (I) := E.KL (I - 1);
-          E.Keys (I) := E.Keys (I - 1);
-          E.Vals (I) := E.Vals (I - 1);
-       end loop;
-       E.KL (Idx) := 8;
-       E.Keys (Idx) := (others => 0);
-       for K in 0 .. 7 loop
-          E.Keys (Idx)(U64 (K)) :=
-            U8 (Interfaces.Shift_Right (Key, 8 * K) and 16#FF#);
-       end loop;
-       E.Vals (Idx) := Value;
-       E.N := E.N + 1;
-       if not Leaf_Encode (E, Node) then
-          return False;
-       end if;
-       return Leaf_Store (NBlk, Node);
-    end Leaf_Insert_Int;
-
-    --  Remove the entry matching both Key and Value.
-    function Leaf_Remove_Int (Dir : Inode_Info; Key : U64;
-                              Value : U64) return Boolean
-    is
-       Node : Block_Buf;
-       NBlk : U64;
-       E    : Leaf_Entries;
-       Idx  : Natural := 0;
-       Hit  : Boolean := False;
-    begin
-       if not Leaf_Load (Dir, Node, NBlk) then
-          return False;
-       end if;
-       Leaf_Decode (Node, E);
-       for I in 0 .. E.N - 1 loop
-          if E.KL (I) = 8
-            and then Leaf_Key_Num (E, I) = Key
-            and then E.Vals (I) = Value
-          then
-             Idx := I;
-             Hit := True;
-             exit;
-          end if;
-       end loop;
-       if not Hit then
-          return False;
-       end if;
-       for I in Idx + 1 .. E.N - 1 loop
-          E.KL (I - 1) := E.KL (I);
-          E.Keys (I - 1) := E.Keys (I);
-          E.Vals (I - 1) := E.Vals (I);
-       end loop;
-       E.N := E.N - 1;
-       if not Leaf_Encode (E, Node) then
-          return False;
-       end if;
-       return Leaf_Store (NBlk, Node);
-    end Leaf_Remove_Int;
+       return Tree_Find (Dir, SK_Str (Key), Value);
+    end Tree_Find_Str;
 
    ------------------------------------------------------------------
    --  Live queries (m82g): mutation ops diff per-subscription match
@@ -1699,7 +2233,7 @@ package body Bfs_Engine is
     begin
        if Name_Index /= 0
          and then Read_Inode (Name_Index, NI)
-         and then not Leaf_Insert (NI, Name, Inode_Block)
+         and then not Tree_Insert_Str (NI, Name, Inode_Block)
        then
           Akernel_User.Console.Put_Line ("bfs: name index add failed");
        end if;
@@ -1712,8 +2246,8 @@ package body Bfs_Engine is
          and then Read_Inode (Name_Index, NI)
        then
           Done : begin
-             if not Leaf_Remove (NI, Name, Inode_Block,
-                                 Match_Value => True)
+             if not Tree_Remove_Str (NI, Name, Inode_Block,
+                                     Match_Value => True)
              then
                 null;  --  absent entry: best-effort removal
              end if;
@@ -1730,7 +2264,7 @@ package body Bfs_Engine is
     begin
        if Index_Blk /= 0
          and then Read_Inode (Index_Blk, II)
-         and then not Leaf_Insert_Int (II, Key, Inode_Block)
+         and then not Tree_Insert_Int (II, Key, Inode_Block)
        then
           Akernel_User.Console.Put_Line ("bfs: numeric index add failed");
        end if;
@@ -1744,7 +2278,7 @@ package body Bfs_Engine is
          and then Read_Inode (Index_Blk, II)
        then
           Done : begin
-             if not Leaf_Remove_Int (II, Key, Inode_Block) then
+             if not Tree_Remove_Int (II, Key, Inode_Block) then
                 null;  --  absent entry: best-effort removal
              end if;
           end Done;
@@ -1752,9 +2286,9 @@ package body Bfs_Engine is
     end Index_Remove_Num;
 
     --  Create an empty file or directory under Parent; the dirent
-    --  and name-index entries are inserted. The caller checks
-    --  Leaf_Can_Fit first so this cannot fail on tree space after
-    --  allocating.
+    --  and name-index entries are inserted. Tree_Insert_Str
+    --  splits full nodes, so a tree-space failure here means disk
+    --  full / depth cap and rolls back the allocations.
     function Create_Entry (Parent : Inode_Info; Name : String;
                            Is_Dir : Boolean; New_Block : out U64)
                            return Boolean
@@ -1763,7 +2297,7 @@ package body Bfs_Engine is
        SBlk   : U64 := 0;
        Buf    : Block_Buf;
        Hdr    : Block_Buf;
-       E      : Leaf_Entries;
+       E      : Leaf_Entries renames Leaf_Scratch;
        Node   : Block_Buf;
        C_Time : constant U64 := Now_Time;
     begin
@@ -1830,7 +2364,7 @@ package body Bfs_Engine is
           return False;
        end if;
        --  Dirent, then name index (duplicate keys allowed there).
-       if not Leaf_Insert (Parent, Name, Ino) then
+       if not Tree_Insert_Str (Parent, Name, Ino) then
           if Is_Dir then
              Free (SBlk, 2);
           end if;
@@ -1848,14 +2382,113 @@ package body Bfs_Engine is
        return True;
     end Create_Entry;
 
-    --  Free the inode's data stream blocks (direct runs only;
-    --  indirect streams are never created by the write path).
+    --  Append the freshly allocated data run (St, Need blocks) to
+    --  the inode's indirect array (m82h), allocating the first
+    --  index block on demand. Merges with the last entry when
+    --  contiguous. One index block (128 runs) is supported; a
+    --  full array is a loud failure (double-indirect is out of
+    --  scope). All changes join the open transaction.
+    function Indirect_Append (Info : in out Inode_Info; St : U64;
+                              Need : U64) return Boolean
+    is
+       Slot : Natural;
+    begin
+       if Info.Indirect.Length = 0 then
+          --  First indirect run: one zeroed index block; coverage
+          --  starts at the direct range end (absolute offset).
+          declare
+             IBlk : U64;
+          begin
+             if not Alloc (1, IBlk) then
+                return False;
+             end if;
+             Info.Indirect := (AG => 0, Start => U16 (IBlk),
+                               Length => 1);
+             Info.Max_Indir := Info.Max_Direct;
+             Slot := Get_Block (IBlk);
+             if Slot = Cache_Slots then
+                return False;
+             end if;
+             for I in 0 .. Block_Size - 1 loop
+                Cache_Data (Slot, I) := 0;
+             end loop;
+             Trans_Add (Slot);
+             Put_Block (Slot);
+          end;
+       end if;
+       Slot := Get_Block (To_Block (Info.Indirect));
+       if Slot = Cache_Slots then
+          return False;
+       end if;
+       declare
+          Free_Idx : U64 := U64'Last;
+          Last_Run : Block_Run;
+       begin
+          for J in 0 .. (Block_Size / 8) - 1 loop
+             declare
+                R : constant Block_Run := Run_At (Slot, J * 8);
+             begin
+                if R.Length = 0 then
+                   Free_Idx := J;
+                   exit;
+                end if;
+                Last_Run := R;
+             end;
+          end loop;
+          if Free_Idx = U64'Last then
+             Put_Block (Slot);
+             Akernel_User.Console.Put_Line ("bfs: indirect full");
+             return False;
+          end if;
+          if Free_Idx > 0
+            and then Last_Run.AG = 0
+            and then To_Block (Last_Run) + U64 (Last_Run.Length) = St
+          then
+             Put_LE16 (Slot, (Free_Idx - 1) * 8 + 6,
+                       Last_Run.Length + U16 (Need));
+          else
+             Put_LE32 (Slot, Free_Idx * 8, 0);
+             Put_LE16 (Slot, Free_Idx * 8 + 4, U16 (St));
+             Put_LE16 (Slot, Free_Idx * 8 + 6, U16 (Need));
+          end if;
+          Trans_Add (Slot);
+          Put_Block (Slot);
+       end;
+       Info.Max_Indir := Info.Max_Indir + Need * Block_Size;
+       return True;
+    end Indirect_Append;
+
+    --  Free the inode's data stream blocks: direct runs, the
+    --  indirect array's data runs, and the index blocks
+    --  themselves (m82h).
     procedure Free_Stream (Info : Inode_Info) is
     begin
        for R of Info.Direct loop
           exit when R.Length = 0;
           Free (To_Block (R), U64 (R.Length));
        end loop;
+       if Info.Indirect.Length > 0 then
+          for BI in 0 .. U64 (Info.Indirect.Length) - 1 loop
+             declare
+                Slot : constant Natural := Get_Block
+                  (To_Block (Info.Indirect) + BI);
+             begin
+                if Slot = Cache_Slots then
+                   return;   --  best effort; rest stays allocated
+                end if;
+                for J in 0 .. (Block_Size / 8) - 1 loop
+                   declare
+                      R : constant Block_Run := Run_At (Slot, J * 8);
+                   begin
+                      exit when R.Length = 0;
+                      Free (To_Block (R), U64 (R.Length));
+                   end;
+                end loop;
+                Put_Block (Slot);
+             end;
+          end loop;
+          Free (To_Block (Info.Indirect), U64 (Info.Indirect.Length));
+       end if;
     end Free_Stream;
 
     --  Zero the inode block (clears magic/flags) and free it.
@@ -2180,9 +2813,8 @@ package body Bfs_Engine is
              Len := 0;
              return Status_Out_Of_Range;
           end if;
-          if not Leaf_Can_Fit (Parent, P_Name (1 .. N_Len))
-            or else not Create_Entry (Parent, P_Name (1 .. N_Len),
-                                      False, New_Ino)
+          if not Create_Entry (Parent, P_Name (1 .. N_Len),
+                               False, New_Ino)
             or else not Read_Inode (New_Ino, Info)
           then
              Trans_Abort;
@@ -2210,12 +2842,17 @@ package body Bfs_Engine is
 
        End_Pos := Offset + Len;
 
-       --  Grow the direct runs until they cover End_Pos.
+       --  Grow the stream until it covers End_Pos: direct runs
+       --  first, the indirect array once they are full (m82h).
        Allocated := 0;
        for R of Info.Direct loop
           exit when R.Length = 0;
           Allocated := Allocated + U64 (R.Length) * Block_Size;
        end loop;
+       Info.Max_Direct := Allocated;
+       if Info.Max_Indir > Allocated then
+          Allocated := Info.Max_Indir;
+       end if;
        while Allocated < End_Pos loop
           Need := (End_Pos - Allocated + Block_Size - 1) / Block_Size;
           --  Free direct slot (or merge into the last run)?
@@ -2251,79 +2888,80 @@ package body Bfs_Engine is
                 Len := 0;
                 return Status_Bad_Args;  --  disk full
              end if;
-             if Cov > 0 and then St = Last_End then
-                --  Contiguous with the last run: merge.
-                for I in reverse Info.Direct'Range loop
-                   if Info.Direct (I).Length /= 0 then
-                      Info.Direct (I).Length :=
-                        Info.Direct (I).Length + U16 (Need);
-                      exit;
-                   end if;
-                end loop;
-             elsif Have_Free then
-                Info.Direct (Free_Idx) :=
-                  (AG => 0, Start => U16 (St), Length => U16 (Need));
+             if Info.Indirect.Length = 0
+               and then
+                 ((Cov > 0 and then St = Last_End) or else Have_Free)
+             then
+                --  Still in the direct range: merge into the last
+                --  run or take a free slot.
+                if Cov > 0 and then St = Last_End then
+                   for I in reverse Info.Direct'Range loop
+                      if Info.Direct (I).Length /= 0 then
+                         Info.Direct (I).Length :=
+                           Info.Direct (I).Length + U16 (Need);
+                         exit;
+                      end if;
+                   end loop;
+                else
+                   Info.Direct (Free_Idx) :=
+                     (AG => 0, Start => U16 (St), Length => U16 (Need));
+                end if;
+                Info.Max_Direct :=
+                  Cov * Block_Size + Need * Block_Size;
              else
-                 --  12 runs used and not contiguous: m82e stops
-                 --  here (indirect streams are future work).
-                 Free (St, Need);
-                 if Created then
-                    Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len),
-                                               Info), Info);
-                    Commit_Ok : begin
-                       if Trans_Commit then
-                          null;
-                       end if;
-                    end Commit_Ok;
-                 else
-                    Trans_Abort;
+                 --  Direct range full (or the indirect array is
+                 --  already started — the direct range must stay
+                 --  below it): append to the indirect array.
+                 if not Indirect_Append (Info, St, Need) then
+                    Free (St, Need);
+                    if Created then
+                       Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len),
+                                                  Info), Info);
+                       Commit_Ok : begin
+                          if Trans_Commit then
+                             null;
+                          end if;
+                       end Commit_Ok;
+                    else
+                       Trans_Abort;
+                    end if;
+                    Len := 0;
+                    return Status_Bad_Args;
                  end if;
-                Len := 0;
-                return Status_Bad_Args;
              end if;
-             Allocated := Cov * Block_Size + Need * Block_Size;
+             Allocated := Allocated + Need * Block_Size;
           end;
        end loop;
 
-       --  Copy the bytes block-wise (read-modify-write).
+       --  Copy the bytes block-wise (read-modify-write), through
+       --  the direct and indirect ranges.
        while Done < Len loop
           P := Offset + Done;
-          Found := False;
-          Covered := 0;
-          for R of Info.Direct loop
-             exit when R.Length = 0;
-             if P < Covered + U64 (R.Length) * Block_Size then
-                In_Run := P - Covered;
-                Skip := In_Run mod Block_Size;
-                Part := U64'Min (Len - Done, Block_Size - Skip);
-                Block := To_Block (R) + In_Run / Block_Size;
-                Slot := Get_Block (Block);
-                if Slot = Cache_Slots then
-                   Trans_Abort;
-                   Len := 0;
-                   return Status_Bad_Args;
-                end if;
-                declare
-                   Src : Byte_Array (0 .. Part - 1)
-                     with Address => Buf + Storage_Offset (Done);
-                begin
-                   for I in 0 .. Part - 1 loop
-                      Cache_Data (Slot, Skip + I) := Src (I);
-                   end loop;
-                end;
-                Trans_Add (Slot);
-                Put_Block (Slot);
-                Done := Done + Part;
-                Found := True;
-                exit;
-             end if;
-             Covered := Covered + U64 (R.Length) * Block_Size;
-          end loop;
-          if not Found then
+          Block := Data_Block (Info, P);
+          if Block = U64'Last then
              Trans_Abort;
              Len := 0;
              return Status_Bad_Args;
           end if;
+          Skip := P mod Block_Size;
+          Part := U64'Min (Len - Done, Block_Size - Skip);
+          Slot := Get_Block (Block);
+          if Slot = Cache_Slots then
+             Trans_Abort;
+             Len := 0;
+             return Status_Bad_Args;
+          end if;
+          declare
+             Src : Byte_Array (0 .. Part - 1)
+               with Address => Buf + Storage_Offset (Done);
+          begin
+             for I in 0 .. Part - 1 loop
+                Cache_Data (Slot, Skip + I) := Src (I);
+             end loop;
+          end;
+          Trans_Add (Slot);
+          Put_Block (Slot);
+          Done := Done + Part;
        end loop;
 
        --  Inode: runs, covered range, size, mtime.
@@ -2345,7 +2983,12 @@ package body Bfs_Engine is
              Put_LE16 (Slot, 72 + U64 (I) * 8 + 4, Info.Direct (I).Start);
              Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, Info.Direct (I).Length);
           end loop;
-          Put_LE64 (Slot, 168, Allocated);
+          Put_LE64 (Slot, 168, Info.Max_Direct);
+          --  m82h: indirect run + covered range.
+          Put_LE32 (Slot, 176, Info.Indirect.AG);
+          Put_LE16 (Slot, 180, Info.Indirect.Start);
+          Put_LE16 (Slot, 182, Info.Indirect.Length);
+          Put_LE64 (Slot, 184, Info.Max_Indir);
           if End_Pos > Info.Size then
              Put_LE64 (Slot, 208, End_Pos);
           end if;
@@ -2386,8 +3029,8 @@ package body Bfs_Engine is
     function Remove_Entry (Parent : Inode_Info; Name : String;
                            Info : Inode_Info) return Boolean is
     begin
-       if not Leaf_Remove (Parent, Name, Info.Block,
-                           Match_Value => True)
+       if not Tree_Remove_Str (Parent, Name, Info.Block,
+                               Match_Value => True)
        then
           return False;
        end if;
@@ -2416,9 +3059,9 @@ package body Bfs_Engine is
           return Status_Not_Found;
        end if;
        if (Info.Mode and S_IFMT) /= S_IFREG
-         or else Info.Max_Indir > 0 or else Info.Max_Double > 0
+         or else Info.Max_Double > 0
        then
-          return Status_Bad_Args;  --  dir: use rmdir; streams: n/a
+          return Status_Bad_Args;  --  dir: use rmdir; d-ind: n/a
        end if;
        Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
        if N_Len = 0
@@ -2456,7 +3099,7 @@ package body Bfs_Engine is
           return Status_Not_Found;
        end if;
        if (Info.Mode and S_IFMT) /= S_IFREG
-         or else Info.Max_Indir > 0 or else Info.Max_Double > 0
+         or else Info.Max_Double > 0
        then
           return Status_Bad_Args;
        end if;
@@ -2482,6 +3125,8 @@ package body Bfs_Engine is
              Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, 0);
           end loop;
           Put_LE64 (Slot, 168, 0);   --  max_direct_range
+          Put_LE64 (Slot, 176, 0);   --  indirect run (m82h)
+          Put_LE64 (Slot, 184, 0);   --  max_indirect_range
           Put_LE64 (Slot, 208, 0);   --  size
           Put_LE64 (Slot, 36, T_Time);
           Trans_Add (Slot);
@@ -2534,9 +3179,8 @@ package body Bfs_Engine is
        then
           return Status_Not_Found;
        end if;
-       if not Leaf_Can_Fit (Parent, P_Name (1 .. N_Len))
-         or else not Create_Entry (Parent, P_Name (1 .. N_Len),
-                                   True, New_Ino)
+       if not Create_Entry (Parent, P_Name (1 .. N_Len),
+                            True, New_Ino)
        then
           Trans_Abort;
           return Status_Bad_Args;
@@ -2663,17 +3307,13 @@ package body Bfs_Engine is
                 return Status_Bad_Args;
              end if;
              exit when Cur.Block = Root_Block;
-             if not Leaf_Find (Cur, "..", Dotdot)
+             if not Tree_Find_Str (Cur, "..", Dotdot)
                or else not Read_Inode (Dotdot, Cur)
              then
                 exit;
              end if;
              Depth := Depth + 1;
           end loop;
-       end if;
-
-       if not Leaf_Can_Fit (T_Parent, T_Name (1 .. T_NL)) then
-          return Status_Bad_Args;
        end if;
 
        --  m82g: capture the removal transition while the old name
@@ -2685,19 +3325,19 @@ package body Bfs_Engine is
        if (Info.Mode and S_IFMT) = S_IFDIR
          and then F_Parent.Block /= T_Parent.Block
        then
-          if not Leaf_Remove (Info, "..", F_Parent.Block,
-                              Match_Value => True)
-            or else not Leaf_Insert (Info, "..", T_Parent.Block)
+          if not Tree_Remove_Str (Info, "..", F_Parent.Block,
+                                  Match_Value => True)
+            or else not Tree_Insert_Str (Info, "..", T_Parent.Block)
           then
              Trans_Abort;
              return Status_Bad_Args;
           end if;
        end if;
 
-       if not Leaf_Remove (F_Parent, F_Name (1 .. F_NL), Info.Block,
-                           Match_Value => True)
-         or else not Leaf_Insert (T_Parent, T_Name (1 .. T_NL),
-                                  Info.Block)
+       if not Tree_Remove_Str (F_Parent, F_Name (1 .. F_NL),
+                               Info.Block, Match_Value => True)
+         or else not Tree_Insert_Str (T_Parent, T_Name (1 .. T_NL),
+                                      Info.Block)
        then
           Trans_Abort;
           return Status_Bad_Args;
@@ -3704,8 +4344,171 @@ package body Bfs_Engine is
          end loop;
          Put_Block (Slot);
       end;
-      return Status_Not_Found;
-   end Attr_Read;
+       return Status_Not_Found;
+    end Attr_Read;
+
+    function Attr_Write (Path : String; Attr : String;
+                         Attr_Type : U64; Buf : System.Address;
+                         Len : U64) return U64
+    is
+       Info    : Inode_Info;
+       Root    : Boolean;
+       P_Path  : String (1 .. 32);
+       P_Len   : Natural;
+       P_Name  : String (1 .. 32);
+       N_Len   : Natural := 0;
+       Was     : Pend_Bits := No_Bits;
+       Pos     : U64;
+       NLen    : U64 := 0;
+       DLen    : U64;
+       Match   : Boolean;
+       Hit     : U64 := U64'Last;   --  offset of existing entry
+       Hit_Tot : U64 := 0;          --  its total size
+       End_Pos : U64;               --  terminator offset
+       New_Tot : U64;
+    begin
+       if not Is_Mounted or else not Lookup (Path, Info, Root) then
+          return Status_Not_Found;
+       end if;
+       if Attr'Length = 0
+         or else Attr'Length > 255
+         or else (Attr'Length = 1
+                  and then Attr (Attr'First) = Character'Val (16#13#))
+         or else Len > Block_Size   --  real room check below
+       then
+          return Status_Bad_Args;
+       end if;
+       --  m82g: capture the pre-write match state (attr terms).
+       Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
+       if N_Len /= 0 then
+          Was := Live_Eval (P_Name (1 .. N_Len), Info);
+       end if;
+       New_Tot := 8 + U64 (Attr'Length) + 3 + Len + 1;
+       declare
+          Slot : constant Natural := Get_Block (Info.Block);
+       begin
+          if Slot = Cache_Slots then
+             return Status_Bad_Args;
+          end if;
+          Pos := Small_Data_Off;
+          while Pos + 8 <= Block_Size loop
+             NLen := U64 (LE16 (Slot, Pos + 4));
+             DLen := U64 (LE16 (Slot, Pos + 6));
+             exit when NLen = 0;
+             exit when Pos + 8 + NLen + 3 + DLen + 1 > Block_Size;
+             if not Is_Name_Attr (Slot, Pos, NLen)
+               and then Hit = U64'Last
+               and then NLen = U64 (Attr'Length)
+             then
+                Match := True;
+                for I in 0 .. NLen - 1 loop
+                   if Cache_Data (Slot, Pos + 8 + I) /=
+                     U8 (Character'Pos (Attr (Attr'First + Natural (I))))
+                   then
+                      Match := False;
+                      exit;
+                   end if;
+                end loop;
+                if Match then
+                   Hit := Pos;
+                   Hit_Tot := 8 + NLen + 3 + DLen + 1;
+                end if;
+             end if;
+             Pos := Pos + 8 + NLen + 3 + DLen + 1;
+          end loop;
+          if NLen /= 0 then
+             --  Region ran to the block end without a terminator.
+             Put_Block (Slot);
+             return Status_Bad_Args;
+          end if;
+          End_Pos := Pos;
+          if Hit = U64'Last then
+             if Len = 0 then
+                Put_Block (Slot);
+                return Status_Not_Found;   --  remove of absent
+             end if;
+             Hit := End_Pos;
+             Hit_Tot := 0;   --  insert: nothing overwritten
+          end if;
+          --  Tail after the replaced entry, terminator included
+          --  (8 bytes; Rename_Name_Attr uses the same convention).
+          declare
+             Tail_From : constant U64 := Hit + Hit_Tot;
+             Tail_Len  : constant U64 := End_Pos + 8 - Tail_From;
+          begin
+             if Len > 0
+               and then Hit + New_Tot + Tail_Len > Block_Size
+             then
+                Put_Block (Slot);
+                return Status_Bad_Args;   --  no small_data room
+             end if;
+             if Len = 0 then
+                --  Remove: shift the tail down over the entry.
+                for I in 0 .. Tail_Len - 1 loop
+                   Cache_Data (Slot, Hit + I) :=
+                     Cache_Data (Slot, Tail_From + I);
+                end loop;
+             else
+                --  Shift the tail (mind the overlap direction),
+                --  then write header, name, pads and data.
+                if New_Tot > Hit_Tot then
+                   for I in reverse 0 .. Tail_Len - 1 loop
+                      Cache_Data (Slot, Hit + New_Tot + I) :=
+                        Cache_Data (Slot, Tail_From + I);
+                   end loop;
+                elsif New_Tot < Hit_Tot then
+                   for I in 0 .. Tail_Len - 1 loop
+                      Cache_Data (Slot, Hit + New_Tot + I) :=
+                        Cache_Data (Slot, Tail_From + I);
+                   end loop;
+                end if;
+                Put_LE32 (Slot, Hit,
+                          U32 (Attr_Type and 16#FFFF_FFFF#));
+                Put_LE16 (Slot, Hit + 4, U16 (Attr'Length));
+                Put_LE16 (Slot, Hit + 6, U16 (Len));
+                for K in 0 .. Attr'Length - 1 loop
+                   Cache_Data (Slot, Hit + 8 + U64 (K)) :=
+                     U8 (Character'Pos (Attr (Attr'First + K)));
+                end loop;
+                for K in 0 .. 2 loop   --  3 pad bytes (NUL + 2)
+                   Cache_Data
+                     (Slot, Hit + 8 + U64 (Attr'Length) + U64 (K)) := 0;
+                end loop;
+                if Len > 0 then
+                   declare
+                      Src : Byte_Array (0 .. Len - 1)
+                        with Address => Buf;
+                   begin
+                      for I in 0 .. Len - 1 loop
+                         Cache_Data
+                           (Slot, Hit + 8 + U64 (Attr'Length) + 3 + I)
+                           := Src (I);
+                      end loop;
+                   end;
+                end if;
+                Cache_Data (Slot, Hit + New_Tot - 1) := 0;  --  pad
+             end if;
+          end;
+          Trans_Add (Slot);
+          Put_Block (Slot);
+       end;
+       --  m82g: diff against the post-write state (the transaction
+       --  overlay shows the new small_data).
+       if N_Len /= 0 then
+          declare
+             Cur : Inode_Info;
+          begin
+             if Read_Inode (Info.Block, Cur) then
+                Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len), Cur),
+                           Cur);
+             end if;
+          end;
+       end if;
+       if not Trans_Commit then
+          return Status_Bad_Args;
+       end if;
+       return Status_Ok;
+    end Attr_Write;
 
    procedure Volume_Info (Total, Free, Block : out U64) is
    begin

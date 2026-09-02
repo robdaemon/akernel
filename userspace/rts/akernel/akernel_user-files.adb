@@ -323,8 +323,66 @@ package body Akernel_User.Files is
             Dst (I) := Src (I);
          end loop;
       end if;
-      return Status_Ok;
-   end Attr_Read;
+       return Status_Ok;
+    end Attr_Read;
+
+    function Attr_Write
+      (Name           : String;
+       Attr           : String;
+       Attr_Type      : U64;
+       Buffer_Address : System.Address;
+       Length         : U64) return U64
+    is
+       Q   : String (1 .. 32);
+       Len : Natural;
+       Dst : Byte_Array (0 .. Buf_Bytes - 1)
+         with Address => To_Address (Integer_Address (Buffer_VA));
+    begin
+       Qualified (Name, Q, Len);
+       if FS_Cap = 0
+         or else Len = 0
+         or else Attr'Length = 0
+         or else Attr'Length > 16  --  words 4..5 on the wire
+         or else Length > Buf_Bytes - 16
+       then
+          return Status_Bad_Args;
+       end if;
+
+       if not Ensure_Buffer then
+          return Status_Not_Found;
+       end if;
+
+       --  Buffer header: le64 type fourcc @0, le64 length @8,
+       --  then the data bytes.
+       for I in 0 .. 7 loop
+          Dst (U64 (I)) := Interfaces.Unsigned_8
+            (Interfaces.Shift_Right (Attr_Type, 8 * I) and 16#FF#);
+          Dst (U64 (8 + I)) := Interfaces.Unsigned_8
+            (Interfaces.Shift_Right (Length, 8 * I) and 16#FF#);
+       end loop;
+       if Length > 0 then
+          declare
+             Src : Byte_Array (0 .. Length - 1)
+               with Address => Buffer_Address;
+          begin
+             for I in 0 .. Length - 1 loop
+                Dst (16 + I) := Src (I);
+             end loop;
+          end;
+       end if;
+
+       Syscalls.Message.Label := Op_Attr_Write;
+       Syscalls.Message.Words := (others => 0);
+       Pack_Name (Q (1 .. Len), 0, 3);
+       Pack_Name (Attr, 4, 5);
+       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+
+       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+          return Status_Not_Found;
+       end if;
+
+       return Syscalls.Message.Words (0);
+    end Attr_Write;
 
    function Open (Name : String; Size : out U64) return U64 is
       Q   : String (1 .. 48);

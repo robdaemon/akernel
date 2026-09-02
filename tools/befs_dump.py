@@ -104,14 +104,11 @@ class Befs:
             out += self.buf[s:s + length * self.block_size]
         return bytes(out[:size])
 
-    def btree_entries(self, stream):
-        #  Single-root-leaf trees only (the fixture); header at
-        #  offset 0, root node at offset node_size.
-        if ule32(stream, 0) != BTREE_MAGIC:
-            raise SystemExit("bad btree magic")
-        node_size = ule32(stream, 4)
-        root = le64(stream, 16)
-        node = stream[root:root + node_size]
+    def btree_node(self, stream, node_size, off):
+        #  Parse one node: (left, right, overflow, [(key, val), ...]).
+        node = stream[off:off + node_size]
+        left, right, ovfl = (le64(node, 0), le64(node, 8),
+                             le64(node, 16))
         count = le16(node, 24)
         klen = le16(node, 26)
         keys = node[28:28 + klen]
@@ -125,6 +122,34 @@ class Befs:
             val = le64(node, pos + 8 * i)
             entries.append((key, val))
             koff += lens[i]
+        return left, right, ovfl, entries
+
+    def btree_entries(self, stream):
+        #  Header at offset 0; internal entry (k, v) means child v
+        #  covers keys in [prev_k, k), the overflow link is the
+        #  rightmost child. Descend first children to the leftmost
+        #  leaf, then walk the leaf chain via right links.
+        if ule32(stream, 0) != BTREE_MAGIC:
+            raise SystemExit("bad btree magic")
+        node_size = ule32(stream, 4)
+        depth = ule32(stream, 8)
+        off = le64(stream, 16)
+        for _ in range(depth):
+            left, right, ovfl, entries = self.btree_node(
+                stream, node_size, off)
+            if ovfl == -1:
+                break  # leaf
+            off = entries[0][1]  # first child
+        entries = []
+        seen = set()
+        while off != -1:
+            if off in seen or len(seen) > 4096:
+                raise SystemExit("btree leaf chain loops")
+            seen.add(off)
+            left, right, ovfl, ents = self.btree_node(
+                stream, node_size, off)
+            entries.extend(ents)
+            off = right
         return entries
 
     def dump_dir(self, ino, path, depth):
