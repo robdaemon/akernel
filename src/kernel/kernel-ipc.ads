@@ -214,6 +214,7 @@ private
       Badge  : U64;
       Next   : Queued_Send_Access;
       In_Use : Boolean;
+      Next_Free : Queued_Send_Access;  --  slab free-list link
    end record;
 
    type Endpoint is record

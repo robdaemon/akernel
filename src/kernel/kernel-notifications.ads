@@ -23,13 +23,12 @@ package Kernel.Notifications is
    --  U64'Last is kernel-reserved.
    Notification_Label : constant U64 := U64'Last;
 
-   --  Steady-state consumers: one per IRQ-driven driver (serial,
-   --  virtio-*) plus one per notification-multiplexing server
-   --  (terminal, trinket, netserv, fuzz's bound test object).
-   --  16 fit exactly until netserv (m71b) tipped the pool to full
-   --  and starved the fuzz ntfn phase of its second object.
-   Max_Notifications : constant := 32;
-
+   --  M80c: the pool is a PMM-backed frame slab grown on demand
+   --  (Kernel.IPC's endpoint Grow_Pool is the template); frames
+   --  are never returned, so object addresses are stable and the
+   --  only exhaustion signal is PMM OOM (No_Slot).  The old 32-
+   --  entry static pool filled at ~24 peak in the test boot —
+   --  every netserv client socket and fuzz worker gate takes one.
    type Status is
      (Ok,
       No_Slot,
@@ -53,9 +52,9 @@ package Kernel.Notifications is
       Transfer => True,
       Manage   => True);
 
-   --  Allocate a zeroed notification from the static slab. On Ok the
-   --  object has refcount 0; the caller inserts a cap (which
-   --  retains it) or Discards it.
+   --  Allocate a zeroed notification from the frame slab (growing
+   --  it on demand). On Ok the object has refcount 0; the caller
+   --  inserts a cap (which retains it) or Discards it.
    procedure Create
      (Result : out Status;
       Object : out System.Address);
@@ -128,5 +127,6 @@ private
       Bound_Thread : Kernel.Tasks.Thread_Access;
       Waiting      : Kernel.Tasks.Thread_Access;
       In_Use       : Boolean;
+      Next_Free    : System.Address;  --  slab free-list link
    end record;
 end Kernel.Notifications;

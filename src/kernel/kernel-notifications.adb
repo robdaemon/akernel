@@ -1,104 +1,183 @@
+with Ada.Unchecked_Conversion;
+with Arch;
 with Kernel.IPC;
+with Kernel.Physical_Memory;
 with Kernel.Scheduler;
 with System.Storage_Elements;
 
 package body Kernel.Notifications is
    use type Kernel.Objects.Refcount;
+   use type Kernel.Physical_Memory.Status;
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
    use type System.Address;
    use type U64;
    use System.Storage_Elements;
 
-   Pool : array (1 .. Max_Notifications) of Notification;
+   type Notification_Access is access all Notification;
 
-   --  Pool slot index for an object address, 0 when the address is
-   --  not a pool slot (never trusted: caps only reference objects
-   --  the kernel itself handed out).
-   function Slot_Of (Object : System.Address) return Natural is
-      Base : constant System.Address := Pool (Pool'First)'Address;
-      Diff : constant Integer_Address :=
-        To_Integer (Object) - To_Integer (Base);
+   function To_Notification
+     (Addr : System.Address) return Notification_Access;
+
+   ------------------------------------------------------------------
+   --  Frame slab (M80c, Kernel.IPC's Grow_Pool template)
+   ------------------------------------------------------------------
+
+   --  PMM frames carved into 16-byte-rounded slots on an intrusive
+   --  free list, grown on demand; frames are never returned
+   --  (high-water slab), so object addresses are stable for the
+   --  pool's life.  The FIRST slot of each frame never enters the
+   --  free list: its Next_Free doubles as the frame-list link the
+   --  membership walk below follows (Slot_Of was the only
+   --  address->index decode over a static pool array; multi-frame
+   --  slabs reimplement it as a frame-range + alignment walk).
+   Slot_Bytes : constant Storage_Count :=
+     Storage_Count ((Notification'Size + 127) / 128 * 16);
+   Slots_Per_Frame : constant Natural :=
+     Natural (Kernel.Physical_Memory.Page_Size) / Natural (Slot_Bytes);
+
+   Frame_Head : System.Address := System.Null_Address;
+   Free_Head  : System.Address := System.Null_Address;
+
+   function To_Notification
+     (Addr : System.Address) return Notification_Access
+   is
+      function Convert is new Ada.Unchecked_Conversion
+        (System.Address, Notification_Access);
    begin
-      if Diff mod (Notification'Max_Size_In_Storage_Elements) /= 0 then
-         return 0;
+      return Convert (Addr);
+   end To_Notification;
+
+   procedure Free_Notification (Object : System.Address) is
+      Slot : constant Notification_Access := To_Notification (Object);
+   begin
+      Slot.In_Use := False;
+      Slot.Waiting := null;
+      Slot.Next_Free := Free_Head;
+      Free_Head := Object;
+   end Free_Notification;
+
+   procedure Grow_Pool (Result : out Status) is
+      PMM_Result : Kernel.Physical_Memory.Status;
+      Frame_PA   : Kernel.Capabilities.U64;
+      Base       : System.Address;
+      Header     : Notification_Access;
+   begin
+      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Frame_PA);
+
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         Result := No_Slot;
+         return;
       end if;
 
-      declare
-         Index : constant Natural :=
-           Natural (Diff / Notification'Max_Size_In_Storage_Elements) + 1;
-      begin
-         if Index not in Pool'Range then
-            return 0;
+      Base := System'To_Address
+        (Integer_Address (Arch.Phys_To_Virt (Frame_PA)));
+
+      --  Slot 0 is the frame header; slots 1.. are notifications.
+      Header := To_Notification (Base);
+      Header.Next_Free := Frame_Head;
+      Frame_Head := Base;
+
+      for Slot in 1 .. Slots_Per_Frame - 1 loop
+         Free_Notification (Base + Storage_Offset (Slot) * Slot_Bytes);
+      end loop;
+
+      Result := Ok;
+   end Grow_Pool;
+
+   --  Validated pool membership: the notification at Object when
+   --  the address names a slot in some slab frame, null otherwise
+   --  (never trusted: caps only reference objects the kernel itself
+   --  handed out; this is the defensive check).
+   function Slot_Access
+     (Object : System.Address) return Notification_Access
+   is
+      Frame : System.Address := Frame_Head;
+      Diff  : Integer_Address;
+   begin
+      --  Integer_Address is modular in this RTS: a negative Diff
+      --  wraps huge, so the range check alone rejects it (the
+      --  static-pool Slot_Of relied on the same trick).
+      while Frame /= System.Null_Address loop
+         Diff := To_Integer (Object)
+                 - To_Integer (Frame + Slot_Bytes);
+         if Diff mod Integer_Address (Slot_Bytes) = 0
+           and then Diff < Integer_Address
+             (Kernel.Physical_Memory.Page_Size - U64 (Slot_Bytes))
+         then
+            return To_Notification (Object);
          end if;
-         return Index;
-      end;
-   end Slot_Of;
+         Frame := To_Notification (Frame).Next_Free;
+      end loop;
+      return null;
+   end Slot_Access;
 
    procedure Create
      (Result : out Status;
       Object : out System.Address)
    is
+      Slot : Notification_Access;
    begin
       Object := System.Null_Address;
 
-      for I in Pool'Range loop
-         if not Pool (I).In_Use then
-            Pool (I).In_Use := True;
-            Pool (I).Header.Count := 0;
-            Pool (I).Bits := 0;
-            Pool (I).Bound_Thread := null;
-            Pool (I).Waiting := null;
-            Object := Pool (I)'Address;
-            Result := Ok;
+      if Free_Head = System.Null_Address then
+         Grow_Pool (Result);
+         if Result /= Ok then
             return;
          end if;
-      end loop;
+      end if;
 
-      Result := No_Slot;
+      Slot := To_Notification (Free_Head);
+      Free_Head := Slot.Next_Free;
+      Slot.Next_Free := System.Null_Address;
+      Slot.In_Use := True;
+      Slot.Header.Count := 0;
+      Slot.Bits := 0;
+      Slot.Bound_Thread := null;
+      Slot.Waiting := null;
+      Object := Slot.all'Address;
+      Result := Ok;
    end Create;
 
    procedure Discard (Object : System.Address) is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
-      if Slot /= 0 then
-         Pool (Slot).In_Use := False;
-         Pool (Slot).Waiting := null;
+      if Slot /= null then
+         Free_Notification (Object);
       end if;
    end Discard;
 
    procedure Retain (Object : System.Address) is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
-      if Slot /= 0 then
-         Pool (Slot).Header.Count := Pool (Slot).Header.Count + 1;
+      if Slot /= null then
+         Slot.Header.Count := Slot.Header.Count + 1;
       end if;
    end Retain;
 
    function Release (Object : System.Address) return Boolean is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
       Wake : Kernel.Scheduler.Status;
    begin
-      if Slot = 0 then
+      if Slot = null then
          return False;
       end if;
 
-      if Pool (Slot).Header.Count > 0 then
-         Pool (Slot).Header.Count := Pool (Slot).Header.Count - 1;
+      if Slot.Header.Count > 0 then
+         Slot.Header.Count := Slot.Header.Count - 1;
       end if;
 
-      if Pool (Slot).Header.Count = 0 then
-         Pool (Slot).In_Use := False;
-         Pool (Slot).Bound_Thread := null;
-         Pool (Slot).Bits := 0;
+      if Slot.Header.Count = 0 then
+         Slot.Bound_Thread := null;
+         Slot.Bits := 0;
          --  Never strand a blocked waiter: the object is gone, so
          --  wake it with the failure result (Syscall_Failed).
-         if Pool (Slot).Waiting /= null then
+         if Slot.Waiting /= null then
             Kernel.Tasks.Set_Saved_Result
-              (Pool (Slot).Waiting.all, U64'Last);
-            Kernel.Scheduler.Wake (Pool (Slot).Waiting, Wake);
-            Pool (Slot).Waiting := null;
+              (Slot.Waiting.all, U64'Last);
+            Kernel.Scheduler.Wake (Slot.Waiting, Wake);
          end if;
+         Free_Notification (Object);
          return True;
       end if;
 
@@ -106,38 +185,38 @@ package body Kernel.Notifications is
    end Release;
 
    function Take (Object : System.Address) return U64 is
-      Slot  : constant Natural := Slot_Of (Object);
-      Bits  : U64 := 0;
+      Slot : constant Notification_Access := Slot_Access (Object);
+      Bits : U64 := 0;
    begin
-      if Slot /= 0 then
-         Bits := Pool (Slot).Bits;
-         Pool (Slot).Bits := 0;
+      if Slot /= null then
+         Bits := Slot.Bits;
+         Slot.Bits := 0;
       end if;
       return Bits;
    end Take;
 
    procedure Signal (Object : System.Address; Bits : U64) is
-      Slot   : constant Natural := Slot_Of (Object);
+      Slot   : constant Notification_Access := Slot_Access (Object);
       Thread : Kernel.Tasks.Thread_Access;
       Wake   : Kernel.Scheduler.Status;
    begin
-      if Slot = 0 then
+      if Slot = null then
          return;
       end if;
 
-      Pool (Slot).Bits := Pool (Slot).Bits or Bits;
+      Slot.Bits := Slot.Bits or Bits;
 
       --  A blocked ntfn_wait waiter comes first: it is explicitly
       --  parked on THIS object, bound or not.
-      Thread := Pool (Slot).Waiting;
+      Thread := Slot.Waiting;
       if Thread /= null then
-         Pool (Slot).Waiting := null;
+         Slot.Waiting := null;
          Kernel.Tasks.Set_Saved_Result (Thread.all, Take (Object));
          Kernel.Scheduler.Wake (Thread, Wake);
          return;
       end if;
 
-      Thread := Pool (Slot).Bound_Thread;
+      Thread := Slot.Bound_Thread;
 
       if Thread = null then
          return;
@@ -168,21 +247,21 @@ package body Kernel.Notifications is
       Thread : Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
-      if Slot = 0 or else Thread = null then
+      if Slot = null or else Thread = null then
          Result := No_Slot;
          return;
       end if;
 
-      if Pool (Slot).Waiting /= null
-        and then Pool (Slot).Waiting /= Thread
+      if Slot.Waiting /= null
+        and then Slot.Waiting /= Thread
       then
          Result := Already_Waiting;
          return;
       end if;
 
-      Pool (Slot).Waiting := Thread;
+      Slot.Waiting := Thread;
       Result := Ok;
    end Record_Waiter;
 
@@ -190,10 +269,10 @@ package body Kernel.Notifications is
      (Object : System.Address;
       Thread : Kernel.Tasks.Thread_Access)
    is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
-      if Slot /= 0 and then Pool (Slot).Waiting = Thread then
-         Pool (Slot).Waiting := null;
+      if Slot /= null and then Slot.Waiting = Thread then
+         Slot.Waiting := null;
       end if;
    end Clear_Waiter;
 
@@ -202,21 +281,21 @@ package body Kernel.Notifications is
       Thread : Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
-      if Slot = 0 or else Thread = null then
+      if Slot = null or else Thread = null then
          Result := No_Slot;
          return;
       end if;
 
-      if Pool (Slot).Bound_Thread /= null
+      if Slot.Bound_Thread /= null
         or else Kernel.Tasks.Bound_Ntfn (Thread.all) /= System.Null_Address
       then
          Result := Already_Bound;
          return;
       end if;
 
-      Pool (Slot).Bound_Thread := Thread;
+      Slot.Bound_Thread := Thread;
       Kernel.Tasks.Set_Bound_Ntfn (Thread.all, Object);
       Result := Ok;
    end Bind_Thread;
@@ -226,16 +305,16 @@ package body Kernel.Notifications is
       Object : System.Address;
       Unbind : Boolean)
    is
-      Slot : constant Natural := Slot_Of (Object);
+      Slot : constant Notification_Access := Slot_Access (Object);
    begin
       if not Unbind then
          return;
       end if;
-      if Slot /= 0 and then Pool (Slot).Bound_Thread = Thread then
-         Pool (Slot).Bound_Thread := null;
+      if Slot /= null and then Slot.Bound_Thread = Thread then
+         Slot.Bound_Thread := null;
       end if;
-      if Slot /= 0 and then Pool (Slot).Waiting = Thread then
-         Pool (Slot).Waiting := null;
+      if Slot /= null and then Slot.Waiting = Thread then
+         Slot.Waiting := null;
       end if;
 
       if Thread /= null
@@ -247,7 +326,8 @@ package body Kernel.Notifications is
 
    procedure Cleanup_Thread (Thread : Kernel.Tasks.Thread_Access) is
       Bound : System.Address;
-      Slot  : Natural;
+      Slot  : Notification_Access;
+      Frame : System.Address;
    begin
       if Thread = null then
          return;
@@ -255,9 +335,9 @@ package body Kernel.Notifications is
 
       Bound := Kernel.Tasks.Bound_Ntfn (Thread.all);
       if Bound /= System.Null_Address then
-         Slot := Slot_Of (Bound);
-         if Slot /= 0 and then Pool (Slot).Bound_Thread = Thread then
-            Pool (Slot).Bound_Thread := null;
+         Slot := Slot_Access (Bound);
+         if Slot /= null and then Slot.Bound_Thread = Thread then
+            Slot.Bound_Thread := null;
          end if;
          Kernel.Tasks.Set_Bound_Ntfn (Thread.all, System.Null_Address);
       end if;
@@ -268,10 +348,16 @@ package body Kernel.Notifications is
       if Kernel.Tasks.State (Thread.all) =
            Kernel.Tasks.Blocked_Notification
       then
-         for I in Pool'Range loop
-            if Pool (I).Waiting = Thread then
-               Pool (I).Waiting := null;
-            end if;
+         Frame := Frame_Head;
+         while Frame /= System.Null_Address loop
+            for I in 1 .. Slots_Per_Frame - 1 loop
+               Slot := To_Notification
+                 (Frame + Storage_Offset (I) * Slot_Bytes);
+               if Slot.In_Use and then Slot.Waiting = Thread then
+                  Slot.Waiting := null;
+               end if;
+            end loop;
+            Frame := To_Notification (Frame).Next_Free;
          end loop;
       end if;
    end Cleanup_Thread;

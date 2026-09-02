@@ -392,6 +392,21 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   process/thread occupancy each run. 1715 PASS SMP4 / 1716 SMP1,
   0 FAIL both; boot smoke to shell clean.
 
+- **M80c done** (this commit): notifications + queued sends ->
+  PMM frame slabs on the endpoint Grow_Pool template (frames
+  never returned, addresses stable, exhaustion = PMM OOM).
+  Notifications: the first slot of each frame doubles as the
+  frame-list link (never enters the free list); the old Slot_Of
+  contiguity decode — the only address->index decode in any
+  pool — is now a frame-range + alignment walk (Integer_Address
+  is modular, so a negative diff wraps huge and the range check
+  rejects it — same trick as before); all entry points went
+  access-based, and Cleanup_Thread's waiter scan walks frames x
+  slots. Max_Notifications=32 deleted (~24 peak at test boot).
+  Queued sends (64 fixed): slab with a Next_Free link; alloc
+  failure still falls back to blocking rendezvous (now OOM-only).
+  1714 PASS / 0 FAIL, SMP4 and SMP1.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide

@@ -20,6 +20,10 @@ package body Kernel.IPC is
      (Source => System.Address,
       Target => Endpoint_Access);
 
+   function To_Queued_Send is new Ada.Unchecked_Conversion
+     (Source => System.Address,
+      Target => Queued_Send_Access);
+
    function To_Thread is new Ada.Unchecked_Conversion
      (Source => System.Address,
       Target => Kernel.Tasks.Thread_Access);
@@ -129,36 +133,66 @@ package body Kernel.IPC is
    --  Queued-send pool (fire-and-forget message copies)
    ------------------------------------------------------------------
 
-   --  Fixed pool; a send that finds no slot falls back to blocking
-   --  the caller (classic rendezvous), so a full pool degrades to
+   --  M80c: PMM-backed frame slab on the endpoint Grow_Pool
+   --  template below (frames never returned; exhaustion = PMM
+   --  OOM).  An allocation that still finds no slot falls back to
+   --  blocking the caller (classic rendezvous), so OOM degrades to
    --  back-pressure rather than message loss.
-   Max_Queued_Sends : constant := 64;
-
-   Send_Pool : array (1 .. Max_Queued_Sends) of aliased Queued_Send :=
-     (others =>
-        (Label  => 0,
-         Words  => (others => 0),
-         Badge  => 0,
-         Next   => null,
-         In_Use => False));
-
-   function Alloc_Queued_Send return Queued_Send_Access is
-   begin
-      for Slot of Send_Pool loop
-         if not Slot.In_Use then
-            Slot.In_Use := True;
-            Slot.Next   := null;
-            return Slot'Access;
-         end if;
-      end loop;
-      return null;
-   end Alloc_Queued_Send;
+   Send_Free_Head : Queued_Send_Access := null;
 
    procedure Free_Queued_Send (Slot : Queued_Send_Access) is
    begin
       Slot.In_Use := False;
       Slot.Next   := null;
+      Slot.Next_Free := Send_Free_Head;
+      Send_Free_Head := Slot;
    end Free_Queued_Send;
+
+   procedure Grow_Send_Pool is
+      use System.Storage_Elements;
+
+      --  Slot size rounded up to 16 bytes; computed at elaboration
+      --  ('Size is not static for record types).
+      Slot_Bytes : constant Storage_Count :=
+        Storage_Count ((Queued_Send'Size + 127) / 128 * 16);
+      Slots_Per_Frame : constant Natural :=
+        Natural (Kernel.Physical_Memory.Page_Size)
+        / Natural (Slot_Bytes);
+
+      PMM_Result : Kernel.Physical_Memory.Status;
+      Frame_PA   : Kernel.Capabilities.U64;
+      Base       : System.Address;
+   begin
+      Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Frame_PA);
+
+      if PMM_Result /= Kernel.Physical_Memory.Ok then
+         return;
+      end if;
+
+      Base := System'To_Address
+        (Integer_Address (Arch.Phys_To_Virt (Frame_PA)));
+
+      for Slot in 0 .. Slots_Per_Frame - 1 loop
+         Free_Queued_Send
+           (To_Queued_Send (Base + Storage_Offset (Slot) * Slot_Bytes));
+      end loop;
+   end Grow_Send_Pool;
+
+   function Alloc_Queued_Send return Queued_Send_Access is
+      Slot : Queued_Send_Access;
+   begin
+      if Send_Free_Head = null then
+         Grow_Send_Pool;
+      end if;
+      Slot := Send_Free_Head;
+      if Slot /= null then
+         Send_Free_Head := Slot.Next_Free;
+         Slot.Next_Free := null;
+         Slot.In_Use := True;
+         Slot.Next := null;
+      end if;
+      return Slot;
+   end Alloc_Queued_Send;
 
    --  Copy the caller's message words/label/badge into a pool slot.
    function Queue_Send_Copy
