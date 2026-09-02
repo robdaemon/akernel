@@ -1,3 +1,5 @@
+with Akernel_User.Tables;
+
 package body Fileserver_Pipes is
    use Interfaces;
    use type U64;
@@ -16,7 +18,14 @@ package body Fileserver_Pipes is
       Eof    : Boolean := False;
    end record;
 
-   Pipes : array (1 .. Max_Pipes) of Pipe_Entry;
+   --  M80d: grow-on-demand chunk chains (Akernel_User.Tables);
+   --  the 16 KiB rings moved out of BSS (32 x 16 KiB) into arena
+   --  chunks.  Pipes (I) reads unchanged via the renames below;
+   --  scans run 1 .. Pipe_Tab.Last and creation appends.
+   package Pipe_Tab is new Akernel_User.Tables (Pipe_Entry);
+
+   function Pipes (I : Natural) return Pipe_Tab.Element_Access
+     renames Pipe_Tab.Ref;
 
    function Match (Name : String; I : Natural) return Boolean is
    begin
@@ -45,7 +54,7 @@ package body Fileserver_Pipes is
 
    function Find (Name : String) return Natural is
    begin
-      for I in Pipes'Range loop
+      for I in 1 .. Pipe_Tab.Last loop
          if Pipes (I).Valid and then Match (Name, I) then
             return I;
          end if;
@@ -55,6 +64,7 @@ package body Fileserver_Pipes is
 
    function Find_Or_Create (Name : String) return Natural is
       P : constant Natural := Find (Name);
+      I : Natural;
    begin
       if P /= 0 then
          return P;
@@ -62,19 +72,27 @@ package body Fileserver_Pipes is
       if Name'Length = 0 or else Name'Length > Max_Pipe_Name then
          return 0;
       end if;
-      for I in Pipes'Range loop
-         if not Pipes (I).Valid then
-            Pipes (I).Valid := True;
-            Pipes (I).Name := (others => Character'Val (0));
-            Pipes (I).Name (1 .. Name'Length) := Name;
-            Pipes (I).N_Len := Name'Length;
-            Pipes (I).Head := 0;
-            Pipes (I).Count := 0;
-            Pipes (I).Eof := False;
-            return I;
+      I := 0;
+      for K in 1 .. Pipe_Tab.Last loop
+         if not Pipes (K).Valid then
+            I := K;
+            exit;
          end if;
       end loop;
-      return 0;
+      if I = 0 then
+         I := Pipe_Tab.Append;  --  grow: 0 only on arena OOM
+      end if;
+      if I = 0 then
+         return 0;
+      end if;
+      Pipes (I).Valid := True;
+      Pipes (I).Name := (others => Character'Val (0));
+      Pipes (I).Name (1 .. Name'Length) := Name;
+      Pipes (I).N_Len := Name'Length;
+      Pipes (I).Head := 0;
+      Pipes (I).Count := 0;
+      Pipes (I).Eof := False;
+      return I;
    end Find_Or_Create;
 
    procedure Destroy (I : Natural) is
@@ -135,25 +153,41 @@ package body Fileserver_Pipes is
       Length  : U64 := 0;
    end record;
 
-   Pendings : array (1 .. Max_Pending) of Pending_Entry;
+   --  M80d: grow-on-demand like the pipes themselves; Stash fails
+   --  (poll fallback) only on arena OOM now.
+   package Pend_Tab is new Akernel_User.Tables (Pending_Entry);
+
+   function Pendings (I : Natural) return Pend_Tab.Element_Access
+     renames Pend_Tab.Ref;
+
+   function Pend_Last return Natural is
+     (Pend_Tab.Last);
 
    function Stash
      (P : Natural; Kind : Pending_Kind;
       Reply_H, Buf, Length : U64) return Boolean
    is
+      S : Natural := 0;
    begin
-      for S in Pendings'Range loop
-         if Pendings (S).Kind = P_None then
-            Pendings (S) :=
-              (Kind    => Kind,
-               Pipe    => P,
-               Reply_H => Reply_H,
-               Buf     => Buf,
-               Length  => Length);
-            return True;
+      for K in 1 .. Pend_Tab.Last loop
+         if Pendings (K).Kind = P_None then
+            S := K;
+            exit;
          end if;
       end loop;
-      return False;
+      if S = 0 then
+         S := Pend_Tab.Append;
+      end if;
+      if S = 0 then
+         return False;
+      end if;
+      Pendings (S).all :=
+        (Kind    => Kind,
+         Pipe    => P,
+         Reply_H => Reply_H,
+         Buf     => Buf,
+         Length  => Length);
+      return True;
    end Stash;
 
    function Pend_Pipe (S : Natural) return Natural is

@@ -7,34 +7,36 @@ with Interfaces;
 --  an empty non-EOF read or a write that does not fit defers its
 --  reply (kernel reply-cap duplication, milestone 47) until the
 --  opposite side arrives; the request's reply cap and buffer cap
---  sit in the pending table below. The table is small on
---  purpose — when full the server falls back to the old
---  Status_Not_Ready poll answer, so clients keep their retry
---  loops as degradation, never as the hot path.
+--  sit in the pending table below. The pending table is grow-on-
+--  demand (M80d) — when even the arena is out the server falls
+--  back to the old Status_Not_Ready poll answer, so clients keep
+--  their retry loops as degradation, never as the hot path.
+--
+--  M80d: pipes and pendings are grow-on-demand chunk chains
+--  (Akernel_User.Tables) — capacity is RAM, not Max_Pipes /
+--  Max_Pending literals, and the 32 x 16 KiB rings moved out of
+--  BSS into arena chunks.  (Milestone 69 headroom note: `run`
+--  can background a pipeline, and a background job holds its
+--  pipes until reaped — that silent-fill class is gone.)
 --
 --  EOF is EXPLICIT (Op_Close from the writer): the fs protocol
 --  is stateless — no fids, no close-counting — so a pipe cannot
 --  infer "all writers gone". The RTS redirect layer sends
 --  Op_Close when a redirected program exits.
 --
---  Library level so the rings live in BSS, never on the 16 KiB
---  server stack (the fileserver_tables burn class).
+--  Library level: nothing here may sit on the server stack (the
+--  fileserver_tables burn class).
 
 package Fileserver_Pipes is
    subtype U64 is Akernel_User.Syscalls.U64;
 
-   --  Milestone 69 headroom: `run` can background a pipeline, and
-   --  a background job holds its pipes until reaped — up to 8
-   --  jobs x 3 pipes = 24 live PIPE: entries, plus foreground
-   --  shells. 8 slots would silently fill.
-   Max_Pipes     : constant := 32;
    Pipe_Bytes    : constant := 16384;
    Max_Pipe_Name : constant := 40;
 
    --  Case-insensitive name lookup (fs convention); 0 = absent.
    function Find (Name : String) return Natural;
 
-   --  Lookup, creating an empty pipe when absent; 0 = table full
+   --  Lookup, creating an empty pipe when absent; 0 = arena OOM
    --  (or an empty/over-long name — both rejected Bad_Args by
    --  the caller before it gets here; 0 means "retry later").
    function Find_Or_Create (Name : String) return Natural;
@@ -65,17 +67,18 @@ package Fileserver_Pipes is
    --  buffer cap until the fileserver completes or fails it;
    --  completion scans the whole table (drain passes run until
    --  no progress — a completing read can unblock a write and
-   --  vice versa).
-   Max_Pending : constant := 8;
+   --  vice versa).  Grow-on-demand (M80d); Stash fails only on
+   --  arena OOM.
    type Pending_Kind is (P_None, P_Read, P_Write);
 
-   --  Reserve a slot for pipe P; False = table full (the caller
+   --  Reserve a slot for pipe P; False = arena OOM (the caller
    --  answers Status_Not_Ready so the client polls).
    function Stash
      (P : Natural; Kind : Pending_Kind;
       Reply_H, Buf, Length : U64) return Boolean;
 
-   --  Scan access for the drain (slots 1 .. Max_Pending).
+   --  Scan access for the drain (slots 1 .. Pend_Last).
+   function Pend_Last return Natural;
    function Pend_Pipe (S : Natural) return Natural;
    function Pend_Kind (S : Natural) return Pending_Kind;
    function Pend_Reply (S : Natural) return U64;

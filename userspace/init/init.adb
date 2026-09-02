@@ -219,6 +219,11 @@ procedure Init is
       Message.Caps := (others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("fs mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("fs mount REJECTED by fileserver");
       end if;
    end Push_FS_Mount;
 
@@ -247,6 +252,11 @@ procedure Init is
       Message.Caps := (0 => EP, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("block mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("block mount REJECTED by fileserver");
       end if;
    end Push_Block_Mount_As;
 
@@ -356,6 +366,11 @@ procedure Init is
       Message.Caps := (0 => FAT32_EP, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("fat32 mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("fat32 mount REJECTED by fileserver");
       end if;
    end Push_Fat32_Mount;
 
@@ -382,6 +397,11 @@ procedure Init is
       Message.Caps := (0 => BFS_EP, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("bfs mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("bfs mount REJECTED by fileserver");
       end if;
    end Push_Bfs_Mount;
 
@@ -408,6 +428,11 @@ procedure Init is
       Message.Caps := (0 => PROCFS_EP, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("procfs mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("procfs mount REJECTED by fileserver");
       end if;
    end Push_Procfs_Mount;
 
@@ -438,6 +463,11 @@ procedure Init is
       Message.Caps := (0 => Svc, others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("host share mount push failed");
+      elsif Message.Words (0) /= 0 then
+         --  M80d: check the reply STATUS WORD, not just the
+         --  transport — a rejected mount (full table, bad args)
+         --  used to pass silently (the m79 Net: no-mount bug).
+         Debug_Put_Line ("host share mount REJECTED by fileserver");
       end if;
    end Push_Host_Mount;
 
@@ -489,6 +519,10 @@ procedure Init is
                Debug_Put_Line ("fs name push failed");
                return;
             end if;
+            if Message.Words (0) /= 0 then
+               Debug_Put_Line ("fs name REJECTED by fileserver");
+               return;
+            end if;
             if Cap_Delete (Minted) /= 0 then
                Debug_Put_Line ("fs name mint delete failed");
             end if;
@@ -501,6 +535,8 @@ procedure Init is
       Message.Caps := (others => 0);
       if IPC_Call (FS_EP) /= IPC_Ok then
          Debug_Put_Line ("fs name push failed");
+      elsif Message.Words (0) /= 0 then
+         Debug_Put_Line ("fs name terminator REJECTED by fileserver");
       end if;
    end Push_FS_Names;
 

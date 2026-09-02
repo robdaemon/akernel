@@ -79,10 +79,11 @@ spawn; the 3 kernel-started processes live outside all tables.
 - Userspace has two heaps: GNAT heap at 0x4000_0000 (2 MiB max,
   s-memory.adb) and newlib sbrk at 0x5200_0000 (4 MiB). Shared-RTS
   VA gap 0x4A81_0000..0x5000_0000 is free but small;
-  **0x7000_0000..0x7FF0_0000 is free everywhere** per the full VA
-  census (bureau ends 0x6B00, thread stacks 0x6F00+, IPC 0x6FFE+);
-  M83 moved the user main stack to 0x7FF0_0000..0x8000_0000 (64
-  pages), so the M80d helper arena below is **15 MiB**, not 16.
+  **0x7000_0000..0x7FF0_0000 (255 MiB) is free everywhere** per
+  the full VA census (bureau ends 0x6B00, thread stacks 0x6F00+,
+  IPC 0x6FFE+); M83 moved the user main stack to
+  0x7FF0_0000..0x8000_0000 (64 pages), so the M80d helper arena
+  below has 255 MiB, not the whole 256 MiB hole.
 - Crates share `rts/akernel/` as a static library; generics there
   are precedented (Akernel_User.IPC, Virtio.PCI/MMIO). Constraint:
   no library-level elaboration runs in crates — helpers must lazily
@@ -154,8 +155,8 @@ Risk: touches the scheduler core. Extra boot smoke before the gate.
   element type; chunk-append growth over Mem_Alloc (<=64 pages/
   chunk) mapped into a helper arena at **0x7000_0000** (burn-guard
   comment + compile-time window assert per house convention —
-  arena ceiling is 0x7FF0_0000, the M83 stack base: 15 MiB =
-  **60 chunks of 64 pages**, NOT 64 chunks/16 MiB); lazy
+  arena ceiling is 0x7FF0_0000, the M83 stack base: 255 MiB, so
+  the directory bound is policy, not geometry); lazy
   init; stable indices while entries live (chunk-append, never
   realloc-copy — netserv sock ids, shell job numbers, gloss fds and
   bureau slots are user-visible indices); static 60-entry chunk

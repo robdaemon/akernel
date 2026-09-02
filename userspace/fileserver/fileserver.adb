@@ -4,6 +4,7 @@ with Interfaces;
 with Akernel_User.Syscalls;
 with Akernel_User.Files;
 with Akernel_User.Console;
+with Akernel_User.Tables;
 with Fileserver_Tables;
 with Fileserver_Pipes;
 
@@ -178,7 +179,7 @@ procedure Fileserver is
          return 0;  --  unqualified
       end if;
 
-      for V in Volumes'Range loop
+      for V in 1 .. Vol_Tab.Last loop
          if Volumes (V).Valid then
             if Match (Name, Colon - 1,
                       Volumes (V).Device (1 .. Volumes (V).Dev_Len),
@@ -197,7 +198,7 @@ procedure Fileserver is
 
    function Find_Assign (Prefix : String) return Natural is
    begin
-      for I in Assigns'Range loop
+      for I in 1 .. Asn_Tab.Last loop
          if Assigns (I).Valid
            and then Match (Assigns (I).Name, Assigns (I).Name_Len,
                            Prefix, True)
@@ -220,7 +221,7 @@ procedure Fileserver is
       then
          return False;
       end if;
-      for I in Assigns'Range loop
+      for I in 1 .. Asn_Tab.Last loop
          if Assigns (I).Valid then
             if Match (Assigns (I).Name, Assigns (I).Name_Len,
                       Name, True)
@@ -233,6 +234,9 @@ procedure Fileserver is
          end if;
       end loop;
       Slot := (if Match_I /= 0 then Match_I else Free_I);
+      if Slot = 0 then
+         Slot := Asn_Tab.Append;  --  grow: 0 only on arena OOM
+      end if;
       if Slot = 0 then
          return False;
       end if;
@@ -335,7 +339,7 @@ procedure Fileserver is
    is
       CI : constant Boolean := Volumes (Volume).Case_Insensitive;
    begin
-      for I in File_Table'Range loop
+      for I in 1 .. File_Tab.Last loop
          if File_Table (I).Valid
            and then Match
              (File_Table (I).Name (1 .. File_Table (I).Name_Len),
@@ -366,7 +370,7 @@ procedure Fileserver is
    --  window, learn Lead_In, drop the mapping. Reads then map
    --  the file's chunk at the window on demand.
    procedure Ensure_Lead_In (Index : Natural; Ok : out Boolean) is
-      F : File_Entry renames File_Table (Index);
+      F : File_Entry renames File_Table (Index).all;
    begin
       Ok := True;
       if F.Lead_Known then
@@ -399,10 +403,23 @@ procedure Fileserver is
       F.Lead_Known := True;
    end Ensure_Lead_In;
 
+   --  First invalid volume slot, else a fresh chunk append (M80d:
+   --  0 now means arena/PMM OOM, not a silent full table).
+   function Alloc_Volume return Natural is
+   begin
+      for V in 1 .. Vol_Tab.Last loop
+         if not Volumes (V).Valid then
+            return V;
+         end if;
+      end loop;
+      return Vol_Tab.Append;
+   end Alloc_Volume;
+
    procedure Handle_Mount is
       Dev_Len : constant Natural := Natural (Syscalls.Message.Words (0));
       Lab_Len : constant Natural := Natural (Syscalls.Message.Words (1));
       CI      : constant Boolean := Syscalls.Message.Words (2) /= 0;
+      V       : Natural;
    begin
       if Dev_Len = 0 or else Dev_Len > 16
         or else Lab_Len = 0 or else Lab_Len > 16
@@ -412,25 +429,24 @@ procedure Fileserver is
          return;
       end if;
 
-      for V in Volumes'Range loop
-         if not Volumes (V).Valid then
-            Volumes (V).Valid := True;
-            Volumes (V).Dev_Len := Dev_Len;
-            Volumes (V).Lab_Len := Lab_Len;
-            Volumes (V).Case_Insensitive := CI;
-            for Pos in 0 .. Dev_Len - 1 loop
-               Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
-            end loop;
-            for Pos in 0 .. Lab_Len - 1 loop
-               Volumes (V).Label (Pos + 1) :=
-                 Unpack_Char (3, Dev_Len + Pos);
-            end loop;
-            Reply2 (Files.Status_Ok, 0);
-            return;
-         end if;
-      end loop;
+      V := Alloc_Volume;
+      if V = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
 
-      Reply2 (Files.Status_Bad_Args, 0);
+      Volumes (V).Valid := True;
+      Volumes (V).Dev_Len := Dev_Len;
+      Volumes (V).Lab_Len := Lab_Len;
+      Volumes (V).Case_Insensitive := CI;
+      for Pos in 0 .. Dev_Len - 1 loop
+         Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
+      end loop;
+      for Pos in 0 .. Lab_Len - 1 loop
+         Volumes (V).Label (Pos + 1) :=
+           Unpack_Char (3, Dev_Len + Pos);
+      end loop;
+      Reply2 (Files.Status_Ok, 0);
    end Handle_Mount;
 
    --  Op_Add_Block: like Op_Mount plus the block driver's service
@@ -442,6 +458,7 @@ procedure Fileserver is
       Lab_Len : constant Natural := Natural (Syscalls.Message.Words (1));
       CI      : constant Boolean := Syscalls.Message.Words (2) /= 0;
       EP      : constant U64 := Syscalls.Message.Caps (0);
+      V       : Natural;
    begin
       if Dev_Len = 0 or else Dev_Len > 16
         or else Lab_Len = 0 or else Lab_Len > 16
@@ -452,39 +469,38 @@ procedure Fileserver is
          return;
       end if;
 
-      for V in Volumes'Range loop
-         if not Volumes (V).Valid then
-            Volumes (V).Valid := True;
-            Volumes (V).Dev_Len := Dev_Len;
-            Volumes (V).Lab_Len := Lab_Len;
-            Volumes (V).Case_Insensitive := CI;
-            for Pos in 0 .. Dev_Len - 1 loop
-               Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
-            end loop;
-            for Pos in 0 .. Lab_Len - 1 loop
-               Volumes (V).Label (Pos + 1) :=
-                 Unpack_Char (3, Dev_Len + Pos);
-            end loop;
-            Volumes (V).Is_Block := True;
-            Volumes (V).Blk_EP := EP;
-            Volumes (V).Blk_Size := 0;
+      V := Alloc_Volume;
+      if V = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
 
-            --  Device capacity in sectors (one page = 8 sectors).
-            Syscalls.Message.Label := Files.Blk_Info;
-            Syscalls.Message.Words := (others => 0);
-            Syscalls.Message.Caps := (others => 0);
-            if Syscalls.IPC_Call (EP) = Syscalls.IPC_Ok
-              and then Syscalls.Message.Words (0) = 0
-            then
-               Volumes (V).Blk_Size := Syscalls.Message.Words (1) * 512;
-            end if;
-
-            Reply2 (Files.Status_Ok, 0);
-            return;
-         end if;
+      Volumes (V).Valid := True;
+      Volumes (V).Dev_Len := Dev_Len;
+      Volumes (V).Lab_Len := Lab_Len;
+      Volumes (V).Case_Insensitive := CI;
+      for Pos in 0 .. Dev_Len - 1 loop
+         Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
       end loop;
+      for Pos in 0 .. Lab_Len - 1 loop
+         Volumes (V).Label (Pos + 1) :=
+           Unpack_Char (3, Dev_Len + Pos);
+      end loop;
+      Volumes (V).Is_Block := True;
+      Volumes (V).Blk_EP := EP;
+      Volumes (V).Blk_Size := 0;
 
-      Reply2 (Files.Status_Bad_Args, 0);
+      --  Device capacity in sectors (one page = 8 sectors).
+      Syscalls.Message.Label := Files.Blk_Info;
+      Syscalls.Message.Words := (others => 0);
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (EP) = Syscalls.IPC_Ok
+        and then Syscalls.Message.Words (0) = 0
+      then
+         Volumes (V).Blk_Size := Syscalls.Message.Words (1) * 512;
+      end if;
+
+      Reply2 (Files.Status_Ok, 0);
    end Handle_Add_Block;
 
 
@@ -494,7 +510,7 @@ procedure Fileserver is
    procedure Handle_Sync is
       Status : U64 := Files.Status_Ok;
    begin
-      for V in Volumes'Range loop
+      for V in 1 .. Vol_Tab.Last loop
          if Volumes (V).Valid and then Volumes (V).Is_FS then
             Syscalls.Message.Label := Files.Op_Sync;
             Syscalls.Message.Words := (others => 0);
@@ -518,6 +534,7 @@ procedure Fileserver is
       Lab_Len : constant Natural := Natural (Syscalls.Message.Words (1));
       CI      : constant Boolean := Syscalls.Message.Words (2) /= 0;
       EP      : constant U64 := Syscalls.Message.Caps (0);
+      V       : Natural;
    begin
       if Dev_Len = 0 or else Dev_Len > 16
         or else Lab_Len = 0 or else Lab_Len > 16
@@ -528,56 +545,55 @@ procedure Fileserver is
          return;
       end if;
 
-      for V in Volumes'Range loop
-         if not Volumes (V).Valid then
-            Volumes (V).Valid := True;
-            Volumes (V).Dev_Len := Dev_Len;
-            Volumes (V).Lab_Len := Lab_Len;
-            Volumes (V).Case_Insensitive := CI;
-            for Pos in 0 .. Dev_Len - 1 loop
-               Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
-            end loop;
-            for Pos in 0 .. Lab_Len - 1 loop
-               Volumes (V).Label (Pos + 1) :=
-                 Unpack_Char (3, Dev_Len + Pos);
-            end loop;
-            Volumes (V).Is_FS := True;
-            Volumes (V).FS_EP := EP;
+      V := Alloc_Volume;
+      if V = 0 then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
 
-            --  Milestone 36: mounting the system volume (label
-            --  "sys") seeds the session assigns C: and ENV: —
-            --  the Amiga boot assigns — unless already set.
-            if Match ("sys", 3,
-                      Volumes (V).Label (1 .. Volumes (V).Lab_Len),
-                      True)
-            then
-               declare
-                  T  : String (1 .. 24) := (others => Character'Val (0));
-                  TL : Natural := Volumes (V).Lab_Len;
-               begin
-                  T (1 .. TL) := Volumes (V).Label (1 .. TL);
-                  if Find_Assign ("C") = 0 then
-                     T (TL + 1) := ':';
-                     T (TL + 2) := 'C';
-                     if Set_Assign ("C", T (1 .. TL + 2)) then
-                        null;
-                     end if;
-                  end if;
-                  if Find_Assign ("ENV") = 0 then
-                     T (TL + 1 .. TL + 10) := ":Prefs/Env";
-                     if Set_Assign ("ENV", T (1 .. TL + 10)) then
-                        null;
-                     end if;
-                  end if;
-               end;
-            end if;
-
-            Reply2 (Files.Status_Ok, 0);
-            return;
-         end if;
+      Volumes (V).Valid := True;
+      Volumes (V).Dev_Len := Dev_Len;
+      Volumes (V).Lab_Len := Lab_Len;
+      Volumes (V).Case_Insensitive := CI;
+      for Pos in 0 .. Dev_Len - 1 loop
+         Volumes (V).Device (Pos + 1) := Unpack_Char (3, Pos);
       end loop;
+      for Pos in 0 .. Lab_Len - 1 loop
+         Volumes (V).Label (Pos + 1) :=
+           Unpack_Char (3, Dev_Len + Pos);
+      end loop;
+      Volumes (V).Is_FS := True;
+      Volumes (V).FS_EP := EP;
 
-      Reply2 (Files.Status_Bad_Args, 0);
+      --  Milestone 36: mounting the system volume (label
+      --  "sys") seeds the session assigns C: and ENV: —
+      --  the Amiga boot assigns — unless already set.
+      if Match ("sys", 3,
+                Volumes (V).Label (1 .. Volumes (V).Lab_Len),
+                True)
+      then
+         declare
+            T  : String (1 .. 24) := (others => Character'Val (0));
+            TL : Natural := Volumes (V).Lab_Len;
+         begin
+            T (1 .. TL) := Volumes (V).Label (1 .. TL);
+            if Find_Assign ("C") = 0 then
+               T (TL + 1) := ':';
+               T (TL + 2) := 'C';
+               if Set_Assign ("C", T (1 .. TL + 2)) then
+                  null;
+               end if;
+            end if;
+            if Find_Assign ("ENV") = 0 then
+               T (TL + 1 .. TL + 10) := ":Prefs/Env";
+               if Set_Assign ("ENV", T (1 .. TL + 10)) then
+                  null;
+               end if;
+            end if;
+         end;
+      end if;
+
+      Reply2 (Files.Status_Ok, 0);
    end Handle_Add_FS;
 
    --  Op_Set_Name: words 0..1 = (nonzero sentinel, name length),
@@ -586,6 +602,18 @@ procedure Fileserver is
    --  entries, far under the 256-file headroom target). The cap
    --  stays in this table for the file's lifetime — it IS the
    --  file, not a per-op borrow.
+   --  First invalid file slot, else a fresh chunk append (M80d:
+   --  0 now means arena/PMM OOM, not a silent full table).
+   function Alloc_File return Natural is
+   begin
+      for I in 1 .. File_Tab.Last loop
+         if not File_Table (I).Valid then
+            return I;
+         end if;
+      end loop;
+      return File_Tab.Append;
+   end Alloc_File;
+
    procedure Handle_Set_Name is
       Handle : constant U64 := Syscalls.Message.Caps (0);
       Len    : constant Natural := Natural (Syscalls.Message.Words (1));
@@ -595,23 +623,24 @@ procedure Fileserver is
          return;
       end if;
 
-      for I in File_Table'Range loop
-         if not File_Table (I).Valid then
-            File_Table (I).Valid := True;
-            File_Table (I).Handle := Handle;
-            File_Table (I).Name_Len := Len;
-            for Pos in 0 .. Len - 1 loop
-               File_Table (I).Name (Pos + 1) :=
-                 Unpack_Char (2, Pos);
-            end loop;
-            File_Table (I).Size :=
-              Syscalls.Boot_File_Size (Handle);
-            Reply2 (Files.Status_Ok, 0);
+      declare
+         I : constant Natural := Alloc_File;
+      begin
+         if I = 0 then
+            Reply2 (Files.Status_Bad_Args, 0);
             return;
          end if;
-      end loop;
-
-      Reply2 (Files.Status_Bad_Args, 0);
+         File_Table (I).Valid := True;
+         File_Table (I).Handle := Handle;
+         File_Table (I).Name_Len := Len;
+         for Pos in 0 .. Len - 1 loop
+            File_Table (I).Name (Pos + 1) :=
+              Unpack_Char (2, Pos);
+         end loop;
+         File_Table (I).Size :=
+           Syscalls.Boot_File_Size (Handle);
+      end;
+      Reply2 (Files.Status_Ok, 0);
    end Handle_Set_Name;
 
    --  Op_Assign: words 0..1 = name (no colon), words 2..5 =
@@ -673,7 +702,7 @@ procedure Fileserver is
       Line  : String (1 .. 40);
       L_Len : Natural;
    begin
-      for I in Assigns'Range loop
+      for I in 1 .. Asn_Tab.Last loop
          if Assigns (I).Valid then
             if Seen = Idx then
                L_Len := 0;
@@ -740,26 +769,33 @@ procedure Fileserver is
    --  fs-driver volume using a cap minted with the original
    --  caller's badge (now the caller's process id). The fs driver
    --  sees the real client identity in Message.Badge.
-   Max_Forward_Caps : constant := 1024;
+   --  M80d: the cache is a grow-on-demand table (was a 1024-entry
+   --  static array) — the "bounded leak" comment retires; entries
+   --  are append-only like the callers they shadow.
    type Forward_Cap_Entry is record
       Valid  : Boolean := False;
       Volume : Natural := 0;
       Badge  : U64 := 0;
       Cap    : U64 := 0;
    end record;
-   Forward_Caps : array (1 .. Max_Forward_Caps) of Forward_Cap_Entry;
+   package Fwd_Tab is new Akernel_User.Tables (Forward_Cap_Entry);
 
    --  Reuse a previously-minted forward cap when the same caller
    --  (badge = process id) hits the same fs-driver volume. This
    --  keeps the VFS forward path from paying for a cap_mint+delete
-   --  on every fs operation. Bounded leak: at most one cap per
-   --  live caller/volume pair.
+   --  on every fs operation.  At most one cap per live
+   --  caller/volume pair.
    function Cached_FS_Cap (Volume : Natural; Badge : U64) return U64 is
    begin
-      for E of Forward_Caps loop
-         if E.Valid and then E.Volume = Volume and then E.Badge = Badge then
-            return E.Cap;
-         end if;
+      for I in 1 .. Fwd_Tab.Last loop
+         declare
+            E : constant Fwd_Tab.Element_Access := Fwd_Tab.Ref (I);
+         begin
+            if E.Valid and then E.Volume = Volume and then E.Badge = Badge
+            then
+               return E.Cap;
+            end if;
+         end;
       end loop;
       return Syscalls.Syscall_Failed;
    end Cached_FS_Cap;
@@ -770,18 +806,29 @@ procedure Fileserver is
       Cap    : U64;
       Stored : out Boolean)
    is
+      Slot : Natural := 0;
    begin
       Stored := False;
-      for E of Forward_Caps loop
-         if not E.Valid then
+      for I in 1 .. Fwd_Tab.Last loop
+         if not Fwd_Tab.Ref (I).Valid then
+            Slot := I;
+            exit;
+         end if;
+      end loop;
+      if Slot = 0 then
+         Slot := Fwd_Tab.Append;
+      end if;
+      if Slot /= 0 then
+         declare
+            E : constant Fwd_Tab.Element_Access := Fwd_Tab.Ref (Slot);
+         begin
             E.Valid  := True;
             E.Volume := Volume;
             E.Badge  := Badge;
             E.Cap    := Cap;
             Stored   := True;
-            return;
-         end if;
-      end loop;
+         end;
+      end if;
    end Store_FS_Cap;
 
    function Is_Proc_Volume (Volume : Natural) return Boolean is
@@ -1413,7 +1460,7 @@ procedure Fileserver is
    begin
       loop
          Progress := False;
-         for S in 1 .. Max_Pending loop
+         for S in 1 .. Pend_Last loop
             if Pend_Kind (S) /= P_None
               and then Pend_Pipe (S) = P
             then
@@ -1519,7 +1566,7 @@ procedure Fileserver is
    procedure Fail_Pipe_Pendings (P : Natural) is
       use Fileserver_Pipes;
    begin
-      for S in 1 .. Max_Pending loop
+      for S in 1 .. Pend_Last loop
          if Pend_Kind (S) /= P_None
            and then Pend_Pipe (S) = P
          then
@@ -2072,7 +2119,7 @@ procedure Fileserver is
          --  client buffers cap at 32 KiB); files larger than the
          --  window just take more passes.
          declare
-            F : File_Entry renames File_Table (I);
+            F : File_Entry renames File_Table (I).all;
             File_Pages : constant U64 :=
               (F.Lead_In + F.Size + Syscalls.Page_Size - 1)
                 / Syscalls.Page_Size;
@@ -2453,33 +2500,30 @@ procedure Fileserver is
    --  server owns them outright. Names resolve like any
    --  device/label prefix, always case-insensitively.
    procedure Seed_Virtual_Volumes is
+      V : Natural;
    begin
-      for V in Volumes'Range loop
-         if not Volumes (V).Valid then
-            Volumes (V).Valid := True;
-            Volumes (V).Device := (others => Character'Val (0));
-            Volumes (V).Device (1 .. 4) := "PIPE";
-            Volumes (V).Dev_Len := 4;
-            Volumes (V).Label := Volumes (V).Device;
-            Volumes (V).Lab_Len := 4;
-            Volumes (V).Case_Insensitive := True;
-            Volumes (V).Is_Pipe := True;
-            exit;
-         end if;
-      end loop;
-      for V in Volumes'Range loop
-         if not Volumes (V).Valid then
-            Volumes (V).Valid := True;
-            Volumes (V).Device := (others => Character'Val (0));
-            Volumes (V).Device (1 .. 3) := "NIL";
-            Volumes (V).Dev_Len := 3;
-            Volumes (V).Label := Volumes (V).Device;
-            Volumes (V).Lab_Len := 3;
-            Volumes (V).Case_Insensitive := True;
-            Volumes (V).Is_Nil := True;
-            exit;
-         end if;
-      end loop;
+      V := Alloc_Volume;
+      if V /= 0 then
+         Volumes (V).Valid := True;
+         Volumes (V).Device := (others => Character'Val (0));
+         Volumes (V).Device (1 .. 4) := "PIPE";
+         Volumes (V).Dev_Len := 4;
+         Volumes (V).Label := Volumes (V).Device;
+         Volumes (V).Lab_Len := 4;
+         Volumes (V).Case_Insensitive := True;
+         Volumes (V).Is_Pipe := True;
+      end if;
+      V := Alloc_Volume;
+      if V /= 0 then
+         Volumes (V).Valid := True;
+         Volumes (V).Device := (others => Character'Val (0));
+         Volumes (V).Device (1 .. 3) := "NIL";
+         Volumes (V).Dev_Len := 3;
+         Volumes (V).Label := Volumes (V).Device;
+         Volumes (V).Lab_Len := 3;
+         Volumes (V).Case_Insensitive := True;
+         Volumes (V).Is_Nil := True;
+      end if;
    end Seed_Virtual_Volumes;
 
    --  Op_Close (milestone 46a): PIPE: name -> writer EOF; any

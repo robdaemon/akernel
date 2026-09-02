@@ -407,6 +407,29 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   failure still falls back to blocking rendezvous (now OOM-only).
   1714 PASS / 0 FAIL, SMP4 and SMP1.
 
+- **M80d done** (this commit): userspace grow-on-demand tables.
+  New RTS helper Akernel_User.Tables (generic over element type,
+  chunk-append growth over Mem_Alloc, 64-page chunks mapped into
+  the new Table_Arena window 0x7000_0000..0x7FF0_0000 — the hole
+  M83 left below the stack; compile-time arena-fit guard; lazy
+  init since crates run no library elaboration; chunk-append
+  never realloc-copies so user-visible indices stay stable;
+  60-entry chunk directory = 15 MiB of table data, a documented
+  sanity bound with 17x headroom under the 255 MiB window).
+  Old array names survive as renames of Ref, so the 100+
+  Table (I).Field sites read unchanged; scans run 1 .. Last and
+  free-slot searches fall through to Append. fileserver:
+  File_Table, Volumes, Assigns, Forward_Caps (1024-entry
+  "bounded leak" comment retires), Pipes (32 x 16 KiB rings out
+  of BSS), Pendings — all growable; exhaustion = arena/PMM OOM,
+  answered loud per op. Fold-in: init's Push_* mount/name
+  helpers now check the reply STATUS WORD, not just IPC_Ok (the
+  m79 Net: silent no-mount class is dead — a fileserver
+  rejection prints REJECTED at boot). CORRECTION to the M83-era
+  notes: the helper arena is 255 MiB (0x7000_0000..0x7FF0_0000),
+  not 15 — the 60-chunk directory bound is policy, not geometry.
+  1714 PASS SMP4 / 1716 SMP1, 0 FAIL both.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide
