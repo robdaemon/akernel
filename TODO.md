@@ -3,3 +3,4 @@
 - The rts is riscv specific too.
 - /*  no reverse DNS on slirp */ - bad assumption, locking the RTS to qemu
 - ping does not accept hostnames
+- Unicode?
