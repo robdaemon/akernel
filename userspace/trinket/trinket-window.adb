@@ -14,7 +14,7 @@ package body Trinket.Window is
    --  Mapping VAs (fixed literals, never derived — the 37b
    --  followup burn). Clear of text 0x4600_0000, args
    --  0x4800_0000, the newlib sbrk arena 0x5200_0000 (2 MiB),
-   --  and stacks/IPC at 0x7000_0000+.
+   --  and IPC at 0x6FFF_0000 / main stack at 0x7FF0_0000+.
    Queue_VA : constant U64 := 16#5F00_0000#;
    Surf_VA  : constant U64 := 16#5F80_0000#;  --  8 MiB window
    Menu_VA  : constant U64 := 16#5F10_0000#;  --  m61 menu page

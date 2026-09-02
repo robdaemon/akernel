@@ -491,6 +491,20 @@ package body Akernel_User.Syscalls is
       return Status;
    end Set_Priority;
 
+   --  m73: the calling thread's IPC buffer VA.  Syscall 43
+   --  reports the per-thread VA; a zero answer (foreign threads
+   --  created before this ABI — and init, which never gets
+   --  Set_IPC_Buffer_VA) falls back to the legacy initial-thread
+   --  window IPC_Buffer_VA.
+   function Discovered_IPC_VA return U64 is
+      VA : U64 := Raw_Thread_IPC_VA;
+   begin
+      if VA = 0 then
+         VA := IPC_Buffer_VA;
+      end if;
+      return VA;
+   end Discovered_IPC_VA;
+
    procedure Thread_Create_Write_Params (Params : Thread_Create_Params) is
       use System.Storage_Elements;
 
@@ -508,7 +522,7 @@ package body Akernel_User.Syscalls is
 
       P : Param_Block
         with Volatile, Address => System'To_Address
-          (Integer_Address (IPC_Buffer_VA) + Integer_Address (8));
+          (Integer_Address (Discovered_IPC_VA) + Integer_Address (8));
    begin
       P :=
         (Stack_VA      => Params.Stack_VA,
@@ -537,21 +551,14 @@ package body Akernel_User.Syscalls is
       return Raw_Thread_Self;
    end Thread_Self;
 
-   --  m73: the calling thread's IPC buffer view.  Syscall 43
-   --  reports the per-thread VA; a zero answer (foreign threads
-   --  created before this ABI) falls back to the legacy initial-
-   --  thread window.
    function Message return IPC_Message_Access is
       function To_Access is new Ada.Unchecked_Conversion
         (System.Address, IPC_Message_Access);
-      VA : U64 := Raw_Thread_IPC_VA;
    begin
-      if VA = 0 then
-         VA := IPC_Buffer_VA;
-      end if;
       return To_Access
         (System.Storage_Elements.To_Address
-           (System.Storage_Elements.Integer_Address (VA)));
+           (System.Storage_Elements.Integer_Address
+              (Discovered_IPC_VA)));
    end Message;
 
    function Thread_Wait (Cap : U64) return U64 is
@@ -628,7 +635,7 @@ package body Akernel_User.Syscalls is
 
       Grants : Grant_Array
         with Volatile, Address => System'To_Address
-          (Integer_Address (IPC_Buffer_VA)
+          (Integer_Address (Discovered_IPC_VA)
            + Integer_Address (Grant_List_Offset));
    begin
       if Index >= Max_Grants then

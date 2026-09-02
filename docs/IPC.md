@@ -40,7 +40,9 @@ Each thread owns one IPC buffer page, created and mapped at thread spawn
 at a fixed user VA:
 
 ```text
-IPC_Buffer_VA = 0x6FFF0000   (just below user stack top 0x70000000)
+IPC_Buffer_VA = 0x6FFF0000   (was just below the user stack top before
+                             M83; the stack now lives at the top of the
+                             user window, 0x7FF00000..0x80000000)
 ```
 
 The frame is kernel-allocated, zeroed at spawn, mapped `User_RW`, and

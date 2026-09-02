@@ -6,6 +6,18 @@ with Kernel.Tasks;
 package Kernel.Processes is
    subtype U64 is Interfaces.Unsigned_64;
 
+   --  User main stack geometry (M83): the stack descends from the
+   --  top of the user VA window [0x4000_0000, 0x8000_0000).  M82g
+   --  overflowed the old 12-page stack descending from
+   --  0x7000_0000 (store fault at 0x6FFF3FF0 in the ZCX unwinder;
+   --  the IPC buffer page at 0x6FFF_0000 capped that layout at 15
+   --  pages).  0x7000_0000..0x7FF0_0000 stays free, reserved for
+   --  the M80d helper arena (docs/LIMIT_FIXES.md).  Stacks are
+   --  eager PMM frames: user page faults are fatal, there is no
+   --  demand paging or guard page.
+   User_Stack_Top   : constant U64 := 16#8000_0000#;
+   User_Stack_Pages : constant := 64;
+
    type Status is
      (Ok,
       Invalid_Program,

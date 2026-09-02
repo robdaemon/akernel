@@ -1,6 +1,7 @@
 with Arch.MMU;
 with Kernel.Memory;
 with Kernel.Physical_Memory;
+with Kernel.Processes;
 with System.Storage_Elements;
 
 package body Kernel.ELF is
@@ -306,8 +307,32 @@ package body Kernel.ELF is
                return;
             end if;
 
+            --  VA bounds (M83): PT_LOAD segments must land inside the
+            --  user window [0x4000_0000, 0x8000_0000) and clear of
+            --  the main stack at the top of it.  The loader had no
+            --  VA check at all — a crafted image could map over the
+            --  relocated stack (or the IPC buffer page).
+            if P_VAddr < 16#4000_0000#
+              or else P_VAddr >= Kernel.Processes.User_Stack_Top
+              or else P_Memsz
+                      > Kernel.Processes.User_Stack_Top - P_VAddr
+            then
+               Result := Bad_Image;
+               return;
+            end if;
+
             Segment_Start := Align_Down (P_VAddr, Arch.MMU.Page_Size);
             Segment_End := Align_Up (P_VAddr + P_Memsz, Arch.MMU.Page_Size);
+
+            if Segment_End
+               > Kernel.Processes.User_Stack_Top
+                 - U64 (Kernel.Processes.User_Stack_Pages)
+                   * Arch.MMU.Page_Size
+            then
+               Result := Bad_Image;
+               return;
+            end if;
+
             Page_VA := Segment_Start;
 
             while Page_VA < Segment_End loop

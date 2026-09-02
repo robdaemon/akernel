@@ -86,7 +86,6 @@ procedure Akernel is
    Init_Kernel_Stack_Frame : Interfaces.Unsigned_64 := 0;
    Init_IPC_Buffer_Frame   : Interfaces.Unsigned_64 := 0;
    User_Root_Table  : Interfaces.Unsigned_64 := 0;
-   User_Stack_Top   : constant Interfaces.Unsigned_64 := 16#7000_0000#;
    Init_Image_Base  : Interfaces.Unsigned_64 := 0;
    Init_Image_Size  : Interfaces.Unsigned_64 := 0;
    Init_Entry       : Interfaces.Unsigned_64 := 0;
@@ -636,14 +635,16 @@ begin
    then
       Arch.MMU.Map_Page
         (Root     => User_Root_Table,
-         Virtual  => User_Stack_Top - Arch.MMU.Page_Size,
+         Virtual  => Kernel.Processes.User_Stack_Top
+                     - Arch.MMU.Page_Size,
          Physical => User_Stack_Frame,
          Flags    => Arch.MMU.User_RW,
          Result   => MMU_Result);
-      --  Spawned processes get 4 stack pages; init deserves the
-      --  same (Start_Display's fs staging overflowed the single
-      --  page: store fault at stack_base - 8).
-      for I in 2 .. 4 loop
+      --  Init gets the same stack geometry as spawned processes
+      --  (shared User_Stack_Top / User_Stack_Pages constants;
+      --  Start_Display's fs staging overflowed the original
+      --  single page: store fault at stack_base - 8).
+      for I in 2 .. Kernel.Processes.User_Stack_Pages loop
          exit when MMU_Result /= Arch.MMU.Ok;
          declare
             Extra_Frame : Interfaces.Unsigned_64 := 0;
@@ -653,7 +654,7 @@ begin
             if PMM_Result = Kernel.Physical_Memory.Ok then
                Arch.MMU.Map_Page
                  (Root     => User_Root_Table,
-                  Virtual  => User_Stack_Top
+                  Virtual  => Kernel.Processes.User_Stack_Top
                               - Interfaces.Unsigned_64 (I)
                                 * Arch.MMU.Page_Size,
                   Physical => Extra_Frame,
@@ -933,7 +934,7 @@ begin
       end if;
       Arch.User_Mode.Enter_User_Mode
         (Entry_Point => Init_Entry,
-         Stack       => User_Stack_Top,
+         Stack       => Kernel.Processes.User_Stack_Top,
          User_Satp   => Arch.MMU.Satp_Value (User_Root_Table));
    else
       if Initrd_Result = Kernel.Initrd.Bad_Header then

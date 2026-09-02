@@ -53,10 +53,11 @@ procedure Fuzz is
      with Import, Convention => C, External_Name => "fuzz_last_a1",
           Volatile;
 
-   --  Static, not stack: the fuzz main frame is already near the
-   --  16KiB user stack — a 1KiB local array here silently
-   --  corrupted unrelated earlier checks (stack spills into the
-   --  heap mappings below).
+   --  Static, not stack: the fuzz main frame is already large —
+   --  back on the old 16 KiB user stack a 1 KiB local array here
+   --  silently corrupted unrelated earlier checks (stack spills
+   --  into the heap mappings below).  M83's 256 KiB stack has
+   --  headroom; the static discipline stays regardless.
    Pids : array
      (0 .. Akernel_User.Syscalls.Process_Table_Slots - 1)
      of U64 := (others => 0);
@@ -362,6 +363,29 @@ procedure Fuzz is
    Mem_Cap          : U64;
 
    Iterations : constant U64 := 4096;
+
+   --  M83 acceptance: the main stack is 256 KiB descending from
+   --  0x8000_0000.  ~150 KiB of live recursion (1 KiB frame x
+   --  depth 150) was fatal on the old 48 KiB stack at
+   --  0x7000_0000.  The frame is Volatile and the result feeds
+   --  the sum after the recursive call, so nothing is elided or
+   --  tail-call optimized away.
+   procedure Deep_Stack_Tests is
+      function Recurse (Depth : U64) return U64 is
+         Frame : array (1 .. 128) of U64 with Volatile;
+      begin
+         Frame := (others => Depth);
+         if Depth > 1 then
+            return Frame (1) + Frame (128) + Recurse (Depth - 1);
+         else
+            return Frame (1) + Frame (128);
+         end if;
+      end Recurse;
+
+      Total : constant U64 := Recurse (150);
+   begin
+      Check (Total /= 0, "m83 deep stack recursion (150 KiB) survives");
+   end Deep_Stack_Tests;
 begin
    Akernel_User.Console.Set_Endpoint (Console_EP);
    Put_Line ("fuzz online");
@@ -381,6 +405,8 @@ begin
    --  cpu_count introspection: at least the boot hart is online.
    Status := Raw_Ecall (Number => Sys_CPU_Count);
    Check (Status >= 1 and then Status <= 64, "cpu_count reports online harts");
+
+   Deep_Stack_Tests;
 
    --  ep_create returns fresh distinct endpoint cap handles.
    Status := Raw_Ecall (Number => Sys_EP_Create);
@@ -583,11 +609,13 @@ begin
       --  m82c/m82e: BD1 BeFS volume tests.  These live in their own
       --  procedure so their locals do NOT inflate this block's
       --  static frame — sibling declare-block locals accumulate
-      --  in the parent frame, and the 12-page user stack (hard
+      --  in the parent frame, and the old 12-page user stack (hard
       --  capped by the IPC buffer at 0x6FFF_0000) overflowed by
       --  ~0x50 bytes inside the ZCX unwinder with this section
-      --  inline.  See Stack_Pages history in
-      --  src/kernel/kernel-processes.adb.
+      --  inline.  M83 moved the stack to 0x8000_0000 with 64
+      --  pages, but the separate-procedure discipline stays cheap
+      --  insurance.  See User_Stack_Pages history in
+      --  src/kernel/kernel-processes.ads.
       procedure Live_Query_Tests;
       procedure Btree_Split_Tests;
       procedure Indirect_Stream_Tests;
@@ -1319,8 +1347,9 @@ begin
       --  Live queries (m82g): subscribe with a notification
       --  cap, mutate, get the doorbell plus path events.
       --  Separate procedure so its locals get their own
-      --  frame — folded into Bfs_Tests they tipped the
-      --  48 KiB process stack over (trap at 0x6FFF3FF0).
+      --  frame — folded into Bfs_Tests they tipped the old
+      --  48 KiB process stack over (trap at 0x6FFF3FF0,
+      --  pre-M83 layout).
       procedure Live_Query_Tests is
          use Akernel_User.Syscalls;
          Ntf  : U64;
@@ -3336,11 +3365,12 @@ begin
       Check (Status = 0, "thread_regs blocked echo dumped");
       if Status = 0 then
          Dumped := True;
-         --  x2 = sp (word 1) in the 8-page user stack window;
-         --  sepc (word 31) in the text range; state (word 33)
-         --  blocked-receive; pid (word 34) matches the slot scan.
-         if APage (1) < 16#6FFF_8000#
-           or else APage (1) >= 16#7000_0000#
+         --  x2 = sp (word 1) in the 64-page user stack window
+         --  [0x7FF0_0000, 0x8000_0000); sepc (word 31) in the
+         --  text range; state (word 33) blocked-receive; pid
+         --  (word 34) matches the slot scan.
+         if APage (1) < 16#7FF0_0000#
+           or else APage (1) >= 16#8000_0000#
            or else APage (31) < 16#4600_0000#
            or else APage (31) >= 16#4800_0000#
            or else APage (33) /= 3

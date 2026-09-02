@@ -135,7 +135,9 @@ package body Scripting.Interp is
       --  nesting level's on-stack frame must stay small — five
       --  nested scripts times ~4 KiB of line buffers (plus the
       --  locals table) blew the 48 KiB process stack before the
-      --  depth cap fired (store page fault at 0x6FFF_3FF8).
+      --  depth cap fired (store page fault at 0x6FFF_3FF8; that
+      --  was the pre-M83 stack at 0x7000_0000 — M83's 256 KiB
+      --  stack has headroom, but heap buffers stay regardless).
       --  Allocated after the slurp, freed on the way out;
       --  references use implicit dereference throughout.
       Line  : Str_Access;  --  raw scan line (256)

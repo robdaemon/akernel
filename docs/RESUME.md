@@ -352,10 +352,26 @@ growth, attribute writes).
   min now (the split test made the suite slower) — capture to a
   log, don't treat long runs as wedges. DEFERRED: **M82i** long
   request paths (255) via the client buffer (wire caps qualified
-  paths at 32 chars; M82g did reply paths only); **M83** IPC
-  buffer relocation + main-stack growth (48 KiB stack discipline
-  is the recurring cost center — big engine records are package
-  state by necessity now).
+  paths at 32 chars; M82g did reply paths only).
+
+- **M83 done** (this commit): IPC/stack geometry. The user main stack
+  moves from 0x7000_0000 to the top of the user window
+  (User_Stack_Top = 0x8000_0000) and grows 12 -> 64 pages (48 ->
+  256 KiB) — the IPC buffer page at 0x6FFF_0000 capped the old
+  layout at 15 pages and M82g actually overflowed it
+  (0x6FFF3FF0). User_Stack_Top/User_Stack_Pages live in
+  kernel-processes.ads now; init (previously 4 pages with a
+  duplicated constant in akernel.adb) shares them. The IPC buffer
+  page is NOT relocated — the stack move alone removes the
+  ceiling — but the last two fixed-constant userspace references
+  (Thread_Create_Write_Params, Set_Grant) now discover the VA
+  through syscall 43 like everything else. The ELF loader rejects
+  segments outside [0x4000_0000, 0x8000_0000) or overlapping the
+  stack (it had no VA bounds check at all).
+  0x7000_0000..0x7FF0_0000 stays free, reserved for M80d's helper
+  arena. fuzz: blocked-thread sp range follows the new layout;
+  new deep-recursion check (~150 KiB — fatal before this
+  change). 1714 PASS / 0 FAIL; test-replay green.
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working

@@ -138,20 +138,8 @@ package body Kernel.Processes is
    Thread_Slot_Generation : array (Thread_Index) of U64 :=
      (others => 0);
 
-   Stack_Top : constant U64 := 16#7000_0000#;
-
-   --  User stack pages per spawned process (fuzz overflowed the
-   --  original single page with on-stack buffers; 16 KiB then
-   --  proved tight once test blocks accumulated ~10 KiB of
-   --  sibling declare-block locals plus deep RPC call chains —
-   --  38b bumped to 8 pages; the VA below stays clear of the IPC
-   --  buffer at 0x6FFF_0000). Milestone 53a bumped to 16 pages:
-   --  the ZCX unwinder's _Unwind_FrameState + per-frame walk adds
-   --  ~8 KiB on the first raise (fuzz overflowed 8 pages by
-   --  0x50 bytes inside uw_frame_state_for). 12 pages (48 KiB),
-   --  NOT 16: the stack descends from 0x7000_0000 and the IPC
-   --  buffer page owns 0x6FFF_0000, so 16 pages would collide.
-   Stack_Pages : constant := 12;
+   --  Spawn loop / entry sp use the spec-level User_Stack_Top /
+   --  User_Stack_Pages constants (shared with init in akernel.adb).
 
    --  ELF image handed to the loader: a byte source (physmap range
    --  or memory-object frames) + size.
@@ -406,7 +394,7 @@ package body Kernel.Processes is
       --  trampolines for nested FD procedures live on the stack.
       Arch.MMU.Map_Page
         (Root     => Root,
-         Virtual  => Stack_Top - Arch.MMU.Page_Size,
+         Virtual  => User_Stack_Top - Arch.MMU.Page_Size,
          Physical => Stack_Frame,
          Flags    => Arch.MMU.User_RWX,
          Result   => MMU_Result);
@@ -418,7 +406,7 @@ package body Kernel.Processes is
          return;
       end if;
 
-      for I in 2 .. Stack_Pages loop
+      for I in 2 .. User_Stack_Pages loop
          Kernel.Physical_Memory.Allocate_Frame (PMM_Result, Stack_Frame);
          if PMM_Result /= Kernel.Physical_Memory.Ok then
             Result := Load_Failed;
@@ -428,7 +416,7 @@ package body Kernel.Processes is
 
          Arch.MMU.Map_Page
            (Root     => Root,
-            Virtual  => Stack_Top - U64 (I) * Arch.MMU.Page_Size,
+            Virtual  => User_Stack_Top - U64 (I) * Arch.MMU.Page_Size,
             Physical => Stack_Frame,
             Flags    => Arch.MMU.User_RWX,
             Result   => MMU_Result);
@@ -562,7 +550,7 @@ package body Kernel.Processes is
       Kernel.Tasks.Initialize_Context
         (TCB       => Threads (Thread_Slot),
          PC        => Start_PC,
-         Stack     => Stack_Top,
+         Stack     => User_Stack_Top,
          User_Satp => Arch.MMU.Satp_Value (Root));
 
       Grant_List_Caps (Parent, Processes (Slot), Grant_Count, Result);
