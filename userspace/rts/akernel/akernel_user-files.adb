@@ -419,6 +419,79 @@ package body Akernel_User.Files is
       return Status_Ok;
    end Read;
 
+   --  One-shot query (m82f): the predicate rides in the shared
+   --  client buffer (NUL-terminated), the match index in word 4.
+   function Query
+     (Name      : String;
+      Predicate : String;
+      Index     : U64;
+      Path      : out String;
+      Path_Len  : out Natural;
+      Size      : out U64;
+      Is_Dir    : out Boolean) return U64
+   is
+      Status : U64;
+      Q      : String (1 .. 32);
+      Len    : Natural;
+      Dst    : Byte_Array (0 .. Buf_Bytes - 1)
+        with Address => To_Address (Integer_Address (Buffer_VA));
+   begin
+      Path_Len := 0;
+      Size := 0;
+      Is_Dir := False;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0
+        or else Len = 0
+        or else Predicate'Length = 0
+        or else Predicate'Length > 255
+      then
+         return Status_Bad_Args;
+      end if;
+
+      if not Ensure_Buffer then
+         return Status_Not_Found;
+      end if;
+
+      for I in 1 .. Predicate'Length loop
+         Dst (U64 (I - 1)) :=
+           Interfaces.Unsigned_8 (Character'Pos (Predicate (I)));
+      end loop;
+      Dst (U64 (Predicate'Length)) := 0;
+
+      Syscalls.Message.Label := Op_Query;
+      Syscalls.Message.Words := (others => 0);
+      Pack_Name (Q (1 .. Len), 0, 3);
+      Syscalls.Message.Words (4) := Index;
+      Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      Status := Syscalls.Message.Words (0);
+      if Status /= Status_Ok then
+         return Status;
+      end if;
+
+      Size := Syscalls.Message.Words (1);
+      Is_Dir := Syscalls.Message.Words (2) /= 0;
+      declare
+         P  : Natural := 0;
+         Ch : Character;
+      begin
+         while P < Path'Length and then P < 24 loop
+            Ch := Character'Val (Natural
+              ((Syscalls.Message.Words (3 + P / 8)
+                  / 2 ** ((P mod 8) * 8)) and 16#FF#));
+            exit when Ch = Character'Val (0);
+            P := P + 1;
+            Path (P) := Ch;
+         end loop;
+         Path_Len := P;
+      end;
+      return Status_Ok;
+   end Query;
+
    function Write
      (Name           : String;
       Offset         : U64;

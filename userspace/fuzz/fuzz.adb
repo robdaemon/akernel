@@ -991,6 +991,105 @@ begin
             end;
          end;
 
+         --  One-shot queries (m82f): stateless Op_Query over the
+         --  name index leaf chain with per-inode predicate eval.
+         declare
+            QP   : String (1 .. 24);
+            QL   : Natural;
+            QSz  : U64;
+            QDir : Boolean;
+
+            procedure Q_Check (Pred : String; Idx : U64;
+                               Want_Path : String; Want_Size : U64;
+                               Msg : String) is
+            begin
+               Status := Akernel_User.Files.Query
+                 ("BD1:", Pred, Idx, QP, QL, QSz, QDir);
+               Check (Status = Akernel_User.Files.Status_Ok
+                      and then QL = Want_Path'Length
+                      and then QP (1 .. QL) = Want_Path
+                      and then (QDir or else QSz = Want_Size),
+                      Msg);
+            end Q_Check;
+
+            procedure Q_None (Pred : String; Idx : U64;
+                              Msg : String) is
+            begin
+               Status := Akernel_User.Files.Query
+                 ("BD1:", Pred, Idx, QP, QL, QSz, QDir);
+               Check (Status = Akernel_User.Files.Status_Not_Found,
+                      Msg);
+            end Q_None;
+         begin
+            --  Exact name.
+            Q_Check ("name==""README.TXT""", 0, "README.TXT", 36,
+                     "bfs query exact name");
+            Q_None ("name==""README.TXT""", 1,
+                    "bfs query exact name single match");
+
+            --  Glob across directories: the name index leaf chain
+            --  is sorted, so matches come EMPTY.TXT, HELLO.TXT
+            --  (in SUBDIR), README.TXT.
+            Q_Check ("name==""*.TXT""", 0, "EMPTY.TXT", 0,
+                     "bfs query glob first");
+            Q_Check ("name==""*.TXT""", 1, "SUBDIR/HELLO.TXT", 24,
+                     "bfs query glob crosses dirs");
+            Q_Check ("name==""*.TXT""", 2, "README.TXT", 36,
+                     "bfs query glob third");
+            Q_None ("name==""*.TXT""", 3,
+                    "bfs query glob exhausted");
+
+            --  Conjunction with a numeric size term.
+            Q_Check ("size>0 && name==""*.TXT""", 0,
+                     "SUBDIR/HELLO.TXT", 24,
+                     "bfs query size+glob first");
+            Q_Check ("size>0 && name==""*.TXT""", 1, "README.TXT", 36,
+                     "bfs query size+glob second");
+            Q_None ("size>0 && name==""*.TXT""", 2,
+                    "bfs query size+glob exhausted");
+
+            --  Size range / negation / parens.
+            Q_Check ("size>=2560", 0, "FRAGMENT.BIN", 2560,
+                     "bfs query size range");
+            Q_Check ("!(name==""*.TXT"")", 0, "FRAGMENT.BIN", 2560,
+                     "bfs query negation");
+            Q_Check ("name==""EMPTY.TXT"" || name==""SUBDIR""", 0,
+                     "EMPTY.TXT", 0, "bfs query or");
+
+            --  Arbitrary attribute terms (m82d small_data).
+            Q_Check ("BEOS:TYPE==""text/plain""", 0, "README.TXT", 36,
+                     "bfs query attr term");
+            Q_Check ("META:comment==""fixture*""", 0, "README.TXT", 36,
+                     "bfs query attr glob");
+
+            --  last_modified in seconds since epoch (fixture
+            --  times are the 2025 epoch): all five indexed
+            --  entries match, then exhaustion.
+            Q_Check ("last_modified>0", 0, "EMPTY.TXT", 0,
+                     "bfs query mtime first");
+            Q_None ("last_modified>0", 5,
+                    "bfs query mtime exhausted");
+
+            --  No match, parse error, non-FS volume.
+            Q_None ("name==""NOSUCH*""", 0,
+                    "bfs query no match");
+            Status := Akernel_User.Files.Query
+              ("BD1:", "==", 0, QP, QL, QSz, QDir);
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "bfs query parse error rejected");
+            Status := Akernel_User.Files.Query
+              ("BD0:", "name==""*""", 0, QP, QL, QSz, QDir);
+            Check (Status = Akernel_User.Files.Status_Bad_Args,
+                   "fat query rejected");
+
+            --  The C: command end-to-end (exit codes only; the
+            --  listing itself is covered by the checks above).
+            Run_Command ("Sys:C/Query", "BD1 name==""*.TXT""", 0,
+                         "query command lists matches");
+            Run_Command ("Sys:C/Query", "BD1 ==", 10,
+                         "query command rejects bad predicate");
+         end;
+
          Status := Akernel_User.Files.Sync;
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs sync ok");

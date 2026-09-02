@@ -984,6 +984,67 @@ procedure Fileserver is
       end if;
    end Handle_Attr_Read;
 
+   --  Op_Query (milestone 82f): words 0..3 = volume-qualified
+   --  path (only the volume prefix matters — queries are
+   --  volume-wide), word 4 = match index, cap slot 0 = the
+   --  client's buffer holding the NUL-terminated predicate,
+   --  forwarded like Op_Attr_Read. The reply rides through
+   --  unchanged: w0 = status, w1 = size, w2 = is_dir, words 3..5
+   --  = volume-relative path. Volumes without query support
+   --  answer Bad_Args.
+   procedure Handle_Query is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Name   : String (1 .. 32);
+      Len    : Natural;
+      Pos    : Natural;
+      V      : Natural;
+      Status : U64 := Files.Status_Ok;
+      Done   : Boolean := False;  --  forwarded: reply already sent
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+   begin
+      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+         Status := Files.Status_Bad_Args;
+      else
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+         elsif not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+         else
+            --  Pack_Path touches words 0..3 only; the match
+            --  index in word 4 rides through to the fs driver.
+            Pack_Path (Exp, Pos, E_Len, 0, 3);
+            Syscalls.Message.Label := Files.Op_Query;
+            Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
+               --  Relay the fs driver's reply words untouched.
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Syscalls.Debug_Put_Line
+                    ("fileserver query reply failed");
+                  Syscalls.Process_Exit;
+               end if;
+               Done := True;
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end if;
+
+      --  Every Op_Query transfers the client's buffer cap into
+      --  this table; drop it or leak a slot per op.
+      if Buf /= 0
+        and then Syscalls.Cap_Delete (Buf) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: query buffer cap delete failed");
+      end if;
+      if not Done then
+         Reply2 (Status, 0);
+      end if;
+   end Handle_Query;
+
    procedure Handle_Stat_Or_Open is
       Name : String (1 .. 48);
       Len  : Natural;
@@ -2324,6 +2385,12 @@ begin
             Reply2 (Files.Status_Not_Ready, 0);
          else
             Handle_Attr_Read;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Query then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Query;
          end if;
       else
          Reply2 (Files.Status_Bad_Args, 0);

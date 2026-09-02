@@ -101,6 +101,7 @@ package Akernel_User.Files is
    Op_Close    : constant U64 := 18;
    Op_Attr_List : constant U64 := 19;
    Op_Attr_Read : constant U64 := 20;
+   Op_Query     : constant U64 := 21;
    --    Op_Attr_List = 19  words 0..3 = path (32 chars, "" =
    --                      volume root), word 4 = attribute index
    --                      -> (status, attr type code, attr data
@@ -120,9 +121,21 @@ package Akernel_User.Files is
    --                      code). Whole-attribute read: count =
    --                      min(attr size, buffer bytes); truncation
    --                      is detectable as count < size. Only
-   --                      small_data attributes today (the BeFS
-   --                      server is read-only and the fixture's
-   --                      attrs all live in the inode).
+   --                      small_data attributes today (the
+   --                      fixture's attrs all live in the inode).
+   --    Op_Query = 21  words 0..3 = path (32 chars; the volume
+   --                      root, queries are volume-wide), word 4
+   --                      = match index, cap slot 0 = buffer with
+   --                      the NUL-terminated predicate (m82f
+   --                      grammar: term with == != < <= > >= over
+   --                      name/size/last_modified or any small_data
+   --                      attribute, && || ! and parens; */? globs
+   --                      for strings) -> (status, size, is_dir,
+   --                      volume-relative path[24] in words 3..5).
+   --                      Stateless like Op_ReadDir: index N
+   --                      returns the N-th match; Status_Not_Found
+   --                      ends the enumeration. FS-driver volumes
+   --                      only; others answer Bad_Args.
    --    Op_Close = 18   words 0..5 = name[48] -> (status, 0). On
    --                      a PIPE: name: writer EOF — no more
    --                      data is coming; reads keep draining
@@ -281,6 +294,24 @@ package Akernel_User.Files is
       Count     : out U64;
       Attr_Size : out U64;
       Attr_Type : out U64) return U64;
+
+   --  One-shot query (milestone 82f): Index-th entry on the
+   --  volume of Name (only the volume prefix is used) matching
+   --  Predicate — term with == != < <= > >= over "name" (glob
+   --  */?), "size", "last_modified" (seconds since epoch) or any
+   --  small_data attribute, combined with && || ! and parens.
+   --  Path returns the match's volume-relative path (caller
+   --  buffer >= 24), Size/Is_Dir describe it. Status_Not_Found =
+   --  no (more) matches; Status_Bad_Args = parse error or the
+   --  volume does not support queries.
+   function Query
+     (Name      : String;
+      Predicate : String;
+      Index     : U64;
+      Path      : out String;
+      Path_Len  : out Natural;
+      Size      : out U64;
+      Is_Dir    : out Boolean) return U64;
 
    --  Write Length bytes from the caller's buffer (Buffer_Address
    --  must be an 8-page memory object) at Offset into Name; Count

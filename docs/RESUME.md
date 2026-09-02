@@ -100,7 +100,7 @@ Plan: M82a C++ toolchain gate (built, proven, then dropped with the
 vendoring route); M82b host-side mkbefs fixture + second GPT
 partition; M82c pure-Ada BFS server (read-only); M82d attribute
 ops on the wire (19/20, done); M82e R/W + journal (done); M82f
-indices/query discussion.
+indices/query (done — one-shot queries).
 
 - **M82a reverted**: the xPack g++ gate was built and proven
   (cxx_test: static ctors, vtables, new/delete in-guest) but the
@@ -212,6 +212,41 @@ indices/query discussion.
   rebuild disk.img (phony deps), so each boot starts from a fresh
   fixture — fuzz idempotency is belt-and-braces. 1614 PASS /
   0 FAIL, replay test green.
+
+- **M82f done** (this commit): one-shot BeFS queries, op 21
+  (Op_Query). Wire: path words 0..3 (volume root — queries are
+  volume-wide), match index in w4, NUL-terminated predicate in
+  the buffer cap -> (status, size, is_dir, volume-relative
+  path[24] in words 3..5); stateless like Op_ReadDir (index-th
+  match, Not_Found ends). fileserver forwards verbatim for Is_FS
+  volumes (buffer-cap forwarding + delete, attr-read shape);
+  fat32's default branch answers Bad_Args. Bfs_Engine.Query:
+  recursive-descent parser (term == != < <= > >= over quoted
+  strings — \" \\ escapes — or decimal integers; && || ! and
+  parens; AST = 24-node package array) -> enumeration rides the
+  NAME INDEX leaf chain (complete index of every named entry,
+  m82e keeps it synced) -> per-inode eval: name = */? glob on
+  the index key, size = int64, last_modified = int64 SECONDS
+  (mtime >> 16 — Haiku's shifted-index comparison special case
+  does not apply to us), any other identifier reads the inode's
+  small_data attribute (string preds glob the data bytes <= 64,
+  numeric preds compare 4/8-byte LE data) -> result path
+  materialized by walking the parent chain (inode+44) collecting
+  name attrs; > 24 chars fails loud (impossible at fixture
+  depth). KEY BUG: the AST nodes are package state and Pred_New
+  only set .Kind — Attr_L/Str_L accumulated across calls so
+  every query after the first mis-parsed; Pred_New now resets
+  the record to defaults. Files.Query client API (predicate via
+  the shared client buffer). New C command Sys:C/Query (`query
+  BD1 name=="*.TXT" && size>0` — predicate = args 2..N joined,
+  the shell passes '"' through). fuzz grew 16 query checks
+  (exact name, cross-dir glob order, && / || / ! / parens, size
+  ranges, BEOS:TYPE/META:comment attr terms, mtime, exhaustion,
+  parse-error + fat rejection, command exit codes). 1650 PASS /
+  0 FAIL; test-replay still green. DEFERRED (M82g candidates):
+  live queries + notification plumbing, size/last_modified index
+  sync (int64 numeric-key leaf variant), per-term index range
+  acceleration, result paths > 24 chars.
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working

@@ -43,9 +43,10 @@ procedure Bfs is
    Op_Sync        : constant U64 := 12;
    Op_ReadDir     : constant U64 := 13;
    Op_Rename      : constant U64 := 16;
-   Op_Volume_Info : constant U64 := 17;
-   Op_Attr_List   : constant U64 := 19;
-   Op_Attr_Read   : constant U64 := 20;
+    Op_Volume_Info : constant U64 := 17;
+    Op_Attr_List   : constant U64 := 19;
+    Op_Attr_Read   : constant U64 := 20;
+    Op_Query       : constant U64 := 21;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -491,6 +492,93 @@ procedure Bfs is
        Reply2 (Status, 0);
     end Handle_Rename;
 
+    --  Op_Query (m82f): words 0..3 = path (the volume root ""),
+    --  word 4 = match index, cap slot 0 = buffer holding the NUL-
+    --  terminated predicate. Reply: w0 = status, w1 = size, w2 =
+    --  is_dir, w3..5 = volume-relative path (24 chars).
+    procedure Handle_Query is
+       Idx    : constant U64 := Syscalls.Message.Words (4);
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Status : U64 := Status_Ok;
+       Mapped : Boolean := False;
+       Win    : array (0 .. 255) of Interfaces.Unsigned_8
+         with Address => To_Address (Integer_Address (Buf_Win_VA));
+       Path     : String (1 .. 24) := (others => Character'Val (0));
+       Path_Len : Natural;
+       Size     : U64;
+       Is_Dir   : Boolean;
+    begin
+       declare
+          Vol_Path : constant String := Path_Of (0);
+          Pred     : String (1 .. 255);
+          Pred_Len : Natural := 0;
+       begin
+          if Vol_Path'Length /= 0 or else Buf = 0 then
+             Status := Status_Bad_Args;  --  queries are volume-wide
+          elsif Syscalls.Mem_Map
+            (Address_Space => Syscalls.Address_Space_Cap,
+             Cap           => Buf,
+             VA            => Buf_Win_VA,
+             Offset        => 0,
+             Length        => Buf_Bytes,
+             Flags         => 3) /= 0
+          then
+             Status := Status_Not_Found;
+          else
+             Mapped := True;
+             for I in 0 .. 254 loop
+                exit when Win (I) = Interfaces.Unsigned_8 (0);
+                Pred_Len := Pred_Len + 1;
+                Pred (Pred_Len) := Character'Val (Natural (Win (I)));
+             end loop;
+             if Pred_Len = 0 then
+                Status := Status_Bad_Args;
+             else
+                Status := Bfs_Engine.Query
+                  (Pred (1 .. Pred_Len), Idx, Path, Path_Len,
+                   Size, Is_Dir);
+             end if;
+          end if;
+       end;
+
+       if Buf /= 0 then
+          if Mapped
+            and then Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line
+               ("bfs: query buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line
+               ("bfs: query buffer cap delete failed");
+          end if;
+       end if;
+
+       if Status /= Status_Ok then
+          Reply2 (Status, 0);
+          return;
+       end if;
+       Syscalls.Message.Words (0) := Status_Ok;
+       Syscalls.Message.Words (1) := Size;
+       Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+       for W in 3 .. 5 loop
+          Syscalls.Message.Words (W) := 0;
+       end loop;
+       for P in 1 .. Path_Len loop
+          Syscalls.Message.Words (3 + (P - 1) / 8) :=
+            Syscalls.Message.Words (3 + (P - 1) / 8)
+              or Shl (U64 (Character'Pos (Path (P))),
+                      ((P - 1) mod 8) * 8);
+       end loop;
+       Syscalls.Message.Caps := (others => 0);
+       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+          Fail ("bfs query reply failed");
+       end if;
+    end Handle_Query;
+
     procedure Handle_Volume_Info is
       Total : U64;
       Free  : U64;
@@ -583,6 +671,8 @@ begin
          Handle_Path_Op;
       elsif Syscalls.Message.Label = Op_Rename then
          Handle_Rename;
+      elsif Syscalls.Message.Label = Op_Query then
+         Handle_Query;
       else
          Reply2 (Status_Bad_Args, 0);
       end if;

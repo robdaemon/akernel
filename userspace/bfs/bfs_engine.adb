@@ -677,17 +677,18 @@ package body Bfs_Engine is
 
    type Run_Array is array (0 .. 11) of Block_Run;
 
-   type Inode_Info is record
-      Block       : U64;   --  inode number
-      Mode        : U32;
-      Size        : U64;   --  data stream size in bytes
-      Direct      : Run_Array;
-      Max_Direct  : U64;
-      Indirect    : Block_Run;
-      Max_Indir   : U64;
-      Double_Ind  : Block_Run;
-      Max_Double  : U64;
-   end record;
+    type Inode_Info is record
+       Block       : U64;   --  inode number
+       Mode        : U32;
+       Mtime       : U64;   --  last_modified (secs << 16 format)
+       Size        : U64;   --  data stream size in bytes
+       Direct      : Run_Array;
+       Max_Direct  : U64;
+       Indirect    : Block_Run;
+       Max_Indir   : U64;
+       Double_Ind  : Block_Run;
+       Max_Double  : U64;
+    end record;
 
    function Read_Inode (Block : U64; Info : out Inode_Info)
                         return Boolean
@@ -701,8 +702,9 @@ package body Bfs_Engine is
          Put_Block (Slot);
          return False;
       end if;
-      Info.Block := Block;
-      Info.Mode := LE32 (Slot, 20);
+       Info.Block := Block;
+       Info.Mode := LE32 (Slot, 20);
+       Info.Mtime := LE64 (Slot, 36);
       for I in Info.Direct'Range loop
          Info.Direct (I) := Run_At (Slot, 72 + U64 (I) * 8);
       end loop;
@@ -712,9 +714,25 @@ package body Bfs_Engine is
       Info.Double_Ind := Run_At (Slot, 192);
       Info.Max_Double := LE64 (Slot, 200);
       Info.Size       := LE64 (Slot, 208);
-      Put_Block (Slot);
-      return True;
-   end Read_Inode;
+       Put_Block (Slot);
+       return True;
+    end Read_Inode;
+
+    --  small_data region of the inode: runs from offset 232 to the
+    --  end of the inode block. Entry layout (tools/mkbefs.py,
+    --  Haiku Inode::AddSmallData): le32 type, le16 name_size (no
+    --  NUL), le16 data_size, name bytes, 3 pad bytes (NUL + 2),
+    --  data bytes, 1 pad byte. A zeroed header (name_size = 0)
+    --  ends the list.
+    Small_Data_Off : constant U64 := 232;
+
+    --  True when the small_data entry at Pos is the internal
+    --  name pseudo-attribute (every named inode carries it first:
+    --  type FILE_NAME_TYPE 'CSTR', name_size = 1, name byte
+    --  0x13 = FILE_NAME_NAME, data = the file name).
+    function Is_Name_Attr (Slot : Natural; Pos : U64; NLen : U64)
+                           return Boolean is
+      (NLen = 1 and then Cache_Data (Slot, Pos + 8) = File_Name_Name);
 
    ------------------------------------------------------------------
    --  Data stream read (file contents AND btree streams)
@@ -2393,29 +2411,584 @@ package body Bfs_Engine is
        return Status_Ok;
     end Rename;
 
-   ------------------------------------------------------------------
-   --  Attributes (small_data region of the inode, m82d)
-   ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    --  One-shot queries (m82f)
+    --
+    --  Predicate grammar (recursive descent; Haiku QueryParser
+    --  subset):
+    --    expr  := or_expr
+    --    or    := and_expr ('||' and_expr)*
+    --    and   := unary ('&&' unary)*
+    --    unary := '!' unary | '(' expr ')' | term
+    --    term  := IDENT (=='|'!='|'<'|'<='|'>'|'>=') VALUE
+    --  IDENT = [A-Za-z0-9_:.]+, VALUE = "quoted string" (escapes
+    --  \" and \\) or unsigned decimal integer. Built-in terms:
+    --  "name" (glob match on the entry name), "size" (int64 vs
+    --  file size), "last_modified" (int64 SECONDS since epoch,
+    --  compared against mtime >> 16 — Haiku's shifted-index
+    --  special case does not apply to us). Any other IDENT reads
+    --  the inode's small_data attribute of that name: string
+    --  predicates glob-match the data bytes, numeric predicates
+    --  compare 4/8-byte LE data as an integer.
+    --
+    --  Enumeration is index-driven: the NAME index contains every
+    --  named entry on the volume, so its leaf chain is the match
+    --  stream; the full predicate filters per inode. Result paths
+    --  are materialized by walking the parent chain (inode+44)
+    --  collecting small_data name attributes up to the root.
+    --  Stateless: each call re-evaluates and returns the Index-th
+    --  match.
+    ------------------------------------------------------------------
 
-   --  Entry layout (tools/mkbefs.py, Haiku Inode::AddSmallData):
-   --  le32 type, le16 name_size (no NUL), le16 data_size, name
-   --  bytes, 3 pad bytes (NUL + 2), data bytes, 1 pad byte. A
-   --  zeroed header (name_size = 0) ends the list; the region
-   --  runs from offset 232 to the end of the inode block.
-   Small_Data_Off : constant U64 := 232;
+    Pred_Max : constant := 255;   --  predicate length cap
+    Pred_Buf : String (1 .. Pred_Max);
+    Pred_Len : Natural := 0;
+    Pred_Pos : Natural := 1;
+    Pred_Ok  : Boolean := False;
 
-    --  Every file inode carries a NAME pseudo-attribute first
-    --  (type FILE_NAME_TYPE 'CSTR', name_size = 1, name byte
-    --  0x13 = FILE_NAME_NAME, data = the file name) so the name
-    --  index can back-refer. Like Haiku's attribute iterator and
-    --  tools/befs_dump.py, it is NOT a user-visible attribute:
-    --  both walks below skip it.
+    type Cmp_Op is (C_Eq, C_Ne, C_Lt, C_Le, C_Gt, C_Ge);
+    type Node_Kind is (N_Term, N_And, N_Or, N_Not);
 
-   --  True when the small_data entry at Pos is the internal
-   --  name pseudo-attribute.
-   function Is_Name_Attr (Slot : Natural; Pos : U64; NLen : U64)
-                          return Boolean is
-     (NLen = 1 and then Cache_Data (Slot, Pos + 8) = File_Name_Name);
+    Pred_Node_Max : constant := 24;
+    type Pred_Node is record
+       Kind   : Node_Kind := N_Term;
+       Left   : Natural := 0;   --  1-based index, 0 = none
+       Right  : Natural := 0;
+       Attr   : String (1 .. 24) := (others => ' ');
+       Attr_L : Natural := 0;
+       Cmp    : Cmp_Op := C_Eq;
+       Is_Num : Boolean := False;
+       Num    : U64 := 0;
+       Str    : String (1 .. 48) := (others => ' ');
+       Str_L  : Natural := 0;
+    end record;
+    Pred_Nodes : array (1 .. Pred_Node_Max) of Pred_Node;
+    Pred_Count : Natural := 0;
+
+    procedure Pred_Skip_Ws is
+    begin
+       while Pred_Pos <= Pred_Len
+         and then (Pred_Buf (Pred_Pos) = ' '
+                   or else Pred_Buf (Pred_Pos) = Character'Val (9))
+       loop
+          Pred_Pos := Pred_Pos + 1;
+       end loop;
+    end Pred_Skip_Ws;
+
+    --  Allocate an AST node; 0 on overflow. The record is reset
+    --  to defaults: nodes are package state reused across calls.
+    function Pred_New (Kind : Node_Kind) return Natural is
+    begin
+       if Pred_Count = Pred_Node_Max then
+          Pred_Ok := False;
+          return 0;
+       end if;
+       Pred_Count := Pred_Count + 1;
+       Pred_Nodes (Pred_Count) := (Kind => Kind, others => <>);
+       return Pred_Count;
+    end Pred_New;
+
+    function Parse_Or return Natural;
+
+    function Parse_Term return Natural is
+       N    : Natural;
+       Ch   : Character;
+       Dig  : U64;
+    begin
+       Pred_Skip_Ws;
+       N := Pred_New (N_Term);
+       if N = 0 then
+          return 0;
+       end if;
+       --  IDENT
+       while Pred_Pos <= Pred_Len loop
+          Ch := Pred_Buf (Pred_Pos);
+          exit when not (Ch in 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9'
+                         | '_' | ':' | '.');
+          exit when Pred_Nodes (N).Attr_L = 24;
+          Pred_Nodes (N).Attr_L := Pred_Nodes (N).Attr_L + 1;
+          Pred_Nodes (N).Attr (Pred_Nodes (N).Attr_L) := Ch;
+          Pred_Pos := Pred_Pos + 1;
+       end loop;
+       if Pred_Nodes (N).Attr_L = 0 then
+          Pred_Ok := False;
+          return 0;
+       end if;
+       --  operator
+       Pred_Skip_Ws;
+       if Pred_Pos > Pred_Len then
+          Pred_Ok := False;
+          return 0;
+       end if;
+       Ch := Pred_Buf (Pred_Pos);
+       if Ch = '=' then
+          Pred_Pos := Pred_Pos + 1;
+          if Pred_Pos <= Pred_Len and then Pred_Buf (Pred_Pos) = '='
+          then
+             Pred_Pos := Pred_Pos + 1;
+             Pred_Nodes (N).Cmp := C_Eq;
+          else
+             Pred_Ok := False;
+             return 0;
+          end if;
+       elsif Ch = '!' then
+          Pred_Pos := Pred_Pos + 1;
+          if Pred_Pos <= Pred_Len and then Pred_Buf (Pred_Pos) = '='
+          then
+             Pred_Pos := Pred_Pos + 1;
+             Pred_Nodes (N).Cmp := C_Ne;
+          else
+             Pred_Ok := False;
+             return 0;
+          end if;
+       elsif Ch = '<' or else Ch = '>' then
+          Pred_Pos := Pred_Pos + 1;
+          if Pred_Pos <= Pred_Len and then Pred_Buf (Pred_Pos) = '='
+          then
+             Pred_Pos := Pred_Pos + 1;
+             Pred_Nodes (N).Cmp := (if Ch = '<' then C_Le else C_Ge);
+          else
+             Pred_Nodes (N).Cmp := (if Ch = '<' then C_Lt else C_Gt);
+          end if;
+       else
+          Pred_Ok := False;
+          return 0;
+       end if;
+       --  value: "string" or decimal integer
+       Pred_Skip_Ws;
+       if Pred_Pos > Pred_Len then
+          Pred_Ok := False;
+          return 0;
+       end if;
+       if Pred_Buf (Pred_Pos) = '"' then
+          Pred_Pos := Pred_Pos + 1;
+          Value_Loop : loop
+             if Pred_Pos > Pred_Len then
+                Pred_Ok := False;  --  unterminated string
+                return 0;
+             end if;
+            Ch := Pred_Buf (Pred_Pos);
+             exit Value_Loop when Ch = '"';
+             if Ch = '\' then
+                Pred_Pos := Pred_Pos + 1;
+                if Pred_Pos > Pred_Len then
+                   Pred_Ok := False;  --  escape at end of input
+                   return 0;
+                end if;
+                Ch := Pred_Buf (Pred_Pos);
+                if Ch /= '\' and then Ch /= '"' then
+                   Pred_Ok := False;  --  unknown escape
+                   return 0;
+                end if;
+             end if;
+             if Pred_Nodes (N).Str_L = 48 then
+                Pred_Ok := False;
+                return 0;
+             end if;
+             Pred_Nodes (N).Str_L := Pred_Nodes (N).Str_L + 1;
+             Pred_Nodes (N).Str (Pred_Nodes (N).Str_L) := Ch;
+             Pred_Pos := Pred_Pos + 1;
+          end loop Value_Loop;
+          Pred_Pos := Pred_Pos + 1;  --  closing quote
+          Pred_Nodes (N).Is_Num := False;
+       else
+          Dig := 0;
+          if Pred_Pos > Pred_Len
+            or else Pred_Buf (Pred_Pos) not in '0' .. '9'
+          then
+             Pred_Ok := False;
+             return 0;
+          end if;
+          while Pred_Pos <= Pred_Len
+            and then Pred_Buf (Pred_Pos) in '0' .. '9'
+          loop
+             Dig := Dig * 10
+               + U64 (Character'Pos (Pred_Buf (Pred_Pos))
+                        - Character'Pos ('0'));
+             Pred_Pos := Pred_Pos + 1;
+          end loop;
+          Pred_Nodes (N).Is_Num := True;
+          Pred_Nodes (N).Num := Dig;
+       end if;
+       return N;
+    end Parse_Term;
+
+    function Parse_Unary return Natural is
+       N   : Natural;
+       Sub : Natural;
+    begin
+       Pred_Skip_Ws;
+       if Pred_Pos <= Pred_Len and then Pred_Buf (Pred_Pos) = '!'
+       then
+          Pred_Pos := Pred_Pos + 1;
+          Sub := Parse_Unary;
+          if Sub = 0 then
+             return 0;
+          end if;
+          N := Pred_New (N_Not);
+          if N = 0 then
+             return 0;
+          end if;
+          Pred_Nodes (N).Left := Sub;
+          return N;
+       elsif Pred_Pos <= Pred_Len and then Pred_Buf (Pred_Pos) = '('
+       then
+          Pred_Pos := Pred_Pos + 1;
+          N := Parse_Or;
+          Pred_Skip_Ws;
+          if N = 0 or else Pred_Pos > Pred_Len
+            or else Pred_Buf (Pred_Pos) /= ')'
+          then
+             Pred_Ok := False;
+             return 0;
+          end if;
+          Pred_Pos := Pred_Pos + 1;
+          return N;
+       else
+          return Parse_Term;
+       end if;
+    end Parse_Unary;
+
+    function Parse_And return Natural is
+       L   : Natural;
+       R   : Natural;
+       N   : Natural;
+    begin
+       L := Parse_Unary;
+       loop
+          Pred_Skip_Ws;
+          exit when L = 0
+            or else Pred_Pos + 1 > Pred_Len
+            or else Pred_Buf (Pred_Pos) /= '&'
+            or else Pred_Buf (Pred_Pos + 1) /= '&';
+          Pred_Pos := Pred_Pos + 2;
+          R := Parse_Unary;
+          if R = 0 then
+             return 0;
+          end if;
+          N := Pred_New (N_And);
+          if N = 0 then
+             return 0;
+          end if;
+          Pred_Nodes (N).Left := L;
+          Pred_Nodes (N).Right := R;
+          L := N;
+       end loop;
+       return L;
+    end Parse_And;
+
+    function Parse_Or return Natural is
+       L   : Natural;
+       R   : Natural;
+       N   : Natural;
+    begin
+       L := Parse_And;
+       loop
+          Pred_Skip_Ws;
+          exit when L = 0
+            or else Pred_Pos + 1 > Pred_Len
+            or else Pred_Buf (Pred_Pos) /= '|'
+            or else Pred_Buf (Pred_Pos + 1) /= '|';
+          Pred_Pos := Pred_Pos + 2;
+          R := Parse_And;
+          if R = 0 then
+             return 0;
+          end if;
+          N := Pred_New (N_Or);
+          if N = 0 then
+             return 0;
+          end if;
+          Pred_Nodes (N).Left := L;
+          Pred_Nodes (N).Right := R;
+          L := N;
+       end loop;
+       return L;
+    end Parse_Or;
+
+    --  Glob match: '*' any run, '?' any single char.
+    function Glob_Match (P : String; S : String) return Boolean is
+    begin
+       if P'Length = 0 then
+          return S'Length = 0;
+       end if;
+       if P (P'First) = '*' then
+          for K in 0 .. S'Length loop
+             if Glob_Match
+               (P (P'First + 1 .. P'Last),
+                S (S'First + K .. S'Last))
+             then
+                return True;
+             end if;
+          end loop;
+          return False;
+       end if;
+       if S'Length = 0 then
+          return False;
+       end if;
+       if P (P'First) = '?' or else P (P'First) = S (S'First) then
+          return Glob_Match
+            (P (P'First + 1 .. P'Last), S (S'First + 1 .. S'Last));
+       end if;
+       return False;
+    end Glob_Match;
+
+    function Cmp_Apply (Op : Cmp_Op; A : U64; B : U64) return Boolean is
+      (case Op is
+          when C_Eq => A = B,
+          when C_Ne => A /= B,
+          when C_Lt => A < B,
+          when C_Le => A <= B,
+          when C_Gt => A > B,
+          when C_Ge => A >= B);
+
+    --  Evaluate a term against the entry (name + inode).
+    function Eval_Term (N : Pred_Node; Name : String;
+                        Info : Inode_Info) return Boolean
+    is
+    begin
+       if N.Attr_L = 4 and then N.Attr (1 .. 4) = "name" then
+          return not N.Is_Num
+            and then Glob_Match (N.Str (1 .. N.Str_L), Name);
+       elsif N.Attr_L = 4 and then N.Attr (1 .. 4) = "size" then
+          return N.Is_Num and then Cmp_Apply (N.Cmp, Info.Size, N.Num);
+       elsif N.Attr_L = 13
+         and then N.Attr (1 .. 13) = "last_modified"
+       then
+          return N.Is_Num
+            and then Cmp_Apply
+              (N.Cmp, Interfaces.Shift_Right (Info.Mtime, 16), N.Num);
+       end if;
+       --  Arbitrary small_data attribute term.
+       declare
+          Slot : constant Natural := Get_Block (Info.Block);
+          Pos  : U64;
+          NLen : U64;
+          DLen : U64;
+          Hit  : Boolean := False;
+          Result : Boolean := False;
+       begin
+          if Slot = Cache_Slots then
+             return False;
+          end if;
+          Pos := Small_Data_Off;
+          while Pos + 8 <= Block_Size loop
+             NLen := U64 (LE16 (Slot, Pos + 4));
+             DLen := U64 (LE16 (Slot, Pos + 6));
+             exit when NLen = 0;
+             exit when Pos + 8 + NLen + 3 + DLen + 1 > Block_Size;
+             if not Is_Name_Attr (Slot, Pos, NLen)
+               and then NLen = U64 (N.Attr_L)
+             then
+                Hit := True;
+                for I in 0 .. NLen - 1 loop
+                   if Cache_Data (Slot, Pos + 8 + I) /=
+                     U8 (Character'Pos (N.Attr (Natural (I) + 1)))
+                   then
+                      Hit := False;
+                      exit;
+                   end if;
+                end loop;
+                if Hit then
+                   if N.Is_Num then
+                      if DLen = 8 then
+                         Result := Cmp_Apply (N.Cmp,
+                                              LE64 (Slot, Pos + 8
+                                                      + NLen + 3),
+                                              N.Num);
+                      elsif DLen = 4 then
+                         Result := Cmp_Apply (N.Cmp,
+                                              U64 (LE32 (Slot, Pos + 8
+                                                           + NLen + 3)),
+                                              N.Num);
+                      end if;
+                   elsif DLen <= 64 then
+                      declare
+                         S : String (1 .. 64);
+                      begin
+                         for I in 0 .. DLen - 1 loop
+                            S (Natural (I) + 1) := Character'Val
+                              (Natural (Cache_Data
+                                 (Slot, Pos + 8 + NLen + 3 + I)));
+                         end loop;
+                         Result := Glob_Match
+                           (N.Str (1 .. N.Str_L),
+                            S (1 .. Natural (DLen)));
+                      end;
+                   end if;
+                   exit;
+                end if;
+             end if;
+             Pos := Pos + 8 + NLen + 3 + DLen + 1;
+          end loop;
+          Put_Block (Slot);
+          return Result;
+       end;
+    end Eval_Term;
+
+    function Eval_Node (N : Natural; Name : String;
+                        Info : Inode_Info) return Boolean is
+    begin
+       case Pred_Nodes (N).Kind is
+          when N_Term =>
+             return Eval_Term (Pred_Nodes (N), Name, Info);
+          when N_And =>
+             return Eval_Node (Pred_Nodes (N).Left, Name, Info)
+               and then Eval_Node (Pred_Nodes (N).Right, Name, Info);
+          when N_Or =>
+             return Eval_Node (Pred_Nodes (N).Left, Name, Info)
+               or else Eval_Node (Pred_Nodes (N).Right, Name, Info);
+          when N_Not =>
+             return not Eval_Node (Pred_Nodes (N).Left, Name, Info);
+       end case;
+    end Eval_Node;
+
+    --  Build the volume-relative path of an inode by walking the
+    --  parent chain, collecting name attributes. False when the
+    --  chain is broken or the path does not fit Path'Length.
+    function Materialize_Path (Info : Inode_Info; Path : out String;
+                               Path_Len : out Natural) return Boolean
+    is
+       Comp      : array (0 .. 7, 1 .. 24) of U8;
+       Comp_Len  : array (0 .. 7) of Natural := (others => 0);
+       Depth     : Natural := 0;
+       Cur       : Inode_Info := Info;
+       Parent_Run : Block_Run;
+       Total     : Natural;
+    begin
+       Path_Len := 0;
+       loop
+          exit when Cur.Block = Root_Block;
+          if Depth = 8 then
+             return False;
+          end if;
+          --  Name pseudo-attribute of Cur (first small_data entry).
+          declare
+             Slot : constant Natural := Get_Block (Cur.Block);
+             DL   : U64;
+          begin
+             if Slot = Cache_Slots
+               or else LE32 (Slot, 232) /= File_Name_Type
+               or else LE16 (Slot, 236) /= 1
+               or else Cache_Data (Slot, 240) /= File_Name_Name
+             then
+                Put_Block (Slot);
+                return False;
+             end if;
+             DL := U64 (LE16 (Slot, 238));
+             if DL = 0 or else DL > 24 then
+                Put_Block (Slot);
+                return False;
+             end if;
+             for I in 0 .. DL - 1 loop
+                Comp (Depth, Natural (I) + 1) :=
+                  Cache_Data (Slot, 244 + I);
+             end loop;
+             Comp_Len (Depth) := Natural (DL);
+             Parent_Run := Run_At (Slot, 44);
+             Put_Block (Slot);
+          end;
+          Depth := Depth + 1;
+          if not Read_Inode (To_Block (Parent_Run), Cur) then
+             return False;
+          end if;
+       end loop;
+       --  Reverse-join with '/'.
+       Total := 0;
+       for I in 0 .. Depth - 1 loop
+          Total := Total + Comp_Len (I);
+       end loop;
+       Total := Total + Depth - 1;  --  separators
+       if Depth = 0 or else Total > Path'Length then
+          return False;
+       end if;
+       Path_Len := 0;
+       for I in reverse 0 .. Depth - 1 loop
+          if Path_Len > 0 then
+             Path_Len := Path_Len + 1;
+             Path (Path'First + Path_Len - 1) := '/';
+          end if;
+          for K in 1 .. Comp_Len (I) loop
+             Path_Len := Path_Len + 1;
+             Path (Path'First + Path_Len - 1) :=
+               Character'Val (Natural (Comp (I, K)));
+          end loop;
+       end loop;
+       return True;
+    end Materialize_Path;
+
+    function Query (Predicate : String; Index : U64;
+                    Path : out String; Path_Len : out Natural;
+                    Size : out U64; Is_Dir : out Boolean)
+                    return U64
+    is
+       NI      : Inode_Info;
+       It      : Tree_It;
+       E_Name  : String (1 .. 32);
+       E_Len   : Natural;
+       E_Block : U64;
+       Info    : Inode_Info;
+       Ok      : Boolean;
+       Root_N  : Natural;
+       Seen    : U64 := 0;
+    begin
+       Path_Len := 0;
+       Size := 0;
+       Is_Dir := False;
+       if not Is_Mounted or else Name_Index = 0
+         or else Predicate'Length = 0
+         or else Predicate'Length > Pred_Max
+       then
+          return Status_Not_Found;
+       end if;
+       --  Parse.
+       Pred_Count := 0;
+       Pred_Ok := True;
+       Pred_Len := Predicate'Length;
+       Pred_Pos := 1;
+       for I in 1 .. Pred_Len loop
+          Pred_Buf (I) := Predicate (Predicate'First + I - 1);
+       end loop;
+       Root_N := Parse_Or;
+       Pred_Skip_Ws;
+       if not Pred_Ok or else Root_N = 0 or else Pred_Pos <= Pred_Len
+       then
+          return Status_Bad_Args;  --  parse error / trailing junk
+       end if;
+       if not Read_Inode (Name_Index, NI) then
+          return Status_Not_Found;
+       end if;
+       Tree_Rewind (NI, It, Ok);
+       if not Ok then
+          return Status_Not_Found;
+       end if;
+       while Tree_Next (It, E_Name, E_Len, E_Block) loop
+          if Read_Inode (E_Block, Info)
+            and then Eval_Node (Root_N, E_Name (1 .. E_Len), Info)
+          then
+             if Seen = Index then
+                Is_Dir := (Info.Mode and S_IFMT) = S_IFDIR;
+                if not Is_Dir then
+                   Size := Info.Size;
+                end if;
+                if not Materialize_Path (Info, Path, Path_Len) then
+                   return Status_Bad_Args;  --  unrepresentable path
+                end if;
+                return Status_Ok;
+             end if;
+             Seen := Seen + 1;
+          end if;
+       end loop;
+       return Status_Not_Found;
+    end Query;
+
+    ------------------------------------------------------------------
+    --  Attributes (small_data region of the inode, m82d)
+    --
+    --  Like Haiku's attribute iterator and tools/befs_dump.py, the
+    --  NAME pseudo-attribute is NOT user-visible: the walks below
+    --  skip it via Is_Name_Attr (region layout documented at
+    --  Small_Data_Off above).
+    ------------------------------------------------------------------
 
    function Attr_List (Path : String; Index : U64;
                        Name : out String; Name_Len : out Natural;

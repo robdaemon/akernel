@@ -99,5 +99,19 @@ package Bfs_Engine is
     --  directory into its own subtree answers 3.
     function Rename (From, To : String) return U64;
 
+    --  One-shot query (m82f): Index-th entry on the volume whose
+    --  inode matches Predicate. Grammar: term with == != < <= > >=
+    --  over "name" (glob with */?), "size", "last_modified"
+    --  (seconds since epoch) or any small_data attribute name,
+    --  combined with && || ! and parens. Enumeration rides the
+    --  name index leaf chain. Path returns the match's path
+    --  relative to the volume root (up to Path'Length chars).
+    --  Status 1 = no (more) matches, 3 = parse error or an
+    --  unrepresentable result path.
+    function Query (Predicate : String; Index : U64;
+                    Path : out String; Path_Len : out Natural;
+                    Size : out U64; Is_Dir : out Boolean)
+                    return U64;
+
     procedure Volume_Info (Total, Free, Block : out U64);
 end Bfs_Engine;

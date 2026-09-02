@@ -74,7 +74,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
-DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping
+DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
