@@ -2,6 +2,7 @@ with Ada.Unchecked_Conversion;
 with System.Storage_Elements;
 with Arch;
 with Kernel.Physical_Memory;
+with Kernel.Processes;
 with Kernel.Scheduler;
 
 package body Kernel.IPC is
@@ -367,7 +368,7 @@ package body Kernel.IPC is
    --  write (m76), so a suspicious tail is rebuilt by walking from
    --  Queue_Head; the walk is bounded by the thread-table size so
    --  a corrupt cycle cannot hang the kernel.
-   Max_Queue_Walk : constant := 256;  --  = Max_Thread_Slots
+   Max_Queue_Walk : constant := Kernel.Processes.Max_Thread_Slots;
 
    procedure Enqueue_Caller
      (Object : in out Endpoint;

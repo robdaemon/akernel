@@ -5,24 +5,23 @@ package body Kernel.Scheduler is
    use type Kernel.Tasks.Thread_State;
    use type U64;
 
-   type Queue_Index is range 0 .. Max_Tasks - 1;
+   --  M80b: the ready and sleep queues are intrusive lists linked
+   --  through the TCB (the endpoint caller queue's Queue_Next is
+   --  the precedent).  A queue never needs capacity beyond live
+   --  threads, so linking through the TCB makes fullness
+   --  unrepresentable — the old packed arrays (Max_Tasks = 320,
+   --  Sleep_Index 0..319) and the silently-dropped Queue_Full
+   --  results are gone as a class.  Ready selection is unchanged:
+   --  best-priority walk, boosted ties first, then FIFO (the list
+   --  order is the old array order: tail push, head boost-insert).
+   Ready_Head : Kernel.Tasks.Thread_Access := null;
+   Ready_Tail : Kernel.Tasks.Thread_Access := null;
+   Ready_N    : Natural := 0;
 
-   --  The ready queue is a plain packed array, not a ring: priority
-   --  selection (milestone 62) pops an arbitrary slot, and at
-   --  Max_Tasks = 144 the O(n) shifts cost a KiB of copies at most
-   --  -- nothing next to the IPC traffic that triggers them.
-   --  Index 0 is the head.  Priority-0 threads keep pre-62
-   --  behaviour exactly: tail push, head pop, boost head-insert.
-   Queue : array (Queue_Index) of Kernel.Tasks.Thread_Access :=
-     (others => null);
-   Count : Natural range 0 .. Max_Tasks := 0;
-
-   --  Sleep queue: sorted by ascending deadline.  A thread appears
-   --  here only while its state is Blocked_Sleeping.
-   type Sleep_Index is range 0 .. 319;
-   Sleep_Queue : array (Sleep_Index) of Kernel.Tasks.Thread_Access :=
-     (others => null);
-   Sleep_Count : Natural range 0 .. Max_Tasks := 0;
+   --  Sleep queue: sorted by ascending deadline, Sleep_Head first.
+   --  A thread appears here only while its state is
+   --  Blocked_Sleeping.
+   Sleep_Head : Kernel.Tasks.Thread_Access := null;
 
    --  Per-hart running thread (SMP).  One global ready queue feeds
    --  all harts; threads migrate freely.  All state is protected by
@@ -41,8 +40,8 @@ package body Kernel.Scheduler is
 
    --  Best-first ordering: strictly higher priority wins; at equal
    --  priority a boosted thread (freshly woken) wins; at equal
-   --  (priority, boost) the earlier queue slot wins (FIFO), so the
-   --  scan only replaces Best on a strict improvement.
+   --  (priority, boost) the earlier list position wins (FIFO), so
+   --  the scan only replaces Best on a strict improvement.
    function Better
      (Cand : Kernel.Tasks.Thread_Control_Block;
       Best : Kernel.Tasks.Thread_Control_Block) return Boolean
@@ -78,13 +77,37 @@ package body Kernel.Scheduler is
       return False;
    end Outranks_Running;
 
+   --  Detach TCB from the ready list.  Caller must know TCB is
+   --  linked (Is_Queued).
+   procedure Unlink_Ready (TCB : Kernel.Tasks.Thread_Access) is
+      P : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Tasks.Ready_Prev (TCB.all);
+      N : constant Kernel.Tasks.Thread_Access :=
+        Kernel.Tasks.Ready_Next (TCB.all);
+   begin
+      if P /= null then
+         Kernel.Tasks.Set_Ready_Next (P.all, N);
+      else
+         Ready_Head := N;
+      end if;
+      if N /= null then
+         Kernel.Tasks.Set_Ready_Prev (N.all, P);
+      else
+         Ready_Tail := P;
+      end if;
+      Kernel.Tasks.Set_Ready_Next (TCB.all, null);
+      Kernel.Tasks.Set_Ready_Prev (TCB.all, null);
+      Kernel.Tasks.Set_Queued (TCB.all, False);
+      Ready_N := Ready_N - 1;
+   end Unlink_Ready;
+
    procedure Push
      (TCB    : Kernel.Tasks.Thread_Access;
       Result : out Status;
       Notify : Boolean := True;
       Boost  : Boolean := False)
    is
-      Was_Empty : constant Boolean := Count = 0;
+      Was_Empty : constant Boolean := Ready_Head = null;
    begin
       if TCB = null
         or else Kernel.Tasks.State (TCB.all) = Kernel.Tasks.Dead
@@ -98,26 +121,32 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      if Count = Max_Tasks then
-         Result := Queue_Full;
-         return;
-      end if;
-
       --  Boosted threads (freshly woken by IPC/notification, or
       --  preempted while still boosted) jump the queue: a CPU hog
       --  then only runs when nobody interactive is ready.  The
       --  boost orders WITHIN a priority class; a strictly higher
       --  priority elsewhere still wins the pop.
       if Boost then
-         for I in reverse 1 .. Count loop
-            Queue (Queue_Index (I)) := Queue (Queue_Index (I - 1));
-         end loop;
-         Queue (Queue_Index'First) := TCB;
+         Kernel.Tasks.Set_Ready_Prev (TCB.all, null);
+         Kernel.Tasks.Set_Ready_Next (TCB.all, Ready_Head);
+         if Ready_Head /= null then
+            Kernel.Tasks.Set_Ready_Prev (Ready_Head.all, TCB);
+         else
+            Ready_Tail := TCB;
+         end if;
+         Ready_Head := TCB;
       else
-         Queue (Queue_Index (Count)) := TCB;
+         Kernel.Tasks.Set_Ready_Next (TCB.all, null);
+         Kernel.Tasks.Set_Ready_Prev (TCB.all, Ready_Tail);
+         if Ready_Tail /= null then
+            Kernel.Tasks.Set_Ready_Next (Ready_Tail.all, TCB);
+         else
+            Ready_Head := TCB;
+         end if;
+         Ready_Tail := TCB;
       end if;
       Kernel.Tasks.Set_Queued (TCB.all, True);
-      Count := Count + 1;
+      Ready_N := Ready_N + 1;
 
       --  Empty -> nonempty: an idle hart may be sleeping in wfi;
       --  IPI it so it reschedules promptly.  Priority crossing: a
@@ -133,85 +162,85 @@ package body Kernel.Scheduler is
       Result := Ok;
    end Push;
 
-   --  Insert a thread into the sleep queue keeping ascending-deadline
-   --  order.  Caller must have already set the thread's sleep deadline
-   --  and verified Sleep_Count < Max_Tasks.
+   --  Insert a thread into the sleep queue keeping ascending-
+   --  deadline order.  Caller must have already set the thread's
+   --  sleep deadline.
    procedure Insert_Sleeper (TCB : Kernel.Tasks.Thread_Access) is
       Deadline : constant U64 := Kernel.Tasks.Sleep_Deadline (TCB.all);
-      Pos      : Natural := Sleep_Count;
+      Prev     : Kernel.Tasks.Thread_Access := null;
+      Cur      : Kernel.Tasks.Thread_Access := Sleep_Head;
    begin
-      for I in 0 .. Sleep_Count - 1 loop
-         if Sleep_Queue (Sleep_Index (I)) /= null
-           and then
-              Kernel.Tasks.Sleep_Deadline (Sleep_Queue (Sleep_Index (I)).all)
-                > Deadline
-         then
-            Pos := I;
-            exit;
-         end if;
+      --  New sleepers go AFTER existing equals (FIFO among equal
+      --  deadlines, matching the old array's shift-insert).
+      while Cur /= null
+        and then Kernel.Tasks.Sleep_Deadline (Cur.all) <= Deadline
+      loop
+         Prev := Cur;
+         Cur := Kernel.Tasks.Sleep_Next (Cur.all);
       end loop;
 
-      for I in reverse Pos + 1 .. Sleep_Count loop
-         Sleep_Queue (Sleep_Index (I)) := Sleep_Queue (Sleep_Index (I - 1));
-      end loop;
-      Sleep_Queue (Sleep_Index (Pos)) := TCB;
-      Sleep_Count := Sleep_Count + 1;
+      Kernel.Tasks.Set_Sleep_Prev (TCB.all, Prev);
+      Kernel.Tasks.Set_Sleep_Next (TCB.all, Cur);
+      if Prev /= null then
+         Kernel.Tasks.Set_Sleep_Next (Prev.all, TCB);
+      else
+         Sleep_Head := TCB;
+      end if;
+      if Cur /= null then
+         Kernel.Tasks.Set_Sleep_Prev (Cur.all, TCB);
+      end if;
    end Insert_Sleeper;
 
-   --  Remove a thread from the sleep queue if present.  Safe to call
-   --  when the thread is not sleeping.
+   --  Remove a thread from the sleep queue if present.  Safe to
+   --  call when the thread is not sleeping (walk-and-compare;
+   --  sleep lists are short and this runs on death/wake paths).
    procedure Remove_Sleeper (TCB : Kernel.Tasks.Thread_Access) is
-      Found : Boolean := False;
+      Cur  : Kernel.Tasks.Thread_Access := Sleep_Head;
+      Prev : Kernel.Tasks.Thread_Access := null;
    begin
-      for I in 0 .. Sleep_Count - 1 loop
-         if not Found then
-            if Sleep_Queue (Sleep_Index (I)) = TCB then
-               Found := True;
-            end if;
-         else
-            Sleep_Queue (Sleep_Index (I - 1)) := Sleep_Queue (Sleep_Index (I));
+      while Cur /= null loop
+         if Cur = TCB then
+            declare
+               N : constant Kernel.Tasks.Thread_Access :=
+                 Kernel.Tasks.Sleep_Next (Cur.all);
+            begin
+               if Prev /= null then
+                  Kernel.Tasks.Set_Sleep_Next (Prev.all, N);
+               else
+                  Sleep_Head := N;
+               end if;
+               if N /= null then
+                  Kernel.Tasks.Set_Sleep_Prev (N.all, Prev);
+               end if;
+               Kernel.Tasks.Set_Sleep_Next (Cur.all, null);
+               Kernel.Tasks.Set_Sleep_Prev (Cur.all, null);
+            end;
+            return;
          end if;
+         Prev := Cur;
+         Cur := Kernel.Tasks.Sleep_Next (Cur.all);
       end loop;
-
-      if Found then
-         Sleep_Count := Sleep_Count - 1;
-         Sleep_Queue (Sleep_Index (Sleep_Count)) := null;
-      end if;
    end Remove_Sleeper;
 
    procedure Pop
      (TCB    : out Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
-      Best     : Kernel.Tasks.Thread_Access := null;
-      Best_Idx : Natural := 0;
-      Cand     : Kernel.Tasks.Thread_Access;
-      W        : Natural := 0;
+      Best : Kernel.Tasks.Thread_Access := null;
+      Cand : Kernel.Tasks.Thread_Access := Ready_Head;
+      Next : Kernel.Tasks.Thread_Access;
    begin
-      --  One pass: compact out null/dead entries (the lazy GC the
-      --  old ring did while popping) and find the best thread.
-      for R in 0 .. Count - 1 loop
-         Cand := Queue (Queue_Index (R));
-         if Cand /= null
-           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
-         then
-            if Best = null or else Better (Cand.all, Best.all) then
-               Best := Cand;
-               Best_Idx := W;
-            end if;
-            Queue (Queue_Index (W)) := Cand;
-            if W /= R then
-               Queue (Queue_Index (R)) := null;
-            end if;
-            W := W + 1;
-         else
-            if Cand /= null then
-               Kernel.Tasks.Set_Queued (Cand.all, False);
-            end if;
-            Queue (Queue_Index (R)) := null;
+      --  One pass: unlink null/dead entries (the lazy GC the old
+      --  array did while compacting) and find the best thread.
+      while Cand /= null loop
+         Next := Kernel.Tasks.Ready_Next (Cand.all);
+         if Kernel.Tasks.State (Cand.all) = Kernel.Tasks.Dead then
+            Unlink_Ready (Cand);
+         elsif Best = null or else Better (Cand.all, Best.all) then
+            Best := Cand;
          end if;
+         Cand := Next;
       end loop;
-      Count := W;
 
       if Best = null then
          TCB := null;
@@ -219,14 +248,7 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      --  Remove the winner, preserving FIFO order of the rest.
-      for I in Best_Idx + 1 .. Count - 1 loop
-         Queue (Queue_Index (I - 1)) := Queue (Queue_Index (I));
-      end loop;
-      Queue (Queue_Index (Count - 1)) := null;
-      Count := Count - 1;
-
-      Kernel.Tasks.Set_Queued (Best.all, False);
+      Unlink_Ready (Best);
       --  The boost is POSITIONAL, not a property of the thread:
       --  the old ring spent it with one head-insert, after which a
       --  yielded thread tail-pushed like everyone else.  Consume
@@ -239,8 +261,10 @@ package body Kernel.Scheduler is
 
    procedure Initialize is
    begin
-      Queue := (others => null);
-      Count := 0;
+      Ready_Head := null;
+      Ready_Tail := null;
+      Ready_N := 0;
+      Sleep_Head := null;
       Current_TCBS := (others => null);
    end Initialize;
 
@@ -311,15 +335,15 @@ package body Kernel.Scheduler is
          return False;
       end if;
 
-      for R in 0 .. Count - 1 loop
-         Cand := Queue (Queue_Index (R));
-         if Cand /= null
-           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
+      Cand := Ready_Head;
+      while Cand /= null loop
+         if Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
            and then Kernel.Tasks.Priority (Cand.all)
                       > Kernel.Tasks.Priority (Cur.all)
          then
             return True;
          end if;
+         Cand := Kernel.Tasks.Ready_Next (Cand.all);
       end loop;
       return False;
    end Should_Preempt;
@@ -345,16 +369,16 @@ package body Kernel.Scheduler is
          return False;
       end if;
 
-      for R in 0 .. Count - 1 loop
-         Cand := Queue (Queue_Index (R));
-         if Cand /= null
-           and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
+      Cand := Ready_Head;
+      while Cand /= null loop
+         if Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
            and then Kernel.Tasks.Is_Boosted (Cand.all)
            and then Kernel.Tasks.Priority (Cand.all)
                       >= Kernel.Tasks.Priority (Cur.all)
          then
             return True;
          end if;
+         Cand := Kernel.Tasks.Ready_Next (Cand.all);
       end loop;
       return False;
    end Should_Boost_Preempt;
@@ -480,11 +504,6 @@ package body Kernel.Scheduler is
          return;
       end if;
 
-      if Sleep_Count = Max_Tasks then
-         Result := Queue_Full;
-         return;
-      end if;
-
       Kernel.Tasks.Set_Sleep_Deadline (Cur.all, Deadline);
       Insert_Sleeper (Cur);
       Arch.SBI.Set_Timer (Next_Timer_Deadline (Now));
@@ -495,29 +514,23 @@ package body Kernel.Scheduler is
      (Now           : U64;
       Next_Deadline : out U64)
    is
-      TCB : Kernel.Tasks.Thread_Access;
+      TCB         : Kernel.Tasks.Thread_Access;
       Wake_Result : Status;
    begin
-      while Sleep_Count > 0 loop
-         TCB := Sleep_Queue (Sleep_Index'First);
-         exit when TCB = null
-           or else Kernel.Tasks.Sleep_Deadline (TCB.all) > Now;
-
+      while Sleep_Head /= null
+        and then Kernel.Tasks.Sleep_Deadline (Sleep_Head.all) <= Now
+      loop
+         TCB := Sleep_Head;
          Remove_Sleeper (TCB);
          --  The thread may already have been woken by another path
          --  (e.g., a signal); Wake is a no-op for Ready/Running.
          Wake (TCB, Wake_Result);
       end loop;
 
-      if Sleep_Count = 0 then
+      if Sleep_Head = null then
          Next_Deadline := U64'Last;
       else
-         TCB := Sleep_Queue (Sleep_Index'First);
-         if TCB = null then
-            Next_Deadline := U64'Last;
-         else
-            Next_Deadline := Kernel.Tasks.Sleep_Deadline (TCB.all);
-         end if;
+         Next_Deadline := Kernel.Tasks.Sleep_Deadline (Sleep_Head.all);
       end if;
    end Check_Sleepers;
 
@@ -532,8 +545,6 @@ package body Kernel.Scheduler is
      (TCB    : Kernel.Tasks.Thread_Access;
       Result : out Status)
    is
-      Cand : Kernel.Tasks.Thread_Access;
-      W    : Natural := 0;
    begin
       if TCB = null then
          Result := Invalid_Task;
@@ -550,29 +561,15 @@ package body Kernel.Scheduler is
       --  too, otherwise it could be woken after its resources are gone.
       Remove_Sleeper (TCB);
 
-      for R in 0 .. Count - 1 loop
-         Cand := Queue (Queue_Index (R));
-         Queue (Queue_Index (R)) := null;
+      if Kernel.Tasks.Is_Queued (TCB.all) then
+         Unlink_Ready (TCB);
+      end if;
 
-         if Cand /= null then
-            Kernel.Tasks.Set_Queued (Cand.all, False);
-
-            if Cand /= TCB
-              and then Kernel.Tasks.State (Cand.all) /= Kernel.Tasks.Dead
-            then
-               Queue (Queue_Index (W)) := Cand;
-               Kernel.Tasks.Set_Queued (Cand.all, True);
-               W := W + 1;
-            end if;
-         end if;
-      end loop;
-
-      Count := W;
       Result := Ok;
    end Remove_Thread;
 
    function Ready_Count return Natural is
    begin
-      return Count;
+      return Ready_N;
    end Ready_Count;
 end Kernel.Scheduler;

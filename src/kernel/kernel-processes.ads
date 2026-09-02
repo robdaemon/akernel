@@ -18,6 +18,13 @@ package Kernel.Processes is
    User_Stack_Top   : constant U64 := 16#8000_0000#;
    User_Stack_Pages : constant := 64;
 
+   --  Thread-table bound (M80b: 256 -> 512; thread ids are a
+   --  monotonic counter, so unlike pids there is no encoding
+   --  ceiling).  Exported so the IPC caller-queue walk bound
+   --  (kernel-ipc.adb) derives from it instead of duplicating a
+   --  literal.  Growable tables are the deferred M80a slice.
+   Max_Thread_Slots : constant := 512;
+
    type Status is
      (Ok,
       Invalid_Program,

@@ -373,9 +373,24 @@ growth, attribute writes).
   new deep-recursion check (~150 KiB — fatal before this
   change). 1714 PASS / 0 FAIL; test-replay green.
 
-Planned but not started: **M80 grow-on-demand tables** (the Max_*
-limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working
-on M80. Otherwise: the open candidates below.
+In flight: **M80 grow-on-demand tables** (the Max_* limit-fixes
+pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
+
+- **M80b done** (this commit): scheduler queues -> intrusive TCB
+  lists (Rdy/Slp Next/Prev on the TCB, endpoint Queue_Next
+  precedent). Ready = doubly-linked list (tail push, boost head-
+  insert, best-priority walk pop — same ordering as the packed
+  array it replaces); sleep queue = sorted linked insert. Queue
+  capacity now equals live-thread count, so fullness is
+  unrepresentable: Max_Tasks=320, Sleep_Index 0..319 and
+  Queue_Full deleted, the seven silently-dropped Wake/Sleep_Until
+  results no longer hide a capacity failure. Threads 256 -> 512
+  (Max_Thread_Slots exported; kernel-ipc's Max_Queue_Walk derives
+  from it). Deferred-stack table drop now prints + counts (leak
+  indicator). M80a placeholder bits: init decodes spawn failures
+  loudly (No_Slot vs Scheduler/Cap/Load/Invalid), fuzz prints
+  process/thread occupancy each run. 1715 PASS SMP4 / 1716 SMP1,
+  0 FAIL both; boot smoke to shell clean.
 
 ## Open candidates
 

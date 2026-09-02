@@ -3,8 +3,9 @@ with Kernel.CPUs;
 with Kernel.Tasks;
 
 package Kernel.Scheduler is
-   --  128 process slots + secondary threads + IRQ tasks + margin.
-   Max_Tasks : constant := 320;
+   --  M80b: no Max_Tasks — the ready and sleep queues are intrusive
+   --  lists linked through the TCB, so queue capacity equals the
+   --  live-thread count and queue fullness is unrepresentable.
 
    subtype U64 is Interfaces.Unsigned_64;
 
@@ -15,7 +16,6 @@ package Kernel.Scheduler is
 
    type Status is
      (Ok,
-      Queue_Full,
       Queue_Empty,
       Invalid_Task,
       No_Current_Task);

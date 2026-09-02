@@ -747,7 +747,27 @@ procedure Init is
           --  once its bring-up completes (see the removed
           --  Push_Netserv_Mount note above).
       else
-         Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
+         --  M80a placeholder: decode the spawn status loudly so a
+         --  full process/thread table (No_Slot) can never again
+         --  hide behind a generic failure line.
+         if Result = Akernel_User.Syscalls.Spawn_No_Slot then
+            Akernel_User.Syscalls.Debug_Put_Line
+              ("program spawn failed: NO SLOT (table full)");
+         elsif Result = Akernel_User.Syscalls.Spawn_Scheduler_Failed then
+            Akernel_User.Syscalls.Debug_Put_Line
+              ("program spawn failed: scheduler rejected thread");
+         elsif Result = Akernel_User.Syscalls.Spawn_Cap_Failed then
+            Akernel_User.Syscalls.Debug_Put_Line
+              ("program spawn failed: cap table/grant error");
+         elsif Result = Akernel_User.Syscalls.Spawn_Load_Failed then
+            Akernel_User.Syscalls.Debug_Put_Line
+              ("program spawn failed: ELF load/map error");
+         elsif Result = Akernel_User.Syscalls.Spawn_Invalid_Program then
+            Akernel_User.Syscalls.Debug_Put_Line
+              ("program spawn failed: invalid program image");
+         else
+            Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
+         end if;
       end if;
    end Parse_Program_Line;
 

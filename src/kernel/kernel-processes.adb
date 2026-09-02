@@ -3,6 +3,7 @@ with Ada.Unchecked_Conversion;
 with Arch;
 with Arch.Context;
 with Arch.MMU;
+with Board.UART;
 with Kernel.CPUs;
 with Kernel.ELF;
 with Kernel.Interrupts;
@@ -35,8 +36,9 @@ package body Kernel.Processes is
    --  128 process slots, plus a separate thread table for
    --  multi-threaded processes (Milestone 66). Each process has
    --  one or more threads; threads share the process cap table.
+   --  Max_Thread_Slots lives in the spec (kernel-ipc derives its
+   --  caller-queue walk bound from it).
    Max_Process_Slots : constant := 128;
-   Max_Thread_Slots  : constant := 256;
    type Process_Index is range 0 .. Max_Process_Slots - 1;
    type Thread_Index  is range 0 .. Max_Thread_Slots - 1;
    type Process_Slot_Array is array (Process_Index)
@@ -111,6 +113,11 @@ package body Kernel.Processes is
       0 .. Max_Deferred_Stacks :=
      (others => 0);
    Trap_Epoch          : array (Kernel.CPUs.CPU_Index) of U64 :=
+     (others => 0);
+   --  M80b: a full deferred table silently leaked the dropped stack
+   --  frame.  The table is transient staging drained at every trap
+   --  entry, so a drop indicates a drain bug — count and print it.
+   Deferred_Drops      : array (Kernel.CPUs.CPU_Index) of U64 :=
      (others => 0);
 
    --  Pid generations (milestone 51): pid = Generation * 256 +
@@ -1430,6 +1437,10 @@ package body Kernel.Processes is
          Deferred_Stacks (CPU, Deferred_Count (CPU)) :=
            (Stack_Top => Stack_Top, Epoch => Trap_Epoch (CPU));
          Deferred_Count (CPU) := Deferred_Count (CPU) + 1;
+      else
+         Deferred_Drops (CPU) := Deferred_Drops (CPU) + 1;
+         Board.UART.Put_Line
+           ("kernel: deferred kernel-stack table full, frame leaked");
       end if;
    end Defer_Stack_On;
 

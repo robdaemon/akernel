@@ -73,14 +73,16 @@ spawn; the 3 kernel-started processes live outside all tables.
   socket eats one), fileserver files 94/512, volumes 9-10/12 with
   9p, netserv socks ~6-10/16, bootinfo 96/511, boot files 94/256.
 - **s-osinte bug (latent, independent of capacity)**: the
-  per-process thread tables hash `cap_handle mod 64`
-  (s-osinte.adb:111). Two threads with congruent cap handles
-  silently clobber each other's ATCB/priority TODAY.
+  per-process thread tables hash `kernel_thread_id mod 64`
+  (s-osinte.adb: Table_Index). Two threads with congruent kernel
+  ids silently clobber each other's ATCB/priority TODAY.
 - Userspace has two heaps: GNAT heap at 0x4000_0000 (2 MiB max,
   s-memory.adb) and newlib sbrk at 0x5200_0000 (4 MiB). Shared-RTS
   VA gap 0x4A81_0000..0x5000_0000 is free but small;
-  **0x7000_0000..0x8000_0000 is free everywhere** per the full VA
-  census (bureau ends 0x6B00, thread stacks 0x6F00+, IPC 0x6FFE+).
+  **0x7000_0000..0x7FF0_0000 is free everywhere** per the full VA
+  census (bureau ends 0x6B00, thread stacks 0x6F00+, IPC 0x6FFE+);
+  M83 moved the user main stack to 0x7FF0_0000..0x8000_0000 (64
+  pages), so the M80d helper arena below is **15 MiB**, not 16.
 - Crates share `rts/akernel/` as a static library; generics there
   are precedented (Akernel_User.IPC, Virtio.PCI/MMIO). Constraint:
   no library-level elaboration runs in crates — helpers must lazily
@@ -151,11 +153,13 @@ Risk: touches the scheduler core. Extra boot smoke before the gate.
 - New `userspace/rts/akernel/akernel_user-tables.ads`: generic over
   element type; chunk-append growth over Mem_Alloc (<=64 pages/
   chunk) mapped into a helper arena at **0x7000_0000** (burn-guard
-  comment + compile-time window assert per house convention); lazy
+  comment + compile-time window assert per house convention —
+  arena ceiling is 0x7FF0_0000, the M83 stack base: 15 MiB =
+  **60 chunks of 64 pages**, NOT 64 chunks/16 MiB); lazy
   init; stable indices while entries live (chunk-append, never
   realloc-copy — netserv sock ids, shell job numbers, gloss fds and
-  bureau slots are user-visible indices); static 64-entry chunk
-  directory (documented sanity bound, e.g. 262K file entries).
+  bureau slots are user-visible indices); static 60-entry chunk
+  directory (documented sanity bound, e.g. 245K file entries).
 - fileserver: File_Table, Volumes, Assigns, Forward_Caps (bounded-
   leak comment retires), Pipes (reclaims 512 KiB BSS), Pendings.
 - Fold in: init's Push_* helpers check the reply status WORD (not
@@ -183,7 +187,9 @@ bureau Wins + Z (window ids already decoupled from slots; the
 slot->Surf_VA 4 MiB-stride formula needs region planning past ~32
 windows — document), devmgr Lines/Input_Svc (+ loud manifest-
 overflow print regardless), serial Lines/Sinks, shell Jobs, libman
-Entries + client Open_Table, gloss FDs/Dir_Slots.
+Entries + client Open_Table, gloss FDs/Dir_Slots, bfs live-query
+subscription table (4 slots, m82g — post-census addition; the
+overflow resync event stays as the queue-depth backstop).
 
 ### M80g — display ceiling 1920x1080
 

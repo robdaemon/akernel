@@ -65,6 +65,10 @@ package body Kernel.Tasks is
       Arch.Context.Initialize (TCB.Context);
       TCB.Queued := False;
       TCB.Boosted := False;
+      TCB.Rdy_Next := null;
+      TCB.Rdy_Prev := null;
+      TCB.Slp_Next := null;
+      TCB.Slp_Prev := null;
       TCB.Priority := 0;
       TCB.Bound_Ntfn := System.Null_Address;
       TCB.Recv_EP := System.Null_Address;
@@ -435,6 +439,66 @@ package body Kernel.Tasks is
    begin
       return TCB.Queue_Next;
    end Endpoint_Queue_Next;
+
+   procedure Set_Ready_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access)
+   is
+   begin
+      TCB.Rdy_Next := Next;
+   end Set_Ready_Next;
+
+   function Ready_Next
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Rdy_Next;
+   end Ready_Next;
+
+   procedure Set_Ready_Prev
+     (TCB  : in out Thread_Control_Block;
+      Prev : Thread_Access)
+   is
+   begin
+      TCB.Rdy_Prev := Prev;
+   end Set_Ready_Prev;
+
+   function Ready_Prev
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Rdy_Prev;
+   end Ready_Prev;
+
+   procedure Set_Sleep_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access)
+   is
+   begin
+      TCB.Slp_Next := Next;
+   end Set_Sleep_Next;
+
+   function Sleep_Next
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Slp_Next;
+   end Sleep_Next;
+
+   procedure Set_Sleep_Prev
+     (TCB  : in out Thread_Control_Block;
+      Prev : Thread_Access)
+   is
+   begin
+      TCB.Slp_Prev := Prev;
+   end Set_Sleep_Prev;
+
+   function Sleep_Prev
+     (TCB : Thread_Control_Block) return Thread_Access
+   is
+   begin
+      return TCB.Slp_Prev;
+   end Sleep_Prev;
 
    procedure Set_IPC_Badge
      (TCB   : in out Thread_Control_Block;

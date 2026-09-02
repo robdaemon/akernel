@@ -256,6 +256,41 @@ package Kernel.Tasks is
    function Endpoint_Queue_Next
      (TCB : Thread_Control_Block) return Thread_Access;
 
+   --  Ready-queue links (M80b): the scheduler's ready queue is an
+   --  intrusive doubly-linked list through the TCB, so queue
+   --  capacity equals live-thread count and fullness is
+   --  unrepresentable.  Valid only while Queued is True.
+   procedure Set_Ready_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access);
+
+   function Ready_Next
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   procedure Set_Ready_Prev
+     (TCB  : in out Thread_Control_Block;
+      Prev : Thread_Access);
+
+   function Ready_Prev
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   --  Sleep-queue links (M80b): intrusive list sorted by ascending
+   --  Sleep_Deadline.  Valid only while the thread sits in the
+   --  scheduler's sleep queue.
+   procedure Set_Sleep_Next
+     (TCB  : in out Thread_Control_Block;
+      Next : Thread_Access);
+
+   function Sleep_Next
+     (TCB : Thread_Control_Block) return Thread_Access;
+
+   procedure Set_Sleep_Prev
+     (TCB  : in out Thread_Control_Block;
+      Prev : Thread_Access);
+
+   function Sleep_Prev
+     (TCB : Thread_Control_Block) return Thread_Access;
+
    --  Badge of the endpoint cap a queued caller called through;
    --  recorded at Call time, consumed when the message transfers.
    procedure Set_IPC_Badge
@@ -441,6 +476,10 @@ private
       Context          : Arch.Context.Thread_Context;
       Queued           : Boolean;
       Boosted          : Boolean;
+      Rdy_Next         : Thread_Access;
+      Rdy_Prev         : Thread_Access;
+      Slp_Next         : Thread_Access;
+      Slp_Prev         : Thread_Access;
       Priority         : Thread_Priority;
       Sleep_Deadline   : Kernel.Capabilities.U64;
       Bound_Ntfn       : System.Address;

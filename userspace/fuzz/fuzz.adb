@@ -3329,13 +3329,23 @@ begin
              "process_info self for slot scan");
       Echo_Pid := 0;
       declare
-         Self_P : constant U64 := APage (0);
+         Self_P    : constant U64 := APage (0);
+         Proc_Live : Natural := 0;
+         Thr_Live  : Natural := 0;
       begin
          for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
          loop
             if Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                           A1 => U64 (Slot), A2 => Admin_Buf) = 0
             then
+               Proc_Live := Proc_Live + 1;
+               --  Word 3 is the (initial) thread state; 8 = dead.
+               --  Secondary threads are invisible to this probe,
+               --  so Thr_Live is a lower bound (M80a placeholder
+               --  occupancy print).
+               if APage (3) /= 8 then
+                  Thr_Live := Thr_Live + 1;
+               end if;
                if APage (0) = Self_P then
                   Admin_Slot := U64 (Slot);
                elsif APage (1) = Self_P then
@@ -3344,6 +3354,12 @@ begin
                end if;
             end if;
          end loop;
+         Put_Line ("m80 occupancy: process slots"
+                   & Natural'Image (Proc_Live) & " /"
+                   & Natural'Image
+                     (Natural (Akernel_User.Syscalls.Process_Table_Slots))
+                   & ", live threads (>="
+                   & Natural'Image (Thr_Live) & ")");
       end;
       Check (Admin_Slot /= U64'Last and then Echo_Slot /= U64'Last,
              "admin test slots located");
