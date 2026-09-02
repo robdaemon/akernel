@@ -46,7 +46,10 @@ procedure Bfs is
     Op_Volume_Info : constant U64 := 17;
     Op_Attr_List   : constant U64 := 19;
     Op_Attr_Read   : constant U64 := 20;
-    Op_Query       : constant U64 := 21;
+     Op_Query       : constant U64 := 21;
+     Op_Query_Open  : constant U64 := 22;
+     Op_Query_Poll  : constant U64 := 23;
+     Op_Query_Close : constant U64 := 24;
 
    Status_Ok           : constant U64 := 0;
    Status_Not_Found    : constant U64 := 1;
@@ -492,10 +495,11 @@ procedure Bfs is
        Reply2 (Status, 0);
     end Handle_Rename;
 
-    --  Op_Query (m82f): words 0..3 = path (the volume root ""),
-    --  word 4 = match index, cap slot 0 = buffer holding the NUL-
-    --  terminated predicate. Reply: w0 = status, w1 = size, w2 =
-    --  is_dir, w3..5 = volume-relative path (24 chars).
+    --  Op_Query (m82f, buffer path in m82g): words 0..3 = path
+    --  (the volume root ""), word 4 = match index, cap slot 0 =
+    --  buffer holding the NUL-terminated predicate. Reply: w0 =
+    --  status, w1 = size, w2 = is_dir, w3 = path length; the
+    --  volume-relative path is written back into the buffer.
     procedure Handle_Query is
        Idx    : constant U64 := Syscalls.Message.Words (4);
        Buf    : constant U64 := Syscalls.Message.Caps (0);
@@ -503,43 +507,49 @@ procedure Bfs is
        Mapped : Boolean := False;
        Win    : array (0 .. 255) of Interfaces.Unsigned_8
          with Address => To_Address (Integer_Address (Buf_Win_VA));
-       Path     : String (1 .. 24) := (others => Character'Val (0));
-       Path_Len : Natural;
+       Path     : String (1 .. 255) := (others => Character'Val (0));
+       Path_Len : Natural := 0;
        Size     : U64;
        Is_Dir   : Boolean;
-    begin
-       declare
-          Vol_Path : constant String := Path_Of (0);
-          Pred     : String (1 .. 255);
-          Pred_Len : Natural := 0;
-       begin
-          if Vol_Path'Length /= 0 or else Buf = 0 then
-             Status := Status_Bad_Args;  --  queries are volume-wide
-          elsif Syscalls.Mem_Map
-            (Address_Space => Syscalls.Address_Space_Cap,
-             Cap           => Buf,
-             VA            => Buf_Win_VA,
-             Offset        => 0,
-             Length        => Buf_Bytes,
-             Flags         => 3) /= 0
-          then
-             Status := Status_Not_Found;
-          else
-             Mapped := True;
-             for I in 0 .. 254 loop
-                exit when Win (I) = Interfaces.Unsigned_8 (0);
-                Pred_Len := Pred_Len + 1;
-                Pred (Pred_Len) := Character'Val (Natural (Win (I)));
-             end loop;
-             if Pred_Len = 0 then
-                Status := Status_Bad_Args;
-             else
-                Status := Bfs_Engine.Query
-                  (Pred (1 .. Pred_Len), Idx, Path, Path_Len,
-                   Size, Is_Dir);
-             end if;
-          end if;
-       end;
+     begin
+        declare
+           Vol_Path : constant String := Path_Of (0);
+           Pred     : String (1 .. 255);
+           Pred_Len : Natural := 0;
+        begin
+           if Vol_Path'Length /= 0 or else Buf = 0 then
+              Status := Status_Bad_Args;  --  queries are volume-wide
+           elsif Syscalls.Mem_Map
+             (Address_Space => Syscalls.Address_Space_Cap,
+              Cap           => Buf,
+              VA            => Buf_Win_VA,
+              Offset        => 0,
+              Length        => Buf_Bytes,
+              Flags         => 3) /= 0
+           then
+              Status := Status_Not_Found;
+           else
+              Mapped := True;
+              for I in 0 .. 254 loop
+                 exit when Win (I) = Interfaces.Unsigned_8 (0);
+                 Pred_Len := Pred_Len + 1;
+                 Pred (Pred_Len) := Character'Val (Natural (Win (I)));
+              end loop;
+              if Pred_Len = 0 then
+                 Status := Status_Bad_Args;
+              else
+                 Status := Bfs_Engine.Query
+                   (Pred (1 .. Pred_Len), Idx, Path, Path_Len,
+                    Size, Is_Dir);
+                 if Status = Status_Ok then
+                    for I in 1 .. Path_Len loop
+                       Win (I - 1) :=
+                         Interfaces.Unsigned_8 (Character'Pos (Path (I)));
+                    end loop;
+                 end if;
+              end if;
+           end if;
+        end;
 
        if Buf /= 0 then
           if Mapped
@@ -561,23 +571,153 @@ procedure Bfs is
           Reply2 (Status, 0);
           return;
        end if;
-       Syscalls.Message.Words (0) := Status_Ok;
-       Syscalls.Message.Words (1) := Size;
-       Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
-       for W in 3 .. 5 loop
-          Syscalls.Message.Words (W) := 0;
-       end loop;
-       for P in 1 .. Path_Len loop
-          Syscalls.Message.Words (3 + (P - 1) / 8) :=
-            Syscalls.Message.Words (3 + (P - 1) / 8)
-              or Shl (U64 (Character'Pos (Path (P))),
-                      ((P - 1) mod 8) * 8);
-       end loop;
-       Syscalls.Message.Caps := (others => 0);
+        Syscalls.Message.Words (0) := Status_Ok;
+        Syscalls.Message.Words (1) := Size;
+        Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+        Syscalls.Message.Words (3) := U64 (Path_Len);
+        Syscalls.Message.Caps := (others => 0);
        if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
           Fail ("bfs query reply failed");
        end if;
     end Handle_Query;
+
+    --  Op_Query_Open (m82g): words 0..3 = path (the volume root
+    --  ""), cap 0 = buffer with the NUL-terminated predicate,
+    --  cap 1 = the client's notification cap (on success the
+    --  engine keeps it and rings bit 0 on queued events; on
+    --  failure it is deleted here). Reply: w0 = status, w1 =
+    --  live-query handle (1-based).
+    procedure Handle_Query_Open is
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Ntfn   : constant U64 := Syscalls.Message.Caps (1);
+       Status : U64 := Status_Bad_Args;
+       Mapped : Boolean := False;
+       Handle : U64 := 0;
+       Win    : array (0 .. 255) of Interfaces.Unsigned_8
+         with Address => To_Address (Integer_Address (Buf_Win_VA));
+    begin
+       declare
+          Vol_Path : constant String := Path_Of (0);
+          Pred     : String (1 .. 255);
+          Pred_Len : Natural := 0;
+       begin
+          if Vol_Path'Length /= 0 or else Buf = 0 or else Ntfn = 0
+          then
+             Status := Status_Bad_Args;
+          elsif Syscalls.Mem_Map
+            (Address_Space => Syscalls.Address_Space_Cap,
+             Cap           => Buf,
+             VA            => Buf_Win_VA,
+             Offset        => 0,
+             Length        => Buf_Bytes,
+             Flags         => 3) /= 0
+          then
+             Status := Status_Not_Found;
+          else
+             Mapped := True;
+             for I in 0 .. 254 loop
+                exit when Win (I) = Interfaces.Unsigned_8 (0);
+                Pred_Len := Pred_Len + 1;
+                Pred (Pred_Len) := Character'Val (Natural (Win (I)));
+             end loop;
+             if Pred_Len = 0 then
+                Status := Status_Bad_Args;
+             else
+                Status := Bfs_Engine.Live_Open
+                  (Pred (1 .. Pred_Len), Ntfn, Handle);
+             end if;
+          end if;
+       end;
+
+       if Buf /= 0 then
+          if Mapped
+            and then Syscalls.Mem_Unmap
+              (Address_Space => Syscalls.Address_Space_Cap,
+               VA            => Buf_Win_VA,
+               Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line
+               ("bfs: query open buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line
+               ("bfs: query open buffer cap delete failed");
+          end if;
+       end if;
+       if Status /= Status_Ok and then Ntfn /= 0 then
+          --  The engine did not take the notification cap.
+          if Syscalls.Cap_Delete (Ntfn) /= 0 then
+             Akernel_User.Console.Put_Line
+               ("bfs: query open ntfn cap delete failed");
+          end if;
+       end if;
+       Reply2 (Status, Handle);
+    end Handle_Query_Open;
+
+    --  Op_Query_Poll (m82g): word 4 = handle, cap 0 = buffer for
+    --  the reply path. Reply: w0 = status, w1 = event kind
+    --  (1 = added, 2 = removed, 3 = resync), w2 = path length,
+    --  path bytes in the buffer.
+    procedure Handle_Query_Poll is
+       Handle : constant U64 := Syscalls.Message.Words (4);
+       Buf    : constant U64 := Syscalls.Message.Caps (0);
+       Status : U64 := Status_Bad_Args;
+       Mapped : Boolean := False;
+       Kind   : U64 := 0;
+       Path   : String (1 .. 255);
+       P_Len  : Natural := 0;
+       Win    : array (0 .. 255) of Interfaces.Unsigned_8
+         with Address => To_Address (Integer_Address (Buf_Win_VA));
+    begin
+       if Buf = 0 then
+          Status := Status_Bad_Args;
+       elsif Syscalls.Mem_Map
+         (Address_Space => Syscalls.Address_Space_Cap,
+          Cap           => Buf,
+          VA            => Buf_Win_VA,
+          Offset        => 0,
+          Length        => Buf_Bytes,
+          Flags         => 3) /= 0
+       then
+          Status := Status_Not_Found;
+       else
+          Mapped := True;
+          Status := Bfs_Engine.Live_Poll (Handle, Kind, Path, P_Len);
+          if Status = Status_Ok then
+             for I in 1 .. P_Len loop
+                Win (I - 1) :=
+                  Interfaces.Unsigned_8 (Character'Pos (Path (I)));
+             end loop;
+          end if;
+          if Syscalls.Mem_Unmap
+            (Address_Space => Syscalls.Address_Space_Cap,
+             VA            => Buf_Win_VA,
+             Length        => Buf_Bytes) /= 0
+          then
+             Akernel_User.Console.Put_Line
+               ("bfs: query poll buffer unmap failed");
+          end if;
+          if Syscalls.Cap_Delete (Buf) /= 0 then
+             Akernel_User.Console.Put_Line
+               ("bfs: query poll buffer cap delete failed");
+          end if;
+       end if;
+       Syscalls.Message.Words (0) := Status;
+       Syscalls.Message.Words (1) := Kind;
+       Syscalls.Message.Words (2) := U64 (P_Len);
+       Syscalls.Message.Caps := (others => 0);
+       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+          Fail ("bfs query poll reply failed");
+       end if;
+    end Handle_Query_Poll;
+
+    --  Op_Query_Close (m82g): word 4 = handle. The subscription
+    --  and its notification cap copy are released.
+    procedure Handle_Query_Close is
+    begin
+       Bfs_Engine.Live_Close (Syscalls.Message.Words (4));
+       Reply2 (Status_Ok, 0);
+    end Handle_Query_Close;
 
     procedure Handle_Volume_Info is
       Total : U64;
@@ -671,8 +811,14 @@ begin
          Handle_Path_Op;
       elsif Syscalls.Message.Label = Op_Rename then
          Handle_Rename;
-      elsif Syscalls.Message.Label = Op_Query then
-         Handle_Query;
+       elsif Syscalls.Message.Label = Op_Query then
+          Handle_Query;
+       elsif Syscalls.Message.Label = Op_Query_Open then
+          Handle_Query_Open;
+       elsif Syscalls.Message.Label = Op_Query_Poll then
+          Handle_Query_Poll;
+       elsif Syscalls.Message.Label = Op_Query_Close then
+          Handle_Query_Close;
       else
          Reply2 (Status_Bad_Args, 0);
       end if;

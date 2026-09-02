@@ -1045,6 +1045,162 @@ procedure Fileserver is
       end if;
    end Handle_Query;
 
+   --  Op_Query_Open / Poll / Close (milestone 82g, live queries):
+   --  same forwarding shape as Op_Query. Open additionally passes
+   --  the client's notification cap in slot 1 (the fs driver keeps
+   --  its copy); Poll takes word 4 = handle and the reply buffer;
+   --  Close is a plain forward with word 4 = handle.
+   procedure Handle_Query_Open is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Ntfn   : constant U64 := Syscalls.Message.Caps (1);
+      Name   : String (1 .. 32);
+      Len    : Natural;
+      Pos    : Natural;
+      V      : Natural;
+      Status : U64 := Files.Status_Ok;
+      Done   : Boolean := False;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+   begin
+      if Buf = 0 or else Ntfn = 0
+        or else not Name_Of (0, 3, Name, Len)
+      then
+         Status := Files.Status_Bad_Args;
+      else
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+         elsif not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+         else
+            Pack_Path (Exp, Pos, E_Len, 0, 3);
+            Syscalls.Message.Label := Files.Op_Query_Open;
+            Syscalls.Message.Caps := (0 => Buf, 1 => Ntfn,
+                                      others => 0);
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Syscalls.Debug_Put_Line
+                    ("fileserver query open reply failed");
+                  Syscalls.Process_Exit;
+               end if;
+               Done := True;
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end if;
+
+      --  Both caps were transferred into this table; drop our
+      --  copies (the fs driver kept its own on success).
+      if Buf /= 0
+        and then Syscalls.Cap_Delete (Buf) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: query open buffer cap delete failed");
+      end if;
+      if Ntfn /= 0
+        and then Syscalls.Cap_Delete (Ntfn) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: query open ntfn cap delete failed");
+      end if;
+      if not Done then
+         Reply2 (Status, 0);
+      end if;
+   end Handle_Query_Open;
+
+   procedure Handle_Query_Poll is
+      Buf    : constant U64 := Syscalls.Message.Caps (0);
+      Name   : String (1 .. 32);
+      Len    : Natural;
+      Pos    : Natural;
+      V      : Natural;
+      Status : U64 := Files.Status_Ok;
+      Done   : Boolean := False;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+   begin
+      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+         Status := Files.Status_Bad_Args;
+      else
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+         elsif not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+         else
+            --  Pack_Path touches words 0..3 only; the handle in
+            --  word 4 rides through to the fs driver.
+            Pack_Path (Exp, Pos, E_Len, 0, 3);
+            Syscalls.Message.Label := Files.Op_Query_Poll;
+            Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Syscalls.Debug_Put_Line
+                    ("fileserver query poll reply failed");
+                  Syscalls.Process_Exit;
+               end if;
+               Done := True;
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end if;
+
+      if Buf /= 0
+        and then Syscalls.Cap_Delete (Buf) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: query poll buffer cap delete failed");
+      end if;
+      if not Done then
+         Reply2 (Status, 0);
+      end if;
+   end Handle_Query_Poll;
+
+   procedure Handle_Query_Close is
+      Name   : String (1 .. 32);
+      Len    : Natural;
+      Pos    : Natural;
+      V      : Natural;
+      Status : U64 := Files.Status_Ok;
+      Done   : Boolean := False;
+      Exp    : String (1 .. Max_Expanded);
+      E_Len  : Natural;
+   begin
+      if not Name_Of (0, 3, Name, Len) then
+         Status := Files.Status_Bad_Args;
+      else
+         Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         if V = 0 then
+            Status := Files.Status_Not_Found;
+         elsif not Volumes (V).Is_FS then
+            Status := Files.Status_Bad_Args;
+         else
+            Pack_Path (Exp, Pos, E_Len, 0, 3);
+            Syscalls.Message.Label := Files.Op_Query_Close;
+            Syscalls.Message.Caps := (others => 0);
+            if Forward_To_FS (V, Syscalls.Message.Badge) then
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Syscalls.Debug_Put_Line
+                    ("fileserver query close reply failed");
+                  Syscalls.Process_Exit;
+               end if;
+               Done := True;
+            else
+               Status := Files.Status_Not_Found;
+            end if;
+         end if;
+      end if;
+
+      if not Done then
+         Reply2 (Status, 0);
+      end if;
+   end Handle_Query_Close;
+
    procedure Handle_Stat_Or_Open is
       Name : String (1 .. 48);
       Len  : Natural;
@@ -2391,6 +2547,24 @@ begin
             Reply2 (Files.Status_Not_Ready, 0);
          else
             Handle_Query;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Query_Open then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Query_Open;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Query_Poll then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Query_Poll;
+         end if;
+      elsif Syscalls.Message.Label = Files.Op_Query_Close then
+         if not Names_Done then
+            Reply2 (Files.Status_Not_Ready, 0);
+         else
+            Handle_Query_Close;
          end if;
       else
          Reply2 (Files.Status_Bad_Args, 0);

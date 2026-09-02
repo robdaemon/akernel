@@ -365,6 +365,8 @@ test:
 	grep -q "README.TXT  (36 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs README missing after test"; ST=1; }; \
 	grep -q "HELLO.TXT  (24 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs HELLO missing after test"; ST=1; }; \
 	grep -q "  name: 5 entries" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs name index out of sync after test"; ST=1; }; \
+	grep -q "  size: 0 entries" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs size index out of sync after test"; ST=1; }; \
+	grep -q "  last_modified: 0 entries" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs last_modified index out of sync after test"; ST=1; }; \
 	if [ $$ST -eq 0 ]; then echo "befs post-test image check ok"; fi; \
 	exit $$ST
 

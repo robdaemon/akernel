@@ -110,6 +110,12 @@ package body Bfs_Engine is
     --  0 when the volume has none — index maintenance then skips).
     Name_Index   : U64 := 0;
 
+    --  size / last_modified indices (m82g): int64-keyed trees,
+    --  kept in sync for regular files on create/write/truncate/
+    --  delete. 0 when the volume lacks them.
+    Size_Index   : U64 := 0;
+    Mtime_Index  : U64 := 0;
+
     --  Block allocator state: net used_blocks change of the open
     --  transaction (folded into Used_Blocks at commit) and the
     --  first-fit scan hint.
@@ -335,6 +341,13 @@ package body Bfs_Engine is
        Trans_Count := Trans_Count + 1;
     end Trans_Add;
 
+    --  Live queries (m82g): mutation ops capture subscriber
+    --  transitions into a pending list; a successful commit
+    --  delivers them (queue + doorbell), an abort drops them.
+    --  Bodies live with the live-query section near the end.
+    procedure Live_Deliver;
+    procedure Live_Clear;
+
     --  Drop the transaction without writing anything; cached
     --  copies of the touched blocks are invalidated (they carry
     --  modifications disk never saw).
@@ -345,6 +358,7 @@ package body Bfs_Engine is
        end loop;
        Trans_Count := 0;
        Used_Pending := 0;
+       Live_Clear;
     end Trans_Abort;
 
     --  Rewrite the superblock half of block 0 with the current
@@ -386,6 +400,7 @@ package body Bfs_Engine is
        Arr   : Byte_Array (0 .. Block_Size - 1);
     begin
        if Trans_Count = 0 then
+          Live_Deliver;  --  no-op unless events are pending
           return True;
        end if;
        if U64 (Trans_Count) + 1 >= Log_Len then
@@ -522,6 +537,7 @@ package body Bfs_Engine is
           return False;
        end if;
        Trans_Count := 0;
+       Live_Deliver;
        return True;
     end Trans_Commit;
 
@@ -1346,6 +1362,145 @@ package body Bfs_Engine is
        return Leaf_Store (NBlk, Node);
     end Leaf_Remove;
 
+    --  Int64-keyed leaf ops (m82g size / last_modified indices):
+    --  keys are fixed 8-byte little-endian values compared
+    --  numerically; duplicate (key, value) pairs allowed.
+
+    function Leaf_Key_Num (E : Leaf_Entries; I : Natural) return U64
+    is
+       V : U64 := 0;
+    begin
+       for K in 0 .. 7 loop
+          V := V or Interfaces.Shift_Left
+            (U64 (E.Keys (I)(U64 (K))), 8 * K);
+       end loop;
+       return V;
+    end Leaf_Key_Num;
+
+    function Leaf_Can_Fit_Int (Dir : Inode_Info) return Boolean
+    is
+       Node   : Block_Buf;
+       NBlk   : U64;
+       E      : Leaf_Entries;
+       KTotal : U64 := 0;
+    begin
+       if not Leaf_Load (Dir, Node, NBlk) then
+          return False;
+       end if;
+       Leaf_Decode (Node, E);
+       if E.N = Leaf_Max then
+          return False;
+       end if;
+       for I in 0 .. E.N - 1 loop
+          KTotal := KTotal + U64 (E.KL (I));
+       end loop;
+       KTotal := KTotal + 8;
+       return ((28 + KTotal + 7) and not 7)
+         + 2 * U64 (E.N + 1) + 8 * U64 (E.N + 1) <= Block_Size;
+    end Leaf_Can_Fit_Int;
+
+    function Leaf_Insert_Int (Dir : Inode_Info; Key : U64;
+                              Value : U64) return Boolean
+    is
+       Node : Block_Buf;
+       NBlk : U64;
+       E    : Leaf_Entries;
+       Idx  : Natural := 0;
+    begin
+       if not Leaf_Load (Dir, Node, NBlk) then
+          return False;
+       end if;
+       Leaf_Decode (Node, E);
+       if E.N = Leaf_Max then
+          return False;
+       end if;
+       while Idx < E.N
+         and then E.KL (Idx) = 8
+         and then Leaf_Key_Num (E, Idx) < Key
+       loop
+          Idx := Idx + 1;
+       end loop;
+       while Idx < E.N
+         and then E.KL (Idx) = 8
+         and then Leaf_Key_Num (E, Idx) = Key
+       loop
+          Idx := Idx + 1;  --  duplicates go after existing keys
+       end loop;
+       for I in reverse Idx + 1 .. E.N loop
+          E.KL (I) := E.KL (I - 1);
+          E.Keys (I) := E.Keys (I - 1);
+          E.Vals (I) := E.Vals (I - 1);
+       end loop;
+       E.KL (Idx) := 8;
+       E.Keys (Idx) := (others => 0);
+       for K in 0 .. 7 loop
+          E.Keys (Idx)(U64 (K)) :=
+            U8 (Interfaces.Shift_Right (Key, 8 * K) and 16#FF#);
+       end loop;
+       E.Vals (Idx) := Value;
+       E.N := E.N + 1;
+       if not Leaf_Encode (E, Node) then
+          return False;
+       end if;
+       return Leaf_Store (NBlk, Node);
+    end Leaf_Insert_Int;
+
+    --  Remove the entry matching both Key and Value.
+    function Leaf_Remove_Int (Dir : Inode_Info; Key : U64;
+                              Value : U64) return Boolean
+    is
+       Node : Block_Buf;
+       NBlk : U64;
+       E    : Leaf_Entries;
+       Idx  : Natural := 0;
+       Hit  : Boolean := False;
+    begin
+       if not Leaf_Load (Dir, Node, NBlk) then
+          return False;
+       end if;
+       Leaf_Decode (Node, E);
+       for I in 0 .. E.N - 1 loop
+          if E.KL (I) = 8
+            and then Leaf_Key_Num (E, I) = Key
+            and then E.Vals (I) = Value
+          then
+             Idx := I;
+             Hit := True;
+             exit;
+          end if;
+       end loop;
+       if not Hit then
+          return False;
+       end if;
+       for I in Idx + 1 .. E.N - 1 loop
+          E.KL (I - 1) := E.KL (I);
+          E.Keys (I - 1) := E.Keys (I);
+          E.Vals (I - 1) := E.Vals (I);
+       end loop;
+       E.N := E.N - 1;
+       if not Leaf_Encode (E, Node) then
+          return False;
+       end if;
+       return Leaf_Store (NBlk, Node);
+    end Leaf_Remove_Int;
+
+   ------------------------------------------------------------------
+   --  Live queries (m82g): mutation ops diff per-subscription match
+   --  bits before/after their change into a pending list; a
+   --  successful Trans_Commit delivers it (queue + doorbell), an
+   --  abort drops it (Live_Clear, forward-declared above). State
+   --  and bodies live with the query section near the end.
+   ------------------------------------------------------------------
+
+    Live_Max : constant := 4;   --  concurrent subscriptions
+
+    type Pend_Bits is array (0 .. Live_Max - 1) of Boolean;
+    No_Bits : constant Pend_Bits := (others => False);
+
+    function Live_Eval (Name : String; Info : Inode_Info)
+                        return Pend_Bits;
+    procedure Live_Diff (Was, Now : Pend_Bits; Info : Inode_Info);
+
    ------------------------------------------------------------------
    --  Path lookup
    ------------------------------------------------------------------
@@ -1446,13 +1601,15 @@ package body Bfs_Engine is
 
     --  Build a fresh inode block into Buf (layout = mkbefs.py
     --  inode()). Stream_Run/Size describe the data stream; Name
-    --  becomes the small_data name pseudo-attribute.
+    --  becomes the small_data name pseudo-attribute; Time (secs
+    --  << 16) stamps create/mtime so the caller can mirror the
+    --  exact value into the last_modified index.
     procedure Build_Inode (Buf : out Block_Buf; Block : U64;
                            Mode : U32; Parent : U64;
                            Stream_Run : Block_Run; Size : U64;
-                           Name : String)
+                           Name : String; Time : U64)
     is
-       T : constant U64 := Now_Time;
+       T : constant U64 := Time;
     begin
        Buf := (others => 0);
        --  magic, inode_num, uid, gid, mode, flags
@@ -1564,6 +1721,36 @@ package body Bfs_Engine is
        end if;
     end Index_Remove;
 
+    --  Numeric index maintenance (m82g): Index_Blk is the
+    --  size/last_modified index inode (0 = absent). Same
+    --  best-effort policy as the name index.
+    procedure Index_Add_Num (Index_Blk : U64; Key : U64;
+                             Inode_Block : U64) is
+       II : Inode_Info;
+    begin
+       if Index_Blk /= 0
+         and then Read_Inode (Index_Blk, II)
+         and then not Leaf_Insert_Int (II, Key, Inode_Block)
+       then
+          Akernel_User.Console.Put_Line ("bfs: numeric index add failed");
+       end if;
+    end Index_Add_Num;
+
+    procedure Index_Remove_Num (Index_Blk : U64; Key : U64;
+                                Inode_Block : U64) is
+       II : Inode_Info;
+    begin
+       if Index_Blk /= 0
+         and then Read_Inode (Index_Blk, II)
+       then
+          Done : begin
+             if not Leaf_Remove_Int (II, Key, Inode_Block) then
+                null;  --  absent entry: best-effort removal
+             end if;
+          end Done;
+       end if;
+    end Index_Remove_Num;
+
     --  Create an empty file or directory under Parent; the dirent
     --  and name-index entries are inserted. The caller checks
     --  Leaf_Can_Fit first so this cannot fail on tree space after
@@ -1578,6 +1765,7 @@ package body Bfs_Engine is
        Hdr    : Block_Buf;
        E      : Leaf_Entries;
        Node   : Block_Buf;
+       C_Time : constant U64 := Now_Time;
     begin
        New_Block := 0;
        if Name'Length = 0 or else Name'Length > Leaf_Key_Max then
@@ -1633,7 +1821,7 @@ package body Bfs_Engine is
           (AG => 0,
            Start => (if Is_Dir then U16 (SBlk) else 0),
            Length => (if Is_Dir then 2 else 0)),
-          (if Is_Dir then 2 * Block_Size else 0), Name);
+          (if Is_Dir then 2 * Block_Size else 0), Name, C_Time);
        if not Store_Block (Ino, Buf) then
           if Is_Dir then
              Free (SBlk, 2);
@@ -1650,6 +1838,12 @@ package body Bfs_Engine is
           return False;
        end if;
        Index_Add (Name, Ino);
+       if not Is_Dir then
+          --  m82g: regular files join the size / last_modified
+          --  indices at creation (size 0, create time).
+          Index_Add_Num (Size_Index, 0, Ino);
+          Index_Add_Num (Mtime_Index, C_Time, Ino);
+       end if;
        New_Block := Ino;
        return True;
     end Create_Entry;
@@ -1793,28 +1987,33 @@ package body Bfs_Engine is
          end;
       end if;
 
-      --  Name index inode (m82e keeps it in sync on mutations):
-      --  the "name" entry of the indices root's tree.
-      if Is_Mounted and then Index_Block /= 0 then
-         declare
-            Idx  : Inode_Info;
-            It   : Tree_It;
-            Name : String (1 .. 32);
-            NLen : Natural;
-            Blk  : U64;
-            Ok   : Boolean;
-         begin
-            if Read_Inode (Index_Block, Idx) then
-               Tree_Rewind (Idx, It, Ok);
-               while Ok and then Tree_Next (It, Name, NLen, Blk) loop
-                  if NLen = 4 and then Name (1 .. 4) = "name" then
-                     Name_Index := Blk;
-                     exit;
-                  end if;
-               end loop;
-            end if;
-         end;
-      end if;
+       --  Index inodes (m82e/m82g keep them in sync on
+       --  mutations): entries of the indices root's tree.
+       if Is_Mounted and then Index_Block /= 0 then
+          declare
+             Idx  : Inode_Info;
+             It   : Tree_It;
+             Name : String (1 .. 32);
+             NLen : Natural;
+             Blk  : U64;
+             Ok   : Boolean;
+          begin
+             if Read_Inode (Index_Block, Idx) then
+                Tree_Rewind (Idx, It, Ok);
+                while Ok and then Tree_Next (It, Name, NLen, Blk) loop
+                   if NLen = 4 and then Name (1 .. 4) = "name" then
+                      Name_Index := Blk;
+                   elsif NLen = 4 and then Name (1 .. 4) = "size" then
+                      Size_Index := Blk;
+                   elsif NLen = 13
+                     and then Name (1 .. 13) = "last_modified"
+                   then
+                      Mtime_Index := Blk;
+                   end if;
+                end loop;
+             end if;
+          end;
+       end if;
     end Init;
 
    function Mounted return Boolean is
@@ -1948,11 +2147,13 @@ package body Bfs_Engine is
        Found   : Boolean;
        Last_End : U64;
        Slot    : Natural;
+       Was     : Pend_Bits := No_Bits;
     begin
        if not Is_Mounted then
           Len := 0;
           return Status_Not_Found;
        end if;
+       Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
        if Lookup (Path, Info, Root) then
           if Root then
              Len := 0;
@@ -1962,9 +2163,12 @@ package body Bfs_Engine is
              Len := 0;
              return Status_Bad_Args;
           end if;
+          --  m82g: capture the pre-write match state.
+          if N_Len /= 0 then
+             Was := Live_Eval (P_Name (1 .. N_Len), Info);
+          end if;
        else
           --  Create in the resolved parent directory.
-          Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
           if N_Len = 0
             or else not Lookup (P_Path (1 .. P_Len), Parent, Root)
             or else (Parent.Mode and S_IFMT) /= S_IFDIR
@@ -1991,12 +2195,14 @@ package body Bfs_Engine is
        if Offset > Info.Size then
           --  fat32 parity: a just-created empty file stays.
           if Created then
-            Ok : begin
-               if not Trans_Commit then
-                  Len := 0;
-                  return Status_Bad_Args;
-               end if;
-            end Ok;
+             Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len), Info),
+                        Info);
+             Ok : begin
+                if not Trans_Commit then
+                   Len := 0;
+                   return Status_Bad_Args;
+                end if;
+             end Ok;
           end if;
           Len := 0;
           return Status_Out_Of_Range;
@@ -2030,16 +2236,18 @@ package body Bfs_Engine is
                 Last_End := To_Block (Info.Direct (I))
                   + U64 (Info.Direct (I).Length);
              end loop;
-             if not Alloc (Need, St) then
-                if Created then
-                   Commit_New : begin
-                      if Trans_Commit then
-                         null;
-                      end if;
-                   end Commit_New;
-                else
-                   Trans_Abort;
-                end if;
+              if not Alloc (Need, St) then
+                 if Created then
+                    Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len),
+                                               Info), Info);
+                    Commit_New : begin
+                       if Trans_Commit then
+                          null;
+                       end if;
+                    end Commit_New;
+                 else
+                    Trans_Abort;
+                 end if;
                 Len := 0;
                 return Status_Bad_Args;  --  disk full
              end if;
@@ -2056,18 +2264,20 @@ package body Bfs_Engine is
                 Info.Direct (Free_Idx) :=
                   (AG => 0, Start => U16 (St), Length => U16 (Need));
              else
-                --  12 runs used and not contiguous: m82e stops
-                --  here (indirect streams are future work).
-                Free (St, Need);
-                if Created then
-                   Commit_Ok : begin
-                      if Trans_Commit then
-                         null;
-                      end if;
-                   end Commit_Ok;
-                else
-                   Trans_Abort;
-                end if;
+                 --  12 runs used and not contiguous: m82e stops
+                 --  here (indirect streams are future work).
+                 Free (St, Need);
+                 if Created then
+                    Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len),
+                                               Info), Info);
+                    Commit_Ok : begin
+                       if Trans_Commit then
+                          null;
+                       end if;
+                    end Commit_Ok;
+                 else
+                    Trans_Abort;
+                 end if;
                 Len := 0;
                 return Status_Bad_Args;
              end if;
@@ -2123,18 +2333,46 @@ package body Bfs_Engine is
           Len := 0;
           return Status_Bad_Args;
        end if;
-       for I in Info.Direct'Range loop
-          Put_LE32 (Slot, 72 + U64 (I) * 8, Info.Direct (I).AG);
-          Put_LE16 (Slot, 72 + U64 (I) * 8 + 4, Info.Direct (I).Start);
-          Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, Info.Direct (I).Length);
-       end loop;
-       Put_LE64 (Slot, 168, Allocated);
-       if End_Pos > Info.Size then
-          Put_LE64 (Slot, 208, End_Pos);
-       end if;
-       Put_LE64 (Slot, 36, Now_Time);
-       Trans_Add (Slot);
-       Put_Block (Slot);
+       declare
+          Old_Size  : constant U64 := Info.Size;
+          Old_Mtime : constant U64 := Info.Mtime;
+          New_Size  : constant U64 :=
+            (if End_Pos > Info.Size then End_Pos else Info.Size);
+          W_Time    : constant U64 := Now_Time;
+       begin
+          for I in Info.Direct'Range loop
+             Put_LE32 (Slot, 72 + U64 (I) * 8, Info.Direct (I).AG);
+             Put_LE16 (Slot, 72 + U64 (I) * 8 + 4, Info.Direct (I).Start);
+             Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, Info.Direct (I).Length);
+          end loop;
+          Put_LE64 (Slot, 168, Allocated);
+          if End_Pos > Info.Size then
+             Put_LE64 (Slot, 208, End_Pos);
+          end if;
+          Put_LE64 (Slot, 36, W_Time);
+          Trans_Add (Slot);
+          Put_Block (Slot);
+
+          --  m82g: keep the size / last_modified indices in sync
+          --  (journaled with the data).
+          if New_Size /= Old_Size then
+             Index_Remove_Num (Size_Index, Old_Size, Info.Block);
+             Index_Add_Num (Size_Index, New_Size, Info.Block);
+          end if;
+          Index_Remove_Num (Mtime_Index, Old_Mtime, Info.Block);
+          Index_Add_Num (Mtime_Index, W_Time, Info.Block);
+       end;
+
+       --  m82g: diff against the post-write state (the overlay
+       --  shows the grown size and fresh mtime).
+       declare
+          Cur : Inode_Info;
+       begin
+          if N_Len /= 0 and then Read_Inode (Info.Block, Cur) then
+             Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len), Cur),
+                        Cur);
+          end if;
+       end;
 
        if not Trans_Commit then
           Len := 0;
@@ -2154,6 +2392,11 @@ package body Bfs_Engine is
           return False;
        end if;
        Index_Remove (Name, Info.Block);
+       if (Info.Mode and S_IFMT) = S_IFREG then
+          --  m82g: regular files leave the numeric indices.
+          Index_Remove_Num (Size_Index, Info.Size, Info.Block);
+          Index_Remove_Num (Mtime_Index, Info.Mtime, Info.Block);
+       end if;
        Free_Stream (Info);
        return Free_Inode (Info);
     end Remove_Entry;
@@ -2183,6 +2426,10 @@ package body Bfs_Engine is
        then
           return Status_Not_Found;
        end if;
+       --  m82g: capture the removal transition while the inode
+       --  and its parent chain are still intact.
+       Live_Diff (Live_Eval (P_Name (1 .. N_Len), Info), No_Bits,
+                  Info);
        if not Remove_Entry (Parent, P_Name (1 .. N_Len), Info) then
           Trans_Abort;
           return Status_Bad_Args;
@@ -2197,6 +2444,11 @@ package body Bfs_Engine is
        Info : Inode_Info;
        Root : Boolean;
        Slot : Natural;
+       P_Path  : String (1 .. 32);
+       P_Len   : Natural;
+       P_Name  : String (1 .. 32);
+       N_Len   : Natural := 0;
+       Was     : Pend_Bits := No_Bits;
     begin
        if not Is_Mounted or else not Lookup (Path, Info, Root)
          or else Root
@@ -2208,22 +2460,51 @@ package body Bfs_Engine is
        then
           return Status_Bad_Args;
        end if;
+       --  m82g: capture the pre-truncate match state.
+       Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
+       if N_Len /= 0 then
+          Was := Live_Eval (P_Name (1 .. N_Len), Info);
+       end if;
        Free_Stream (Info);
        Slot := Get_Block (Info.Block);
        if Slot = Cache_Slots then
           Trans_Abort;
           return Status_Bad_Args;
        end if;
-       for I in 0 .. 11 loop
-          Put_LE32 (Slot, 72 + U64 (I) * 8, 0);
-          Put_LE16 (Slot, 72 + U64 (I) * 8 + 4, 0);
-          Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, 0);
-       end loop;
-       Put_LE64 (Slot, 168, 0);   --  max_direct_range
-       Put_LE64 (Slot, 208, 0);   --  size
-       Put_LE64 (Slot, 36, Now_Time);
-       Trans_Add (Slot);
-       Put_Block (Slot);
+       declare
+          Old_Size  : constant U64 := Info.Size;
+          Old_Mtime : constant U64 := Info.Mtime;
+          T_Time    : constant U64 := Now_Time;
+       begin
+          for I in 0 .. 11 loop
+             Put_LE32 (Slot, 72 + U64 (I) * 8, 0);
+             Put_LE16 (Slot, 72 + U64 (I) * 8 + 4, 0);
+             Put_LE16 (Slot, 72 + U64 (I) * 8 + 6, 0);
+          end loop;
+          Put_LE64 (Slot, 168, 0);   --  max_direct_range
+          Put_LE64 (Slot, 208, 0);   --  size
+          Put_LE64 (Slot, 36, T_Time);
+          Trans_Add (Slot);
+          Put_Block (Slot);
+
+          --  m82g: size / last_modified index sync.
+          if Old_Size /= 0 then
+             Index_Remove_Num (Size_Index, Old_Size, Info.Block);
+             Index_Add_Num (Size_Index, 0, Info.Block);
+          end if;
+          Index_Remove_Num (Mtime_Index, Old_Mtime, Info.Block);
+          Index_Add_Num (Mtime_Index, T_Time, Info.Block);
+       end;
+       --  m82g: diff against the post-truncate state (the overlay
+       --  shows the zeroed size and fresh mtime).
+       declare
+          Cur : Inode_Info;
+       begin
+          if N_Len /= 0 and then Read_Inode (Info.Block, Cur) then
+             Live_Diff (Was, Live_Eval (P_Name (1 .. N_Len), Cur),
+                        Cur);
+          end if;
+       end;
        if not Trans_Commit then
           return Status_Bad_Args;
        end if;
@@ -2256,8 +2537,21 @@ package body Bfs_Engine is
        if not Leaf_Can_Fit (Parent, P_Name (1 .. N_Len))
          or else not Create_Entry (Parent, P_Name (1 .. N_Len),
                                    True, New_Ino)
-         or else not Trans_Commit
        then
+          Trans_Abort;
+          return Status_Bad_Args;
+       end if;
+       --  m82g: the new directory enters matching result sets.
+       declare
+          NInfo : Inode_Info;
+       begin
+          if Read_Inode (New_Ino, NInfo) then
+             Live_Diff (No_Bits,
+                        Live_Eval (P_Name (1 .. N_Len), NInfo),
+                        NInfo);
+          end if;
+       end;
+       if not Trans_Commit then
           Trans_Abort;
           return Status_Bad_Args;
        end if;
@@ -2304,6 +2598,9 @@ package body Bfs_Engine is
        then
           return Status_Not_Found;
        end if;
+       --  m82g: removal transition (see Delete).
+       Live_Diff (Live_Eval (P_Name (1 .. N_Len), Info), No_Bits,
+                  Info);
        if not Remove_Entry (Parent, P_Name (1 .. N_Len), Info) then
           Trans_Abort;
           return Status_Bad_Args;
@@ -2330,6 +2627,7 @@ package body Bfs_Engine is
        Cur      : Inode_Info;
        Dotdot   : U64;
        Depth    : Natural := 0;
+       Was      : Pend_Bits := No_Bits;
     begin
        if not Is_Mounted or else not Lookup (From, Info, Root)
          or else Root
@@ -2378,6 +2676,11 @@ package body Bfs_Engine is
           return Status_Bad_Args;
        end if;
 
+       --  m82g: capture the removal transition while the old name
+       --  and parent chain are still in place.
+       Was := Live_Eval (F_Name (1 .. F_NL), Info);
+       Live_Diff (Was, No_Bits, Info);
+
        --  Moved directory: point ".." at the new parent first.
        if (Info.Mode and S_IFMT) = S_IFDIR
          and then F_Parent.Block /= T_Parent.Block
@@ -2401,10 +2704,35 @@ package body Bfs_Engine is
        end if;
        Index_Remove (F_Name (1 .. F_NL), Info.Block);
        Index_Add (T_Name (1 .. T_NL), Info.Block);
+       --  Keep the inode parent run in sync on cross-directory
+       --  moves (query path materialization walks it).
+       if F_Parent.Block /= T_Parent.Block then
+          declare
+             P_Slot : constant Natural := Get_Block (Info.Block);
+          begin
+             if P_Slot = Cache_Slots then
+                Trans_Abort;
+                return Status_Bad_Args;
+             end if;
+             Put_LE16 (P_Slot, 48, U16 (T_Parent.Block));
+             Trans_Add (P_Slot);
+             Put_Block (P_Slot);
+          end;
+       end if;
        if not Rename_Name_Attr (Info, T_Name (1 .. T_NL)) then
           Trans_Abort;
           return Status_Bad_Args;
        end if;
+       --  m82g: the entry joins matching sets under its new name.
+       declare
+          NInfo : Inode_Info;
+       begin
+          if Read_Inode (Info.Block, NInfo) then
+             Live_Diff (No_Bits,
+                        Live_Eval (T_Name (1 .. T_NL), NInfo),
+                        NInfo);
+          end if;
+       end;
        if not Trans_Commit then
           return Status_Bad_Args;
        end if;
@@ -2462,7 +2790,9 @@ package body Bfs_Engine is
        Str    : String (1 .. 48) := (others => ' ');
        Str_L  : Natural := 0;
     end record;
-    Pred_Nodes : array (1 .. Pred_Node_Max) of Pred_Node;
+    type Pred_Node_Store is array (1 .. Pred_Node_Max) of Pred_Node;
+    type Pred_Store_Access is access constant Pred_Node_Store;
+    Pred_Nodes : aliased Pred_Node_Store;
     Pred_Count : Natural := 0;
 
     procedure Pred_Skip_Ws is
@@ -2825,31 +3155,39 @@ package body Bfs_Engine is
        end;
     end Eval_Term;
 
-    function Eval_Node (N : Natural; Name : String;
-                        Info : Inode_Info) return Boolean is
+    --  Nodes is the parsed AST: the one-shot parser state for
+    --  Query, the subscription's snapshot for live events. Passed
+    --  by access: the store is ~2.5 KiB and Eval_Node recurses,
+    --  a by-value parameter would blow the 48 KiB process stack.
+    function Eval_Node (Nodes : Pred_Store_Access; N : Natural;
+                        Name : String; Info : Inode_Info)
+                        return Boolean is
     begin
-       case Pred_Nodes (N).Kind is
+       case Nodes (N).Kind is
           when N_Term =>
-             return Eval_Term (Pred_Nodes (N), Name, Info);
+             return Eval_Term (Nodes (N), Name, Info);
           when N_And =>
-             return Eval_Node (Pred_Nodes (N).Left, Name, Info)
-               and then Eval_Node (Pred_Nodes (N).Right, Name, Info);
+             return Eval_Node (Nodes, Nodes (N).Left, Name, Info)
+               and then Eval_Node (Nodes, Nodes (N).Right, Name, Info);
           when N_Or =>
-             return Eval_Node (Pred_Nodes (N).Left, Name, Info)
-               or else Eval_Node (Pred_Nodes (N).Right, Name, Info);
+             return Eval_Node (Nodes, Nodes (N).Left, Name, Info)
+               or else Eval_Node (Nodes, Nodes (N).Right, Name, Info);
           when N_Not =>
-             return not Eval_Node (Pred_Nodes (N).Left, Name, Info);
+             return not Eval_Node (Nodes, Nodes (N).Left, Name, Info);
        end case;
     end Eval_Node;
 
     --  Build the volume-relative path of an inode by walking the
     --  parent chain, collecting name attributes. False when the
     --  chain is broken or the path does not fit Path'Length.
+    --  Caps: 16 components of up to 64 chars (the wire carries
+    --  the path in the client buffer, so only Path'Length is the
+    --  real limit).
     function Materialize_Path (Info : Inode_Info; Path : out String;
                                Path_Len : out Natural) return Boolean
     is
-       Comp      : array (0 .. 7, 1 .. 24) of U8;
-       Comp_Len  : array (0 .. 7) of Natural := (others => 0);
+       Comp      : array (0 .. 15, 1 .. 64) of U8;
+       Comp_Len  : array (0 .. 15) of Natural := (others => 0);
        Depth     : Natural := 0;
        Cur       : Inode_Info := Info;
        Parent_Run : Block_Run;
@@ -2858,7 +3196,7 @@ package body Bfs_Engine is
        Path_Len := 0;
        loop
           exit when Cur.Block = Root_Block;
-          if Depth = 8 then
+          if Depth = 16 then
              return False;
           end if;
           --  Name pseudo-attribute of Cur (first small_data entry).
@@ -2875,7 +3213,7 @@ package body Bfs_Engine is
                 return False;
              end if;
              DL := U64 (LE16 (Slot, 238));
-             if DL = 0 or else DL > 24 then
+             if DL = 0 or else DL > 64 then
                 Put_Block (Slot);
                 return False;
              end if;
@@ -2963,7 +3301,8 @@ package body Bfs_Engine is
        end if;
        while Tree_Next (It, E_Name, E_Len, E_Block) loop
           if Read_Inode (E_Block, Info)
-            and then Eval_Node (Root_N, E_Name (1 .. E_Len), Info)
+            and then Eval_Node (Pred_Nodes'Access, Root_N,
+                                E_Name (1 .. E_Len), Info)
           then
              if Seen = Index then
                 Is_Dir := (Info.Mode and S_IFMT) = S_IFDIR;
@@ -2980,6 +3319,263 @@ package body Bfs_Engine is
        end loop;
        return Status_Not_Found;
     end Query;
+
+    ------------------------------------------------------------------
+    --  Live queries (m82g)
+    --
+    --  A subscription snapshots the parsed predicate AST plus a
+    --  client-supplied notification cap. Mutation ops evaluate the
+    --  entry state before and after their change per subscription
+    --  and diff the match bits (entry entered the result set →
+    --  Ev_Added, left it → Ev_Removed); events carry the
+    --  volume-relative path and are delivered only after the
+    --  journal commit succeeds. A full event queue raises a
+    --  one-shot Ev_Resync instead (the client re-runs the query).
+    ------------------------------------------------------------------
+
+    Live_Ev_Max : constant := 8;   --  queued events per subscription
+
+    Ev_Added   : constant := 1;
+    Ev_Removed : constant := 2;
+    Ev_Resync  : constant := 3;
+
+    type Live_Path is record
+       Len  : Natural := 0;
+       Text : String (1 .. 255) := (others => ' ');
+    end record;
+
+    type Live_Ev is record
+       Kind : U8 := 0;
+       Path : Live_Path;
+    end record;
+
+    type Live_Ev_Queue is array (0 .. Live_Ev_Max - 1) of Live_Ev;
+
+    type Live_Sub is record
+       Active : Boolean := False;
+       Ntfn   : U64 := 0;
+       Root   : Natural := 0;
+       Nodes  : aliased Pred_Node_Store;
+       Ev     : Live_Ev_Queue;
+       Ev_N   : Natural := 0;
+       Resync : Boolean := False;
+    end record;
+
+    type Live_Table is array (0 .. Live_Max - 1) of Live_Sub;
+    Subs : Live_Table;
+
+    --  Events captured by the in-flight mutation op, delivered by
+    --  Trans_Commit (4 covers the write/truncate/rename diffs).
+    type Pend_Rec is record
+       Any   : Boolean := False;
+       Kind  : U8 := 0;
+       Match : Pend_Bits := No_Bits;
+       Path  : Live_Path;
+    end record;
+    type Pend_List is array (0 .. 3) of Pend_Rec;
+    Pend : Pend_List;
+
+    procedure Live_Clear is
+    begin
+       Pend := (others => <>);
+    end Live_Clear;
+
+    --  Evaluate every active subscription against (Name, Info).
+    function Live_Eval (Name : String; Info : Inode_Info)
+                        return Pend_Bits
+    is
+       R : Pend_Bits := No_Bits;
+    begin
+       for S in 0 .. Live_Max - 1 loop
+          if Subs (S).Active and then Subs (S).Root /= 0 then
+             R (S) := Eval_Node (Subs (S).Nodes'Access,
+                                 Subs (S).Root, Name, Info);
+          end if;
+       end loop;
+       return R;
+    end Live_Eval;
+
+    --  Queue a pending event when any subscription matches; the
+    --  path is materialized from Info while the transaction
+    --  overlay still shows the capture-time state.
+    procedure Live_Push (Kind : U8; Match : Pend_Bits;
+                         Info : Inode_Info)
+    is
+       Any : Boolean := False;
+       P   : Live_Path;
+    begin
+       for S in 0 .. Live_Max - 1 loop
+          Any := Any or else Match (S);
+       end loop;
+       if not Any then
+          return;
+       end if;
+       if not Materialize_Path (Info, P.Text, P.Len) then
+          return;  --  unrepresentable path: events are advisory
+       end if;
+       for R of Pend loop
+          if not R.Any then
+             R := (Any => True, Kind => Kind, Match => Match,
+                   Path => P);
+             return;
+          end if;
+       end loop;
+    end Live_Push;
+
+    --  Diff before/after match bits and queue the transitions.
+    procedure Live_Diff (Was, Now : Pend_Bits; Info : Inode_Info)
+    is
+       RM : Pend_Bits := No_Bits;
+       AD : Pend_Bits := No_Bits;
+       A_RM : Boolean := False;
+       A_AD : Boolean := False;
+    begin
+       for S in 0 .. Live_Max - 1 loop
+          if Subs (S).Active then
+             RM (S) := Was (S) and not Now (S);
+             AD (S) := Now (S) and not Was (S);
+             A_RM := A_RM or else RM (S);
+             A_AD := A_AD or else AD (S);
+          end if;
+       end loop;
+       if A_RM then
+          Live_Push (Ev_Removed, RM, Info);
+       end if;
+       if A_AD then
+          Live_Push (Ev_Added, AD, Info);
+       end if;
+    end Live_Diff;
+
+    --  Trans_Commit epilogue: enqueue pending events and ring the
+    --  doorbells (bit 0; the client polls to drain the queue).
+    procedure Live_Deliver is
+    begin
+       for R of Pend loop
+          exit when not R.Any;
+          for S in 0 .. Live_Max - 1 loop
+             if Subs (S).Active and then R.Match (S) then
+                if Subs (S).Ev_N < Live_Ev_Max then
+                   Subs (S).Ev (Subs (S).Ev_N) :=
+                     (Kind => R.Kind, Path => R.Path);
+                   Subs (S).Ev_N := Subs (S).Ev_N + 1;
+                else
+                   Subs (S).Resync := True;
+                end if;
+                Done : begin
+                   if Syscalls.Ntfn_Signal (Subs (S).Ntfn, 1) /= 0
+                   then
+                      null;  --  doorbell is advisory
+                   end if;
+                end Done;
+             end if;
+          end loop;
+       end loop;
+       Pend := (others => <>);
+    end Live_Deliver;
+
+    --  Parse Predicate and subscribe; Ntfn_Cap stays owned by the
+    --  engine (deleted at Live_Close). Handle is 1-based.
+    function Live_Open (Predicate : String; Ntfn_Cap : U64;
+                        Handle : out U64) return U64
+    is
+       Root_N : Natural;
+       Slot   : Natural := Live_Max;
+    begin
+       Handle := 0;
+       if not Is_Mounted or else Name_Index = 0
+         or else Predicate'Length = 0
+         or else Predicate'Length > Pred_Max
+       then
+          return Status_Not_Found;
+       end if;
+       for I in 0 .. Live_Max - 1 loop
+          if not Subs (I).Active then
+             Slot := I;
+             exit;
+          end if;
+       end loop;
+       if Slot = Live_Max then
+          return Status_Bad_Args;  --  subscription table full
+       end if;
+       --  Parse with the one-shot parser, then snapshot the AST.
+       Pred_Count := 0;
+       Pred_Ok := True;
+       Pred_Len := Predicate'Length;
+       Pred_Pos := 1;
+       for I in 1 .. Pred_Len loop
+          Pred_Buf (I) := Predicate (Predicate'First + I - 1);
+       end loop;
+       Root_N := Parse_Or;
+       Pred_Skip_Ws;
+       if not Pred_Ok or else Root_N = 0 or else Pred_Pos <= Pred_Len
+       then
+          return Status_Bad_Args;
+       end if;
+       Subs (Slot) := (Active => True, Ntfn => Ntfn_Cap,
+                       Root => Root_N, Nodes => Pred_Nodes,
+                       others => <>);
+       Handle := U64 (Slot) + 1;
+       return Status_Ok;
+    end Live_Open;
+
+    --  Pop the oldest queued event (Status_Not_Found when empty);
+    --  a pending overflow yields a single Ev_Resync event.
+    function Live_Poll (Handle : U64; Kind : out U64;
+                        Path : out String; Path_Len : out Natural)
+                        return U64
+    is
+    begin
+       Kind := 0;
+       Path_Len := 0;
+       if Handle = 0 or else Handle > U64 (Live_Max) then
+          return Status_Bad_Args;
+       end if;
+       declare
+          H : constant Natural := Natural (Handle) - 1;
+          E : Live_Ev;
+       begin
+          if not Subs (H).Active then
+             return Status_Bad_Args;
+          end if;
+          if Subs (H).Ev_N = 0 then
+             if Subs (H).Resync then
+                Subs (H).Resync := False;
+                Kind := Ev_Resync;
+                return Status_Ok;
+             end if;
+             return Status_Not_Found;
+          end if;
+          E := Subs (H).Ev (0);
+          for I in 1 .. Subs (H).Ev_N - 1 loop
+             Subs (H).Ev (I - 1) := Subs (H).Ev (I);
+          end loop;
+          Subs (H).Ev_N := Subs (H).Ev_N - 1;
+          Kind := U64 (E.Kind);
+          while Path_Len < Path'Length
+            and then Path_Len < E.Path.Len
+          loop
+             Path_Len := Path_Len + 1;
+             Path (Path'First + Path_Len - 1) :=
+               E.Path.Text (Path_Len);
+          end loop;
+          return Status_Ok;
+       end;
+    end Live_Poll;
+
+    procedure Live_Close (Handle : U64) is
+       Unused : U64;
+    begin
+       if Handle >= 1 and then Handle <= U64 (Live_Max) then
+          declare
+             H : constant Natural := Natural (Handle) - 1;
+          begin
+             if Subs (H).Active then
+                Subs (H).Active := False;
+                Unused := Syscalls.Cap_Delete (Subs (H).Ntfn);
+             end if;
+          end;
+       end if;
+    end Live_Close;
 
     ------------------------------------------------------------------
     --  Attributes (small_data region of the inode, m82d)

@@ -208,6 +208,20 @@ trap_frame_get_a0:
     ret
 .size trap_frame_get_a0, . - trap_frame_get_a0
 
+.global trap_frame_get_sp
+.type trap_frame_get_sp, @function
+trap_frame_get_sp:
+    ld a0, 8(a0)
+    ret
+.size trap_frame_get_sp, . - trap_frame_get_sp
+
+.global trap_frame_get_ra
+.type trap_frame_get_ra, @function
+trap_frame_get_ra:
+    ld a0, 0(a0)
+    ret
+.size trap_frame_get_ra, . - trap_frame_get_ra
+
 .global trap_frame_get_a1
 .type trap_frame_get_a1, @function
 trap_frame_get_a1:

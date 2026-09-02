@@ -104,6 +104,12 @@ package body Arch.Traps is
    function Trap_Frame_Get_A0 (Frame : System.Address) return U64
      with Import, Convention => C, External_Name => "trap_frame_get_a0";
 
+   function Trap_Frame_Get_Sp (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_sp";
+
+   function Trap_Frame_Get_Ra (Frame : System.Address) return U64
+     with Import, Convention => C, External_Name => "trap_frame_get_ra";
+
    function Trap_Frame_Get_A1 (Frame : System.Address) return U64
      with Import, Convention => C, External_Name => "trap_frame_get_a1";
 
@@ -2860,6 +2866,12 @@ package body Arch.Traps is
          Put_Hex_Unsafe (U64 (Kernel.Tasks.Thread_Id'Pos
                    (Kernel.Tasks.Id (Kernel.Scheduler.Current.all))));
          Board.UART.Put_Line_Unsafe ("");
+         Board.UART.Put_Unsafe ("  proc   = ");
+         Put_Hex_Unsafe (U64 (Kernel.Tasks.Process_Id'Pos
+                   (Kernel.Tasks.Process_Id_Of
+                      (Kernel.Tasks.Owning_Process
+                         (Kernel.Scheduler.Current.all).all))));
+         Board.UART.Put_Line_Unsafe ("");
       end if;
 
       Board.UART.Put_Unsafe ("  sepc   = ");
@@ -2868,6 +2880,12 @@ package body Arch.Traps is
 
       Board.UART.Put_Unsafe ("  stval  = ");
       Put_Hex_Unsafe (Arch.SBI.Stval);
+      Board.UART.Put_Line_Unsafe ("");
+      Board.UART.Put_Unsafe ("  sp     = ");
+      Put_Hex_Unsafe (Trap_Frame_Get_Sp (Frame));
+      Board.UART.Put_Line_Unsafe ("");
+      Board.UART.Put_Unsafe ("  ra     = ");
+      Put_Hex_Unsafe (Trap_Frame_Get_Ra (Frame));
       Board.UART.Put_Line_Unsafe ("");
       Kernel.Lock.Release;
       Halt;

@@ -29,7 +29,7 @@ procedure Query is
    VLen : Natural;
    Pred : String (1 .. 255);
    PLen : Natural := 0;
-   Path : String (1 .. 24);
+   Path : String (1 .. 255);
    PL   : Natural;
    Size : Files.U64;
    Is_D : Boolean;

@@ -588,6 +588,7 @@ begin
       --  ~0x50 bytes inside the ZCX unwinder with this section
       --  inline.  See Stack_Pages history in
       --  src/kernel/kernel-processes.adb.
+      procedure Live_Query_Tests;
       procedure Bfs_Tests is
       begin
          --  Stat/read through file server -> Bfs_Engine ->
@@ -781,6 +782,23 @@ begin
               ("BD1:RENDIR/MOVED.TXT");
             Status := Akernel_User.Files.Delete ("BD1:REN.B");
             Status := Akernel_User.Files.Rmdir ("BD1:RENDIR");
+            Status := Akernel_User.Files.Delete
+              ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT");
+            Status := Akernel_User.Files.Rmdir ("BD1:QLONGD/QDEEPD");
+            Status := Akernel_User.Files.Rmdir ("BD1:QLONGD");
+            Status := Akernel_User.Files.Delete ("BD1:LIVE1.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVE2.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:NOTLIVE.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO0.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO1.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO2.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO3.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO4.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO5.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO6.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO7.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO8.TXT");
+            Status := Akernel_User.Files.Delete ("BD1:LIVEO9.TXT");
 
             --  Create-by-write, then read back.
             declare
@@ -1086,9 +1104,60 @@ begin
             --  listing itself is covered by the checks above).
             Run_Command ("Sys:C/Query", "BD1 name==""*.TXT""", 0,
                          "query command lists matches");
-            Run_Command ("Sys:C/Query", "BD1 ==", 10,
-                         "query command rejects bad predicate");
-         end;
+             Run_Command ("Sys:C/Query", "BD1 ==", 10,
+                          "query command rejects bad predicate");
+
+             --  Long paths (m82g): the result path rides back in
+             --  the client buffer, so paths beyond 24 chars
+             --  round-trip (26 chars here — the 30-char qualified
+             --  form still fits the 32-char request wire limit).
+             declare
+                QP2 : String (1 .. 64);
+                QL2 : Natural;
+             begin
+                Status := Akernel_User.Files.Mkdir ("BD1:QLONGD");
+                Check (Status = Akernel_User.Files.Status_Ok,
+                       "bfs long path dir created");
+                Status := Akernel_User.Files.Mkdir
+                  ("BD1:QLONGD/QDEEPD");
+                Check (Status = Akernel_User.Files.Status_Ok,
+                       "bfs long path nested dir created");
+                declare
+                   Payload : constant String := "AKBEFS!";
+                begin
+                   for I in 0 .. 6 loop
+                      Buf (I) := Interfaces.Unsigned_8
+                        (Character'Pos (Payload (I + 1)));
+                   end loop;
+                end;
+                Status := Akernel_User.Files.Write
+                  ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT", 0,
+                   Buf'Address, 7, Count);
+                Check (Status = Akernel_User.Files.Status_Ok
+                       and then Count = 7,
+                       "bfs long path file written");
+                Status := Akernel_User.Files.Query
+                  ("BD1:", "name==""DEEPFILE.TXT""", 0, QP2, QL2,
+                   QSz, QDir);
+                Check (Status = Akernel_User.Files.Status_Ok
+                       and then QL2 = 26
+                       and then QP2 (1 .. QL2)
+                         = "QLONGD/QDEEPD/DEEPFILE.TXT"
+                       and then QSz = 7,
+                       "bfs query long path via buffer");
+                Status := Akernel_User.Files.Delete
+                  ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT");
+                Check (Status = Akernel_User.Files.Status_Ok,
+                       "bfs long path file deleted");
+                Status := Akernel_User.Files.Rmdir
+                  ("BD1:QLONGD/QDEEPD");
+                Check (Status = Akernel_User.Files.Status_Ok,
+                       "bfs long path nested dir removed");
+                Status := Akernel_User.Files.Rmdir ("BD1:QLONGD");
+                Check (Status = Akernel_User.Files.Status_Ok,
+                       "bfs long path dir removed");
+             end;
+          end;
 
          Status := Akernel_User.Files.Sync;
          Check (Status = Akernel_User.Files.Status_Ok,
@@ -1238,7 +1307,170 @@ begin
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "fat attr read rejected");
          end;
+         Live_Query_Tests;
       end Bfs_Tests;
+
+      --  Live queries (m82g): subscribe with a notification
+      --  cap, mutate, get the doorbell plus path events.
+      --  Separate procedure so its locals get their own
+      --  frame — folded into Bfs_Tests they tipped the
+      --  48 KiB process stack over (trap at 0x6FFF3FF0).
+      procedure Live_Query_Tests is
+         use Akernel_User.Syscalls;
+         Ntf  : U64;
+         LQH  : U64 := 0;
+         LK   : U64;
+         LP   : String (1 .. 64);
+         LPL  : Natural;
+         Bits : U64;
+      begin
+             Ntf := Ntfn_Create;
+             Check (Ntf /= Syscall_Failed,
+                    "live query ntfn created");
+             Status := Akernel_User.Files.Query_Open
+               ("BD1:", "name==""LIVE*.TXT""", Ntf, LQH);
+             Check (Status = Akernel_User.Files.Status_Ok
+                    and then LQH /= 0,
+                    "live query opened");
+
+             --  A matching create rings the doorbell and queues
+             --  an "added" event.
+             declare
+                Payload : constant String := "AKBEFS!";
+             begin
+                for I in 0 .. 6 loop
+                   Buf (I) := Interfaces.Unsigned_8
+                     (Character'Pos (Payload (I + 1)));
+                end loop;
+             end;
+             Status := Akernel_User.Files.Write
+               ("BD1:LIVE1.TXT", 0, Buf'Address, 7, Count);
+             Check (Status = Akernel_User.Files.Status_Ok
+                    and then Count = 7,
+                    "live query matching file created");
+             Bits := Ntfn_Wait (Ntf);
+             Check (Bits /= Syscall_Failed
+                    and then (Bits and 1) /= 0,
+                    "live query doorbell rang");
+             Status := Akernel_User.Files.Query_Poll
+               ("BD1:", LQH, LK, LP, LPL);
+             Check (Status = Akernel_User.Files.Status_Ok
+                    and then LK = 1
+                    and then LPL = 9
+                    and then LP (1 .. 9) = "LIVE1.TXT",
+                    "live query added event");
+             Status := Akernel_User.Files.Query_Poll
+               ("BD1:", LQH, LK, LP, LPL);
+             Check (Status = Akernel_User.Files.Status_Not_Found,
+                    "live query queue drained");
+
+             --  A non-matching create queues nothing (no wait:
+             --  the doorbell must not have rung).
+             Status := Akernel_User.Files.Write
+               ("BD1:NOTLIVE.TXT", 0, Buf'Address, 7, Count);
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query non-matching file created");
+             Status := Akernel_User.Files.Query_Poll
+               ("BD1:", LQH, LK, LP, LPL);
+             Check (Status = Akernel_User.Files.Status_Not_Found,
+                    "live query non-match silent");
+
+             --  Deleting a matching entry queues "removed".
+             Status := Akernel_User.Files.Delete
+               ("BD1:LIVE1.TXT");
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query matching file deleted");
+             Bits := Ntfn_Wait (Ntf);
+             Check (Bits /= Syscall_Failed
+                    and then (Bits and 1) /= 0,
+                    "live query doorbell on remove");
+             Status := Akernel_User.Files.Query_Poll
+               ("BD1:", LQH, LK, LP, LPL);
+             Check (Status = Akernel_User.Files.Status_Ok
+                    and then LK = 2
+                    and then LPL = 9
+                    and then LP (1 .. 9) = "LIVE1.TXT",
+                    "live query removed event");
+
+             --  Close: the handle dies, later mutations are
+             --  silent.
+             Status := Akernel_User.Files.Query_Close
+               ("BD1:", LQH);
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query closed");
+             Status := Akernel_User.Files.Write
+               ("BD1:LIVE2.TXT", 0, Buf'Address, 7, Count);
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query post-close file created");
+             Status := Akernel_User.Files.Query_Poll
+               ("BD1:", LQH, LK, LP, LPL);
+             Check (Status = Akernel_User.Files.Status_Bad_Args,
+                    "live query closed handle rejected");
+
+             --  Queue overflow: 10 matching creates > 8-deep
+             --  queue, then a resync event.
+             Status := Akernel_User.Files.Query_Open
+               ("BD1:", "name==""LIVEO*.TXT""", Ntf, LQH);
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query reopened for overflow");
+             declare
+                LN : String (1 .. 14) := "BD1:LIVEO0.TXT";
+             begin
+                for I in 0 .. 9 loop
+                   LN (10) := Character'Val
+                     (Character'Pos ('0') + I);
+                   Status := Akernel_User.Files.Write
+                     (LN, 0, Buf'Address, 7, Count);
+                end loop;
+             end;
+             Bits := Ntfn_Wait (Ntf);
+             Check (Bits /= Syscall_Failed
+                    and then (Bits and 1) /= 0,
+                    "live query overflow doorbell");
+             declare
+                Got_Add : Natural := 0;
+                Got_Resync : Boolean := False;
+             begin
+                for I in 1 .. 10 loop
+                   Status := Akernel_User.Files.Query_Poll
+                     ("BD1:", LQH, LK, LP, LPL);
+                   exit when Status /= Akernel_User.Files.Status_Ok;
+                   if LK = 1 then
+                      Got_Add := Got_Add + 1;
+                   elsif LK = 3 then
+                      Got_Resync := True;
+                   end if;
+                end loop;
+                Check (Got_Add = 8 and then Got_Resync,
+                       "live query overflow resync");
+                Status := Akernel_User.Files.Query_Poll
+                  ("BD1:", LQH, LK, LP, LPL);
+                Check
+                  (Status = Akernel_User.Files.Status_Not_Found,
+                   "live query overflow drained");
+             end;
+             Status := Akernel_User.Files.Query_Close
+               ("BD1:", LQH);
+             Check (Status = Akernel_User.Files.Status_Ok,
+                    "live query overflow closed");
+
+             --  Cleanup.
+             Status := Akernel_User.Files.Delete
+               ("BD1:NOTLIVE.TXT");
+             Status := Akernel_User.Files.Delete
+               ("BD1:LIVE2.TXT");
+             declare
+                LN : String (1 .. 14) := "BD1:LIVEO0.TXT";
+             begin
+                for I in 0 .. 9 loop
+                   LN (10) := Character'Val
+                     (Character'Pos ('0') + I);
+                   Status := Akernel_User.Files.Delete (LN);
+                end loop;
+             end;
+             Check (Cap_Delete (Ntf) = 0,
+                    "live query ntfn released");
+      end Live_Query_Tests;
    begin
       Akernel_User.Files.Bind (FS_EP);
 

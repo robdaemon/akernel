@@ -113,5 +113,18 @@ package Bfs_Engine is
                     Size : out U64; Is_Dir : out Boolean)
                     return U64;
 
+    --  Live queries (m82g): Live_Open subscribes Predicate and
+    --  takes ownership of Ntfn_Cap (deleted at Live_Close);
+    --  returns a 1-based Handle. Matching mutations queue path
+    --  events (Kind 1 = added, 2 = removed, 3 = resync after queue
+    --  overflow) and signal the notification. Live_Poll pops the
+    --  oldest event (status 1 = queue empty, 3 = bad handle).
+    function Live_Open (Predicate : String; Ntfn_Cap : U64;
+                        Handle : out U64) return U64;
+    function Live_Poll (Handle : U64; Kind : out U64;
+                        Path : out String; Path_Len : out Natural)
+                        return U64;
+    procedure Live_Close (Handle : U64);
+
     procedure Volume_Info (Total, Free, Block : out U64);
 end Bfs_Engine;

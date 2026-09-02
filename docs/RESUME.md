@@ -100,7 +100,9 @@ Plan: M82a C++ toolchain gate (built, proven, then dropped with the
 vendoring route); M82b host-side mkbefs fixture + second GPT
 partition; M82c pure-Ada BFS server (read-only); M82d attribute
 ops on the wire (19/20, done); M82e R/W + journal (done); M82f
-indices/query (done — one-shot queries).
+indices/query (done — one-shot queries); M82g (done — buffer-carried
+result paths, size/mtime index sync, live queries with ntfn
+doorbells).
 
 - **M82a reverted**: the xPack g++ gate was built and proven
   (cxx_test: static ctors, vtables, new/delete in-guest) but the
@@ -247,6 +249,51 @@ indices/query (done — one-shot queries).
   live queries + notification plumbing, size/last_modified index
   sync (int64 numeric-key leaf variant), per-term index range
   acceleration, result paths > 24 chars.
+
+- **M82g done** (this commit): the M82f deferrals, minus range
+  acceleration (invisible optimization; enumeration is already
+  name-index-driven). (1) Result paths ride the client buffer:
+  Op_Query reply w3 = path length, bytes written into the RW-
+  mapped buffer (engine Materialize_Path caps raised to 16
+  components of 64 chars; request wire still caps qualified paths
+  at 32); Files.Query reads the path back from its buffer; the
+  C: Query command's path buffer is 255 now. (2) size /
+  last_modified index sync: Init discovers both index inodes
+  alongside "name"; new int64 leaf ops (8-byte LE keys compared
+  numerically, btree data_type 3); hooks in Create_Entry (files
+  join at size 0 — Build_Inode now takes the timestamp so inode
+  and index agree), Write/Truncate (remove+add on change,
+  journaled with the data), Remove_Entry (files leave both
+  indices). Makefile post-test greps grew "size: 0 entries" /
+  "last_modified: 0 entries" round-trips. (3) Live queries, ops
+  22/23/24: Op_Query_Open (predicate in buffer cap 0, client
+  notification cap in slot 1 — the kernel hands receivers a
+  full-rights copy, so bfs can Signal) snapshots the parsed AST
+  into a 4-slot subscription table -> (status, handle);
+  Op_Query_Poll pops the oldest queued event -> (status, kind
+  1=added/2=removed/3=resync, path in the buffer); Op_Query_Close
+  releases slot + ntfn copy. Mutation ops diff per-subscription
+  match bits before/after their change (Was captured from the
+  lookup-time Inode_Info, Now re-read through the transaction
+  overlay after the mutation) and queue path events; delivery is
+  the Trans_Commit epilogue (never for aborted ops) — enqueue +
+  Ntfn_Signal bit 0; an 8-deep queue overflow raises a one-shot
+  resync event. Rename also updates the inode parent run (offset
+  44) on cross-directory moves now — query path materialization
+  walks it (latent M82e gap). RTS: Files.Query_Open/Poll/Close.
+  fuzz: 7 long-path checks (26-char result through the buffer)
+  + 20 live-query checks (doorbell on create/delete, added/
+  removed events, non-match silence, closed-handle rejection,
+  10-create overflow -> resync). 1675 PASS / 0 FAIL; test-replay
+  green. KEY BUGS: (a) Eval_Node briefly took the ~2.5 KiB AST
+  store by VALUE while recursing — passes by access now; (b) the
+  fuzz live block's locals were hoisted into Bfs_Tests' frame and
+  tipped the 48 KiB process stack (store fault at 0x6FFF3FF0 in
+  streams__write's prologue, 240 bytes of headroom left) — the
+  tests live in their own Live_Query_Tests procedure now, called
+  after the big declare blocks close. The kernel's fatal trap
+  dump grew sp/ra/proc lines (sbi_asm trap_frame_get_sp/ra) to
+  diagnose (b) — kept as permanent diagnostics.
 
 Planned but not started: **M80 grow-on-demand tables** (the Max_*
 limit-fixes pass) — `docs/LIMIT_FIXES.md`; load it only when working
