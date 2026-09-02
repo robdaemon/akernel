@@ -40,22 +40,23 @@ procedure Bureau is
    Win_Svc    : constant U64 := 3;
 
    Buf_VA   : constant U64 := 16#6000_0000#;
-   --  Per-slot client surface maps: 4 MiB stride starting here.
-   --  m80f region plan: the surface window runs 0x6800..0x6E00
-   --  (96 MiB = 24 slots), queues moved to 0x6E00 (1 MiB of
-   --  one-page maps), menus to 0x6E10. Past 24 windows the
-   --  4 MiB-stride formula needs a new region (and M80g's
-   --  1920x1080 surfaces need an 8.5+ MiB stride anyway) —
+   --  Per-slot client surface maps: one stride per slot from
+   --  Surf_VA0. Region plan (m80f/m80g): 0x6800..0x6E00 =
+   --  96 MiB, queues at 0x6E00 (1 MiB of one-page maps), menus
+   --  at 0x6E10. At the 8 MiB stride 1080p needs, that is 12
+   --  slots; past 12 windows the region itself must move.
    --  Max_Win_Slots derives from the region so the table cap
    --  can never outrun the VA window.
    Surf_VA0 : constant U64 := 16#6800_0000#;
-   Surf_Slot_Stride : constant U64 := 16#40_0000#;
+   Surf_Slot_Stride : constant U64 := 16#80_0000#;  --  m80g: 8 MiB
    --  Per-slot client input-queue maps (v3): one page each.
    Queue_VA0 : constant U64 := 16#6E00_0000#;
 
-   Max_W : constant := 1024;
-   Max_H : constant := 768;
-   Max_Objects : constant := (Max_W * Max_H * 4) / 4096 / 64;  --  12
+   Max_W : constant := 1920;  --  m80g: was 1024x768
+   Max_H : constant := 1080;
+   --  m80g: ceil — 1080p is 2025 pages = 31.64 objects.
+   Max_Objects : constant := (Max_W * Max_H * 4 + 4096 * 64 - 1)
+     / 4096 / 64;  --  32
 
    Width   : U64;
    Height  : U64;
@@ -113,12 +114,13 @@ procedure Bureau is
     --  (Akernel_User.Tables) and the cap is the surface-region
     --  capacity below, not an arbitrary count.
     Max_Win_Slots : constant Natural :=
-      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  24
-    --  16 chunks = 4 MiB = exactly the Surf_Slot_Stride window.
+      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  12
+    --  32 chunks = 8 MiB = exactly the Surf_Slot_Stride window.
+    --  (m80g: 16 -> 32; a 1920x1080 pane is 2025 pages.)
     --  Headroom added WITH the v5 zoom consumer: a zoomed pane
     --  (1016x721 @ 1024x768) needs 12 chunks; 8 silently
     --  rejected the resize with Status_No_Slot.
-    Surf_Max_Objects : constant := 16;
+    Surf_Max_Objects : constant := 32;
    type Cap_Set is array (0 .. Surf_Max_Objects - 1) of U64;
 
    --  Milestone 61: per-window menu tree, COPIED out of the

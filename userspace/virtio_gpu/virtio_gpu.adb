@@ -84,10 +84,11 @@ procedure Virtio_Gpu is
    FB_VA     : constant U64 := 16#5040_0000#;
    --  DMA object layout: page 0 descriptors, page 1 avail ring,
    --  page 2 used ring, page 3 command buffer, page 4 response
-   --  buffer, pages 5..7 attach-backing entries (3 pages = 768
-   --  entries = up to 3 MiB of framebuffer, one entry per page).
-   DMA_Pages  : constant U64 := 8;
-   Max_Entries : constant U64 := 3 * 4096 / 16;
+   --  buffer, pages 5..12 attach-backing entries (8 pages = 2048
+   --  entries = up to 8 MiB of framebuffer, one entry per page;
+   --  m80g: 3 -> 8 pages for the 1920x1080 ceiling = 2025).
+   DMA_Pages  : constant U64 := 13;
+   Max_Entries : constant U64 := 8 * 4096 / 16;
 
    --  First service-endpoint message from the device manager.
    Driver_Config_Label : constant U64 := U64'Last - 1;
@@ -109,9 +110,11 @@ procedure Virtio_Gpu is
    Resource_Id     : constant Virtio.U32 := 1;
 
    --  Text console geometry: 8x16 cells (8x8 font stretched 2x
-   --  vertically). Display clamped to [640x480 .. 1024x768].
-   Max_W : constant := 1024;
-   Max_H : constant := 768;
+   --  vertically). Display clamped to [640x480 .. 1920x1080]
+   --  (m80g: was 1024x768; 1080p needs 2025 backing entries,
+   --  see the DMA layout above).
+   Max_W : constant := 1920;
+   Max_H : constant := 1080;
    Min_W : constant := 640;
    Min_H : constant := 480;
 
@@ -191,8 +194,8 @@ procedure Virtio_Gpu is
    type Word_Array is array (Natural range 0 .. 1023) of Virtio.U32
      with Volatile_Components;
 
-   --  Entries span pages 5..7 (3072 words = 768 entries).
-   type Ent_Array is array (Natural range 0 .. 3071) of Virtio.U32
+   --  Entries span pages 5..12 (8192 words = 2048 entries).
+   type Ent_Array is array (Natural range 0 .. 8191) of Virtio.U32
      with Volatile_Components;
 
    Cmd_Words  : Word_Array with Address => To_Addr (DMA_VA + 3 * 4096);
@@ -235,7 +238,9 @@ procedure Virtio_Gpu is
    Dirty_Y0 : Natural := Natural'Last;
    Dirty_Y1 : Natural := 0;
 
-   FB_Objects : constant := (Max_W * Max_H * 4) / 4096 / 64;  --  12
+   --  m80g: ceil — 1080p is 2025 pages = 31.64 objects.
+   FB_Objects : constant := (Max_W * Max_H * 4 + 4096 * 64 - 1)
+     / 4096 / 64;  --  32
    FB_Caps : array (0 .. FB_Objects - 1) of U64 := (others => 0);
    FB_Obj_Count : Natural := 0;
 

@@ -68,9 +68,11 @@ procedure Terminal is
      with Address => System.Storage_Elements.To_Address
        (System.Storage_Elements.Integer_Address (Queue_VA));
 
-   Max_W : constant := 1024;
-   Max_H : constant := 768;
-   Max_Objects : constant := (Max_W * Max_H * 4) / 4096 / 64;
+   Max_W : constant := 1920;  --  m80g: was 1024x768
+   Max_H : constant := 1080;
+   --  m80g: ceil — 1080p is 2025 pages = 31.64 objects.
+   Max_Objects : constant := (Max_W * Max_H * 4 + 4096 * 64 - 1)
+     / 4096 / 64;
 
    Surf_Id : U64;
    Pages   : U64;

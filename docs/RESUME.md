@@ -455,6 +455,23 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   bounded at 256 yields), green on re-run and at SMP1.
   1717 PASS SMP4 / 1719 SMP1, 0 FAIL both.
 
+- **M80g done** (this commit): display ceiling 1024x768 ->
+  1920x1080. virtio_gpu: clamp 1920x1080; attach-backing
+  entries 768 -> 2048 (DMA pages 5..12, DMA_Pages 8 -> 13);
+  FB_Objects is now a CEIL divide (the truncating formula gave
+  31 x 64 = 1984 pages < 2025 at 1080p — latent at the old
+  ceiling too, just never reachable). bureau: Max geometry +
+  same ceil fix; Surf_Max_Objects 16 -> 32; surface stride
+  4 -> 8 MiB (1080p pane = 2025 pages = 7.9 MiB), region
+  0x6800..0x6E00 now holds 12 slots (documented: past 12 the
+  region itself must move). terminal: Max geometry + ceil fix.
+  Makefile: QEMU_GPU_FLAGS appended to the virtio-gpu device
+  (default empty = 1024x768; big boot via
+  QEMU_GPU_FLAGS=",xres=1920,yres=1080"). Gates: default
+  geometry 1718 SMP4 / 1715 SMP1 (0 FAIL); one 1080p boot
+  1719 PASS / 0 FAIL ("bureau display info ok" and "terminal
+  surface ok" exercise the big path).
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide

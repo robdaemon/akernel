@@ -26,6 +26,10 @@ QEMU_ARGS ?= -nographic
 #  (fuzz then prints SKIP for the Host: checks).
 SHARE_DIR ?= $(CURDIR)/share
 QEMU_9P_FLAGS ?= -fsdev local,id=fs0,path=$(SHARE_DIR),security_model=none -device virtio-9p-pci,fsdev=fs0,mount_tag=host,addr=0x9
+#  m80g: display geometry opt-in — the driver/bureau/terminal
+#  ceilings are 1920x1080 but the device default stays 1024x768.
+#  Boot big with e.g. QEMU_GPU_FLAGS=",xres=1920,yres=1080".
+QEMU_GPU_FLAGS ?=
 INITRD_ADDR ?= 0x84000000
 
 KERNEL_ELF := bin/akernel.elf
@@ -338,7 +342,7 @@ run: all $(if $(SKIP_DISK),,$(DISK_IMG))
 	  -device virtio-blk-pci,drive=hd0,addr=0x4 \
 	  -device virtio-keyboard-pci,addr=0x5 \
 	  -device virtio-tablet-pci,addr=0x6 \
-	  -device virtio-gpu-pci,addr=0x7 \
+	  -device virtio-gpu-pci,addr=0x7$(QEMU_GPU_FLAGS) \
 	  -netdev user,id=n0 \
 	  -device virtio-net-pci,netdev=n0,addr=0x8 \
 	  -monitor unix:/tmp/qmon.sock,server,nowait \
