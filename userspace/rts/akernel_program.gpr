@@ -19,6 +19,16 @@ abstract project Akernel_Program is
    for Exec_Dir use "../../bin/userspace";
    for Create_Missing_Dirs use "True";
 
+   package Compiler is
+      --  M84 paint-perf finding: the runtime's required switches
+      --  (runtime.xml: -gnatA -fno-tree-loop-distribute-patterns)
+      --  carry NO -O flag, so every userspace program built at
+      --  -O0 — the compositor's per-pixel loops measured ~0.5
+      --  us/pixel (a full-window composite ~0.5 s). Project
+      --  switches land after the runtime's, so this wins.
+      for Switches ("Ada") use ("-O2");
+   end Compiler;
+
    package Linker is
       --  Milestone 53b: newlib comes in via GROUP(-lc -lm) in
       --  the linker script (gprbuild drops Linker'Linker_Options

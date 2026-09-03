@@ -353,6 +353,47 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M84b done** (this commit): paint performance. Users were
+  right: maximize/restore painted at ~1.2 s. In-guest
+  instrumentation (Read_Time around Handle_Resize phases in
+  trinket-window, Composite_Band paint vs present in bureau;
+  QMP input-send-event to drive the zoom gadget headless)
+  measured: bureau Paint_Band 480 ms for a 1M-px band, client
+  buffer teardown+re-push 500 ms, client repaint 30 ms, present
+  ~1 ms. Root cause: the runtime's required switches (from
+  runtime.xml) carry NO -O flag, so ALL userspace built at -O0
+  with checks; the compositor's per-pixel pane-copy/fill loops
+  ran ~0.5 us/pixel. Fixes: (1) -O2 in akernel_program.gpr's
+  new Compiler package (project switches land after the
+  runtime's, so it wins); (2) bureau Fill_Rect + Draw_Window
+  pane copy + trinket-paint Fill_Rect now use row-slice
+  assignment (block set/copy, not per-pixel checked stores).
+  -O2 surfaced strict-aliasing warnings in Akernel_User.Tables
+  instantiations: Element_Access is carved by address
+  arithmetic, now carries pragma No_Strict_Aliasing. Result:
+  1M-px composite 478 -> 11 ms; maximize total ~1.2 s -> ~90
+  ms. SMOKE-TEST RECIPE (recorded for reuse): headless GUI runs
+  need QEMU_ARGS="-nographic -display none" — plain "-display
+  none" drops -nographic and the guest serial console goes to
+  the vc, so userspace output never reaches the log; and
+  background QEMU needs setsid+disown or the tool-call process
+  group kill takes it down.
+
+- **thread_regs flake, REAL root cause** (this commit): the
+  "10 ms" poll sleep added in the earlier flake fix was
+  `Read_Time + 100` — but mtime ticks at **10 MHz** on qemu
+  virt (the M66b comment's "10 kHz" was wrong; fixed), so +100
+  = 10 us, and the kernel's past-deadline gate returned the
+  sleep SYNCHRONOUSLY: the poll was a busy spin that never
+  yielded the hart. At SMP4 other harts ran echo2 anyway
+  (masking it); at SMP1 the spin fits inside one 50 ms quantum,
+  so echo2 stayed Ready for the whole poll (debug run: state=0
+  for all 100 tries, and each iteration measured ~0.5 s of
+  actual sleep when the deadline finally did stick). Fixed:
+  Sys_Yield + a real 10 ms sleep (+100_000) per poll. The
+  earlier entry's "10 ms" claim was aspirational; this is the
+  version that actually sleeps.
+
 - **M84 done** (this commit): Fileman reworked into a
   Directory-Opus-style dual-pane lister. Per-pane state record
   (path/listview/scrollbar/path gadget) x 2 with an Active pane

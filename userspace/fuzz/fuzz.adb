@@ -3533,8 +3533,14 @@ begin
          Ignore := Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                               A1 => Echo_Slot, A2 => Admin_Buf);
          exit when APage (3) = 3;
+         Ignore := Raw_Ecall (Number => Sys_Yield);
+         --  mtime ticks at 10 MHz on qemu virt: 100_000 = 10 ms.
+         --  (+100 was 10 us — returned synchronously at the
+         --  Sleep_Until past-deadline gate, turning this poll
+         --  into a busy spin that fits inside one 50 ms quantum
+         --  at SMP1: echo2 never got the hart.)
          Ignore := Akernel_User.Syscalls.Sleep_Until
-           (Akernel_User.Syscalls.Read_Time + 100);  --  10 ms
+           (Akernel_User.Syscalls.Read_Time + 100_000);
       end loop;
       Check (APage (3) = 3, "thread_regs echo parked in receive");
       if APage (3) = 3 then
@@ -7404,7 +7410,7 @@ begin
    end;
 
    --  Milestone 66b: Sleep_Until sanity check.  Deadline is in
-   --  mtime ticks (10 kHz on qemu virt); sleep 1 ms and verify we
+   --  mtime ticks (10 MHz on qemu virt); sleep 1 ms and verify we
    --  actually waited.  A past deadline returns immediately.
    declare
       use Akernel_User.Syscalls;

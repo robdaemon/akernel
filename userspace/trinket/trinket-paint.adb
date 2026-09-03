@@ -42,10 +42,10 @@ package body Trinket.Paint is
       if RX0 >= RX1 or else RY0 >= RY1 then
          return;
       end if;
+      --  Row-slice fills: block set, not a per-pixel checked
+      --  store loop (M84 paint perf).
       for Y in RY0 .. RY1 - 1 loop
-         for X in RX0 .. RX1 - 1 loop
-            Pix (Y * C.W + X) := Col;
-         end loop;
+         Pix (Y * C.W + RX0 .. Y * C.W + RX1 - 1) := (others => Col);
       end loop;
    end Fill_Rect;
 

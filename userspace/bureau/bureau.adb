@@ -353,10 +353,14 @@ procedure Bureau is
       if Row1 <= Row0 or else Col1 <= Col0 then
          return;
       end if;
+      --  Row-slice fills: lowers to a block set instead of a
+      --  per-pixel checked store loop (M84 paint perf).
       for Y in Row0 .. Row1 - 1 loop
-         for X in Col0 .. Col1 - 1 loop
-            Buf (Y * (Stride / 4) + X) := Color;
-         end loop;
+         declare
+            Base : constant U64 := Y * (Stride / 4);
+         begin
+            Buf (Base + Col0 .. Base + Col1 - 1) := (others => Color);
+         end;
       end loop;
    end Fill_Rect;
 
@@ -505,12 +509,17 @@ procedure Bureau is
          SW := Wins (S).PW;
          SH := Wins (S).PH;
          if BX1 > BX0 and then BY1 > BY0 then
+            --  Row-slice copies (M84 paint perf): a per-pixel
+            --  checked loop here was the compositor's hot spot.
             for Row in BY0 .. BY1 - 1 loop
-               for Col in BX0 .. BX1 - 1 loop
-                  Buf (Row * Stride_Px + Col) :=
-                    Surf ((Row - Pane_Y (S)) * SW +
-                            (Col - Pane_X (S)));
-               end loop;
+               declare
+                  Dst : constant U64 := Row * Stride_Px;
+                  Src : constant U64 :=
+                    (Row - Pane_Y (S)) * SW - Pane_X (S);
+               begin
+                  Buf (Dst + BX0 .. Dst + BX1 - 1) :=
+                    Surf (Src + BX0 .. Src + BX1 - 1);
+               end;
             end loop;
          end if;
       else

@@ -29,6 +29,10 @@ package Akernel_User.Tables is
    subtype Index is Natural;
 
    type Element_Access is access all Element;
+   pragma No_Strict_Aliasing (Element_Access);
+   --  Elements are carved out of chunk memory by address
+   --  arithmetic (8-byte stride, unchecked conversion) — exactly
+   --  the case No_Strict_Aliasing exists for (surfaced by -O2).
 
    --  Append a slot at the high-water mark, growing the chunk
    --  chain as needed.  Returns the new index; 0 on arena/PMM
