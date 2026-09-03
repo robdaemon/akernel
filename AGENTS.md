@@ -43,3 +43,13 @@
 - When `make test` or any test is ran, you must use the `timeout`
   command, otherwise we'll spin indefinitely on any wedge. This
   will also help us spot performance degradations.
+- **Killing QEMU: use `pkill -f "qemu-system-riscv6[4]"`.** A bare
+  `pkill -f qemu-system-riscv` matches the *invoking shell's own
+  command line* (the pattern string is in it) and kills the tool
+  session mid-command — observed as wedged commands that never
+  return. The bracket character class breaks the self-match.
+  Related: background QEMU runs must be detached (`setsid bash -c
+  '...' & disown`) or they die with the tool call's process-group
+  kill on timeout; QMP screendump + `input-send-event` over
+  `/tmp/qqmp.sock` is the headless GUI smoke-test path (see the
+  M84 entry in docs/RESUME.md).
