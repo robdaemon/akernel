@@ -1,4 +1,5 @@
 with Akernel_User.Console;
+with Akernel_User.Files;
 with Akernel_User.Syscalls;
 with Interfaces;
 with System.Storage_Elements;
@@ -115,6 +116,10 @@ procedure Fat32 is
 
    Buf_Pages : constant U64 := 8;
    Buf_Bytes : constant U64 := Buf_Pages * Syscalls.Page_Size;
+
+   --  M82i: window for a buffer-carried request path (one page,
+   --  directly above the 8-page buffer window).
+   Path_Win_VA : constant U64 := 16#5400_8000#;
 
    type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
    Bounce : Byte_Array (0 .. Syscalls.Page_Size - 1)
@@ -1460,23 +1465,68 @@ procedure Fat32 is
       end if;
    end Reply2;
 
-   --  Unpack the path from message words First .. 5.
-   function Path_Of (First : Natural) return String is
-      Name : String (1 .. 32) := (others => Character'Val (0));
+   --  Unpack the path from message words First .. 5, or (m82i)
+   --  from the one-page buffer in cap slot Slot when the first
+   --  word is the Path_In_Buf marker; the received cap copy is
+   --  deleted here.
+   function Path_Of (First : Natural; Slot : Natural) return String is
+      Name : String (1 .. Akernel_User.Files.Max_Path) :=
+        (others => Character'Val (0));
       Len  : Natural := 0;
    begin
-      for P in 0 .. 31 loop
+      if Syscalls.Message.Words (First)
+           /= Akernel_User.Files.Path_In_Buf
+      then
+         for P in 0 .. 31 loop
+            declare
+               Ch : constant Character :=
+                 Character'Val (Natural
+                   ((Syscalls.Message.Words (First + P / 8)
+                       / Shl (1, (P mod 8) * 8)) and 16#FF#));
+            begin
+               exit when Ch = Character'Val (0);
+               Len := Len + 1;
+               Name (Len) := Ch;
+            end;
+         end loop;
+         return Name (1 .. Len);
+      end if;
+
+      declare
+         Cap : constant U64 := Syscalls.Message.Caps (Slot);
+      begin
+         if Cap = 0
+           or else Syscalls.Mem_Map
+             (Address_Space => Syscalls.Address_Space_Cap,
+              Cap           => Cap,
+              VA            => Path_Win_VA,
+              Offset        => 0,
+              Length        => Syscalls.Page_Size,
+              Flags         => 3) /= 0
+         then
+            return Name (1 .. 0);
+         end if;
          declare
-            Ch : constant Character :=
-              Character'Val (Natural
-                ((Syscalls.Message.Words (First + P / 8)
-                    / Shl (1, (P mod 8) * 8)) and 16#FF#));
+            Win : Byte_Array
+              (0 .. U64 (Akernel_User.Files.Max_Path))
+              with Address => To_Address (Integer_Address (Path_Win_VA));
          begin
-            exit when Ch = Character'Val (0);
-            Len := Len + 1;
-            Name (Len) := Ch;
+            for I in Win'Range loop
+               exit when Win (I) = 0;
+               Len := Len + 1;
+               Name (Len) := Character'Val (Natural (Win (I)));
+            end loop;
          end;
-      end loop;
+         if Syscalls.Mem_Unmap
+           (Address_Space => Syscalls.Address_Space_Cap,
+            VA            => Path_Win_VA,
+            Length        => Syscalls.Page_Size) /= 0
+           or else Syscalls.Cap_Delete (Cap) /= 0
+         then
+            Akernel_User.Console.Put_Line
+              ("fat32: path buffer release failed");
+         end if;
+      end;
       return Name (1 .. Len);
    end Path_Of;
 
@@ -1512,7 +1562,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Reply2 (Status_Bad_Args, 0);
@@ -1581,7 +1631,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Clus := Root_Clus;
@@ -1657,7 +1707,7 @@ procedure Fat32 is
          end if;
 
          declare
-            Path : constant String := Path_Of (2);
+            Path : constant String := Path_Of (2, 1);
          begin
             if Path'Length = 0 then
                Status := Status_Bad_Args;
@@ -1788,7 +1838,7 @@ procedure Fat32 is
          end if;
 
          declare
-            Path : constant String := Path_Of (2);
+            Path : constant String := Path_Of (2, 1);
          begin
             if Path'Length = 0 then
                Status := Status_Bad_Args;
@@ -1942,7 +1992,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Reply2 (Status_Bad_Args, 0);
@@ -1993,7 +2043,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Reply2 (Status_Bad_Args, 0);
@@ -2044,7 +2094,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Reply2 (Status_Bad_Args, 0);
@@ -2102,7 +2152,7 @@ procedure Fat32 is
       end if;
 
       declare
-         Path : constant String := Path_Of (0);
+         Path : constant String := Path_Of (0, 0);
       begin
          if Path'Length = 0 then
             Reply2 (Status_Bad_Args, 0);
@@ -2207,7 +2257,7 @@ procedure Fat32 is
       Attr    : Interfaces.Unsigned_8 := 0;
       Status  : U64 := Status_Ok;
       Mapped  : Boolean := False;
-      Win     : Byte_Array (0 .. 47)
+      Win     : Byte_Array (0 .. U64 (Akernel_User.Files.Max_Path))
         with Address => To_Address (Integer_Address (Buf_Win_VA));
 
       procedure Process is
@@ -2223,8 +2273,8 @@ procedure Fat32 is
          end if;
 
          declare
-            Path : constant String := Path_Of (0);
-            To   : String (1 .. 32);
+            Path : constant String := Path_Of (0, 1);
+            To   : String (1 .. Akernel_User.Files.Max_Path);
             To_Len : Natural := 0;
          begin
             if Path'Length = 0 then
@@ -2237,7 +2287,9 @@ procedure Fat32 is
                return;
             end if;
             Mapped := True;
-            for I in U64 (0) .. 31 loop
+            --  m82i: TO is buffer-carried, up to Max_Path.
+            for I in U64 (0) .. U64 (Akernel_User.Files.Max_Path - 1)
+            loop
                exit when Win (I) = 0;
                To_Len := To_Len + 1;
                To (To_Len) := Character'Val (Natural (Win (I)));

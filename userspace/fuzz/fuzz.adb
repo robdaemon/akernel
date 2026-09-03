@@ -620,6 +620,7 @@ begin
       procedure Btree_Split_Tests;
       procedure Indirect_Stream_Tests;
       procedure Attr_Write_Tests;
+      procedure Long_Path_Tests;
       procedure Bfs_Tests is
       begin
          --  Stat/read through file server -> Bfs_Engine ->
@@ -1342,6 +1343,7 @@ begin
          Btree_Split_Tests;
          Indirect_Stream_Tests;
          Attr_Write_Tests;
+         Long_Path_Tests;
       end Bfs_Tests;
 
       --  Live queries (m82g): subscribe with a notification
@@ -1917,6 +1919,153 @@ begin
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs attrw: cleanup ok");
       end Attr_Write_Tests;
+
+      --  M82i long request paths: the dir path is 61 chars
+      --  (> the 48-char inline cap of stat/open/mkdir/rmdir,
+      --  > the 32 of readdir/attr ops) and the file path 113 —
+      --  every op below rides the client path buffer (marker +
+      --  cap slot). Idempotent: fixed names, pre-deleted.
+      procedure Long_Path_Tests is
+         D1 : constant String :=
+           "BD1:FZLONGDIR_m82i_long_request_path_wire_capacity_test_0001";
+         F  : constant String :=
+           D1 & "/FZFILE_deep_component_for_reads_and_attrs_0002.TXT";
+         G  : constant String :=
+           D1 & "/FZFILE_renamed_component_for_long_wire_paths_0003.TXT";
+         X  : constant String := D1 & "/X.TXT";
+         AType : U64;
+         ASize : U64;
+         AN    : String (1 .. 24);
+         AN_L  : Natural;
+         Ent   : String (1 .. 24);
+         Ent_L : Natural;
+         EDir  : Boolean;
+         ESz   : U64;
+         Idx   : U64;
+         Found : Boolean;
+         WD    : U64;
+         WT    : U64;
+         Is_D  : Boolean;
+         LPV   : constant String := "lpv";
+      begin
+         Status := Akernel_User.Files.Delete (F);
+         Status := Akernel_User.Files.Delete (G);
+         Status := Akernel_User.Files.Delete (X);
+         Status := Akernel_User.Files.Rmdir (D1);
+
+         Status := Akernel_User.Files.Mkdir (D1);
+         if Status /= Akernel_User.Files.Status_Ok then
+            Put_Line ("m82i debug: mkdir status" & U64'Image (Status));
+         end if;
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: mkdir ok");
+
+         declare
+            Payload : constant String :=
+              "m82i long path payload" & ASCII.LF;
+         begin
+            for I in 0 .. Payload'Length - 1 loop
+               Buf (I) := Interfaces.Unsigned_8
+                 (Character'Pos (Payload (Payload'First + I)));
+            end loop;
+            Status := Akernel_User.Files.Write
+              (F, 0, Buf'Address, U64 (Payload'Length), Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Count = U64 (Payload'Length),
+                   "bfs longpath: write ok");
+            Status := Akernel_User.Files.Read
+              (F, 0, Buf'Address, 64, Count);
+            Match := Status = Akernel_User.Files.Status_Ok
+              and then Count = U64 (Payload'Length);
+            for I in 0 .. Payload'Length - 1 loop
+               Match := Match
+                 and then Buf (I) = Interfaces.Unsigned_8
+                   (Character'Pos (Payload (Payload'First + I)));
+            end loop;
+            Check (Match, "bfs longpath: readback ok");
+         end;
+
+         Status := Akernel_User.Files.Stat_Ex (F, Size, WD, WT, Is_D);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 23 and then not Is_D,
+                "bfs longpath: stat_ex ok");
+
+         --  A short-named sibling proves ReadDir on the long
+         --  directory path (reply entry names stay 24 chars).
+         Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
+         Buf (1) := Interfaces.Unsigned_8 (10);
+         Status := Akernel_User.Files.Write (X, 0, Buf'Address, 2, Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 2,
+                "bfs longpath: sibling write");
+         Idx := 0;
+         Found := False;
+         loop
+            Status := Akernel_User.Files.Read_Dir
+              (D1, Idx, Ent, Ent_L, EDir, ESz);
+            exit when Status /= Akernel_User.Files.Status_Ok;
+            if Ent_L = 5 and then Ent (1 .. 5) = "X.TXT" then
+               Found := not EDir;
+            end if;
+            Idx := Idx + 1;
+            exit when Idx > 100;
+         end loop;
+         Check (Found, "bfs longpath: readdir finds sibling");
+
+         --  Attr round-trip on the 113-char path (path buffer in
+         --  slot 1 alongside the data buffer in slot 0).
+         for I in 0 .. 2 loop
+            Buf (I) := Interfaces.Unsigned_8
+              (Character'Pos (LPV (I + 1)));
+         end loop;
+         Status := Akernel_User.Files.Attr_Write
+           (F, "META:lp", 16#4353_5452#, Buf'Address, 3);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: attr write ok");
+         Status := Akernel_User.Files.Attr_Read
+           (F, "META:lp", Buf'Address, 64, Count, ASize, AType);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 3
+                and then Buf (0) = Interfaces.Unsigned_8
+                  (Character'Pos ('l')),
+                "bfs longpath: attr read ok");
+         Status := Akernel_User.Files.Attr_List
+           (F, 0, AN, AN_L, AType, ASize);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then AN_L = 7 and then AN (1 .. 7) = "META:lp",
+                "bfs longpath: attr list ok");
+
+         --  Long FROM (slot 1) and long TO (buffer): rename,
+         --  probe both, then rename back for cleanup symmetry.
+         Status := Akernel_User.Files.Rename (F, G);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: rename ok");
+         Status := Akernel_User.Files.Stat (F, Size);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs longpath: from gone after rename");
+         Status := Akernel_User.Files.Stat (G, Size);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Size = 23,
+                "bfs longpath: to live after rename");
+
+         --  fat32 answers the marker path too: a 67-char probe
+         --  misses cleanly (no crash, no garbage match).
+         Status := Akernel_User.Files.Stat
+           ("BD0:FZNOFILE_m82i_long_request_path_wire_capacity_probe_0009.TXT",
+            Size);
+         Check (Status = Akernel_User.Files.Status_Not_Found,
+                "bfs longpath: fat long path misses cleanly");
+
+         Status := Akernel_User.Files.Delete (G);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: delete renamed ok");
+         Status := Akernel_User.Files.Delete (X);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: delete sibling ok");
+         Status := Akernel_User.Files.Rmdir (D1);
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs longpath: rmdir ok");
+      end Long_Path_Tests;
    begin
       Akernel_User.Files.Bind (FS_EP);
 

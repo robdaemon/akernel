@@ -36,6 +36,11 @@ with Interfaces;
 with System.Storage_Elements;
 
 package body Bfs_Engine is
+
+   --  M82i: on-disk component and request-path ceiling (was 32,
+   --  the old inline-wire cap; the wire now carries 255).
+   Max_Path_Len : constant := 255;
+
    package Syscalls renames Akernel_User.Syscalls;
    use type Syscalls.U64;
    use type Interfaces.Unsigned_8;
@@ -2052,7 +2057,7 @@ package body Bfs_Engine is
    is
       Cur     : Inode_Info;
       It      : Tree_It;
-      Name    : String (1 .. 32);
+      Name    : String (1 .. Max_Path_Len);
       Name_Ln : Natural;
       Block   : U64;
       Ok      : Boolean;
@@ -2634,7 +2639,7 @@ package body Bfs_Engine is
           declare
              Idx  : Inode_Info;
              It   : Tree_It;
-             Name : String (1 .. 32);
+             Name : String (1 .. Max_Path_Len);
              NLen : Natural;
              Blk  : U64;
              Ok   : Boolean;
@@ -2714,7 +2719,7 @@ package body Bfs_Engine is
       Info   : Inode_Info;
       Root   : Boolean;
       It     : Tree_It;
-      E_Name : String (1 .. 32);
+      E_Name : String (1 .. Max_Path_Len);
       E_Len  : Natural;
       Block  : U64;
       E_Info : Inode_Info;
@@ -2769,9 +2774,9 @@ package body Bfs_Engine is
        Parent  : Inode_Info;
        Root    : Boolean;
        Created : Boolean := False;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural;
        New_Ino : U64;
        End_Pos : U64;
@@ -3056,9 +3061,9 @@ package body Bfs_Engine is
        Info    : Inode_Info;
        Parent  : Inode_Info;
        Root    : Boolean;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural;
     begin
        if not Is_Mounted or else not Lookup (Path, Info, Root)
@@ -3095,9 +3100,9 @@ package body Bfs_Engine is
        Info : Inode_Info;
        Root : Boolean;
        Slot : Natural;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural := 0;
        Was     : Pend_Bits := No_Bits;
     begin
@@ -3168,9 +3173,9 @@ package body Bfs_Engine is
        Info    : Inode_Info;
        Parent  : Inode_Info;
        Root    : Boolean;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural;
        New_Ino : U64;
     begin
@@ -3214,12 +3219,12 @@ package body Bfs_Engine is
        Info    : Inode_Info;
        Parent  : Inode_Info;
        Root    : Boolean;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural;
        It      : Tree_It;
-       E_Name  : String (1 .. 32);
+       E_Name  : String (1 .. Max_Path_Len);
        E_Len   : Natural;
        Block   : U64;
        Ok      : Boolean;
@@ -3268,13 +3273,13 @@ package body Bfs_Engine is
        F_Parent : Inode_Info;
        T_Parent : Inode_Info;
        Root     : Boolean;
-       F_Path   : String (1 .. 32);
+       F_Path   : String (1 .. Max_Path_Len);
        F_PL     : Natural;
-       F_Name   : String (1 .. 32);
+       F_Name   : String (1 .. Max_Path_Len);
        F_NL     : Natural;
-       T_Path   : String (1 .. 32);
+       T_Path   : String (1 .. Max_Path_Len);
        T_PL     : Natural;
-       T_Name   : String (1 .. 32);
+       T_Name   : String (1 .. Max_Path_Len);
        T_NL     : Natural;
        Cur      : Inode_Info;
        Dotdot   : U64;
@@ -3909,7 +3914,7 @@ package body Bfs_Engine is
     is
        NI      : Inode_Info;
        It      : Tree_It;
-       E_Name  : String (1 .. 32);
+       E_Name  : String (1 .. Max_Path_Len);
        E_Len   : Natural;
        E_Block : U64;
        Info    : Inode_Info;
@@ -4371,9 +4376,9 @@ package body Bfs_Engine is
     is
        Info    : Inode_Info;
        Root    : Boolean;
-       P_Path  : String (1 .. 32);
+       P_Path  : String (1 .. Max_Path_Len);
        P_Len   : Natural;
-       P_Name  : String (1 .. 32);
+       P_Name  : String (1 .. Max_Path_Len);
        N_Len   : Natural := 0;
        Was     : Pend_Bits := No_Bits;
        Pos     : U64;

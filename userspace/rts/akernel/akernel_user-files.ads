@@ -237,8 +237,32 @@ package Akernel_User.Files is
    Buf_Pages : constant U64 := 8;  --  32 KiB client read buffer
    Max_Name  : constant := 32;
 
+   --  M82i long request paths: an op whose qualified path exceeds
+   --  its inline capacity (48 chars where the path rides words
+   --  0..5, 32 where it rides 0..3 or 2..5) sets the FIRST path
+   --  word to Path_In_Buf and passes a one-page client-owned
+   --  memory object holding the NUL-terminated path (up to
+   --  Max_Path chars) in the first cap slot the op does not
+   --  otherwise use: slot 0 for path-only ops (stat/open/close/
+   --  delete/truncate/mkdir/rmdir/volume-info/readdir/attr-list/
+   --  query-close), slot 1 where slot 0 is a data/predicate/
+   --  rename-target buffer (read/write/attr-read/attr-write/
+   --  query/rename FROM), slot 2 for query-open (0 = predicate,
+   --  1 = notification). The kernel duplicates the cap per hop;
+   --  every receiver maps, reads, unmaps and cap_deletes its
+   --  copy. The VFS forwards long paths the same way from its
+   --  own staging page. Old servers never see the marker (they
+   --  would answer Not_Found for the all-ones "name").
+   Path_In_Buf   : constant U64 := U64'Last;
+   Max_Path      : constant := 255;
+   Path_Buf_Pages : constant U64 := 1;
+
    --  Client side: fixed VA window for the read buffer.
    Buffer_VA : constant U64 := 16#4400_0000#;
+   --  ... and the path buffer page directly above it (8 pages of
+   --  read buffer end at 16#4400_8000#; the link base at
+   --  16#4600_0000# leaves the window disjoint by construction).
+   Path_Buf_VA : constant U64 := 16#4400_8000#;
 
    --  Bind the package to a file-server endpoint cap (Send right).
    procedure Bind (FS_Cap : U64);

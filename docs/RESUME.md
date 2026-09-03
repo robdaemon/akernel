@@ -317,9 +317,38 @@ growth, attribute writes).
   sparse writes (offset > EOF) are rejected, so the interleaved
   indirect test must append at exactly EOF; `make test` is ~6.5
   min now (the split test made the suite slower) — capture to a
-  log, don't treat long runs as wedges. DEFERRED: **M82i** long
-  request paths (255) via the client buffer (wire caps qualified
-  paths at 32 chars; M82g did reply paths only).
+  log, don't treat long runs as wedges.
+
+- **M82i done** (this commit): long request paths (255) via a
+  client buffer. Wire: an op whose qualified path exceeds its
+  inline capacity (48 chars at words 0..5, 32 at 0..3 or 2..5)
+  sets the first path word to Path_In_Buf (all-ones) and passes
+  a one-page path memobj in the first cap slot the op does not
+  otherwise use (0 for path-only ops, 1 when slot 0 is a data/
+  predicate/rename-TO buffer, 2 for query-open); append-only —
+  old servers would just Not_Found the marker "name". Client
+  (akernel_user-files): lazy 1-page path buffer at the new fixed
+  window 0x4400_8000 (above the 8-page read buffer, below the
+  0x4600_0000 link base), Stage_Path picks inline vs buffer per
+  op; Q strings widened to Max_Path. VFS (fileserver):
+  Fetch_Path maps/reads/unmaps/cap_deletes the received copy
+  immediately; forwards use the VFS's own 1-page staging memobj
+  (Stage_Forward_Path, lazily allocated); Max_Expanded 96 -> 288;
+  Handle_Rename's TO read/rewrite widened 48 -> 255. fs drivers:
+  Path_Of (First, Slot) marker fallback in both fat32 and bfs;
+  bfs TO buffer widened. Bfs_Engine: 21 internal path/component
+  buffers widened 32 -> Max_Path_Len (255) — Split_Path would
+  have raised CE on a 56-char component. fuzz: Long_Path_Tests
+  (17 checks: 61-char dir, 113-char file; mkdir/write/readback/
+  stat_ex/readdir/attr write+read+list/rename long FROM+TO/
+  delete/rmdir; fat32 long-path miss probe). KEY DEBUG LESSON:
+  Akernel_User.Console.Put_Line from a server MID-OP clobbers
+  Syscalls.Message (the console write reuses the IPC buffer) —
+  every "words look corrupted" observation via an inserted print
+  was the print's own fault; use Syscalls.Debug_Put_Line for
+  server instrumentation. 1738 PASS SMP4 / 1733 SMP1, 0 FAIL
+  (one thread_regs flake on the first SMP4 run, green on
+  re-run).
 
 - **M83 done** (this commit): IPC/stack geometry. The user main stack
   moves from 0x7000_0000 to the top of the user window

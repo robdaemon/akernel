@@ -58,8 +58,9 @@ procedure Fileserver is
    Names_Done : Boolean := False;
 
    --  Volume/assign/entry docs live with the tables in
-   --  fileserver_tables.ads.
-   Max_Expanded : constant := 96;
+   --  fileserver_tables.ads.  M82i: 96 -> 288 (a 255-char wire
+   --  path plus one assign expansion of up to 32).
+   Max_Expanded : constant := 288;
 
    --  VA windows. Userspace VA map (see s-memory.adb): heap
    --  0x4000_0000..0x4020_0000, TEXT at 0x4600_0000, args
@@ -88,6 +89,19 @@ procedure Fileserver is
    Blk_Buf_Cap : U64 := 0;
    Blk_Buf_VA  : constant U64 := Buf_Win_VA + 8 * Syscalls.Page_Size;
    Buf_Bytes      : constant U64 := Files.Buf_Pages * Syscalls.Page_Size;
+
+   --  M82i long request paths: the client-side path page maps
+   --  here for the unpack (one page, right under the text base,
+   --  above the bounce page); the VFS's own staging page for
+   --  forwards sits one page lower.
+   Path_Win_VA   : constant U64 := 16#4242_6000#;
+   Stage_Win_VA  : constant U64 := 16#4242_5000#;
+   Stage_Cap     : U64 := 0;  --  lazy 1-page forward staging obj
+   Stage_Win_Fit : constant :=
+     1 / Boolean'Pos
+       (Blk_Buf_VA + Syscalls.Page_Size <= Stage_Win_VA
+        and then Path_Win_VA + Syscalls.Page_Size
+                   <= 16#4600_0000#);
 
    function Shift_Right
      (Value : U64; Amount : Natural) return U64
@@ -129,6 +143,67 @@ procedure Fileserver is
    is (if C in 'A' .. 'Z'
        then Character'Val (Character'Pos (C) + 32)
        else C);
+
+   --  M82i: fetch a request path — inline from words First ..
+   --  Last, or, when the first path word is Files.Path_In_Buf,
+   --  from the one-page client buffer in cap slot Slot (mapped
+   --  at Path_Win_VA, read, unmapped, and the received cap copy
+   --  deleted here so no handler threads cap lifetimes).
+   function Fetch_Path
+     (First : Natural;
+      Last  : Natural;
+      Slot  : Natural;
+      S     : out String;
+      Len   : out Natural) return Boolean
+   is
+      Cap : U64;
+      C   : Character;
+   begin
+      if Syscalls.Message.Words (First) /= Files.Path_In_Buf then
+         return Name_Of (First, Last, S, Len);
+      end if;
+      Len := 0;
+      S := (others => Character'Val (0));
+      Cap := Syscalls.Message.Caps (Slot);
+      if Cap = 0 then
+         return False;
+      end if;
+      if Syscalls.Mem_Map
+        (Address_Space => Syscalls.Address_Space_Cap,
+         Cap           => Cap,
+         VA            => Path_Win_VA,
+         Offset        => 0,
+         Length        => Syscalls.Page_Size,
+         Flags         => 3) /= 0
+      then
+         return False;
+      end if;
+      declare
+         Win : Byte_Array (0 .. Syscalls.Page_Size - 1)
+           with Address => To_Address (Integer_Address (Path_Win_VA));
+      begin
+         for I in 0 .. Files.Max_Path loop
+            C := Character'Val (Natural (Win (U64 (I))));
+            exit when C = Character'Val (0);
+            if Len >= S'Length then
+               Len := 0;
+               exit;
+            end if;
+            Len := Len + 1;
+            S (S'First + Len - 1) := C;
+         end loop;
+      end;
+      if Syscalls.Mem_Unmap
+        (Address_Space => Syscalls.Address_Space_Cap,
+         VA            => Path_Win_VA,
+         Length        => Syscalls.Page_Size) /= 0
+        or else Syscalls.Cap_Delete (Cap) /= 0
+      then
+         Akernel_User.Console.Put_Line
+           ("fileserver: path buffer release failed");
+      end if;
+      return Len > 0;
+   end Fetch_Path;
 
    function Match
      (Text       : String;
@@ -765,6 +840,62 @@ procedure Fileserver is
       end loop;
    end Pack_Path;
 
+   --  M82i forward counterpart: stage Exp (Pos .. E_Len) for an
+   --  fs driver — inline via Pack_Path when it fits, otherwise
+   --  into the VFS's own staging page (lazily allocated) with
+   --  the marker at word First_Word and the cap in slot Slot.
+   --  The kernel duplicates Stage_Cap into the driver per call;
+   --  the driver deletes its copy, ours persists.
+   function Stage_Forward_Path
+     (Exp        : String;
+      Pos        : Natural;
+      E_Len      : Natural;
+      First_Word : Natural;
+      Last_Word  : Natural;
+      Slot       : Natural) return Boolean
+   is
+      L : constant Natural := E_Len - Pos + 1;
+   begin
+      if L <= (Last_Word - First_Word + 1) * 8 then
+         Pack_Path (Exp, Pos, E_Len, First_Word, Last_Word);
+         return True;
+      end if;
+      if L > Files.Max_Path then
+         return False;
+      end if;
+      if Stage_Cap = 0 then
+         Stage_Cap := Syscalls.Mem_Alloc (1);
+         if Stage_Cap = Syscalls.Syscall_Failed
+           or else Syscalls.Mem_Map
+             (Address_Space => Syscalls.Address_Space_Cap,
+              Cap           => Stage_Cap,
+              VA            => Stage_Win_VA,
+              Offset        => 0,
+              Length        => Syscalls.Page_Size,
+              Flags         => 3) /= 0
+         then
+            Stage_Cap := 0;
+            return False;
+         end if;
+      end if;
+      declare
+         Win : Byte_Array (0 .. Syscalls.Page_Size - 1)
+           with Address => To_Address (Integer_Address (Stage_Win_VA));
+      begin
+         for I in 0 .. L - 1 loop
+            Win (U64 (I)) :=
+              Byte (Character'Pos (Exp (Exp'First + Pos - 1 + I)));
+         end loop;
+         Win (U64 (L)) := 0;
+      end;
+      for W in First_Word .. Last_Word loop
+         Syscalls.Message.Words (W) := 0;
+      end loop;
+      Syscalls.Message.Words (First_Word) := Files.Path_In_Buf;
+      Syscalls.Message.Caps (Slot) := Stage_Cap;
+      return True;
+   end Stage_Forward_Path;
+
    --  Milestone 41b/Proc:self: forward a client request to an
    --  fs-driver volume using a cap minted with the original
    --  caller's badge (now the caller's process id). The fs driver
@@ -890,7 +1021,7 @@ procedure Fileserver is
    --  through unchanged: w0 = status, w1 = size, w2 = is_dir,
    --  words 3..5 = entry name.
    procedure Handle_Read_Dir is
-      Name : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -898,7 +1029,7 @@ procedure Fileserver is
       Exp  : String (1 .. Max_Expanded);
       E_Len : Natural;
    begin
-      if not Name_Of (0, 3, Name, Len) then
+      if not Fetch_Path (0, 3, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
@@ -911,9 +1042,12 @@ procedure Fileserver is
 
       Idx := Syscalls.Message.Words (4);
       Syscalls.Message.Label := Files.Op_ReadDir;
-      Pack_Path (Exp, Pos, E_Len, 0, 3);
-      Syscalls.Message.Words (4) := Idx;
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 0) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      Syscalls.Message.Words (4) := Idx;
       if Forward_To_FS (V, Syscalls.Message.Badge) then
          --  Relay the fs driver's reply words untouched.
          Syscalls.Message.Caps := (others => 0);
@@ -934,7 +1068,7 @@ procedure Fileserver is
    --  attr data size, words 3..5 = attr name. Volumes without
    --  attribute support answer Not_Found (empty list semantics).
    procedure Handle_Attr_List is
-      Name : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -942,7 +1076,7 @@ procedure Fileserver is
       Exp  : String (1 .. Max_Expanded);
       E_Len : Natural;
    begin
-      if not Name_Of (0, 3, Name, Len) then
+      if not Fetch_Path (0, 3, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
@@ -955,9 +1089,12 @@ procedure Fileserver is
 
       Idx := Syscalls.Message.Words (4);
       Syscalls.Message.Label := Files.Op_Attr_List;
-      Pack_Path (Exp, Pos, E_Len, 0, 3);
-      Syscalls.Message.Words (4) := Idx;
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 0) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      Syscalls.Message.Words (4) := Idx;
       if Forward_To_FS (V, Syscalls.Message.Badge) then
          --  Relay the fs driver's reply words untouched.
          Syscalls.Message.Caps := (others => 0);
@@ -980,7 +1117,7 @@ procedure Fileserver is
    --  Bad_Args.
    procedure Handle_Attr_Read is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -989,7 +1126,7 @@ procedure Fileserver is
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
    begin
-      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+      if Buf = 0 or else not Fetch_Path (0, 3, 1, Name, Len) then
          Status := Files.Status_Bad_Args;
       else
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
@@ -1000,10 +1137,11 @@ procedure Fileserver is
          else
             --  Pack_Path touches words 0..3 only; the attr name
             --  in words 4..5 rides through to the fs driver.
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Attr_Read;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 1) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                --  Relay the fs driver's reply words untouched.
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
@@ -1041,7 +1179,7 @@ procedure Fileserver is
    --  Bad_Args.
    procedure Handle_Attr_Write is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -1050,7 +1188,7 @@ procedure Fileserver is
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
    begin
-      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+      if Buf = 0 or else not Fetch_Path (0, 3, 1, Name, Len) then
          Status := Files.Status_Bad_Args;
       else
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
@@ -1062,10 +1200,11 @@ procedure Fileserver is
             --  Pack_Path touches words 0..3 only; the attr name
             --  in words 4..5 and the buffer header ride through
             --  to the fs driver.
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Attr_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 1) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                --  Relay the fs driver's reply words untouched.
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
@@ -1103,7 +1242,7 @@ procedure Fileserver is
    --  answer Bad_Args.
    procedure Handle_Query is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -1112,7 +1251,7 @@ procedure Fileserver is
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
    begin
-      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+      if Buf = 0 or else not Fetch_Path (0, 3, 1, Name, Len) then
          Status := Files.Status_Bad_Args;
       else
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
@@ -1123,10 +1262,11 @@ procedure Fileserver is
          else
             --  Pack_Path touches words 0..3 only; the match
             --  index in word 4 rides through to the fs driver.
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Query;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 1) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                --  Relay the fs driver's reply words untouched.
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
@@ -1162,7 +1302,7 @@ procedure Fileserver is
    procedure Handle_Query_Open is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
       Ntfn   : constant U64 := Syscalls.Message.Caps (1);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -1172,7 +1312,7 @@ procedure Fileserver is
       E_Len  : Natural;
    begin
       if Buf = 0 or else Ntfn = 0
-        or else not Name_Of (0, 3, Name, Len)
+        or else not Fetch_Path (0, 3, 2, Name, Len)
       then
          Status := Files.Status_Bad_Args;
       else
@@ -1182,11 +1322,12 @@ procedure Fileserver is
          elsif not Volumes (V).Is_FS then
             Status := Files.Status_Bad_Args;
          else
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Query_Open;
             Syscalls.Message.Caps := (0 => Buf, 1 => Ntfn,
                                       others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 2) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                   Syscalls.Debug_Put_Line
@@ -1221,7 +1362,7 @@ procedure Fileserver is
 
    procedure Handle_Query_Poll is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -1230,7 +1371,7 @@ procedure Fileserver is
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
    begin
-      if Buf = 0 or else not Name_Of (0, 3, Name, Len) then
+      if Buf = 0 or else not Fetch_Path (0, 3, 1, Name, Len) then
          Status := Files.Status_Bad_Args;
       else
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
@@ -1241,10 +1382,11 @@ procedure Fileserver is
          else
             --  Pack_Path touches words 0..3 only; the handle in
             --  word 4 rides through to the fs driver.
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Query_Poll;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 1) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                   Syscalls.Debug_Put_Line
@@ -1270,7 +1412,7 @@ procedure Fileserver is
    end Handle_Query_Poll;
 
    procedure Handle_Query_Close is
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
       Pos    : Natural;
       V      : Natural;
@@ -1279,7 +1421,7 @@ procedure Fileserver is
       Exp    : String (1 .. Max_Expanded);
       E_Len  : Natural;
    begin
-      if not Name_Of (0, 3, Name, Len) then
+      if not Fetch_Path (0, 3, 0, Name, Len) then
          Status := Files.Status_Bad_Args;
       else
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
@@ -1288,10 +1430,11 @@ procedure Fileserver is
          elsif not Volumes (V).Is_FS then
             Status := Files.Status_Bad_Args;
          else
-            Pack_Path (Exp, Pos, E_Len, 0, 3);
             Syscalls.Message.Label := Files.Op_Query_Close;
             Syscalls.Message.Caps := (others => 0);
-            if Forward_To_FS (V, Syscalls.Message.Badge) then
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 3, 0) then
+               Status := Files.Status_Bad_Args;
+            elsif Forward_To_FS (V, Syscalls.Message.Badge) then
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
                   Syscalls.Debug_Put_Line
@@ -1311,7 +1454,7 @@ procedure Fileserver is
    end Handle_Query_Close;
 
    procedure Handle_Stat_Or_Open is
-      Name : String (1 .. 48);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -1319,7 +1462,7 @@ procedure Fileserver is
       Exp  : String (1 .. Max_Expanded);
       E_Len : Natural;
    begin
-      if not Name_Of (0, 5, Name, Len) then
+      if not Fetch_Path (0, 5, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
@@ -1385,8 +1528,11 @@ procedure Fileserver is
          --  protocol; the path portion rides words 0..5. The
          --  caller identity is delivered through the minted cap
          --  badge (Forward_To_FS preserves Message contents).
-         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Caps := (others => 0);
+         if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 5, 0) then
+            Reply2 (Files.Status_Bad_Args, 0);
+            return;
+         end if;
          if Forward_To_FS (V, Syscalls.Message.Badge) then
             Reply2 (Syscalls.Message.Words (0),
                     Syscalls.Message.Words (1));
@@ -1792,7 +1938,7 @@ procedure Fileserver is
       Offset : constant U64 := Syscalls.Message.Words (0);
       Length : constant U64 := Syscalls.Message.Words (1);
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural := 0;
       Pos    : Natural := 1;
       V      : Natural := 0;
@@ -1812,7 +1958,7 @@ procedure Fileserver is
 
          if Buf = 0
            or else Length = 0
-           or else not Name_Of (2, 5, Name, Len)
+           or else not Fetch_Path (2, 5, 1, Name, Len)
          then
             Status := Files.Status_Bad_Args;
             return;
@@ -1827,9 +1973,12 @@ procedure Fileserver is
          if Volumes (V).Is_FS then
             Syscalls.Message.Words (0) := Offset;
             Syscalls.Message.Words (1) := Length;
-            Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 2, 5, 1) then
+               Status := Files.Status_Bad_Args;
+               return;
+            end if;
             if Forward_To_FS (V, Syscalls.Message.Badge) then
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
@@ -1951,7 +2100,7 @@ procedure Fileserver is
       Offset : constant U64 := Syscalls.Message.Words (0);
       Length : constant U64 := Syscalls.Message.Words (1);
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 32);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural := 0;
       Pos    : Natural := 1;
       V      : Natural := 0;
@@ -1973,7 +2122,7 @@ procedure Fileserver is
 
          if Buf = 0
            or else Length = 0
-           or else not Name_Of (2, 5, Name, Len)
+           or else not Fetch_Path (2, 5, 1, Name, Len)
          then
             Status := Files.Status_Bad_Args;
             return;
@@ -1992,9 +2141,12 @@ procedure Fileserver is
             --  its own copy; ours is deleted below).
             Syscalls.Message.Words (0) := Offset;
             Syscalls.Message.Words (1) := Length;
-            Pack_Path (Exp, Pos, E_Len, 2);
             Syscalls.Message.Label := Files.Op_Read;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
+            if not Stage_Forward_Path (Exp, Pos, E_Len, 2, 5, 1) then
+               Status := Files.Status_Bad_Args;
+               return;
+            end if;
             if Forward_To_FS (V, Syscalls.Message.Badge) then
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
@@ -2225,7 +2377,7 @@ procedure Fileserver is
    --  are read-only and raw block volumes have no files.
    procedure Handle_Path_Op is
       Op   : constant U64 := Syscalls.Message.Label;
-      Name : String (1 .. 48);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -2237,7 +2389,7 @@ procedure Fileserver is
          return;
       end if;
 
-      if not Name_Of (0, 5, Name, Len) then
+      if not Fetch_Path (0, 5, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
@@ -2301,9 +2453,12 @@ procedure Fileserver is
       end if;
 
       if Volumes (V).Is_FS then
-         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Op;
          Syscalls.Message.Caps := (others => 0);
+         if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 5, 0) then
+            Reply2 (Files.Status_Bad_Args, 0);
+            return;
+         end if;
          if Forward_To_FS (V, Syscalls.Message.Badge) then
             Reply2 (Syscalls.Message.Words (0),
                     Syscalls.Message.Words (1));
@@ -2323,9 +2478,9 @@ procedure Fileserver is
    --  stripped TO path and forwarded verbatim.
    procedure Handle_Rename is
       Buf    : constant U64 := Syscalls.Message.Caps (0);
-      Name   : String (1 .. 48);
+      Name : String (1 .. Files.Max_Path);
       Len    : Natural;
-      To     : String (1 .. 48);
+      To     : String (1 .. Files.Max_Path);
       To_Len : Natural := 0;
       Pos    : Natural;
       V      : Natural;
@@ -2337,7 +2492,7 @@ procedure Fileserver is
       E_Len2 : Natural;
       Status : U64 := Files.Status_Ok;
       Mapped : Boolean := False;
-      Win    : Byte_Array (0 .. 47)
+      Win    : Byte_Array (0 .. U64 (Files.Max_Path))
         with Address => System.Storage_Elements.To_Address
           (System.Storage_Elements.Integer_Address (Buf_Win_VA));
 
@@ -2348,7 +2503,7 @@ procedure Fileserver is
             return;
          end if;
 
-         if Buf = 0 or else not Name_Of (0, 5, Name, Len) then
+         if Buf = 0 or else not Fetch_Path (0, 5, 1, Name, Len) then
             Status := Files.Status_Bad_Args;
             return;
          end if;
@@ -2369,7 +2524,7 @@ procedure Fileserver is
          end if;
          Mapped := True;
 
-         for I in U64 (0) .. 47 loop
+         for I in U64 (0) .. U64 (Files.Max_Path - 1) loop
             exit when Win (I) = 0;
             To_Len := To_Len + 1;
             To (To_Len) := Character'Val (Natural (Win (I)));
@@ -2390,8 +2545,8 @@ procedure Fileserver is
          end if;
 
          --  Rewrite the buffer with the bare TO path (NUL-padded
-         --  through 48 bytes) for the fs driver.
-         for I in U64 (0) .. 47 loop
+         --  through Max_Path + 1 bytes) for the fs driver.
+         for I in U64 (0) .. U64 (Files.Max_Path) loop
             Win (I) :=
               (if I < U64 (E_Len2 - Pos2 + 1)
                then Byte (Character'Pos (Exp2 (Pos2 + Natural (I))))
@@ -2408,9 +2563,12 @@ procedure Fileserver is
          end if;
          Mapped := False;
 
-         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Files.Op_Rename;
          Syscalls.Message.Caps := (0 => Buf, others => 0);
+         if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 5, 1) then
+            Status := Files.Status_Bad_Args;
+            return;
+         end if;
          if Forward_To_FS (V, Syscalls.Message.Badge) then
             Status := Syscalls.Message.Words (0);
          else
@@ -2443,7 +2601,7 @@ procedure Fileserver is
    --  picks the volume; fs-driver volumes relay (status, total,
    --  free, cluster), everything else answers Bad_Args.
    procedure Handle_Volume_Info is
-      Name : String (1 .. 48);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -2455,7 +2613,7 @@ procedure Fileserver is
          return;
       end if;
 
-      if not Name_Of (0, 5, Name, Len) then
+      if not Fetch_Path (0, 5, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;
@@ -2474,9 +2632,12 @@ procedure Fileserver is
       end if;
 
       if Volumes (V).Is_FS then
-         Pack_Path (Exp, Pos, E_Len, 0);
          Syscalls.Message.Label := Files.Op_Volume_Info;
          Syscalls.Message.Caps := (others => 0);
+         if not Stage_Forward_Path (Exp, Pos, E_Len, 0, 5, 0) then
+            Reply2 (Files.Status_Bad_Args, 0);
+            return;
+         end if;
          if Forward_To_FS (V, Syscalls.Message.Badge)
            and then Syscalls.Message.Words (0) = Files.Status_Ok
          then
@@ -2531,7 +2692,7 @@ procedure Fileserver is
    --  through, close = flush = nothing; keeps the wire
    --  fid-less: Close names the path, not a handle).
    procedure Handle_Close is
-      Name : String (1 .. 48);
+      Name : String (1 .. Files.Max_Path);
       Len  : Natural;
       Pos  : Natural;
       V    : Natural;
@@ -2539,7 +2700,7 @@ procedure Fileserver is
       Exp  : String (1 .. Max_Expanded);
       E_Len : Natural;
    begin
-      if not Name_Of (0, 5, Name, Len) then
+      if not Fetch_Path (0, 5, 0, Name, Len) then
          Reply2 (Files.Status_Bad_Args, 0);
          return;
       end if;

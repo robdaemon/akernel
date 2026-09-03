@@ -75,6 +75,69 @@ package body Akernel_User.Files is
       end loop;
    end Pack_Name;
 
+   --  M82i: one-page path buffer for requests whose qualified
+   --  path outgrows the inline words. Lazily allocated like the
+   --  read buffer and reused across calls (the kernel duplicates
+   --  a transferred cap into the receiver's table, so the
+   --  original stays ours; receivers delete their copies).
+   Path_Cap : U64 := 0;
+
+   function Ensure_Path_Buffer return Boolean is
+   begin
+      if Path_Cap /= 0 then
+         return True;
+      end if;
+      Path_Cap := Syscalls.Mem_Alloc (Path_Buf_Pages);
+      if Path_Cap = Syscalls.Syscall_Failed
+        or else Syscalls.Mem_Map
+          (Address_Space => Syscalls.Address_Space_Cap,
+           Cap           => Path_Cap,
+           VA            => Path_Buf_VA,
+           Offset        => 0,
+           Length        => Path_Buf_Pages * Syscalls.Page_Size,
+           Flags         => 3) /= 0
+      then
+         Path_Cap := 0;
+         return False;
+      end if;
+      return True;
+   end Ensure_Path_Buffer;
+
+   --  Stage the qualified path Q (1 .. Len): packed inline when
+   --  it fits words First .. Last, otherwise written NUL-
+   --  terminated into the path buffer with the Path_In_Buf
+   --  marker at word First and the buffer cap in slot Slot.
+   --  Call AFTER any other Message.Caps assignments (Stage_Path
+   --  only touches slot Slot). False = allocation failure.
+   function Stage_Path
+     (Q     : String;
+      Len   : Natural;
+      First : Natural;
+      Last  : Natural;
+      Slot  : Natural) return Boolean
+   is
+      Win : Byte_Array (0 .. Path_Buf_Pages * Syscalls.Page_Size - 1)
+        with Address => To_Address (Integer_Address (Path_Buf_VA));
+   begin
+      if Len <= (Last - First + 1) * 8 then
+         Pack_Name (Q (Q'First .. Q'First + Len - 1), First, Last);
+         return True;
+      end if;
+      if Len > Max_Path or else not Ensure_Path_Buffer then
+         return False;
+      end if;
+      for W in First .. Last loop
+         Syscalls.Message.Words (W) := 0;
+      end loop;
+      for I in 1 .. Len loop
+         Win (U64 (I - 1)) := Byte (Character'Pos (Q (Q'First + I - 1)));
+      end loop;
+      Win (U64 (Len)) := 0;
+      Syscalls.Message.Words (First) := Path_In_Buf;
+      Syscalls.Message.Caps (Slot) := Path_Cap;
+      return True;
+   end Stage_Path;
+
    procedure Bind (FS_Cap : U64) is
    begin
       Akernel_User.Files.FS_Cap := FS_Cap;
@@ -92,7 +155,7 @@ package body Akernel_User.Files is
    end Set_Default_Volume;
 
    function Stat (Name : String; Size : out U64) return U64 is
-      Q   : String (1 .. 48);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
    begin
       Size := 0;
@@ -102,8 +165,10 @@ package body Akernel_User.Files is
       end if;
 
       Syscalls.Message.Label := Op_Stat;
-      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -121,7 +186,7 @@ package body Akernel_User.Files is
       Write_Date : out U64;
       Write_Time : out U64;
       Is_Dir     : out Boolean) return U64 is
-      Q   : String (1 .. 48);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
    begin
       Size := 0;
@@ -134,8 +199,10 @@ package body Akernel_User.Files is
       end if;
 
       Syscalls.Message.Label := Op_Stat;
-      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -155,10 +222,10 @@ package body Akernel_User.Files is
       Index        : U64;
       Out_Name     : out String;
       Out_Name_Len : out Natural;
-      Is_Dir       : out Boolean;
+      Is_Dir     : out Boolean;
       Size         : out U64) return U64
    is
-      Q   : String (1 .. 32);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
       Ch  : Character;
    begin
@@ -172,9 +239,11 @@ package body Akernel_User.Files is
 
       Syscalls.Message.Label := Op_ReadDir;
       Syscalls.Message.Words := (others => 0);
-      Pack_Name (Q (1 .. Len), 0, 3);
-      Syscalls.Message.Words (4) := Index;
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 3, 0) then
+         return Status_Not_Found;
+      end if;
+      Syscalls.Message.Words (4) := Index;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -227,7 +296,7 @@ package body Akernel_User.Files is
       Attr_Type    : out U64;
       Attr_Size    : out U64) return U64
    is
-      Q   : String (1 .. 32);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
       Ch  : Character;
    begin
@@ -241,9 +310,11 @@ package body Akernel_User.Files is
 
       Syscalls.Message.Label := Op_Attr_List;
       Syscalls.Message.Words := (others => 0);
-      Pack_Name (Q (1 .. Len), 0, 3);
-      Syscalls.Message.Words (4) := Index;
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 3, 0) then
+         return Status_Not_Found;
+      end if;
+      Syscalls.Message.Words (4) := Index;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -276,7 +347,7 @@ package body Akernel_User.Files is
       Attr_Type : out U64) return U64
    is
       Status : U64;
-      Q      : String (1 .. 32);
+      Q      : String (1 .. Max_Path);
       Len    : Natural;
       Src    : Byte_Array (0 .. Buf_Bytes - 1)
         with Address => To_Address (Integer_Address (Buffer_VA));
@@ -302,9 +373,11 @@ package body Akernel_User.Files is
 
       Syscalls.Message.Label := Op_Attr_Read;
       Syscalls.Message.Words := (others => 0);
-      Pack_Name (Q (1 .. Len), 0, 3);
-      Pack_Name (Attr, 4, 5);
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if not Stage_Path (Q, Len, 0, 3, 1) then
+         return Status_Not_Found;
+      end if;
+      Pack_Name (Attr, 4, 5);
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -333,7 +406,7 @@ package body Akernel_User.Files is
        Buffer_Address : System.Address;
        Length         : U64) return U64
     is
-       Q   : String (1 .. 32);
+       Q   : String (1 .. Max_Path);
        Len : Natural;
        Dst : Byte_Array (0 .. Buf_Bytes - 1)
          with Address => To_Address (Integer_Address (Buffer_VA));
@@ -373,9 +446,11 @@ package body Akernel_User.Files is
 
        Syscalls.Message.Label := Op_Attr_Write;
        Syscalls.Message.Words := (others => 0);
-       Pack_Name (Q (1 .. Len), 0, 3);
-       Pack_Name (Attr, 4, 5);
        Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+       if not Stage_Path (Q, Len, 0, 3, 1) then
+          return Status_Not_Found;
+       end if;
+       Pack_Name (Attr, 4, 5);
 
        if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
           return Status_Not_Found;
@@ -385,7 +460,7 @@ package body Akernel_User.Files is
     end Attr_Write;
 
    function Open (Name : String; Size : out U64) return U64 is
-      Q   : String (1 .. 48);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
    begin
       Size := 0;
@@ -399,8 +474,10 @@ package body Akernel_User.Files is
       --  use (Amiga semantics), while Stat stays a pure
       --  existence probe.
       Syscalls.Message.Label := Op_Open;
-      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -427,7 +504,7 @@ package body Akernel_User.Files is
       Count  : out U64) return U64
    is
       Status : U64;
-      Q      : String (1 .. 32);
+      Q      : String (1 .. Max_Path);
       Len    : Natural;
       Src    : Byte_Array (0 .. Buf_Bytes - 1)
         with Address => To_Address (Integer_Address (Buffer_VA));
@@ -454,8 +531,10 @@ package body Akernel_User.Files is
       Syscalls.Message.Label := Op_Read;
       Syscalls.Message.Words (0) := Offset;
       Syscalls.Message.Words (1) := U64'Min (Length, Buf_Bytes);
-      Pack_Name (Q (1 .. Len), 2, 5);
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if not Stage_Path (Q, Len, 2, 5, 1) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -489,7 +568,7 @@ package body Akernel_User.Files is
       Is_Dir    : out Boolean) return U64
    is
       Status : U64;
-      Q      : String (1 .. 32);
+      Q      : String (1 .. Max_Path);
       Len    : Natural;
       Dst    : Byte_Array (0 .. Buf_Bytes - 1)
         with Address => To_Address (Integer_Address (Buffer_VA));
@@ -518,9 +597,11 @@ package body Akernel_User.Files is
 
       Syscalls.Message.Label := Op_Query;
       Syscalls.Message.Words := (others => 0);
-      Pack_Name (Q (1 .. Len), 0, 3);
-      Syscalls.Message.Words (4) := Index;
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if not Stage_Path (Q, Len, 0, 3, 1) then
+         return Status_Not_Found;
+      end if;
+      Syscalls.Message.Words (4) := Index;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -552,7 +633,7 @@ package body Akernel_User.Files is
        Ntfn      : U64;
        Handle    : out U64) return U64
     is
-       Q      : String (1 .. 32);
+       Q      : String (1 .. Max_Path);
        Len    : Natural;
        Dst    : Byte_Array (0 .. Buf_Bytes - 1)
          with Address => To_Address (Integer_Address (Buffer_VA));
@@ -580,9 +661,11 @@ package body Akernel_User.Files is
 
        Syscalls.Message.Label := Op_Query_Open;
        Syscalls.Message.Words := (others => 0);
-       Pack_Name (Q (1 .. Len), 0, 3);
        Syscalls.Message.Caps := (0 => Buf_Cap, 1 => Ntfn,
                                  others => 0);
+       if not Stage_Path (Q, Len, 0, 3, 2) then
+          return Status_Not_Found;
+       end if;
 
        if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
           return Status_Not_Found;
@@ -602,7 +685,7 @@ package body Akernel_User.Files is
        Path_Len  : out Natural) return U64
     is
        Status : U64;
-       Q      : String (1 .. 32);
+       Q      : String (1 .. Max_Path);
        Len    : Natural;
        Dst    : Byte_Array (0 .. Buf_Bytes - 1)
          with Address => To_Address (Integer_Address (Buffer_VA));
@@ -620,9 +703,11 @@ package body Akernel_User.Files is
 
        Syscalls.Message.Label := Op_Query_Poll;
        Syscalls.Message.Words := (others => 0);
-       Pack_Name (Q (1 .. Len), 0, 3);
-       Syscalls.Message.Words (4) := Handle;
        Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+       if not Stage_Path (Q, Len, 0, 3, 1) then
+          return Status_Not_Found;
+       end if;
+       Syscalls.Message.Words (4) := Handle;
 
        if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
           return Status_Not_Found;
@@ -649,7 +734,7 @@ package body Akernel_User.Files is
 
     function Query_Close (Name : String; Handle : U64) return U64
     is
-       Q   : String (1 .. 32);
+       Q   : String (1 .. Max_Path);
        Len : Natural;
     begin
        Qualified (Name, Q, Len);
@@ -658,9 +743,11 @@ package body Akernel_User.Files is
        end if;
        Syscalls.Message.Label := Op_Query_Close;
        Syscalls.Message.Words := (others => 0);
-       Pack_Name (Q (1 .. Len), 0, 3);
-       Syscalls.Message.Words (4) := Handle;
        Syscalls.Message.Caps := (others => 0);
+       if not Stage_Path (Q, Len, 0, 3, 0) then
+          return Status_Not_Found;
+       end if;
+       Syscalls.Message.Words (4) := Handle;
        if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
           return Status_Not_Found;
        end if;
@@ -675,7 +762,7 @@ package body Akernel_User.Files is
       Count          : out U64) return U64
    is
       Status : U64;
-      Q      : String (1 .. 32);
+      Q      : String (1 .. Max_Path);
       Len    : Natural;
       N      : U64;
    begin
@@ -707,8 +794,10 @@ package body Akernel_User.Files is
       Syscalls.Message.Label := Op_Write;
       Syscalls.Message.Words (0) := Offset;
       Syscalls.Message.Words (1) := N;
-      Pack_Name (Q (1 .. Len), 2, 5);
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if not Stage_Path (Q, Len, 2, 5, 1) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -725,7 +814,7 @@ package body Akernel_User.Files is
 
    --  Shared body for the path-only mutating ops.
    function Path_Op (Op : U64; Name : String) return U64 is
-      Q   : String (1 .. 48);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
    begin
       Qualified (Name, Q, Len);
@@ -734,8 +823,10 @@ package body Akernel_User.Files is
       end if;
 
       Syscalls.Message.Label := Op;
-      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -750,8 +841,8 @@ package body Akernel_User.Files is
      (Path_Op (Op_Close, Name));
 
    function Rename (From, To : String) return U64 is
-      QF : String (1 .. 48);
-      QT : String (1 .. 48);
+      QF : String (1 .. Max_Path);
+      QT : String (1 .. Max_Path);
       LF : Natural;
       LT : Natural;
       Dst : Byte_Array (0 .. Buf_Bytes - 1)
@@ -766,7 +857,8 @@ package body Akernel_User.Files is
          return Status_Not_Found;
       end if;
 
-      --  TO path NUL-terminated at offset 0 of the shared buffer.
+      --  TO path NUL-terminated at offset 0 of the shared buffer
+      --  (m82i: up to Max_Path chars now).
       for I in 0 .. U64 (LT) loop
          Dst (I) :=
            (if I < U64 (LT)
@@ -775,8 +867,10 @@ package body Akernel_User.Files is
       end loop;
 
       Syscalls.Message.Label := Op_Rename;
-      Pack_Name (QF (1 .. LF), 0, 5);
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if not Stage_Path (QF, LF, 0, 5, 1) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
@@ -790,7 +884,7 @@ package body Akernel_User.Files is
       Free    : out U64;
       Cluster : out U64) return U64
    is
-      Q   : String (1 .. 48);
+      Q   : String (1 .. Max_Path);
       Len : Natural;
    begin
       Total := 0;
@@ -802,8 +896,10 @@ package body Akernel_User.Files is
       end if;
 
       Syscalls.Message.Label := Op_Volume_Info;
-      Pack_Name (Q (1 .. Len), 0, 5);
       Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
          return Status_Not_Found;
