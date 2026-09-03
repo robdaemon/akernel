@@ -55,9 +55,9 @@ repository.
 
 (detail: `git log`, `docs/HISTORY.md`)
 
-## Active
+## Recently completed
 
-**M82 in flight — BeFS file server** (metadata in the filesystem:
+**M82 done — BeFS file server** (metadata in the filesystem:
 typed attributes, indices, journal; BeOS/Haiku BFS is MIT-licensed).
 Route: **pure-Ada re-implementation** (Bfs_Engine), with the Haiku
 BFS sources as reference reading only — the vendored-C++ route was
@@ -350,6 +350,9 @@ growth, attribute writes).
   (one thread_regs flake on the first SMP4 run, green on
   re-run).
 
+  **M82 complete** (a..i; a reverted with the vendored-C++
+  route). Nothing else queued.
+
 - **M83 done** (this commit): IPC/stack geometry. The user main stack
   moves from 0x7000_0000 to the top of the user window
   (User_Stack_Top = 0x8000_0000) and grows 12 -> 64 pages (48 ->
@@ -519,7 +522,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   Gates: 1721/1722 SMP4 (one thread_regs flake, green on
   re-run), 1722 SMP1, 0 FAIL.
 
-  **M80 complete** (b/c/d/e/f/g/h). Next: M82i.
+  **M80 complete** (b/c/d/e/f/g/h); M82i landed after it.
 
 ## Open candidates
 
