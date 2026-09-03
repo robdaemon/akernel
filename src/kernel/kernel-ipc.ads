@@ -14,6 +14,9 @@ with Kernel.Tasks;
 package Kernel.IPC is
    subtype U64 is Interfaces.Unsigned_64;
 
+   --  Wire format (append-only): the IPC buffer message layout
+   --  userspace marshals against; growing either shifts every
+   --  label's field offsets, so these are ABI, not capacity.
    Max_Words : constant := 6;
    Max_Caps  : constant := 4;
 

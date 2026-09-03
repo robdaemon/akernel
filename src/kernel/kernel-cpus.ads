@@ -22,6 +22,11 @@ with Interfaces;
 package Kernel.CPUs is
    subtype U64 is Interfaces.Unsigned_64;
 
+   --  Static ceiling: per-CPU state is fixed-size records wired
+   --  into the scheduler and trap path at boot; the DTB reports
+   --  the actual hart count (any QEMU -smp we boot is far below
+   --  this), and exceeding it is a boot-time config error, not
+   --  a runtime growth case.
    Max_CPUs : constant := 64;
 
    type CPU_Index is range 0 .. Max_CPUs - 1;

@@ -472,6 +472,26 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   1719 PASS / 0 FAIL ("bureau display info ok" and "terminal
   surface ok" exercise the big path).
 
+- **M80h done** (this commit): policy + census. AGENTS.md gains
+  the capacity rule: tables grow on demand (Akernel_User.Tables
+  chunk chains / kernel PMM slabs) or wire to a policy constant
+  with room; a surviving static Max_* carries a written
+  justification (wire format, hardware ring, boot order,
+  transient staging, sizing). Census-comment cleanup:
+  kernel-ipc Max_Words/Max_Caps (wire format), kernel-cpus
+  Max_CPUs (boot-time config), terminal Max_Hist (UX policy),
+  Max_Thread_Slots note refreshed now that M80b landed (sizing
+  argument retained). fuzz gains a capacity-census group:
+  Sys:/Net: mounts are hard checks (Sys: probed via README.TXT —
+  its root does not answer Stat_Ex as a directory), Host:
+  checked only when the 9p share is attached, and each run
+  prints "m80 census: Net:tcp lines N, Proc: entries N, Host:
+  mounted|absent" so capacity drift is visible in the log.
+  Gates: 1721/1722 SMP4 (one thread_regs flake, green on
+  re-run), 1722 SMP1, 0 FAIL.
+
+  **M80 complete** (b/c/d/e/f/g/h). Next: M82i.
+
 ## Open candidates
 
 1. **Register fast path** — measure IPC call/recv cost, then decide

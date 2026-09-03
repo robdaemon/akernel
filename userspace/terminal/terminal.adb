@@ -117,6 +117,9 @@ procedure Terminal is
    Edit_Buf : String (1 .. Edit_Cap);
    Edit_Len : Natural := 0;
 
+   --  Static by policy: 32 lines x 120 chars of recall is a
+   --  user-visible UX choice, not a resource limit; deeper
+   --  history buys nothing over the shell's own recall.
    Max_Hist : constant := 32;
    type Hist_Entry is record
       Text : String (1 .. Edit_Cap);

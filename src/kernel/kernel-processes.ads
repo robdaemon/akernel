@@ -22,7 +22,10 @@ package Kernel.Processes is
    --  monotonic counter, so unlike pids there is no encoding
    --  ceiling).  Exported so the IPC caller-queue walk bound
    --  (kernel-ipc.adb) derives from it instead of duplicating a
-   --  literal.  Growable tables are the deferred M80a slice.
+   --  literal.  Ceiling retained deliberately (M80g sizing):
+   --  512 threads x ~300 KB/thread (TCB + kernel stack +
+   --  guard + initial user frames) ~= 150 MB worst-case PMM,
+   --  comfortably inside the 8 GB memory map.
    Max_Thread_Slots : constant := 512;
 
    type Status is

@@ -5796,6 +5796,86 @@ begin
             end if;
          end;
 
+         --  M80h capacity census: every run asserts the expected
+         --  volumes are mounted (Sys: and Net: hard checks; Host:
+         --  only when the 9p share was attached) and prints
+         --  occupancy via Net: (netstat line count) and Proc:
+         --  (root entry count) so capacity drift shows in the
+         --  log instead of only surfacing as a full-table wedge.
+         declare
+            CSt      : U64;
+            CSize    : U64 := 0;
+            CDir     : Boolean := False;
+            CWDate   : U64;
+            CWTime   : U64;
+            CCount   : U64;
+            COff     : U64;
+            CLines   : Natural := 0;
+            CProcs   : Natural := 0;
+            CEnt     : String (1 .. 24);
+            CEnt_Len : Natural;
+            CEDir    : Boolean;
+            CESize   : U64;
+            CIdx     : U64;
+            Host_Ok  : Boolean := False;
+            CBuf     : array (0 .. 511) of Interfaces.Unsigned_8;
+         begin
+            --  Sys: is the initrd volume; its root does not
+            --  answer Stat_Ex as a directory, so the mount probe
+            --  stats the always-present README instead.
+            CSt := Akernel_User.Files.Stat ("Sys:README.TXT", CSize);
+            Check (CSt = Akernel_User.Files.Status_Ok
+                   and then CSize > 0,
+                   "census Sys: volume mounted");
+            CSt := Akernel_User.Files.Stat_Ex
+              ("Net:", CSize, CWDate, CWTime, CDir);
+            Check (CSt = Akernel_User.Files.Status_Ok
+                   and then CDir,
+                   "census Net: volume mounted");
+            for Try in 1 .. 10_000 loop
+               CSt := Akernel_User.Files.Stat_Ex
+                 ("Host:", CSize, CWDate, CWTime, CDir);
+               exit when CSt = Akernel_User.Files.Status_Ok;
+               Akernel_User.Syscalls.Yield;
+            end loop;
+            if CSt = Akernel_User.Files.Status_Ok then
+               Host_Ok := CDir;
+               Check (CDir, "census Host: volume mounted");
+            else
+               Put_Line ("SKIP census host share not present");
+            end if;
+            --  Net: occupancy: line count of the netstat render.
+            COff := 0;
+            loop
+               CSt := Akernel_User.Files.Read
+                 ("Net:tcp", COff, CBuf'Address,
+                  U64 (CBuf'Length), CCount);
+               exit when CSt /= Akernel_User.Files.Status_Ok
+                 or else CCount = 0;
+               for I in 0 .. Natural (CCount) - 1 loop
+                  if CBuf (I) = Interfaces.Unsigned_8 (10) then
+                     CLines := CLines + 1;
+                  end if;
+               end loop;
+               COff := COff + CCount;
+            end loop;
+            --  Proc: occupancy: entries in the root listing.
+            CIdx := 0;
+            loop
+               CSt := Akernel_User.Files.Read_Dir
+                 ("Proc:", CIdx, CEnt, CEnt_Len, CEDir, CESize);
+               exit when CSt /= Akernel_User.Files.Status_Ok;
+               CProcs := CProcs + 1;
+               CIdx := CIdx + 1;
+               exit when CIdx > 10_000;
+            end loop;
+            Put_Line ("m80 census: Net:tcp lines"
+                      & Natural'Image (CLines) & ", Proc: entries"
+                      & Natural'Image (CProcs)
+                      & (if Host_Ok then ", Host: mounted"
+                         else ", Host: absent"));
+         end;
+
          Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
                       "cd missing dir fails");
          Run_Command ("Sys:C/CD", "BD0:README.TXT", 10,
