@@ -3518,18 +3518,33 @@ begin
                         A1 => Admin_Slot, A2 => Admin_Buf) = 2,
              "thread_regs running thread busy");
 
-      --  Echo parks in Receive within a few yields; retry the
-      --  dump until the frame is stable.
-      for Try in 1 .. 256 loop
+      --  Wait for the CONDITION, not a fixed yield count: poll
+      --  process_info's thread-state word (3 = Blocked_Receive)
+      --  and sleep 10 ms between polls so wall-clock time passes
+      --  on every hart.  The old 256-iteration Sys_Yield loop
+      --  flaked two ways: Sys_Yield returns instantly when the
+      --  local ready queue is empty, so all 256 tries could burn
+      --  before a busy hart even ran echo2's first instruction
+      --  (never Status=0); and a dump landing in a transient
+      --  RTS-startup block read a non-receive state word (the
+      --  "frame fields sane" failure with a successful dump).
+      Dumped := False;
+      for Try in 1 .. 100 loop
+         Ignore := Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
+                              A1 => Echo_Slot, A2 => Admin_Buf);
+         exit when APage (3) = 3;
+         Ignore := Akernel_User.Syscalls.Sleep_Until
+           (Akernel_User.Syscalls.Read_Time + 100);  --  10 ms
+      end loop;
+      Check (APage (3) = 3, "thread_regs echo parked in receive");
+      if APage (3) = 3 then
          Status := Raw_Ecall (Number => Sys_Thread_Regs,
                               A0 => Admin_Cap, A1 => Echo_Slot,
                               A2 => Admin_Buf);
-         exit when Status = 0;
-         Ignore := Raw_Ecall (Number => Sys_Yield);
-      end loop;
-      Check (Status = 0, "thread_regs blocked echo dumped");
-      if Status = 0 then
-         Dumped := True;
+         Dumped := Status = 0;
+      end if;
+      Check (Dumped, "thread_regs blocked echo dumped");
+      if Dumped then
          --  x2 = sp (word 1) in the 64-page user stack window
          --  [0x7FF0_0000, 0x8000_0000); sepc (word 31) in the
          --  text range; state (word 33) blocked-receive; pid

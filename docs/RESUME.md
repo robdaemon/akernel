@@ -353,6 +353,21 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **thread_regs flake fixed** (this commit): the fuzz check used
+  a 256-iteration Sys_Yield loop waiting for the spawned echo to
+  park in Receive. Two race modes: Sys_Yield returns instantly
+  when the local ready queue is empty, so all 256 tries could
+  burn before a busy hart ran echo2's first instruction (never
+  Status=0); and a dump landing in a transient RTS-startup block
+  read a non-receive state word ("frame fields sane" failed with
+  a successful dump). Now the test polls process_info's state
+  word for 3 = Blocked_Receive with 10 ms Sleep_Until between
+  polls (wall time passes on every hart), then dumps exactly
+  once. 4 consecutive clean gates (3x SMP4, 1x SMP1; 1737-1739
+  PASS, 0 FAIL). Kernel side needed no change: the BKL
+  (amoswap.d aq/rl) serializes kernel mode, and recv's block
+  path saves the trap context before Set_State.
+
 - **M83 done** (this commit): IPC/stack geometry. The user main stack
   moves from 0x7000_0000 to the top of the user window
   (User_Stack_Top = 0x8000_0000) and grows 12 -> 64 pages (48 ->
