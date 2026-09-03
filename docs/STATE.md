@@ -213,7 +213,9 @@ QEMU virt RAM base:     0x80000000
   it; Sys:System/
   Edit is a real text editor on it (Text_IO load/save, Save/
   Quit buttons, wired scrollbar); Sys:System/Fileman is the
-  file manager (Listview + Scrollbar). Tier-1 Amiga-style
+  file manager (M84: dual-pane Dopus-style lister — per-pane
+  editable path gadget + listview/scrollbar, active-pane
+  routing, 9-button bar with Copy/Move across panes + Swap). Tier-1 Amiga-style
   shared libraries (58) ride the same uniform ABI: a library
   is a server program installed at Sys:Libs/<Name>,
   Akernel_User.Libs.Open_Library stages+spawns it on demand

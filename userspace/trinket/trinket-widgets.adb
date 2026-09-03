@@ -305,7 +305,9 @@ package body Trinket.Widgets is
             W.Dirty := True;
          end if;
          return True;
-      elsif Code = 13 then              --  Enter
+      elsif Code = 13 or else Code = 10 then   --  Enter
+         --  The input seat delivers Return as LF (10) — the
+         --  keymap maps Linux KEY_ENTER there — so accept both.
          if W.On_Commit /= null then
             W.On_Commit.all;
          end if;

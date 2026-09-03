@@ -13,11 +13,19 @@ package Trinket.Listview is
    type Listview is new Widgets.Widget with private;
    type Any_Listview is access all Listview;
 
-   type Selected_Callback is access procedure (Index : Natural);
-   --  1-based index of the newly selected item; 0 = none.
+    type Selected_Callback is access procedure (Index : Natural);
+    --  1-based index of the newly selected item; 0 = none.
 
-   function New_Listview
-     (On_Change : Selected_Callback := null) return Any_Listview;
+    type Press_Callback is access procedure;
+    --  Fired on EVERY pointer press inside the list, even when the
+    --  selection does not change (On_Change only fires on change).
+    --  M84: the dual-pane fileman activates the clicked pane from
+    --  it; re-clicking the already-selected row must count too.
+
+    function New_Listview
+      (On_Change : Selected_Callback := null) return Any_Listview;
+
+    procedure Set_On_Press (W : in out Listview; Cb : Press_Callback);
 
    procedure Clear (W : in out Listview);
    --  Remove all items and reset selection/top.
@@ -81,8 +89,9 @@ private
       N         : Natural := 0;
       Sel       : Natural := 0;  --  1-based, 0 = none
       Top       : U64 := 0;
-      Has_Icons : Boolean := False;
-      On_Change : Selected_Callback := null;
+       Has_Icons : Boolean := False;
+       On_Change : Selected_Callback := null;
+       On_Press  : Press_Callback := null;
    end record;
 
 end Trinket.Listview;

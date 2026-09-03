@@ -31,6 +31,12 @@ package body Trinket.Listview is
       return Any_Listview (L);
    end New_Listview;
 
+   procedure Set_On_Press
+     (W : in out Listview; Cb : Press_Callback) is
+   begin
+      W.On_Press := Cb;
+   end Set_On_Press;
+
    procedure Clear (W : in out Listview) is
    begin
       W.N := 0;
@@ -257,6 +263,9 @@ package body Trinket.Listview is
       end if;
       if not Inside (W.all, PX, PY) then
          return False;
+      end if;
+      if W.On_Press /= null then
+         W.On_Press.all;
       end if;
       if W.N = 0 then
          return True;

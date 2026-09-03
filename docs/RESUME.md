@@ -353,6 +353,31 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M84 done** (this commit): Fileman reworked into a
+  Directory-Opus-style dual-pane lister. Per-pane state record
+  (path/listview/scrollbar/path gadget) x 2 with an Active pane
+  (click anywhere in a pane activates it — new listview
+  On_Press callback, since On_Change only fires on selection
+  CHANGE and re-clicking the selected row must count too);
+  per-pane editable path boxes (Enter commits: ':'-qualified =
+  absolute incl. volume switch, bare = relative to the pane;
+  failure reverts the gadget); single equal-width 9-button bar
+  (Open/Parent/Copy/Move/Rename/Swap/New Drawer/Delete/Quit);
+  Copy/Move default to selection -> OTHER pane's dir (name
+  field overrides for copy-as/rename/newdir); Move = fs rename,
+  cross-volume fallback copy+delete (files only); Swap
+  exchanges pane directories. Root group overrides On_Key:
+  focused Inputs first, then the ACTIVE pane's list, then the
+  other — the generic reverse-add-order walk would steer all
+  nav keys to one pane. Initial loads' auto-selections fire
+  activation, so Active is reset to 1 after them. KEY BUG found
+  by QMP screendump smoke: the input seat keymap delivers
+  Return as LF (10), but Input.On_Key committed only on CR (13)
+  — On_Commit had NEVER fired anywhere; both accepted now.
+  Manual gate via QMP input-send-event + screendump: dual-pane
+  render, typed path commit (BD0: -> BD0:System, "Right pane
+  active"), Swap exchange. 1739 PASS SMP4 / 1738 SMP1, 0 FAIL.
+
 - **thread_regs flake fixed** (this commit): the fuzz check used
   a 256-iteration Sys_Yield loop waiting for the spawned echo to
   park in Receive. Two race modes: Sys_Yield returns instantly

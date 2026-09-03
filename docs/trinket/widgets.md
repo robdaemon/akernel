@@ -130,7 +130,8 @@ end record;
 
 Sunken pane field. Click focuses and positions the cursor. Printable
 keys insert, `BS`/`Del` delete, arrows/home/end move. `On_Commit`
-fires on Enter.
+fires on Enter (M84 fix: the input seat delivers Return as LF (10);
+both CR and LF commit).
 
 Keys are consumed **only while focused**, so sibling widgets (e.g. a
 listview's arrows) keep working when focus is elsewhere.
