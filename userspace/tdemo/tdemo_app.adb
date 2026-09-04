@@ -273,10 +273,12 @@ package body Tdemo_App is
          (Widgets.New_Label ("iiii llll vs WWW MMM"));
 
        --  Weighted so fixed-content groups keep their content
-       --  inside the frame at the default 400x420: Text (5
+       --  inside the frame at the default 400x444: Text (5
        --  labels) and Images (64x48 bitmaps) need the tall
-       --  slices; the button rows and toggles stay thin.
-       Widgets.Group (Root.all).Add (File_Grp, 3);
+       --  slices; the button rows and toggles stay thin. File
+       --  wants 4 (not 3): the inset label needs >= 40px of row
+       --  or the text touches the frame top/bottom.
+       Widgets.Group (Root.all).Add (File_Grp, 4);
        Widgets.Group (Root.all).Add (Text_Grp, 6);
        Widgets.Group (Root.all).Add (Img_Grp, 6);
        Widgets.Group (Root.all).Add (Work_Grp, 4);
@@ -285,7 +287,7 @@ package body Tdemo_App is
        Widgets.Group (Root.all).Add (Btn_Row, 4);
 
        if Trinket.Window.Open
-         (Win, 3, 400, 420, "Trinket Demo", Root)
+         (Win, 3, 400, 444, "Trinket Demo", Root)
        then
           Trinket.Window.Set_App_Handler (Win, App_Message'Access);
          Trinket.Window.Set_Menus
