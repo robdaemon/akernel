@@ -16,3 +16,6 @@ akernel_virtio = "*"
 
 [[pins]]
 akernel_virtio = { path = "../virtio" }
+
+[[pins]]
+gnat_riscv64_elf = { version='15.3.1' }

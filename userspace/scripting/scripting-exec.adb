@@ -229,9 +229,19 @@ package body Scripting.Exec is
    end Exec;
 
    function Has_Metachar (Cmd : String) return Boolean is
+      Depth : Natural := 0;
    begin
+      --  M85c: glob alternation (a|b) also uses '|' (and patterns
+      --  may contain '>' or '<' literally), so operators inside
+      --  parentheses are not shell metacharacters.
       for C of Cmd loop
-         if C = '|' or else C = '>' or else C = '<' then
+         if C = '(' then
+            Depth := Depth + 1;
+         elsif C = ')' and then Depth > 0 then
+            Depth := Depth - 1;
+         elsif Depth = 0
+           and then (C = '|' or else C = '>' or else C = '<')
+         then
             return True;
          end if;
       end loop;
@@ -268,11 +278,12 @@ package body Scripting.Exec is
         (others => (others => Character'Val (0)));
       Stage_Ol  : array (1 .. Max_Stages) of Natural :=
         (others => 0);
-      I    : Natural;
-      T    : Natural;
-      St   : U64;
-      Size : U64;
-      Bad  : Boolean := False;
+       I    : Natural;
+       T    : Natural;
+       Depth : Natural := 0;
+       St   : U64;
+       Size : U64;
+       Bad  : Boolean := False;
 
       procedure Set_Path
         (Buf : out String; Len : in out Natural; Value : String)
@@ -333,15 +344,17 @@ package body Scripting.Exec is
             Text : constant String :=
               Cmd (Toks (T).F .. Toks (T).L);
          begin
-            if Text = "|" then
-               if NStage = Max_Stages
-                 or else Stage_Len (NStage) = 0
-               then
-                  Bad := True;
-               else
-                  NStage := NStage + 1;
-               end if;
-            elsif Text = ">" or else Text = "<" then
+             if Depth = 0 and then Text = "|" then
+                if NStage = Max_Stages
+                  or else Stage_Len (NStage) = 0
+                then
+                   Bad := True;
+                else
+                   NStage := NStage + 1;
+                end if;
+             elsif Depth = 0
+               and then (Text = ">" or else Text = "<")
+             then
                if T = NTok then
                   Bad := True;
                else
@@ -360,9 +373,19 @@ package body Scripting.Exec is
                      end if;
                   end;
                end if;
-            else
-               Append_Word (Text);
-            end if;
+             else
+                Append_Word (Text);
+                --  M85c: track glob-alternation paren depth so a
+                --  spaced (foo | bar) pattern does not split the
+                --  pipeline; Has_Metachar applies the same rule.
+                for C of Text loop
+                   if C = '(' then
+                      Depth := Depth + 1;
+                   elsif C = ')' and then Depth > 0 then
+                      Depth := Depth - 1;
+                   end if;
+                end loop;
+             end if;
          end;
          T := T + 1;
       end loop;

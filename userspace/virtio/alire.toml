@@ -11,3 +11,6 @@ project-files = ["virtio.gpr"]
 
 [[depends-on]]
 gnat_riscv64_elf = "15.3.1"
+
+[[pins]]
+gnat_riscv64_elf = { version='15.3.1' }
