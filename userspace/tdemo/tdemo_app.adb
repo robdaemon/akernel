@@ -57,6 +57,15 @@ package body Tdemo_App is
     Status_Lbl : Widgets.Any_Widget;
     Img_Widget : Widgets.Any_Widget;
 
+    --  M86e showcase: the three radios in the "Choices" group
+    --  share this set, so selecting one clears the others.
+    Choice_Set : aliased Widgets.Radio_Set;
+
+    procedure Choice_Toggled (On : Boolean) is
+    begin
+       Debug_Put_Line ("tdemo: choice toggled" & Boolean'Image (On));
+    end Choice_Toggled;
+
     --  Worker gate: the worker task creates its own gate
     --  notification, publishes the handle, then blocks in
     --  Ntfn_Wait — no CPU burned while idle (protected entries are
@@ -151,6 +160,8 @@ package body Tdemo_App is
          Widgets.New_Group (Widgets.Horizontal, "Images");
        Work_Grp : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal, "Worker");
+       Choice_Grp : constant Widgets.Any_Widget :=
+         Widgets.New_Group (Widgets.Horizontal, "Choices");
        Btn_Row  : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal);
       Sz       : U64;
@@ -232,10 +243,33 @@ package body Tdemo_App is
       Widgets.Group (Btn_Row.all).Add
         (Widgets.New_Button ("Ghost", Disabled => True));
 
+      --  M86e: toggles — two checkboxes and a three-way radio
+      --  set (Choice_Set enforces mutual exclusion).
+      Widgets.Group (Choice_Grp.all).Add
+        (Widgets.New_Checkbox
+           ("Bold", Checked => True,
+            On_Change => Choice_Toggled'Access));
+      Widgets.Group (Choice_Grp.all).Add
+        (Widgets.New_Checkbox
+           ("Italic", On_Change => Choice_Toggled'Access));
+      Widgets.Group (Choice_Grp.all).Add
+        (Widgets.New_Radio
+           ("Left", Choice_Set'Access, Selected => True,
+            On_Change => Choice_Toggled'Access));
+      Widgets.Group (Choice_Grp.all).Add
+        (Widgets.New_Radio
+           ("Center", Choice_Set'Access,
+            On_Change => Choice_Toggled'Access));
+      Widgets.Group (Choice_Grp.all).Add
+        (Widgets.New_Radio
+           ("Right", Choice_Set'Access,
+            On_Change => Choice_Toggled'Access));
+
        Widgets.Group (Root.all).Add (File_Grp);
        Widgets.Group (Root.all).Add (Text_Grp);
        Widgets.Group (Root.all).Add (Img_Grp);
        Widgets.Group (Root.all).Add (Work_Grp);
+       Widgets.Group (Root.all).Add (Choice_Grp);
        Widgets.Group (Root.all).Add (Btn_Row);
 
        if Trinket.Window.Open

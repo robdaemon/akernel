@@ -11,6 +11,24 @@ repository.
 
 ## Recently shipped
 
+- **M86e** (this commit): toggle widgets. Trinket gains
+  `Checkbox` and `Radio` (MUI CheckMark/RadioButton lineage):
+  14px framed box (square / disc drawn with a doubled-coordinate
+  circle test) + label, the whole rect is the hit area, state
+  flips on release-inside and fires `On_Change (On : Boolean)`.
+  The full M86c battery applies: hover Face_Hi box face, held
+  press sinks the bevel and shifts the glyph, Disabled ghosts.
+  Checked = embossed check (dark stroke, white +1,+1 shadow);
+  selected radio = solid dot. Radios sharing a `Radio_Set`
+  (access passed to `New_Radio`'s `Peers`) are mutually
+  exclusive — selecting one clears + dirties the others
+  (`Max_Radio` = 8/set is a documented policy constant).
+  Programmatic `Set_Checked`/`Set_Selected` never fire the
+  callback. tdemo grew a "Choices" group (Bold/Italic checkboxes
+  + Left/Center/Right radio set) as the live showcase.
+  QMP-verified: glyph pixels probed, Italic toggle-on, and
+  Center-select clearing Left's dot. 1851/1850 PASS SMP4/SMP1.
+
 - **M86d** (this commit): Xen scrollbars. Trinket `Scrollbar`
   restyled to the MUI/Xen look decoded from the Xen prefs preview:
   flat black/white frame, vertical 1px striped track and knob

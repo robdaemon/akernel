@@ -154,7 +154,69 @@ procedure Set_Focused (W : in out Input; F : Boolean);
 function Is_Focused (W : Input) return Boolean;
 ```
 
+### `Checkbox` / `Radio` (toggles)
+
+```ada
+type Toggle_Callback is access procedure (On : Boolean);
+
+type Checkbox is new Widget with record
+   Txt       : String (1 .. Max_Text);
+   Len       : Text_Len := 0;
+   Checked   : Boolean := False;
+   Pressed   : Boolean := False;
+   Hover     : Boolean := False;
+   Disabled  : Boolean := False;
+   On_Change : Toggle_Callback := null;
+end record;
+
+Max_Radio : constant := 8;  --  per set (policy constant)
+type Radio_Set is record
+   Members : Radio_Members := (others => null);
+   N       : Natural := 0;
+end record;
+
+type Radio is new Widget with record
+   --  same battery, plus
+   Selected  : Boolean := False;
+   Peers     : Radio_Set_Access := null;
+end record;
+```
+
+Toggle gadgets (M86e): a 14px framed box at the left — square for
+`Checkbox`, a disc for `Radio` — with the label to its right; the
+**whole rect is the hit area** (MUI behavior). The state battery
+matches `Button` (M86c): hover brightens the box face, a held
+press sinks it and shifts the glyph, `Disabled` ghosts the label
+and ignores the pointer. The state flips on release-inside and
+`On_Change` fires with the NEW state. A checked box carries an
+embossed check (dark stroke, white shadow); a selected radio a
+solid dot.
+
+Radios sharing one `Radio_Set` (pass `Set'Access` to `New_Radio`'s
+`Peers`) are mutually exclusive: selecting one clears and dirties
+the others; `On_Change` fires only for the radio that became
+selected. `Max_Radio` = 8 members per set is a policy constant
+with headroom past any dialog we ship.
+
+```ada
+function New_Checkbox
+  (S : String; Checked : Boolean := False;
+   On_Change : Toggle_Callback := null;
+   Disabled : Boolean := False) return Any_Widget;
+function New_Radio
+  (S : String; Peers : Radio_Set_Access := null;
+   Selected : Boolean := False;
+   On_Change : Toggle_Callback := null;
+   Disabled : Boolean := False) return Any_Widget;
+procedure Set_Checked (W : in out Checkbox; On : Boolean);
+procedure Set_Selected (W : in out Radio; On : Boolean);
+```
+
+The programmatic setters mark dirty and never fire `On_Change`;
+`Set_Selected (W, True)` also clears the peers.
+
 ### `Scrollbar` (vertical)
+
 
 ```ada
 type Scrollbar is new Widget with record
