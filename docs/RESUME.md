@@ -353,6 +353,24 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M86a done** (this commit): Akernel_User.Theme — the single
+  palette source (userspace/rts/akernel/akernel_user-theme.ads,
+  dependency-free constants, opt-in like Font8x8: only programs
+  that with it carry it).  Bureau's and Trinket's hand-synced
+  palette blocks are now renames of Theme constants; the
+  Pane drift (#F8F8F8 bureau / #FFFFFF trinket) unified on
+  #FFFFFF (bureau's copy only blanked not-yet-mapped windows,
+  visually nil).  Object renames in Ada take NO "constant"
+  keyword ("constant not permitted in renaming declaration");
+  and pragma Pure/Preelaborate can't be used — the Akernel_User
+  root is uncategorized ("wrong categorization" errors).
+  VERIFICATION LESSON: full-frame screendump pixel-diffs are
+  useless across boots — startup spawn order is racy, so window
+  cascade positions and focus stacking differ run to run;
+  compare the SET of distinct colors instead (solid fills, no
+  AA: identical palette-in-use <=> identical color set; 17/17
+  here).  1850 PASS SMP4 / 1846 SMP1, 0 FAIL.
+
 - **M85c done** (this commit): glob wiring. Dir and List take a
   wildcard pattern argument (Akernel_User.Glob syntax): the
   pattern is the tail after the last ':' or '/' (no separator:

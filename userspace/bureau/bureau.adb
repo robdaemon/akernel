@@ -5,6 +5,7 @@ with Akernel_User.Syscalls;
 with Akernel_User.Display;
 with Akernel_User.Window;
 with Akernel_User.Tables;
+with Akernel_User.Theme;
 with Font8x8;
 
 --  Bureau: the compositor / window server. Spawned by the device
@@ -75,27 +76,28 @@ procedure Bureau is
 
    subtype Pixel is Interfaces.Unsigned_32;
 
-   --  Workbench-3.x-ish palette (AARRGGBB; B8G8R8A8 little-endian
-   --  means the u32 low byte is BLUE — the format name's channel
-   --  order is memory byte order). Burned the OTHER way first: a
+   --  Palette (AARRGGBB; B8G8R8A8 little-endian means the u32
+   --  low byte is BLUE — the format name's channel order is
+   --  memory byte order. Burned the OTHER way first: a
    --  screendump decoder that swapped R/B when reconstructing
    --  pixels from the PPM made a correct blue title "read as"
    --  red; "fixing" the palette then produced a REAL salmon
    --  title the buggy decoder re-confirmed as blue. Decode PPM
    --  bytes straight (R,G,B) and trust the user's eyes over the
-   --  script.
-   Desktop    : constant Pixel := 16#FFA0_A0A4#;
-   Bar_Face   : constant Pixel := 16#FFC0_C0C4#;
-   Win_Face   : constant Pixel := 16#FFC0_C0C4#;
-   Bevel_Hi   : constant Pixel := 16#FFFF_FFFF#;
-   Bevel_Lo   : constant Pixel := 16#FF40_4040#;
-   Border     : constant Pixel := 16#FF10_1010#;
-   Title_Blue : constant Pixel := 16#FF60_68B0#;
-   Title_Gray : constant Pixel := 16#FF8C_8C90#;
-   Title_Text : constant Pixel := 16#FFFF_FFFF#;
-   Title_Dim  : constant Pixel := 16#FF20_2020#;
-   Pane       : constant Pixel := 16#FFF8_F8F8#;
-   Text_Dark  : constant Pixel := 16#FF20_2020#;
+   --  script.)  Milestone 86a: values live in
+   --  Akernel_User.Theme, shared with Trinket's widgets.
+   Desktop    : Pixel renames Akernel_User.Theme.Desktop;
+   Bar_Face   : Pixel renames Akernel_User.Theme.Bar_Face;
+   Win_Face   : Pixel renames Akernel_User.Theme.Win_Face;
+   Bevel_Hi   : Pixel renames Akernel_User.Theme.Bevel_Hi;
+   Bevel_Lo   : Pixel renames Akernel_User.Theme.Bevel_Lo;
+   Border     : Pixel renames Akernel_User.Theme.Border;
+   Title_Blue : Pixel renames Akernel_User.Theme.Title_Blue;
+   Title_Gray : Pixel renames Akernel_User.Theme.Title_Gray;
+   Title_Text : Pixel renames Akernel_User.Theme.Title_Text;
+   Title_Dim  : Pixel renames Akernel_User.Theme.Title_Dim;
+   Pane       : Pixel renames Akernel_User.Theme.Pane;
+   Text_Dark  : Pixel renames Akernel_User.Theme.Text_Dark;
 
    Bar_H    : constant := 18;   --  screen bar height
    Title_H  : constant := 20;   --  window title bar height
@@ -800,8 +802,8 @@ procedure Bureau is
       "##..#OO#..",
       "#....#OO#.",
       ".....##...");
-   Cur_Outline : constant Pixel := 16#FF10_1010#;
-   Cur_Fill    : constant Pixel := 16#FFFF_FFFF#;
+   Cur_Outline : Pixel renames Akernel_User.Theme.Cur_Outline;
+   Cur_Fill    : Pixel renames Akernel_User.Theme.Cur_Fill;
 
    Under   : array (U64 range 0 .. Cur_W * Cur_H - 1) of Pixel;
 

@@ -1,27 +1,29 @@
 with System;
 with Interfaces;
 with Akernel_User.Syscalls;
+with Akernel_User.Theme;
 
 --  Trinket (milestone 56): the opt-in GUI widget library — the
 --  MUI-style retained widget tree that renders client-side into
 --  Bureau window surfaces. Bureau keeps chrome/focus/routing;
 --  Trinket owns everything inside the pane.
 --
---  Root package: pixel types, the Workbench-3.x palette (the SAME
---  constants Bureau draws its chrome with, so widget faces match
---  the frame), and the Canvas record every draw op takes.
+--  Root package: pixel types, the palette (renames of
+--  Akernel_User.Theme, milestone 86a — one skin shared with
+--  Bureau's chrome), and the Canvas record every draw op takes.
 package Trinket is
    subtype U64 is Akernel_User.Syscalls.U64;
    subtype Pixel is Interfaces.Unsigned_32;  -- AARRGGBB
 
-   --  Palette (userspace/bureau/bureau.adb, same values).
-   Face      : constant Pixel := 16#FFC0_C0C4#;  --  gadget face
-   Bevel_Hi  : constant Pixel := 16#FFFF_FFFF#;
-   Bevel_Lo  : constant Pixel := 16#FF40_4040#;
-   Border    : constant Pixel := 16#FF10_1010#;
-   Pane      : constant Pixel := 16#FFFF_FFFF#;  --  editable field
-   Sel_Blue  : constant Pixel := 16#FF60_68B0#;  --  selection
-   Text_Dark : constant Pixel := 16#FF20_2020#;
+   --  Palette (milestone 86a: Akernel_User.Theme, shared with
+   --  Bureau; renames keep widget code untouched).
+   Face      : Pixel renames Akernel_User.Theme.Face;
+   Bevel_Hi  : Pixel renames Akernel_User.Theme.Bevel_Hi;
+   Bevel_Lo  : Pixel renames Akernel_User.Theme.Bevel_Lo;
+   Border    : Pixel renames Akernel_User.Theme.Border;
+   Pane      : Pixel renames Akernel_User.Theme.Pane;
+   Sel_Blue  : Pixel renames Akernel_User.Theme.Sel_Blue;
+   Text_Dark : Pixel renames Akernel_User.Theme.Text_Dark;
 
    --  Navigation key codes (milestone 57): virtio_input sends
    --  these for keys outside ASCII. Text-only consumers drop
