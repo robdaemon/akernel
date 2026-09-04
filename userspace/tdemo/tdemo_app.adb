@@ -265,12 +265,16 @@ package body Tdemo_App is
            ("Right", Choice_Set'Access,
             On_Change => Choice_Toggled'Access));
 
-       Widgets.Group (Root.all).Add (File_Grp);
-       Widgets.Group (Root.all).Add (Text_Grp);
-       Widgets.Group (Root.all).Add (Img_Grp);
-       Widgets.Group (Root.all).Add (Work_Grp);
-       Widgets.Group (Root.all).Add (Choice_Grp);
-       Widgets.Group (Root.all).Add (Btn_Row);
+       --  Weighted so fixed-content groups keep their content
+       --  inside the frame at the default 400x420: Text (5
+       --  labels) and Images (64x48 bitmaps) need the tall
+       --  slices; the button rows and toggles stay thin.
+       Widgets.Group (Root.all).Add (File_Grp, 3);
+       Widgets.Group (Root.all).Add (Text_Grp, 6);
+       Widgets.Group (Root.all).Add (Img_Grp, 6);
+       Widgets.Group (Root.all).Add (Work_Grp, 4);
+       Widgets.Group (Root.all).Add (Choice_Grp, 4);
+       Widgets.Group (Root.all).Add (Btn_Row, 4);
 
        if Trinket.Window.Open
          (Win, 3, 400, 420, "Trinket Demo", Root)

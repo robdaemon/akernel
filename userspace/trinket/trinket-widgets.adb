@@ -25,21 +25,25 @@ package body Trinket.Widgets is
       return Any_Widget (I);
    end New_Image;
 
-   overriding procedure Draw (W : Image_Widget; C : Canvas) is
-      DX : U64 := W.X;
-      DY : U64 := W.Y;
-   begin
-      if not Trinket.Images.Loaded (W.Img) then
-         return;
-      end if;
-      if W.W > W.Img.W then
-         DX := W.X + (W.W - W.Img.W) / 2;
-      end if;
-      if W.H > W.Img.H then
-         DY := W.Y + (W.H - W.Img.H) / 2;
-      end if;
-      Trinket.Images.Blit (C, W.Img, DX, DY);
-   end Draw;
+    overriding procedure Draw (W : Image_Widget; C : Canvas) is
+       DX : U64 := W.X;
+       DY : U64 := W.Y;
+       C2 : Canvas := C;
+    begin
+       if not Trinket.Images.Loaded (W.Img) then
+          return;
+       end if;
+       if W.W > W.Img.W then
+          DX := W.X + (W.W - W.Img.W) / 2;
+       end if;
+       if W.H > W.Img.H then
+          DY := W.Y + (W.H - W.Img.H) / 2;
+       end if;
+       --  Clip to our own rect: a slice thinner than the image
+       --  must not spill over the group frame (M86e overflow).
+       Set_Clip (C2, W.X, W.Y, W.X + W.W, W.Y + W.H);
+       Trinket.Images.Blit (C2, W.Img, DX, DY);
+    end Draw;
 
    procedure Set_Image
      (W : in out Image_Widget; Img : Trinket.Images.Image) is
