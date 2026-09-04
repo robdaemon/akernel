@@ -13,19 +13,18 @@ repository.
 
 - **M86d** (this commit): Xen scrollbars. Trinket `Scrollbar`
   restyled to the MUI/Xen look decoded from the Xen prefs preview:
-  flat black/white frame, vertical 1px striped track
-  (Win_Face/Face), striped knob with the blue checker cap
-  (Sel_Blue/Win_Face) at its bottom, and MUI's signature layout —
-  BOTH arrow boxes stacked at the bottom (up over down) with thin
-  embossed chevron glyphs (black + white left shadow) replacing
-  the old top/bottom filled triangles. `Knob_Rect`/`On_Pointer`
-  track region is now `Y+2 .. H-2*Arrow` with an underflow guard
-  for degenerate bars (H <= 2*Arrow+2 renders plain face, ignores
-  pointer). M86c press feedback (sunken + glyph shift, sunken
-  knob while dragging) kept at the new positions. QMP-verified:
-  pixel probe of the terminal bar (stripes #AFAFAF/#959595, cap
-  #3B67A2 checker, chevrons at the right rows) and a held up
-  arrow (sunken + shifted glyph). 1851 PASS SMP4 + SMP1.
+  flat black/white frame, vertical 1px striped track and knob
+  (Win_Face/Face), and MUI's signature layout — BOTH arrow boxes
+  stacked at the bottom (up over down) with thin embossed chevron
+  glyphs (black + white left shadow) replacing the old top/bottom
+  filled triangles. (The first cut also stapled a blue checker
+  "cap" under the knob, misreading the xenbar track-background
+  accent as a knob part — dropped in the follow-up commit.)
+  `Knob_Rect`/`On_Pointer` track region is now `Y+2 .. H-2*Arrow`
+  with an underflow guard for degenerate bars (H <= 2*Arrow+2
+  renders plain face, ignores pointer). M86c press feedback
+  (sunken + glyph shift, sunken knob while dragging) kept at the
+  new positions. QMP-verified. 1851 PASS SMP4 + SMP1.
 
 - **M81** — WB chrome + real zoom (commits 95292ac, 3f07002, and
   the v5 commit closing this entry): screen-bar menus now REPLACE

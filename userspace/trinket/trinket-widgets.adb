@@ -617,28 +617,11 @@ package body Trinket.Widgets is
                        W.Y + W.H - 2, Face);
       Frame_Flat (W.X, W.Y, W.X + W.W, W.Y + W.H);
 
-      --  Knob: framed striped box with the Xen blue checker cap
-      --  at its bottom; sunken frame while dragged.
+      --  Knob: framed striped box; sunken frame while dragged.
       Knob_Rect (W, KT, KB);
       if KB > KT then
          Fill_Stripes (W.X + 2, KT + 2, W.X + W.W - 2, KB - 2);
          Frame_Flat (W.X + 1, KT, W.X + W.W - 1, KB);
-         if KB - KT >= 16 then
-            declare
-               CT : constant U64 := KB - 11;  --  cap top
-               CB : constant U64 := KB - 2;
-            begin
-               for Row in CT + 2 .. CB loop
-                  for X in W.X + 3 .. W.X + W.W - 4 loop
-                     Paint.Fill_Rect
-                       (C, X, Row, X + 1, Row + 1,
-                        (if (X + Row) mod 2 = 0
-                         then Sel_Blue else Win_Face));
-                  end loop;
-               end loop;
-               Frame_Flat (W.X + 1, CT, W.X + W.W - 1, KB - 1);
-            end;
-         end if;
       end if;
 
       --  Arrow boxes, both at the bottom: up over down.  Held
