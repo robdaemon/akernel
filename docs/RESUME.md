@@ -353,6 +353,19 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M84c done** (this commit): double-click open. Detection lives
+  in Trinket.Listview (Bureau pointer events carry no timestamps,
+  so the widget times presses with Syscalls.Read_Time):
+  Set_On_Double_Click + per-list Last_Press_Row/Time state;
+  same row again within Double_Click_Ticks (4_000_000 = 400 ms
+  at the 10 MHz mtime) fires the callback after the usual
+  selection update; a press below the last row resets the pair
+  state. Fileman: Open_Clicked's body refactored into
+  Open_Item (P, Index), shared by the Open button and the new
+  Double_L/R callbacks. QMP smoke: 900 ms-apart pair selects
+  only; 160 ms-apart pair on the System drawer navigates the
+  pane. 1738 PASS SMP4 / 1737 SMP1, 0 FAIL.
+
 - **M84b done** (this commit): paint performance. Users were
   right: maximize/restore painted at ~1.2 s. In-guest
   instrumentation (Read_Time around Handle_Resize phases in

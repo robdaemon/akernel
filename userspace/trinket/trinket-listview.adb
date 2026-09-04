@@ -1,5 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
+with Akernel_User.Syscalls;
 
 package body Trinket.Listview is
 
@@ -36,6 +37,12 @@ package body Trinket.Listview is
    begin
       W.On_Press := Cb;
    end Set_On_Press;
+
+   procedure Set_On_Double_Click
+     (W : in out Listview; Cb : Selected_Callback) is
+   begin
+      W.On_Double_Click := Cb;
+   end Set_On_Double_Click;
 
    procedure Clear (W : in out Listview) is
    begin
@@ -274,7 +281,23 @@ package body Trinket.Listview is
       R := (PY - W.Y) / RH;
       Idx := Natural (W.Top + R) + 1;
       if Idx <= W.N then
-         Set_Selected (W.all, Idx);
+         --  M84c: same row again within the threshold = double
+         --  click.  Selection updates first, then the callback.
+         declare
+            Now    : constant U64 := Akernel_User.Syscalls.Read_Time;
+            Double : constant Boolean :=
+              Idx = W.Last_Press_Row
+              and then Now - W.Last_Press_Time < Double_Click_Ticks;
+         begin
+            W.Last_Press_Row  := Idx;
+            W.Last_Press_Time := Now;
+            Set_Selected (W.all, Idx);
+            if Double and then W.On_Double_Click /= null then
+               W.On_Double_Click (Idx);
+            end if;
+         end;
+      else
+         W.Last_Press_Row := 0;
       end if;
       return True;
    end On_Pointer;

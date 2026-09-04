@@ -108,6 +108,8 @@ package body Fileman_App is
    procedure Path_Commit_L;
    procedure Path_Commit_R;
    procedure Open_Clicked;
+   procedure Double_L (Index : Natural);
+   procedure Double_R (Index : Natural);
    procedure Parent_Clicked;
    procedure Copy_Clicked;
    procedure Move_Clicked;
@@ -479,15 +481,16 @@ package body Fileman_App is
       Sync_Scrollbar (P);
    end Load_Directory;
 
-   procedure Open_Clicked is
-      Idx  : constant Natural :=
-        Trinket.Listview.Selected (Panes (Active).List.all);
+   --  Open entry Index of pane P: drawers navigate, files go to
+   --  the editor.  Shared by the Open button and the listview's
+   --  double-click callback (M84c).
+   procedure Open_Item (P : Positive; Index : Natural) is
       Name : String :=
-        Trinket.Listview.Get_Item (Panes (Active).List.all, Idx);
+        Trinket.Listview.Get_Item (Panes (P).List.all, Index);
       Full : constant String :=
-        CLI.Join_Path (Panes (Active).Path.all, Name);
+        CLI.Join_Path (Panes (P).Path.all, Name);
    begin
-      if Idx = 0 then
+      if Index = 0 then
          return;
       end if;
 
@@ -495,7 +498,7 @@ package body Fileman_App is
          if Dirs.Exists (Full)
            and then Dirs.Kind (Full) = Dirs.Directory
          then
-            Load_Directory (Active, CLI.Normalize_Path (Full));
+            Load_Directory (P, CLI.Normalize_Path (Full));
          else
             Spawn_Edit (Full);
          end if;
@@ -503,7 +506,23 @@ package body Fileman_App is
          when Dirs.Name_Error | Dirs.Use_Error =>
             null;
       end;
+   end Open_Item;
+
+   procedure Open_Clicked is
+   begin
+      Open_Item
+        (Active, Trinket.Listview.Selected (Panes (Active).List.all));
    end Open_Clicked;
+
+   procedure Double_L (Index : Natural) is
+   begin
+      Open_Item (1, Index);
+   end Double_L;
+
+   procedure Double_R (Index : Natural) is
+   begin
+      Open_Item (2, Index);
+   end Double_R;
 
    procedure Parent_Clicked is
       Parent : constant String :=
@@ -726,6 +745,8 @@ package body Fileman_App is
                  (Selection_Changed_L'Access);
                Trinket.Listview.Set_On_Press
                  (Panes (P).List.all, Press_L'Access);
+               Trinket.Listview.Set_On_Double_Click
+                 (Panes (P).List.all, Double_L'Access);
                Panes (P).Scroll :=
                  Trinket.Widgets.New_Scrollbar (Scroll_Moved_L'Access);
             else
@@ -736,6 +757,8 @@ package body Fileman_App is
                  (Selection_Changed_R'Access);
                Trinket.Listview.Set_On_Press
                  (Panes (P).List.all, Press_R'Access);
+               Trinket.Listview.Set_On_Double_Click
+                 (Panes (P).List.all, Double_R'Access);
                Panes (P).Scroll :=
                  Trinket.Widgets.New_Scrollbar (Scroll_Moved_R'Access);
             end if;

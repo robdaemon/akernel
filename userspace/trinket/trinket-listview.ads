@@ -22,10 +22,21 @@ package Trinket.Listview is
     --  M84: the dual-pane fileman activates the clicked pane from
     --  it; re-clicking the already-selected row must count too.
 
+    --  M84c: double-click detection lives in the widget (Bureau
+    --  pointer events carry no timestamps, so the widget times
+    --  presses itself — mtime ticks at 10 MHz on qemu virt).
+    --  Two presses on the SAME row within the threshold fire
+    --  On_Double_Click with the row index, after the usual
+    --  selection update.
+    Double_Click_Ticks : constant U64 := 4_000_000;  --  400 ms
+
     function New_Listview
       (On_Change : Selected_Callback := null) return Any_Listview;
 
     procedure Set_On_Press (W : in out Listview; Cb : Press_Callback);
+
+    procedure Set_On_Double_Click
+      (W : in out Listview; Cb : Selected_Callback);
 
    procedure Clear (W : in out Listview);
    --  Remove all items and reset selection/top.
@@ -92,6 +103,12 @@ private
        Has_Icons : Boolean := False;
        On_Change : Selected_Callback := null;
        On_Press  : Press_Callback := null;
+       On_Double_Click : Selected_Callback := null;
+       --  Double-click detection state (M84c): row + mtime of the
+       --  last valid press; a press below the last row resets the
+       --  row so stale pairs cannot survive a directory change.
+       Last_Press_Row  : Natural := 0;
+       Last_Press_Time : U64 := 0;
    end record;
 
 end Trinket.Listview;
