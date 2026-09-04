@@ -35,6 +35,7 @@ package Akernel_User.Theme is
    --  with it) — Xen gadgets sit a shade lighter than the
    --  window, the inverse of the old Workbench flat gray.
    Face      : constant Pixel := 16#FFAF_AFAF#;  --  gadget face
+   Face_Hi   : constant Pixel := 16#FFCF_CFCF#;  --  hover (M86c)
    Bevel_Hi  : constant Pixel := 16#FFFF_FFFF#;
    Bevel_Lo  : constant Pixel := 16#FF7B_7B7B#;
    Border    : constant Pixel := 16#FF10_1010#;

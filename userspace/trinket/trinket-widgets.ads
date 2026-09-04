@@ -133,15 +133,21 @@ package Trinket.Widgets is
       return Boolean;
 
    --  Button: raised face, sunken while pressed, centered bold-ish
-   --  label; fires On_Click on release-inside.
+   --  label; fires On_Click on release-inside.  M86c: lighter
+   --  face while the pointer hovers; Disabled ghosts the label
+   --  (embossed) and ignores the pointer entirely.
    type Button is new Widget with record
       Txt      : String (1 .. Max_Text);
       Len      : Text_Len := 0;
       Pressed  : Boolean := False;
+      Hover    : Boolean := False;
+      Disabled : Boolean := False;
       On_Click : Click_Callback := null;
    end record;
    function New_Button
-     (S : String; On_Click : Click_Callback := null) return Any_Widget;
+     (S        : String;
+      On_Click : Click_Callback := null;
+      Disabled : Boolean        := False) return Any_Widget;
    overriding procedure Draw (W : Button; C : Canvas);
    overriding function On_Pointer
      (W : access Button; K : Pointer_Kind; PX, PY : U64)
@@ -152,6 +158,8 @@ package Trinket.Widgets is
    --  Arrow press steps 1, track press pages, knob drags (v4
    --  pointer capture delivers the drag + release even outside
    --  the window). On_Change fires on USER moves only.
+   --  M86c press feedback: the pressed arrow draws sunken with
+   --  its glyph shifted, the knob draws sunken while dragged.
    type Change_Callback is access procedure (Pos : U64);
    type Scrollbar is new Widget with record
       Min       : U64 := 0;
@@ -161,6 +169,7 @@ package Trinket.Widgets is
       On_Change : Change_Callback := null;
       Dragging  : Boolean := False;
       Grab_DY   : U64 := 0;
+      Arrow_Dn  : Integer := 0;  --  0, -1 up pressed, +1 down
    end record;
    function New_Scrollbar
      (On_Change : Change_Callback := null) return Any_Widget;

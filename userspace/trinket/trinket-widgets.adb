@@ -1,5 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
+with Akernel_User.Theme;
 
 package body Trinket.Widgets is
    use type Trinket.U64;
@@ -367,12 +368,15 @@ package body Trinket.Widgets is
    --  Button
 
    function New_Button
-     (S : String; On_Click : Click_Callback := null) return Any_Widget
+     (S        : String;
+      On_Click : Click_Callback := null;
+      Disabled : Boolean        := False) return Any_Widget
    is
       B : constant Button_Access := new Button;
    begin
       Set_Text (B.Txt, B.Len, S);
       B.On_Click := On_Click;
+      B.Disabled := Disabled;
       return Any_Widget (B);
    end New_Button;
 
@@ -388,10 +392,24 @@ package body Trinket.Widgets is
       if not Intersects (W, C) then
          return;
       end if;
-      Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
+      --  M86c: hover brightens the face; disabled stays flat.
+      Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H,
+                       (if W.Hover and then not W.Disabled
+                          and then not W.Pressed
+                        then Akernel_User.Theme.Face_Hi
+                        else Face));
       Paint.Bevel2 (C, W.X, W.Y, W.X + W.W, W.Y + W.H,
                    Raised => not W.Pressed);
-      Fonts.Draw_Text (C, TX, TY, W.Txt (1 .. W.Len), Text_Dark);
+      if W.Disabled then
+         --  Ghosted: embossed label, light copy under dark.
+         Fonts.Draw_Text (C, TX + 1, TY + 1, W.Txt (1 .. W.Len),
+                          Bevel_Hi);
+         Fonts.Draw_Text (C, TX, TY, W.Txt (1 .. W.Len),
+                          Bevel_Lo);
+      else
+         Fonts.Draw_Text (C, TX, TY, W.Txt (1 .. W.Len),
+                          Text_Dark);
+      end if;
    end Draw;
 
    function On_Pointer
@@ -399,6 +417,9 @@ package body Trinket.Widgets is
       return Boolean
    is
    begin
+      if W.Disabled then
+         return False;
+      end if;
       case K is
          when Press =>
             if Inside (W.all, PX, PY) then
@@ -418,6 +439,16 @@ package body Trinket.Widgets is
                return True;
             end if;
          when Move =>
+            --  Hover tracking: never consume an unpressed move,
+            --  so sibling widgets clear/set their own hover.
+            declare
+               Now_In : constant Boolean := Inside (W.all, PX, PY);
+            begin
+               if Now_In /= W.Hover then
+                  W.Hover := Now_In;
+                  W.Dirty := True;
+               end if;
+            end;
             return W.Pressed;
       end case;
       return False;
@@ -512,31 +543,40 @@ package body Trinket.Widgets is
       Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
       Paint.Bevel2 (C, W.X, W.Y, W.X + W.W, W.Y + W.H,
                     Raised => False);
-      --  Arrow boxes + triangle glyphs.
+      --  Arrow boxes + triangle glyphs; a pressed arrow draws
+      --  sunken with its glyph shifted (M86c).
       Paint.Fill_Rect (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
                        W.Y + Arrow - 2, Face);
       Paint.Bevel2 (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
-                    W.Y + Arrow - 2);
+                    W.Y + Arrow - 2,
+                    Raised => W.Arrow_Dn /= -1);
       Paint.Fill_Rect (C, W.X + 2, W.Y + W.H - Arrow + 2,
                        W.X + W.W - 2, W.Y + W.H - 2, Face);
       Paint.Bevel2 (C, W.X + 2, W.Y + W.H - Arrow + 2,
-                    W.X + W.W - 2, W.Y + W.H - 2);
+                    W.X + W.W - 2, W.Y + W.H - 2,
+                    Raised => W.Arrow_Dn /= 1);
       declare
          MX : constant U64 := W.X + W.W / 2;
+         SU : constant U64 := (if W.Arrow_Dn = -1 then 1 else 0);
+         SD : constant U64 := (if W.Arrow_Dn = 1 then 1 else 0);
       begin
          for DY in U64'(0) .. 3 loop
-            Paint.Fill_Rect (C, MX - DY, W.Y + 5 + DY,
-                             MX + DY + 1, W.Y + 6 + DY, Text_Dark);
-            Paint.Fill_Rect (C, MX - DY, W.Y + W.H - 6 - DY,
-                             MX + DY + 1, W.Y + W.H - 5 - DY,
+            Paint.Fill_Rect (C, MX - DY + SU, W.Y + 5 + DY + SU,
+                             MX + DY + 1 + SU, W.Y + 6 + DY + SU,
+                             Text_Dark);
+            Paint.Fill_Rect (C, MX - DY + SD,
+                             W.Y + W.H - 6 - DY + SD,
+                             MX + DY + 1 + SD,
+                             W.Y + W.H - 5 - DY + SD,
                              Text_Dark);
          end loop;
       end;
-      --  Knob (striped, the mockup look).
+      --  Knob (striped, the mockup look); sunken while dragged.
       Knob_Rect (W, KT, KB);
       if KB > KT then
          Paint.Fill_Rect (C, W.X + 2, KT, W.X + W.W - 2, KB, Face);
-         Paint.Bevel2 (C, W.X + 2, KT, W.X + W.W - 2, KB);
+         Paint.Bevel2 (C, W.X + 2, KT, W.X + W.W - 2, KB,
+                       Raised => not W.Dragging);
          declare
             SY : U64 := KT + 5;
          begin
@@ -564,11 +604,16 @@ package body Trinket.Widgets is
             end if;
             Knob_Rect (W.all, KT, KB);
             if PY < W.Y + Arrow then
+               W.Arrow_Dn := -1;
+               W.Dirty := True;
                User_Move (W, W.Pos - 1);
             elsif PY >= W.Y + W.H - Arrow then
+               W.Arrow_Dn := 1;
+               W.Dirty := True;
                User_Move (W, W.Pos + 1);
             elsif PY >= KT and then PY < KB then
                W.Dragging := True;
+               W.Dirty := True;
                W.Grab_DY := PY - KT;
             elsif PY < KT then
                User_Move (W, W.Pos - W.Visible);
@@ -595,8 +640,14 @@ package body Trinket.Widgets is
                return True;
             end if;
          when Release =>
+            if W.Arrow_Dn /= 0 then
+               W.Arrow_Dn := 0;
+               W.Dirty := True;
+               return True;
+            end if;
             if W.Dragging then
                W.Dragging := False;
+               W.Dirty := True;
                return True;
             end if;
       end case;
@@ -747,8 +798,11 @@ package body Trinket.Widgets is
          end if;
       end loop;
       --  Release must reach a pressed child even when the
-      --  pointer has slid off it.
-      if K = Release then
+      --  pointer has slid off it; Move must ALSO reach children
+      --  the pointer is not over, so hover states clear (M86c —
+      --  including the leave-window marker one pixel past the
+      --  pane's bottom-right corner).
+      if K = Release or else K = Move then
          for I in 1 .. W.N loop
             if W.Kids (I).On_Pointer (K, PX, PY) then
                return True;

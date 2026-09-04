@@ -103,18 +103,26 @@ type Button is new Widget with record
    Txt      : String (1 .. Max_Text);
    Len      : Text_Len := 0;
    Pressed  : Boolean := False;
+   Hover    : Boolean := False;      --  M86c: pointer over it
+   Disabled : Boolean := False;      --  M86c: ghosted, inert
    On_Click : Click_Callback := null;
 end record;
 ```
 
 Raised face, sunken while pressed, centered label. Fires `On_Click`
-on release inside the button.
+on release inside the button. M86c states: the face brightens to
+`Theme.Face_Hi` while hovered (Bureau delivers a leave-marker move
+one pixel past the pane corner when the pointer exits the window,
+so hover never latches); `Disabled` draws the label embossed
+(highlight over shadow) and ignores the pointer.
 
 ```ada
 type Click_Callback is access procedure;
 
 function New_Button
-  (S : String; On_Click : Click_Callback := null) return Any_Widget;
+  (S        : String;
+   On_Click : Click_Callback := null;
+   Disabled : Boolean        := False) return Any_Widget;
 ```
 
 ### `Input` (single-line string gadget)
@@ -157,13 +165,15 @@ type Scrollbar is new Widget with record
    On_Change : Change_Callback := null;
    Dragging  : Boolean := False;
    Grab_DY   : U64 := 0;
+   Arrow_Dn  : Integer := 0;  --  M86c: 0, -1 up held, +1 down held
 end record;
 ```
 
 Vertical scrollbar. Sunken track, arrow boxes, proportional striped
 knob. Pointer capture (Bureau v4) delivers drag and release outside the
 window. `On_Change` fires **only for user moves**, not for
-programmatic `Set_Pos`.
+programmatic `Set_Pos`. M86c press feedback: a held arrow draws sunken
+with its glyph shifted one pixel; the knob draws sunken while dragged.
 
 ```ada
 type Change_Callback is access procedure (Pos : U64);

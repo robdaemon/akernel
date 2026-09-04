@@ -353,6 +353,26 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M86c done** (this commit): widget states. Listview selected
+  rows draw inverted (white on the blue band). Button: Hover
+  (face brightens to Theme.Face_Hi) + Disabled (embossed ghost
+  label, pointer-inert; New_Button gained a Disabled parameter;
+  tdemo shows a "Ghost" button). Scrollbar: held arrow draws
+  sunken with the glyph shifted 1px; knob sunken while dragging
+  (Arrow_Dn -1/0/+1). TWO NON-OBVIOUS FIXES: (1) hover needs
+  move events where the pointer ISN'T — Group.On_Pointer only
+  delivered to children containing the point, so a leave never
+  cleared hover; Move now falls through to all children like
+  Release already did. (2) Bureau stops delivering at the
+  content edge, so a hovered gadget latched when the pointer
+  left the window: Wins gained Ptr_Inside, and Forward_Pointer
+  delivers ONE move one pixel past the bottom-right corner on
+  the inside->outside transition (Inside() False everywhere =
+  unlatch), coalesced like any move, one per transition only.
+  QMP-verified: hover #CFCFCF->#AFAFAF on leave, ghost emboss,
+  selection inversion, arrow bevel flip + glyph shift.
+  1850 PASS SMP4 / 1851 SMP1, 0 FAIL.
+
 - **M86b done** (this commit): Xen skin. Palette decoded from
   sasg.com's preview.gif (pixel-sampled via PIL in-memory, no
   files written) + MUI 3.8 Presets/XEN.prefs (IFF PREF; pen

@@ -164,6 +164,10 @@ procedure Bureau is
       --  (Write). Bureau enqueues focused keys and signals; it
       --  never calls the client.
       Queue_Cap : U64 := 0;
+      --  M86c: pointer-is-inside-content tracker, so the leave
+      --  transition can deliver ONE out-of-content move (widget
+      --  hover states need it to unlatch).
+      Ptr_Inside : Boolean := False;
       Ntfn_Cap  : U64 := 0;
       Title    : String (1 .. 40) := (others => ' ');
       Title_Len : Natural := 0;
@@ -1305,10 +1309,23 @@ procedure Bureau is
               or else IX >= Long_Long_Integer (Wins (T).PW)
               or else IY >= Long_Long_Integer (Wins (T).PH)
             then
-               return;
+               --  M86c: on the inside->outside transition,
+               --  deliver one move one pixel PAST the content's
+               --  bottom-right corner — Inside () is False for
+               --  every widget, so hover states unlatch.
+               --  Without it a hovered gadget stayed lit when
+               --  the pointer left the window.
+               if not Wins (T).Ptr_Inside then
+                  return;
+               end if;
+               Wins (T).Ptr_Inside := False;
+               CX := Wins (T).PW;
+               CY := Wins (T).PH;
+            else
+               Wins (T).Ptr_Inside := True;
+               CX := U64 (IX);
+               CY := U64 (IY);
             end if;
-            CX := U64 (IX);
-            CY := U64 (IY);
          else
             CX := U64 (Long_Long_Integer'Min
               (Long_Long_Integer'Max (IX, 0),

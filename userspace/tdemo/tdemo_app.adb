@@ -228,6 +228,9 @@ package body Tdemo_App is
         (Widgets.New_Button ("Revert", Revert_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
         (Widgets.New_Button ("Cancel", Cancel_Clicked'Access));
+      --  M86c: a ghosted button to show the disabled state.
+      Widgets.Group (Btn_Row.all).Add
+        (Widgets.New_Button ("Ghost", Disabled => True));
 
        Widgets.Group (Root.all).Add (File_Grp);
        Widgets.Group (Root.all).Add (Text_Grp);

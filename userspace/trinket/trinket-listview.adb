@@ -1,6 +1,7 @@
 with Trinket.Paint;
 with Trinket.Fonts;
 with Akernel_User.Syscalls;
+with Akernel_User.Theme;
 
 package body Trinket.Listview is
 
@@ -208,7 +209,11 @@ package body Trinket.Listview is
               (C2, TX, Y + (RH - LH) / 2,
                W.Items (Natural (Idx + 1)).Text
                  (1 .. W.Items (Natural (Idx + 1)).Len),
-               Text_Dark);
+               --  M86c: selected rows invert — dark text on the
+               --  blue band was unreadable.
+               (if Natural (Idx + 1) = W.Sel
+                then Akernel_User.Theme.Title_Text
+                else Text_Dark));
          end;
       end loop;
    end Draw;
