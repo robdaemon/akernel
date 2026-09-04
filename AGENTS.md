@@ -48,8 +48,16 @@
   command line* (the pattern string is in it) and kills the tool
   session mid-command — observed as wedged commands that never
   return. The bracket character class breaks the self-match.
-  Related: background QEMU runs must be detached (`setsid bash -c
-  '...' & disown`) or they die with the tool call's process-group
-  kill on timeout; QMP screendump + `input-send-event` over
-  `/tmp/qqmp.sock` is the headless GUI smoke-test path (see the
-  M84 entry in docs/RESUME.md).
+   Related: background QEMU runs must be detached or they die with
+   the tool call's process-group kill on timeout. Do NOT use
+   `setsid [-f] bash -c '...' & disown` — it leaves the tool call
+   wedged on inherited fds. The verified launcher is Python Popen,
+   which returns instantly and boots clean:
+   `python3 -c "import subprocess; subprocess.Popen(['make','run',
+   'QEMU_ARGS=-nographic -display none'], stdout=open('/tmp/gui.log',
+   'w'), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+   start_new_session=True, close_fds=True)"` — then poll the log
+   for 'shell online' from SEPARATE short commands (never sleep in
+   the launch call). QMP screendump + `input-send-event` over
+   `/tmp/qqmp.sock` is the headless GUI smoke-test path (see the
+   M84 entry in docs/RESUME.md).
