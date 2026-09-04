@@ -43,6 +43,9 @@ package Trinket.Window is
     --  window then answers Bureau's kind-5 resize events by
     --  reallocating its surface and re-laying out the widget
     --  tree. Group-based proportional layouts zoom for free.
+    --  Req_W/Req_H are a REQUEST: the surface opens at least at
+    --  the root's Min_Size (M86g content negotiation), so apps
+    --  express a preference, not a load-bearing pixel budget.
 
    procedure Run (W : in out Window);
    --  Event loop: returns when Bureau delivers the close-gadget

@@ -802,11 +802,8 @@ package body Fileman_App is
       Trinket.Widgets.Group (Root.all).Add (Btn_Row);
       Trinket.Widgets.Group (Root.all).Add (Status_Label);
 
-      --  850 wide: nine equal buttons -> ~83px each, so the
-      --  widest label ("New Drawer", 74px proportional) keeps
-      --  clear of the bevels.
       if Trinket.Window.Open
-        (Win, Bureau_EP, 850, 440, "File Manager", Root)
+        (Win, Bureau_EP, 720, 440, "File Manager", Root)
       then
          Trinket.Window.Set_Menus
            (Win,

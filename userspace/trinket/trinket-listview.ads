@@ -76,6 +76,7 @@ package Trinket.Listview is
    --  widget height.
 
    overriding procedure Draw (W : Listview; C : Canvas);
+   overriding procedure Min_Size (W : Listview; MW, MH : out U64);
    overriding function On_Key
      (W : access Listview; Code : U64) return Boolean;
    overriding function On_Pointer

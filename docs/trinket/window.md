@@ -23,22 +23,25 @@ end;
 `Open` performs the following setup:
 
 1. `Fonts.Init` loads the BDF font (falls back to compiled-in 8x8).
-2. Allocates a one-page **input queue** memory object and maps it at
+2. The requested size is grown up to the root widget's `Min_Size`
+   (M86g content negotiation: apps express a size *preference*;
+   font-derived content minimums are always honored).
+3. Allocates a one-page **input queue** memory object and maps it at
    `Queue_VA` (`0x5F00_0000`).
-3. Creates a `Sink_EP` endpoint for the client side of the v3 async
+4. Creates a `Sink_EP` endpoint for the client side of the v3 async
    input channel, and a `Ntfn_Cap` notification bound to the calling
    thread.
-4. Mints the queue cap with `Map+Read+Write+Transfer` and the
+5. Mints the queue cap with `Map+Read+Write+Transfer` and the
    notification cap with `Write+Transfer`.
-5. Calls Bureau `Op_Surface_Create` (20). Bureau replies with the
+6. Calls Bureau `Op_Surface_Create` (20). Bureau replies with the
    surface id and the number of 4 KiB pages needed.
-6. Allocates the surface buffer in up to four 64-page **chunks** and
+7. Allocates the surface buffer in up to four 64-page **chunks** and
    maps them contiguously at `Surf_VA` (`0x5F80_0000`). Each chunk
    cap is minted `Map+Read+Transfer` and handed to Bureau via
    `Op_Surface_Set_Buffer` (21), then committed with
    `Op_Surface_Commit_Buffer` (22).
-7. Sets the title (`Op_Set_Title`, 25).
-8. Positions the root widget at `(0,0,w,h)` and calls its `Layout`.
+8. Sets the title (`Op_Set_Title`, 25).
+9. Positions the root widget at `(0,0,w,h)` and calls its `Layout`.
 
 If any step fails, `Open` returns `False` and releases what it already
 allocated.

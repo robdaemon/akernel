@@ -480,4 +480,12 @@ package body Trinket.Text_Edit is
       end loop;
    end Draw;
 
+   overriding procedure Min_Size (W : Text_Edit; MW, MH : out U64) is
+      pragma Unreferenced (W);
+   begin
+      --  Sunken frame + Pad inset: two lines tall, ~5 cells wide.
+      MW := 2 * Pad + 5 * 8;
+      MH := 2 * LH + 2 * Pad + 4;
+   end Min_Size;
+
 end Trinket.Text_Edit;

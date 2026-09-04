@@ -11,6 +11,31 @@ repository.
 
 ## Recently shipped
 
+- **M86g** (this commit): content-size negotiation. The Widget
+  protocol gains `Min_Size (W; MW, MH : out U64)` (default 0x0),
+  overridden per widget from the CURRENT font metrics — Label/
+  Button/Checkbox/Radio wrap `Text_Width` + bevel/padding, Input
+  and inset Labels floor at `Line_Height + 8`, Scrollbar pins
+  Arrow x 3*Arrow, Image its bitmap, Listview two rows, Text_Edit
+  two lines; Group recurses (layout direction sums, cross takes
+  the max, plus the title band). Group.Layout is now two-pass:
+  every child gets its min in the layout direction FIRST, then
+  only the remainder splits by weight (cumulative fractions, as
+  before) — weights now express who gets the slack, never who
+  gives up content; minimums past the inner extent overflow and
+  the canvas clip takes it (a huge user font degrades to
+  clipping, never to a negative size). Window.Open grows the
+  requested surface to the root's Min_Size, so app pixel sizes
+  are preferences, not load-bearing budgets — this reverts the
+  M86f-follow-up app-side tunes (fileman back to 720 wide with
+  "New Drawer" fitting via its button min, tdemo back to
+  400x420 with the File row's inset label floored at 16px).
+  First-pass bug caught by screendump: Group.Min_Size had the
+  horizontal MW/MH swapped (max-kid-HEIGHT fed MW), which grew
+  fileman's window to a ~450px-tall button bar. QMP-verified:
+  New Drawer 15px clear each side at 720, tdemo File label 4/3px
+  top/bottom clearance at 420. 1847 PASS SMP4+SMP1, 0 FAIL.
+
 - **M86f** (this commit): proportional UI font. tools/font2bdf.py
   gains `--proportional`: each glyph is trimmed to its ink bounds
   with DWIDTH = ink + 1 (space = 4) — the classic pseudo-

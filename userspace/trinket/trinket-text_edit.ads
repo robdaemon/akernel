@@ -37,6 +37,7 @@ package Trinket.Text_Edit is
    function Visible_Rows (W : Text_Edit) return U64;
 
    overriding procedure Draw (W : Text_Edit; C : Canvas);
+   overriding procedure Min_Size (W : Text_Edit; MW, MH : out U64);
    overriding function On_Key
      (W : access Text_Edit; Code : U64) return Boolean;
    overriding function On_Pointer

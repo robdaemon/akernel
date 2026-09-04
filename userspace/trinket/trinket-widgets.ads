@@ -24,6 +24,14 @@ package Trinket.Widgets is
    --  Computes child geometry from W's own rect. Default: no
    --  children, nothing to do. Group overrides.
 
+   procedure Min_Size (W : Widget; MW, MH : out U64);
+   --  Content-driven floor (M86g): the smallest rect that still
+   --  fits the widget's content at the CURRENT font. Default
+   --  0x0 = no floor. Group.Layout grants every child its min
+   --  first and splits only the remainder by weight; Window.Open
+   --  grows the requested size to the root's min. Content set
+   --  after Open does not renegotiate (same caveat as MUI).
+
    procedure Draw (W : Widget; C : Canvas) is abstract;
    --  Paint into the canvas; the canvas clip is the damage band
    --  (widgets may skip work via Intersects).
@@ -75,6 +83,7 @@ package Trinket.Widgets is
    end record;
    function New_Image (Img : Trinket.Images.Image) return Any_Widget;
    overriding procedure Draw (W : Image_Widget; C : Canvas);
+   overriding procedure Min_Size (W : Image_Widget; MW, MH : out U64);
    procedure Set_Image (W : in out Image_Widget; Img : Trinket.Images.Image);
    --  Swap the borrowed image and mark dirty (milestone 68: worker
    --  tasks decode images off the event thread and hand them over
@@ -99,6 +108,7 @@ package Trinket.Widgets is
      (S : String; Align : Alignment := Left; Inset : Boolean := False)
       return Any_Widget;
    overriding procedure Draw (W : Label; C : Canvas);
+   overriding procedure Min_Size (W : Label; MW, MH : out U64);
    procedure Set_Text (W : in out Label; S : String);
    --  Update an existing label's text and mark it dirty.
 
@@ -126,6 +136,7 @@ package Trinket.Widgets is
    procedure Set_Focused (W : in out Input; F : Boolean);
    function Is_Focused (W : Input) return Boolean is (W.Focused);
    overriding procedure Draw (W : Input; C : Canvas);
+   overriding procedure Min_Size (W : Input; MW, MH : out U64);
    overriding function On_Key
      (W : access Input; Code : U64) return Boolean;
    overriding function On_Pointer
@@ -148,8 +159,9 @@ package Trinket.Widgets is
       (S        : String;
        On_Click : Click_Callback := null;
        Disabled : Boolean        := False) return Any_Widget;
-    overriding procedure Draw (W : Button; C : Canvas);
-    overriding function On_Pointer
+     overriding procedure Draw (W : Button; C : Canvas);
+     overriding procedure Min_Size (W : Button; MW, MH : out U64);
+     overriding function On_Pointer
       (W : access Button; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
 
@@ -184,6 +196,7 @@ package Trinket.Widgets is
     --  Programmatic set; marks dirty; does NOT fire On_Change.
     function Is_Checked (W : Checkbox) return Boolean is (W.Checked);
     overriding procedure Draw (W : Checkbox; C : Canvas);
+    overriding procedure Min_Size (W : Checkbox; MW, MH : out U64);
     overriding function On_Pointer
       (W : access Checkbox; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
@@ -220,6 +233,7 @@ package Trinket.Widgets is
     --  clears only W. Never fires On_Change.
     function Is_Selected (W : Radio) return Boolean is (W.Selected);
     overriding procedure Draw (W : Radio; C : Canvas);
+    overriding procedure Min_Size (W : Radio; MW, MH : out U64);
     overriding function On_Pointer
       (W : access Radio; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
@@ -250,6 +264,7 @@ package Trinket.Widgets is
    --  Clamps Pos; marks dirty; does NOT fire On_Change.
    procedure Set_Pos (W : in out Scrollbar; P : U64);
    overriding procedure Draw (W : Scrollbar; C : Canvas);
+   overriding procedure Min_Size (W : Scrollbar; MW, MH : out U64);
    overriding function On_Pointer
      (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
@@ -258,7 +273,9 @@ package Trinket.Widgets is
    --  centered title breaking the top edge (the mockup's
    --  "File"/"Text" groups). Inset flips the frame sunken and
    --  fills the interior Pane-white (the text area look).
-   --  Kids share the group's extent in the layout direction
+   --  Kids are first granted their Min_Size in the layout
+   --  direction (M86g — content can never be squeezed below its
+   --  floor by a font change), then the REMAINDER splits
    --  proportionally to their WEIGHT (MUI lineage; milestone
    --  64): default 1 = the original equal split; a listview in
    --  a tall row takes Weight 5+ and the labels/buttons stay
@@ -282,6 +299,7 @@ package Trinket.Widgets is
       return Any_Widget;
    procedure Add (G : in out Group; Child : Any_Widget; Weight : U64 := 1);
    overriding procedure Layout (W : in out Group);
+   overriding procedure Min_Size (W : Group; MW, MH : out U64);
    overriding procedure Draw (W : Group; C : Canvas);
    overriding function On_Pointer
      (W : access Group; K : Pointer_Kind; PX, PY : U64)

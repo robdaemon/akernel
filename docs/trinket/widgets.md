@@ -61,6 +61,7 @@ Abstract root. Concrete widgets override `Draw`; containers override
 | operation | role |
 |---|---|
 | `Layout (W : in out Widget)` | compute children from `W`'s rect; default no-op |
+| `Min_Size (W : Widget; MW, MH : out U64)` | content-driven floor at the current font; default 0x0 |
 | `Draw (W : Widget; C : Canvas) is abstract` | paint into clipped canvas |
 | `On_Pointer (W : access Widget; K : Pointer_Kind; PX, PY : U64) return Boolean` | pointer event; default unconsumed |
 | `On_Key (W : access Widget; Code : U64) return Boolean` | key event; default unconsumed |
@@ -298,11 +299,17 @@ H/V layout container with optional frame and title breaking the top
 edge. `Inset => True` draws a sunken frame and fills the interior with
 `Pane` white.
 
-Children share the group's extent in the layout direction
-proportionally to their `Weight` (MUI lineage). Default weight is 1;
-a tall listview might get 5 while surrounding buttons stay thin.
-Horizontal groups pin scrollbars to arrow-width before splitting the
-remainder.
+Children are first granted their `Min_Size` in the layout direction
+(M86g): every widget reports a content-driven floor derived from the
+current font metrics (`Text_Width`/`Line_Height`), so a font change
+re-flows the layout instead of overflowing frames. Only the
+*remainder* over the summed minimums splits proportionally to each
+child's `Weight` (MUI lineage) — weights express who gets the slack,
+never who gives up content. If the minimums exceed the inner extent
+(a huge user font), children keep their minimums and the canvas clip
+takes the overflow. Default weight is 1; a tall listview might get 5
+while surrounding buttons stay thin. Horizontal groups pin scrollbars
+to arrow-width before splitting the remainder.
 
 ```ada
 type Direction is (Vertical, Horizontal);

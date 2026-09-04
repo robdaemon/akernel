@@ -218,6 +218,14 @@ package body Trinket.Listview is
       end loop;
    end Draw;
 
+   overriding procedure Min_Size (W : Listview; MW, MH : out U64) is
+   begin
+      --  Two rows plus frame slack; wide enough for an icon cell
+      --  (or the plain 4px inset) and a few characters.
+      MW := (if W.Has_Icons then 22 else 4) + 4 * 8 + 4;
+      MH := 2 * Row_Height (W) + 2;
+   end Min_Size;
+
    overriding function On_Key
      (W : access Listview; Code : U64) return Boolean
    is

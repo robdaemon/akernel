@@ -135,10 +135,27 @@ package body Trinket.Window is
        Result  : U64;
        Q_Mint  : U64;
        N_Mint  : U64;
+       Min_W   : U64;
+       Min_H   : U64;
+       Open_W  : U64 := Req_W;
+       Open_H  : U64 := Req_H;
     begin
-      Fonts.Init;
-      W.EP := Bureau_EP;
-      W.Root := Root;
+       Fonts.Init;
+       W.EP := Bureau_EP;
+       W.Root := Root;
+
+       --  M86g: content-size negotiation — grow the request up
+       --  to the root's Min_Size so a font change can never
+       --  leave the layout cramped (Bureau still clamps the top
+       --  end to the display; past that, widgets clip).
+       Root.Min_Size (Min_W, Min_H);
+       if Min_W > Open_W then
+          Open_W := Min_W;
+       end if;
+       if Min_H > Open_H then
+          Open_H := Min_H;
+       end if;
+
 
       --  v3 input channel: queue page + sink EP + thread-bound
       --  notification (the demo.adb pattern).
@@ -203,8 +220,8 @@ package body Trinket.Window is
       if Q_Mint = Syscall_Failed or else N_Mint = Syscall_Failed then
          return False;
       end if;
-       Result := Win.Surface_Create
-         (Bureau_EP, Req_W, Req_H, Q_Mint, N_Mint,
+        Result := Win.Surface_Create
+          (Bureau_EP, Open_W, Open_H, Q_Mint, N_Mint,
           W.Id, Pages, W.Cnv.W, W.Cnv.H,
           Flags => (if Resizable then Win.Flag_Resizable else 0));
       declare

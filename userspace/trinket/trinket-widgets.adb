@@ -52,6 +52,12 @@ package body Trinket.Widgets is
       W.Dirty := True;
    end Set_Image;
 
+   overriding procedure Min_Size (W : Image_Widget; MW, MH : out U64) is
+   begin
+      MW := W.Img.W;
+      MH := W.Img.H;
+   end Min_Size;
+
     function Max (A, B : U64) return U64 is (if A > B then A else B);
     function Min (A, B : U64) return U64 is (if A < B then A else B);
 
@@ -94,6 +100,13 @@ package body Trinket.Widgets is
    begin
       null;
    end Layout;
+
+   procedure Min_Size (W : Widget; MW, MH : out U64) is
+      pragma Unreferenced (W);
+   begin
+      MW := 0;
+      MH := 0;
+   end Min_Size;
 
    function On_Pointer
      (W : access Widget; K : Pointer_Kind; PX, PY : U64)
@@ -197,6 +210,16 @@ package body Trinket.Widgets is
       W.Dirty := True;
    end Set_Text;
 
+   procedure Min_Size (W : Label; MW, MH : out U64) is
+      LH : constant U64 := Fonts.Line_Height;
+   begin
+      --  Inset: 6px text pad + 2px bevel each way, and the same
+      --  vertical slack Input needs (text draws at TY+2).
+      MW := Fonts.Text_Width (W.Txt (1 .. W.Len))
+        + (if W.Inset then 8 else 4);
+      MH := LH + (if W.Inset then 8 else 0);
+   end Min_Size;
+
    --  Input
 
    function New_Input return Any_Widget is
@@ -271,6 +294,15 @@ package body Trinket.Widgets is
            (C2, CX, TY + 2, CX + 1, TY + 2 + LH, Text_Dark);
       end if;
    end Draw;
+
+   procedure Min_Size (W : Input; MW, MH : out U64) is
+      pragma Unreferenced (W);
+   begin
+      --  Sunken field: 4px pad + bevel each side over ~5 cells;
+      --  vertically the same LH + 8 as an inset label.
+      MW := 48;
+      MH := Fonts.Line_Height + 8;
+   end Min_Size;
 
    function On_Key (W : access Input; Code : U64) return Boolean is
    begin
@@ -430,6 +462,13 @@ package body Trinket.Widgets is
       end if;
    end Draw;
 
+   procedure Min_Size (W : Button; MW, MH : out U64) is
+   begin
+      --  Centered label: 2px bevel + 2px breathing room per side.
+      MW := Fonts.Text_Width (W.Txt (1 .. W.Len)) + 8;
+      MH := Fonts.Line_Height + 4;
+   end Min_Size;
+
    function On_Pointer
      (W : access Button; K : Pointer_Kind; PX, PY : U64)
       return Boolean
@@ -579,6 +618,20 @@ package body Trinket.Widgets is
       Toggle_Label (W, C, W.Txt, W.Len, W.Disabled, Sh);
    end Draw;
 
+   --  Shared floor: box at X+2, label Toggle_Gap right of it,
+   --  2px slack on the right; the taller of box/text plus 4.
+   procedure Toggle_Min (Txt : String; MW, MH : out U64) is
+   begin
+      MW := 2 + Toggle_Box + Toggle_Gap
+        + Fonts.Text_Width (Txt) + 2;
+      MH := Max (Toggle_Box, Fonts.Line_Height) + 4;
+   end Toggle_Min;
+
+   procedure Min_Size (W : Checkbox; MW, MH : out U64) is
+   begin
+      Toggle_Min (W.Txt (1 .. W.Len), MW, MH);
+   end Min_Size;
+
    function On_Pointer
      (W : access Checkbox; K : Pointer_Kind; PX, PY : U64)
       return Boolean
@@ -719,6 +772,11 @@ package body Trinket.Widgets is
       end if;
       Toggle_Label (W, C, W.Txt, W.Len, W.Disabled, Sh);
    end Draw;
+
+   procedure Min_Size (W : Radio; MW, MH : out U64) is
+   begin
+      Toggle_Min (W.Txt (1 .. W.Len), MW, MH);
+   end Min_Size;
 
    function On_Pointer
      (W : access Radio; K : Pointer_Kind; PX, PY : U64)
@@ -955,6 +1013,15 @@ package body Trinket.Widgets is
       Chevron (CX, W.Y + W.H - Arrow + 6, False, SD);
    end Draw;
 
+   procedure Min_Size (W : Scrollbar; MW, MH : out U64) is
+      pragma Unreferenced (W);
+   begin
+      --  Vertical only: Arrow wide; the bottom cluster (two
+      --  arrow boxes) plus a minimal knob track tall.
+      MW := Arrow;
+      MH := 3 * Arrow;
+   end Min_Size;
+
    function On_Pointer
      (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
       return Boolean
@@ -1050,6 +1117,38 @@ package body Trinket.Widgets is
       end if;
    end Add;
 
+   procedure Min_Size (W : Group; MW, MH : out U64) is
+      Margin  : constant U64 := 8;
+      Spacing : constant U64 := 8;
+      Top     : constant U64 := (if W.Title_Len > 0 then 16 else 8);
+      KW, KH  : U64;
+      CW      : U64 := 0;  --  kids in the cross direction: max
+      CS      : U64 := 0;  --  kids in the layout direction: sum
+   begin
+      for I in 1 .. W.N loop
+         W.Kids (I).Min_Size (KW, KH);
+         if W.Dir = Vertical then
+            CW := Max (CW, KW);
+            CS := CS + KH;
+         else
+            CW := Max (CW, KH);
+            CS := CS + KW;
+         end if;
+      end loop;
+      if W.N > 0 then
+         CS := CS + Spacing * U64 (W.N - 1);
+      end if;
+      --  The title sits in a 6px-gapped band on the top edge;
+      --  keep it inside the frame too (width-only, either
+      --  direction).
+      MW := Margin * 2 + (if W.Dir = Vertical then CW else CS);
+      if W.Title_Len > 0 then
+         MW := Max (MW, Margin * 2 + Fonts.Text_Width
+                      (W.Title (1 .. W.Title_Len)) + 28);
+      end if;
+      MH := Top + Margin + (if W.Dir = Vertical then CS else CW);
+   end Min_Size;
+
    procedure Layout (W : in out Group) is
       Margin  : constant U64 := 8;
       Spacing : constant U64 := 8;
@@ -1058,45 +1157,60 @@ package body Trinket.Widgets is
       IY0     : constant U64 := W.Y + Top;
       IX1     : constant U64 := W.X + W.W - Margin;
       IY1     : constant U64 := W.Y + W.H - Margin;
+      Mins    : array (1 .. Max_Children) of U64 := (others => 0);
+      KW, KH  : U64;
       Avail   : U64;
+      Extra   : U64;
       Pos     : U64;
       Fixed   : Natural := 0;  --  scrollbars pin to Arrow wide
       Total_W : U64 := 0;
+      Base    : U64 := 0;
       Cum     : U64;
       Prev    : U64;
    begin
       if W.N = 0 then
          return;
       end if;
+      --  M86g: content minimums come FIRST — every child gets at
+      --  least its Min_Size in the layout direction; only the
+      --  remainder splits by weight (cumulative fractions, so
+      --  rounding never drifts). Mins past the inner extent just
+      --  overflow and the canvas clip takes it — a huge user
+      --  font degrades to clipping, never to a negative size.
       if W.Dir = Vertical then
-         --  Weighted split (MUI lineage): positions derive from
-         --  the CUMULATIVE weight fraction so rounding never
-         --  drifts or leaves a remainder strip.
          for I in 1 .. W.N loop
+            W.Kids (I).Min_Size (KW, KH);
+            Mins (I) := KH;
+            Base := Base + KH;
             Total_W := Total_W + W.Wts (I);
          end loop;
          Avail := IY1 - IY0 - Spacing * U64 (W.N - 1);
+         Extra := (if Avail > Base then Avail - Base else 0);
+         Pos   := IY0;
          Cum   := 0;
          for I in 1 .. W.N loop
             Prev := Cum;
             Cum  := Cum + W.Wts (I);
             W.Kids (I).X := IX0;
-            W.Kids (I).Y := IY0 + Spacing * U64 (I - 1)
-              + Avail * Prev / Total_W;
+            W.Kids (I).Y := Pos;
             W.Kids (I).W := IX1 - IX0;
-            W.Kids (I).H := Avail * Cum / Total_W
-              - Avail * Prev / Total_W;
+            W.Kids (I).H := Mins (I)
+              + (Extra * Cum / Total_W - Extra * Prev / Total_W);
+            Pos := Pos + W.Kids (I).H + Spacing;
          end loop;
       else
          for I in 1 .. W.N loop
             if W.Kids (I).all in Scrollbar then
                Fixed := Fixed + 1;
             else
+               W.Kids (I).Min_Size (Mins (I), KH);
+               Base := Base + Mins (I);
                Total_W := Total_W + W.Wts (I);
             end if;
          end loop;
          Avail := IX1 - IX0 - Spacing * U64 (W.N - 1)
            - U64 (Fixed) * Arrow;
+         Extra := (if Avail > Base then Avail - Base else 0);
          Pos := IX0;
          Cum := 0;
          for I in 1 .. W.N loop
@@ -1110,10 +1224,11 @@ package body Trinket.Widgets is
                Prev := Cum;
                Cum  := Cum + W.Wts (I);
                W.Kids (I).X := Pos;
-               W.Kids (I).W :=
-                 (if Total_W > 0
-                  then Avail * Cum / Total_W - Avail * Prev / Total_W
-                  else 0);
+               W.Kids (I).W := Mins (I)
+                 + (if Total_W > 0
+                    then Extra * Cum / Total_W
+                      - Extra * Prev / Total_W
+                    else 0);
                Pos := Pos + W.Kids (I).W + Spacing;
             end if;
          end loop;
