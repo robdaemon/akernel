@@ -353,6 +353,25 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M85b done** (this commit): Akernel_User.Glob — the shared
+  Amiga MatchPatternNoCase analog, pure and syscall-free.
+  Tokens: ? (any char), * (shorthand for #?), #x (zero or more
+  of item x — literal, ?, %, escaped char or group), % (empty
+  string), (a|b|c) alternation (no nesting), ~pat negation (to
+  the end of the current group level), ' escape; case-insensitive;
+  malformed patterns (trailing escape, unterminated group, bare
+  '#') never match.  Match is anchored at both ends; Is_Pattern
+  scans for any wildcard token.  Recursive anchored-slice
+  matcher (MS over pattern/string index ranges); groups and '#'
+  of a group try every prefix split (bounded by the 255-char
+  name limit).  fuzz: 31-check battery (all tokens, anchoring,
+  case, escapes, negation, malformed).  NOTE: bfs_engine has
+  its own minimal Glob_Match (*, ? only, case-sensitive) behind
+  C:Query — left alone deliberately; swapping it for
+  Akernel_User.Glob would change Query to case-insensitive
+  semantics and is a separate decision.  1776 PASS SMP4 /
+  1777 SMP1, 0 FAIL.
+
 - **M85a done** (this commit): EndCLI. New streams op
   Op_Endcli = 5 (append-only) + Akernel_User.Streams.Endcli
   (Endpoint) helper; reply Count 0 = "closing, exit" / 1 = "not

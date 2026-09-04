@@ -14,6 +14,7 @@ with Akernel_User.Console;
 with Akernel_User.Files;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
+with Akernel_User.Glob;
 with Akernel_User.Libs;
 with Trinket;
 with Trinket.Images;
@@ -6290,6 +6291,56 @@ begin
                        0, "endcli on serial does not kill the shell");
           Check_Env ("FZENDCLI", "alive",
                      "shell kept running after endcli (no window)");
+
+          --  Glob matcher battery (M85b): pure-function checks of
+          --  the MatchPatternNoCase semantics.
+          declare
+             package G renames Akernel_User.Glob;
+          begin
+             Check (G.Match ("*", "anything"), "glob * any");
+             Check (G.Match ("*", ""), "glob * empty");
+             Check (G.Match ("readme.txt", "readme.txt"),
+                    "glob literal matches itself");
+             Check (G.Match ("README.*", "readme.txt"),
+                    "glob is case-insensitive");
+             Check (G.Match ("#?.info", "readme.info"),
+                    "glob #? suffix matches");
+             Check (not G.Match ("#?.info", "readme.txt"),
+                    "glob #? rejects wrong suffix");
+             Check (G.Match ("?.txt", "a.txt"), "glob ? one char");
+             Check (not G.Match ("?.txt", "ab.txt"),
+                    "glob ? rejects two chars");
+             Check (G.Match ("#a", "aaa"), "glob #x repeats");
+             Check (G.Match ("#ab", "aaab"), "glob #x + literal");
+             Check (not G.Match ("#a", "aaab"), "glob #x anchored");
+             Check (G.Match ("a%b", "ab"), "glob % matches empty");
+             Check (not G.Match ("a%b", "axb"),
+                    "glob % matches nothing else");
+             Check (G.Match ("(foo|bar).txt", "foo.txt"),
+                    "glob group first alt");
+             Check (G.Match ("(foo|bar).txt", "bar.txt"),
+                    "glob group second alt");
+             Check (not G.Match ("(foo|bar).txt", "baz.txt"),
+                    "glob group rejects other");
+             Check (G.Match ("#(a|b)c", "abac"), "glob # of group");
+             Check (G.Match ("~#?.info", "readme.txt"),
+                    "glob ~ negates non-match");
+             Check (not G.Match ("~#?.info", "readme.info"),
+                    "glob ~ negates match");
+             Check (G.Match (Character'Val (39) & "?", "?"),
+                    "glob escape quotes ?");
+             Check (not G.Match (Character'Val (39) & "?", "x"),
+                    "glob escaped ? is literal");
+             Check (G.Match ("(a|b)c#?", "bcdef"),
+                    "glob group mid-pattern");
+             Check (not G.Match ("(abc", "abc"),
+                    "glob unterminated group fails");
+             Check (G.Match ("#?.txt", ".txt"), "glob #? zero chars");
+             Check (G.Is_Pattern ("#?.info"), "Is_Pattern on #?");
+             Check (G.Is_Pattern ("(a|b)"), "Is_Pattern on group");
+             Check (not G.Is_Pattern ("readme.txt"),
+                    "Is_Pattern off for literal");
+          end;
 
           Write_File ("BD0:FZECHOS.TXT", Script22,
                       "echo script written");
