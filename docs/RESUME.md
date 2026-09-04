@@ -34,7 +34,10 @@ repository.
   horizontal MW/MH swapped (max-kid-HEIGHT fed MW), which grew
   fileman's window to a ~450px-tall button bar. QMP-verified:
   New Drawer 15px clear each side at 720, tdemo File label 4/3px
-  top/bottom clearance at 420. 1847 PASS SMP4+SMP1, 0 FAIL.
+  top/bottom clearance at 420. Follow-up (this commit too):
+  Button's min height LH+4 left the glyph cell touching the
+  bottom bevel (tdemo button row) — now LH+8, same vertical
+  slack as Input. 1847 PASS SMP4+SMP1, 0 FAIL.
 
 - **M86f** (this commit): proportional UI font. tools/font2bdf.py
   gains `--proportional`: each glyph is trimmed to its ink bounds

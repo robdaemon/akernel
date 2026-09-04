@@ -464,9 +464,11 @@ package body Trinket.Widgets is
 
    procedure Min_Size (W : Button; MW, MH : out U64) is
    begin
-      --  Centered label: 2px bevel + 2px breathing room per side.
+      --  Centered label: 2px bevel + 2px breathing room per side
+      --  (LH + 8 vertically — the +4 floor left the glyph cell
+      --  touching the bottom bevel, descenders included).
       MW := Fonts.Text_Width (W.Txt (1 .. W.Len)) + 8;
-      MH := Fonts.Line_Height + 4;
+      MH := Fonts.Line_Height + 8;
    end Min_Size;
 
    function On_Pointer
