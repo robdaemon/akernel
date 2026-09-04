@@ -6342,6 +6342,137 @@ begin
                     "Is_Pattern off for literal");
           end;
 
+          --  Dir/List wildcard patterns end to end (M85c).  The
+          --  fixture directory holds A.TXT (5), B.TXT (4) and
+          --  C.DAT (9); readdir order is FS-dependent, so multi-
+          --  match checks are containment, single-match ones
+          --  exact.
+          declare
+             St  : U64;
+             Sz  : U64;
+             Cnt : U64;
+
+             function File_Has (Path, Frag : String) return Boolean
+             is
+                Hit : Boolean := False;
+             begin
+                for I in Buf'Range loop
+                   Buf (I) := 0;
+                end loop;
+                St := Akernel_User.Files.Open (Path, Sz);
+                if St /= Akernel_User.Files.Status_Ok
+                  or else Sz > U64 (Buf'Length)
+                then
+                   return False;
+                end if;
+                St := Akernel_User.Files.Read
+                  (Path, 0, Buf'Address, Sz, Cnt);
+                if St /= Akernel_User.Files.Status_Ok
+                  or else Cnt /= Sz
+                then
+                   return False;
+                end if;
+                for I in 0 .. Natural (Sz) - Frag'Length loop
+                   declare
+                      Eq : Boolean := True;
+                   begin
+                      for J in Frag'Range loop
+                         Eq := Eq
+                           and then Buf (I + J - Frag'First) =
+                             Interfaces.Unsigned_8
+                               (Character'Pos (Frag (J)));
+                      end loop;
+                      Hit := Hit or else Eq;
+                   end;
+                end loop;
+                return Hit;
+             end File_Has;
+
+             ScriptD1 : constant String :=
+               "dir BD0:FZDIR/#? > BD0:FZDPA.TXT" & ASCII.LF;
+             ScriptD2 : constant String :=
+               "dir BD0:FZDIR/#?.TXT > BD0:FZDPB.TXT" & ASCII.LF;
+             ScriptD3 : constant String :=
+               "dir BD0:FZDIR/B.T?T > BD0:FZDPC.TXT" & ASCII.LF;
+             --  Alternation + redirection: '|' inside parens must
+             --  not route as a pipe, '>' outside still must.
+             ScriptD4 : constant String :=
+               "dir BD0:FZDIR/(a|c).dat > BD0:FZPD.TXT" & ASCII.LF;
+             ScriptD5 : constant String :=
+               "list BD0:FZDIR/#?.DAT > BD0:FZPL.TXT" & ASCII.LF;
+             --  Pattern without a separator lists from the cwd.
+             ScriptD6 : constant String :=
+               "cd BD0:FZDIR" & ASCII.LF
+               & "dir #?.TXT > BD0:FZPD2.TXT" & ASCII.LF
+               & "cd BD0:" & ASCII.LF;
+          begin
+             St := Akernel_User.Files.Mkdir ("BD0:FZDIR");
+             Write_File ("BD0:FZDIR/A.TXT", "alpha",
+                         "glob fixture A.TXT written");
+             Write_File ("BD0:FZDIR/B.TXT", "beta",
+                         "glob fixture B.TXT written");
+             Write_File ("BD0:FZDIR/C.DAT", "delta-one",
+                         "glob fixture C.DAT written");
+
+             Write_File ("BD0:FZSD1.TXT", ScriptD1,
+                         "dir #? script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD1.TXT",
+                          0, "dir #? runs");
+             Check (File_Has ("BD0:FZDPA.TXT", "A.TXT"),
+                    "dir #? lists A.TXT");
+             Check (File_Has ("BD0:FZDPA.TXT", "C.DAT"),
+                    "dir #? lists C.DAT");
+
+             Write_File ("BD0:FZSD2.TXT", ScriptD2,
+                         "dir #?.TXT script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD2.TXT",
+                          0, "dir #?.TXT runs");
+             Check (File_Has ("BD0:FZDPB.TXT", "A.TXT"),
+                    "dir #?.TXT lists A.TXT");
+             Check (File_Has ("BD0:FZDPB.TXT", "B.TXT"),
+                    "dir #?.TXT lists B.TXT");
+             Check (not File_Has ("BD0:FZDPB.TXT", "C.DAT"),
+                    "dir #?.TXT filters out C.DAT");
+
+             Write_File ("BD0:FZSD3.TXT", ScriptD3,
+                         "dir B.T?T script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD3.TXT",
+                          0, "dir B.T?T runs");
+             Check_File ("BD0:FZDPC.TXT", "  B.TXT 4" & ASCII.LF,
+                         "dir B.T?T matches only B.TXT");
+
+             Write_File ("BD0:FZSD4.TXT", ScriptD4,
+                         "dir alternation script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD4.TXT",
+                          0, "dir (a|c).dat runs");
+             Check_File ("BD0:FZPD.TXT", "  C.DAT 9" & ASCII.LF,
+                         "dir (a|c).dat matches only C.DAT");
+
+             Write_File ("BD0:FZSD5.TXT", ScriptD5,
+                         "list #?.DAT script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD5.TXT",
+                          0, "list #?.DAT runs");
+             Check (File_Has ("BD0:FZPL.TXT", "C.DAT"),
+                    "list #?.DAT lists C.DAT");
+             Check (not File_Has ("BD0:FZPL.TXT", "A.TXT"),
+                    "list #?.DAT filters out A.TXT");
+
+             Write_File ("BD0:FZSD6.TXT", ScriptD6,
+                         "dir cwd-pattern script written");
+             Run_Command ("Sys:System/Shell",
+                          "execute BD0:FZSD6.TXT",
+                          0, "dir #?.TXT from cwd runs");
+             Check (File_Has ("BD0:FZPD2.TXT", "A.TXT"),
+                    "cwd pattern lists A.TXT");
+             Check (not File_Has ("BD0:FZPD2.TXT", "C.DAT"),
+                    "cwd pattern filters out C.DAT");
+          end;
+
           Write_File ("BD0:FZECHOS.TXT", Script22,
                       "echo script written");
           Run_Command ("Sys:System/Shell",

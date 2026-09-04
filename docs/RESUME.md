@@ -353,6 +353,25 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M85c done** (this commit): glob wiring. Dir and List take a
+  wildcard pattern argument (Akernel_User.Glob syntax): the
+  pattern is the tail after the last ':' or '/' (no separator:
+  the whole arg, listed from the cwd — Dir) and the walk stays
+  Start_Search ("*") with a Glob.Match filter per Simple_Name.
+  Arguments WITHOUT wildcard tokens keep the old behaviour, so
+  "Dir BD0:SUBDIR" still lists SUBDIR's contents rather than
+  exact-matching the name. A matchless pattern is RC_Ok with no
+  output (the N=0 "can't open" quirk only applies without a
+  pattern). scripting-exec: Has_Metachar and the pipeline
+  splitter now ignore '|'/'>'/'<' at paren depth > 0, so glob
+  alternation "dir BD0:X/(a|c).dat > out" routes correctly
+  (paren '|' is not a pipe; bare '>' still redirects). fuzz:
+  FZDIR fixture (A.TXT 5, B.TXT 4, C.DAT 9) with redirected
+  listings — containment checks for multi-match (readdir order
+  is FS-dependent), exact Check_File for single-match
+  ("  B.TXT 4", "  C.DAT 9"), plus a cwd-relative pattern-only
+  arg. 1851 PASS SMP4 / 1850 SMP1, 0 FAIL.
+
 - **M85b done** (this commit): Akernel_User.Glob — the shared
   Amiga MatchPatternNoCase analog, pure and syscall-free.
   Tokens: ? (any char), * (shorthand for #?), #x (zero or more
