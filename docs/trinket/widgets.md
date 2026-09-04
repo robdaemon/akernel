@@ -10,16 +10,18 @@ and are **content-absolute** inside the window.
 
 `subtype Pixel is Interfaces.Unsigned_32;` — little-endian `AARRGGBB`.
 
-Palette constants (match Bureau chrome):
+Palette constants (renames of `Akernel_User.Theme`, M86a — one
+skin shared with Bureau chrome; Xen values since M86b):
 
 | name | value | use |
 |---|---|---|
-| `Face` | `16#FFC0_C0C4#` | gadget face |
+| `Face` | `16#FFAF_AFAF#` | gadget face |
+| `Win_Face` | `16#FF95_9595#` | window background behind widgets |
 | `Bevel_Hi` | `16#FFFF_FFFF#` | highlight bevel |
-| `Bevel_Lo` | `16#FF40_4040#` | shadow bevel |
+| `Bevel_Lo` | `16#FF7B_7B7B#` | shadow bevel |
 | `Border` | `16#FF10_1010#` | thin border |
-| `Pane` | `16#FFFF_FFFF#` | editable field background |
-| `Sel_Blue` | `16#FF60_68B0#` | selection |
+| `Pane` | `16#FFAF_AFAF#` | editable field background |
+| `Sel_Blue` | `16#FF3B_67A2#` | selection |
 | `Text_Dark` | `16#FF20_2020#` | text |
 
 Navigation key codes delivered by Bureau/virtio-input for non-ASCII

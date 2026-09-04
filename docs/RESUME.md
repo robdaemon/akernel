@@ -353,6 +353,27 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M86b done** (this commit): Xen skin. Palette decoded from
+  sasg.com's preview.gif (pixel-sampled via PIL in-memory, no
+  files written) + MUI 3.8 Presets/XEN.prefs (IFF PREF; pen
+  strings are BGR hex) + XEN/Plain brush CMAPs (.mf0/.mbr are
+  ILBM; a ~40-line in-memory python ILBM decoder — FORM chunks,
+  ByteRun1, planar->chunky — printed palette+ASCII art).
+  THE LOOK: steel blue #3B67A2 title AND full window frame
+  (frame fill follows focus: blue/gray), mid gray #959595
+  window face, light gray #AFAFAF gadgets/panes (Xen gadgets
+  sit LIGHTER than the window — inverse of the old flat WB
+  gray, so Trinket's Face/Win_Face split: band fills and the
+  Group title punch band moved to Win_Face, gadgets keep
+  Face), soft #7B7B7B bevel shadows, panes (incl. terminal)
+  AFAFAF, desktop solid #888888 (marble dither average), bar/
+  menus AFAFAF with blue hot items, focused title text gets
+  MUI's "shadow" style (dark +1,+1 copy under white).  Values
+  live only in Akernel_User.Theme.  Known nit left for M86c:
+  selected listview rows draw dark text on the blue band
+  (uninverted).  QMP-verified colors pixel-exact.  1851 PASS
+  SMP4 / 1850 SMP1, 0 FAIL.
+
 - **M86a done** (this commit): Akernel_User.Theme — the single
   palette source (userspace/rts/akernel/akernel_user-theme.ads,
   dependency-free constants, opt-in like Font8x8: only programs

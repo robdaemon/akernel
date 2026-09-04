@@ -721,9 +721,9 @@ package body Trinket.Widgets is
             --  negative (the tdemo CONSTRAINT_ERROR).
             TY : constant U64 := (if W.Y >= 2 then W.Y - 2 else 0);
          begin
-            --  Face-colored band breaks the frame behind the title.
+            --  Window-bg band breaks the frame behind the title.
             Paint.Fill_Rect (C, TX - 6, W.Y, TX + TW + 6,
-                             W.Y + Fonts.Line_Height, Face);
+                             W.Y + Fonts.Line_Height, Win_Face);
             Fonts.Draw_Text
               (C, TX, TY, W.Title (1 .. W.Title_Len), Text_Dark);
          end;

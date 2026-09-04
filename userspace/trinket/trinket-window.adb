@@ -112,7 +112,7 @@ package body Trinket.Window is
        W.Root.W := GW;
        W.Root.H := GH;
        W.Root.Layout;
-       Trinket.Paint.Fill_Rect (W.Cnv, 0, 0, GW, GH, Face);
+       Trinket.Paint.Fill_Rect (W.Cnv, 0, 0, GW, GH, Win_Face);
        W.Root.Draw (W.Cnv);
        W.Root.Clear_Dirty;
        if Win.Surface_Update (W.EP, W.Id, 0, 0, GW, GH) /=
@@ -270,10 +270,11 @@ package body Trinket.Window is
           W.Cnv.CY0 := Y0;
           W.Cnv.CX1 := X1;
           W.Cnv.CY1 := Y1;
-          --  Repaint the band: face-fill it first so shrinking or
-          --  moved content leaves no trails. The tree redraws
+          --  Repaint the band: window-bg fill first so shrinking
+          --  or moved content leaves no trails. The tree redraws
           --  clipped, so overlapping bands land identical pixels.
-          Trinket.Paint.Fill_Rect (W.Cnv, X0, Y0, X1, Y1, Face);
+          Trinket.Paint.Fill_Rect (W.Cnv, X0, Y0, X1, Y1,
+                                   Win_Face);
           W.Root.Draw (W.Cnv);
           if Win.Surface_Update
             (W.EP, W.Id, X0, Y0, X1 - X0, Y1 - Y0) /= Win.Status_Ok

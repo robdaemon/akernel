@@ -18,6 +18,7 @@ package Trinket is
    --  Palette (milestone 86a: Akernel_User.Theme, shared with
    --  Bureau; renames keep widget code untouched).
    Face      : Pixel renames Akernel_User.Theme.Face;
+   Win_Face  : Pixel renames Akernel_User.Theme.Win_Face;
    Bevel_Hi  : Pixel renames Akernel_User.Theme.Bevel_Hi;
    Bevel_Lo  : Pixel renames Akernel_User.Theme.Bevel_Lo;
    Border    : Pixel renames Akernel_User.Theme.Border;

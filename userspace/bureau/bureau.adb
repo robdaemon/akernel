@@ -480,8 +480,10 @@ procedure Bureau is
       Stride_Px : constant U64 := Stride / 4;
       BX0, BY0, BX1, BY1, SW, SH : U64;
    begin
-      --  Frame: 2px dark border + raised bevel ring.
-      Fill_Rect (FX, FY, FX + FW, FY + FH, Border);
+      --  Frame (M86b Xen): the WHOLE window border takes the
+      --  focus color — steel blue when focused, gray when not —
+      --  with a raised bevel ring on top.
+      Fill_Rect (FX, FY, FX + FW, FY + FH, Title_C);
       Bevel (FX + 2, FY + 2, FX + FW - 2, FY + FH - 2);
       --  Title bar + gadgets + title text. Gadgets are the full
       --  title-band height, flush against the frame's inner
@@ -498,6 +500,13 @@ procedure Bureau is
                       Title_H, Gad_Depth);
       end if;
       if Wins (S).Title_Len > 0 then
+         --  M86b Xen: focused titles use MUI's "shadow" style —
+         --  a dark offset copy under the light glyph.
+         if S = Focus then
+            Draw_Text (FX + Frame + Title_H + 9, Title_Y + 3,
+                       Wins (S).Title (1 .. Wins (S).Title_Len),
+                       Border, Title_C);
+         end if;
          Draw_Text (FX + Frame + Title_H + 8, Title_Y + 2,
                     Wins (S).Title (1 .. Wins (S).Title_Len),
                     Text_C, Title_C);

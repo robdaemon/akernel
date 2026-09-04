@@ -25,22 +25,29 @@ package Akernel_User.Theme is
 
    subtype Pixel is Interfaces.Unsigned_32;  --  AARRGGBB
 
-   --  Shared widget/chrome colors (Workbench-3.x values for now;
-   --  M86b re-skins to the MUI Xen palette).
-   Face      : constant Pixel := 16#FFC0_C0C4#;  --  gadget face
+   --  MUI Xen palette (milestone 86b; decoded from sasg.com's
+   --  preview.gif and the MUI 3.8 Presets/XEN.prefs pens — BGR
+   --  hex strings — plus the XEN/Plain brush palettes):
+   --  steel blue #3B67A2 chrome, mid gray #959595 window face,
+   --  light gray #AFAFAF gadgets and fields, soft #7B7B7B
+   --  shadows.  Face is the GADGET face; Win_Face the window
+   --  background behind the widgets (Trinket fills pane bands
+   --  with it) — Xen gadgets sit a shade lighter than the
+   --  window, the inverse of the old Workbench flat gray.
+   Face      : constant Pixel := 16#FFAF_AFAF#;  --  gadget face
    Bevel_Hi  : constant Pixel := 16#FFFF_FFFF#;
-   Bevel_Lo  : constant Pixel := 16#FF40_4040#;
+   Bevel_Lo  : constant Pixel := 16#FF7B_7B7B#;
    Border    : constant Pixel := 16#FF10_1010#;
-   Pane      : constant Pixel := 16#FFFF_FFFF#;  --  editable field
-   Sel_Blue  : constant Pixel := 16#FF60_68B0#;  --  selection
+   Pane      : constant Pixel := 16#FFAF_AFAF#;  --  editable field
+   Sel_Blue  : constant Pixel := 16#FF3B_67A2#;  --  selection
    Text_Dark : constant Pixel := 16#FF20_2020#;
 
    --  Bureau chrome.
-   Desktop    : constant Pixel := 16#FFA0_A0A4#;
+   Desktop    : constant Pixel := 16#FF88_8888#;  --  marble -> solid
    Bar_Face   : constant Pixel := Face;   --  screen bar / menus
-   Win_Face   : constant Pixel := Face;   --  window frame fill
+   Win_Face   : constant Pixel := 16#FF95_9595#;  --  window bg
    Title_Blue : constant Pixel := Sel_Blue;  --  focused title bar
-   Title_Gray : constant Pixel := 16#FF8C_8C90#;  --  unfocused
+   Title_Gray : constant Pixel := 16#FFAF_AFAF#;  --  unfocused
    Title_Text : constant Pixel := 16#FFFF_FFFF#;
    Title_Dim  : constant Pixel := Text_Dark;
 
