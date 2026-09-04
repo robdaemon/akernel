@@ -457,6 +457,15 @@ package body Trinket.Widgets is
    --  Scrollbar
 
    Arrow : constant U64 := 16;  --  arrow box height
+   --  M86d (Xen): BOTH arrow boxes stack at the bottom of the
+   --  bar (up over down), the MUI signature layout.
+
+   function Track_B (W : Scrollbar) return U64 is
+     --  Bottom of the knob travel region, with an underflow
+     --  guard for degenerate bars shorter than the arrow pair.
+     (if W.H > 2 * Arrow + 2
+      then W.Y + W.H - 2 * Arrow
+      else W.Y + 2);
 
    function New_Scrollbar
      (On_Change : Change_Callback := null) return Any_Widget
@@ -514,9 +523,9 @@ package body Trinket.Widgets is
    procedure Knob_Rect
      (W : Scrollbar; Top, Bottom : out U64)
    is
-      Track_T : constant U64 := W.Y + Arrow;
-      Track_B : constant U64 := W.Y + W.H - Arrow;
-      Track_H : constant U64 := Track_B - Track_T;
+      Track_T : constant U64 := W.Y + 2;
+      Track_Bn : constant U64 := Track_B (W);
+      Track_H : constant U64 := Track_Bn - Track_T;
       Total   : constant U64 := W.Max - W.Min + W.Visible;
       Knob_H  : constant U64 :=
         U64'Max (12, Track_H * W.Visible / U64'Max (Total, 1));
@@ -536,82 +545,154 @@ package body Trinket.Widgets is
 
    procedure Draw (W : Scrollbar; C : Canvas) is
       KT, KB : U64;
+
+      procedure Frame_Flat (X0, Y0, X1, Y1 : U64) is
+      begin
+         --  Xen's flat frame: black outline + white inner line.
+         Paint.Fill_Rect (C, X0, Y0, X1, Y0 + 1, Border);
+         Paint.Fill_Rect (C, X0, Y1 - 1, X1, Y1, Border);
+         Paint.Fill_Rect (C, X0, Y0, X0 + 1, Y1, Border);
+         Paint.Fill_Rect (C, X1 - 1, Y0, X1, Y1, Border);
+         Paint.Fill_Rect (C, X0 + 1, Y0 + 1, X1 - 1, Y0 + 2,
+                          Bevel_Hi);
+         Paint.Fill_Rect (C, X0 + 1, Y1 - 2, X1 - 1, Y1 - 1,
+                          Bevel_Hi);
+         Paint.Fill_Rect (C, X0 + 1, Y0 + 1, X0 + 2, Y1 - 1,
+                          Bevel_Hi);
+         Paint.Fill_Rect (C, X1 - 2, Y0 + 1, X1 - 1, Y1 - 1,
+                          Bevel_Hi);
+      end Frame_Flat;
+
+      procedure Fill_Stripes (X0, Y0, X1, Y1 : U64) is
+         --  The xenbar look: vertical 1px stripes alternating
+         --  window gray / gadget gray.
+         X : U64 := X0;
+      begin
+         while X < X1 loop
+            Paint.Fill_Rect (C, X, Y0, X + 1, Y1,
+                             (if (X - X0) mod 2 = 0
+                              then Win_Face else Face));
+            X := X + 1;
+         end loop;
+      end Fill_Stripes;
+
+      procedure Chevron (CX, Y0 : U64; Up : Boolean; Sh : U64) is
+         --  Thin single-pixel chevron, white shadow to the left
+         --  (MUI "shadow" style); Sh shifts when pressed.
+         P : U64;
+      begin
+         for I in U64'(0) .. 3 loop
+            P := (if Up then Y0 + I else Y0 + 3 - I);
+            Paint.Fill_Rect (C, CX - I - 1 + Sh, P + Sh,
+                             CX - I + Sh, P + 1 + Sh, Bevel_Hi);
+            Paint.Fill_Rect (C, CX + I - 1 + Sh, P + Sh,
+                             CX + I + Sh, P + 1 + Sh, Bevel_Hi);
+            Paint.Fill_Rect (C, CX - I + Sh, P + Sh,
+                             CX - I + 1 + Sh, P + 1 + Sh,
+                             Text_Dark);
+            Paint.Fill_Rect (C, CX + I + Sh, P + Sh,
+                             CX + I + 1 + Sh, P + 1 + Sh,
+                             Text_Dark);
+         end loop;
+      end Chevron;
+
+      CX : constant U64 := W.X + W.W / 2;
+      SU : constant U64 := (if W.Arrow_Dn = -1 then 1 else 0);
+      SD : constant U64 := (if W.Arrow_Dn = 1 then 1 else 0);
    begin
       if not Intersects (W, C) then
          return;
       end if;
-      Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
-      Paint.Bevel2 (C, W.X, W.Y, W.X + W.W, W.Y + W.H,
-                    Raised => False);
-      --  Arrow boxes + triangle glyphs; a pressed arrow draws
-      --  sunken with its glyph shifted (M86c).
-      Paint.Fill_Rect (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
-                       W.Y + Arrow - 2, Face);
-      Paint.Bevel2 (C, W.X + 2, W.Y + 2, W.X + W.W - 2,
-                    W.Y + Arrow - 2,
-                    Raised => W.Arrow_Dn /= -1);
-      Paint.Fill_Rect (C, W.X + 2, W.Y + W.H - Arrow + 2,
-                       W.X + W.W - 2, W.Y + W.H - 2, Face);
-      Paint.Bevel2 (C, W.X + 2, W.Y + W.H - Arrow + 2,
-                    W.X + W.W - 2, W.Y + W.H - 2,
-                    Raised => W.Arrow_Dn /= 1);
-      declare
-         MX : constant U64 := W.X + W.W / 2;
-         SU : constant U64 := (if W.Arrow_Dn = -1 then 1 else 0);
-         SD : constant U64 := (if W.Arrow_Dn = 1 then 1 else 0);
-      begin
-         for DY in U64'(0) .. 3 loop
-            Paint.Fill_Rect (C, MX - DY + SU, W.Y + 5 + DY + SU,
-                             MX + DY + 1 + SU, W.Y + 6 + DY + SU,
-                             Text_Dark);
-            Paint.Fill_Rect (C, MX - DY + SD,
-                             W.Y + W.H - 6 - DY + SD,
-                             MX + DY + 1 + SD,
-                             W.Y + W.H - 5 - DY + SD,
-                             Text_Dark);
-         end loop;
-      end;
-      --  Knob (striped, the mockup look); sunken while dragged.
+      if W.H <= 2 * Arrow + 2 or else W.W <= 6 then
+         --  Degenerate bar: plain face, nothing fits.
+         Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
+         return;
+      end if;
+
+      --  Track: stripes over the knob travel region; flat frame
+      --  around the whole bar.
+      Fill_Stripes (W.X + 2, W.Y + 2, W.X + W.W - 2,
+                    Track_B (W));
+      Paint.Fill_Rect (C, W.X + 2, Track_B (W), W.X + W.W - 2,
+                       W.Y + W.H - 2, Face);
+      Frame_Flat (W.X, W.Y, W.X + W.W, W.Y + W.H);
+
+      --  Knob: framed striped box with the Xen blue checker cap
+      --  at its bottom; sunken frame while dragged.
       Knob_Rect (W, KT, KB);
       if KB > KT then
-         Paint.Fill_Rect (C, W.X + 2, KT, W.X + W.W - 2, KB, Face);
-         Paint.Bevel2 (C, W.X + 2, KT, W.X + W.W - 2, KB,
-                       Raised => not W.Dragging);
-         declare
-            SY : U64 := KT + 5;
-         begin
-            while SY + 1 < KB - 4 loop
-               Paint.Fill_Rect (C, W.X + 5, SY, W.X + W.W - 5,
-                                SY + 1, Bevel_Lo);
-               SY := SY + 3;
-            end loop;
-         end;
+         Fill_Stripes (W.X + 2, KT + 2, W.X + W.W - 2, KB - 2);
+         Frame_Flat (W.X + 1, KT, W.X + W.W - 1, KB);
+         if KB - KT >= 16 then
+            declare
+               CT : constant U64 := KB - 11;  --  cap top
+               CB : constant U64 := KB - 2;
+            begin
+               for Row in CT + 2 .. CB loop
+                  for X in W.X + 3 .. W.X + W.W - 4 loop
+                     Paint.Fill_Rect
+                       (C, X, Row, X + 1, Row + 1,
+                        (if (X + Row) mod 2 = 0
+                         then Sel_Blue else Win_Face));
+                  end loop;
+               end loop;
+               Frame_Flat (W.X + 1, CT, W.X + W.W - 1, KB - 1);
+            end;
+         end if;
       end if;
+
+      --  Arrow boxes, both at the bottom: up over down.  Held
+      --  arrow draws sunken with the glyph shifted (M86c).
+      Paint.Fill_Rect (C, W.X + 2, W.Y + W.H - 2 * Arrow + 1,
+                       W.X + W.W - 2, W.Y + W.H - Arrow - 1, Face);
+      Frame_Flat (W.X + 1, W.Y + W.H - 2 * Arrow,
+                  W.X + W.W - 1, W.Y + W.H - Arrow);
+      if W.Arrow_Dn = -1 then
+         Paint.Bevel2 (C, W.X + 2, W.Y + W.H - 2 * Arrow + 1,
+                       W.X + W.W - 2, W.Y + W.H - Arrow - 1,
+                       Raised => False);
+      end if;
+      Paint.Fill_Rect (C, W.X + 2, W.Y + W.H - Arrow + 1,
+                       W.X + W.W - 2, W.Y + W.H - 2, Face);
+      Frame_Flat (W.X + 1, W.Y + W.H - Arrow,
+                  W.X + W.W - 1, W.Y + W.H);
+      if W.Arrow_Dn = 1 then
+         Paint.Bevel2 (C, W.X + 2, W.Y + W.H - Arrow + 1,
+                       W.X + W.W - 2, W.Y + W.H - 2,
+                       Raised => False);
+      end if;
+      Chevron (CX, W.Y + W.H - 2 * Arrow + 6, True, SU);
+      Chevron (CX, W.Y + W.H - Arrow + 6, False, SD);
    end Draw;
 
    function On_Pointer
      (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
       return Boolean
-   is
-      KT, KB : U64;
-      Track_T : constant U64 := W.Y + Arrow;
-      Track_B : constant U64 := W.Y + W.H - Arrow;
-   begin
-      case K is
-         when Press =>
-            if not Inside (W.all, PX, PY) then
-               return False;
-            end if;
-            Knob_Rect (W.all, KT, KB);
-            if PY < W.Y + Arrow then
-               W.Arrow_Dn := -1;
-               W.Dirty := True;
-               User_Move (W, W.Pos - 1);
-            elsif PY >= W.Y + W.H - Arrow then
-               W.Arrow_Dn := 1;
-               W.Dirty := True;
-               User_Move (W, W.Pos + 1);
-            elsif PY >= KT and then PY < KB then
+    is
+       KT, KB : U64;
+       Track_T  : constant U64 := W.Y + 2;
+       Track_Bt : constant U64 := Track_B (W.all);
+    begin
+       if W.H <= 2 * Arrow + 2 then
+          return False;  --  degenerate bar, nothing to hit
+       end if;
+       case K is
+          when Press =>
+             if not Inside (W.all, PX, PY) then
+                return False;
+             end if;
+             Knob_Rect (W.all, KT, KB);
+             --  MUI layout: both arrow boxes at the bottom —
+             --  up above down; track press pages (M86d).
+             if PY >= W.Y + W.H - Arrow then
+                W.Arrow_Dn := 1;
+                W.Dirty := True;
+                User_Move (W, W.Pos + 1);
+             elsif PY >= W.Y + W.H - 2 * Arrow then
+                W.Arrow_Dn := -1;
+                W.Dirty := True;
+                User_Move (W, W.Pos - 1);
+             elsif PY >= KT and then PY < KB then
                W.Dragging := True;
                W.Dirty := True;
                W.Grab_DY := PY - KT;
@@ -626,8 +707,8 @@ package body Trinket.Widgets is
                Knob_Rect (W.all, KT, KB);
                declare
                   Knob_H : constant U64 := KB - KT;
-                  Travel : constant U64 :=
-                    Track_B - Track_T - Knob_H;
+                   Travel : constant U64 :=
+                     Track_Bt - Track_T - Knob_H;
                   Rel : constant U64 :=
                     (if PY > Track_T + W.Grab_DY
                      then PY - Track_T - W.Grab_DY else 0);

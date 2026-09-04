@@ -169,11 +169,15 @@ type Scrollbar is new Widget with record
 end record;
 ```
 
-Vertical scrollbar. Sunken track, arrow boxes, proportional striped
-knob. Pointer capture (Bureau v4) delivers drag and release outside the
-window. `On_Change` fires **only for user moves**, not for
-programmatic `Set_Pos`. M86c press feedback: a held arrow draws sunken
-with its glyph shifted one pixel; the knob draws sunken while dragged.
+Vertical scrollbar in the MUI/Xen look (M86d): flat black/white
+frame, track of vertical 1px window-gray/gadget-gray stripes, a
+striped knob with the Xen blue checker cap at its bottom, and —
+MUI's signature layout — **both arrow boxes stacked at the bottom**
+(up over down) with thin embossed chevron glyphs. Pointer capture
+(Bureau v4) delivers drag and release outside the window.
+`On_Change` fires **only for user moves**, not for programmatic
+`Set_Pos`. M86c press feedback: a held arrow draws sunken with its
+glyph shifted one pixel; the knob draws sunken while dragged.
 
 ```ada
 type Change_Callback is access procedure (Pos : U64);
