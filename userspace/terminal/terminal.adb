@@ -297,7 +297,9 @@ procedure Terminal is
             exit when Line_I >= Terminal_Buffer.Line_Count;
             Terminal_Buffer.Get_Line (Line_I, Line, Len);
             if Len > 0 then
-               Trinket.Fonts.Draw_Text
+               --  Grid device: fixed 8px cells regardless of the
+               --  proportional UI font (M86f).
+               Trinket.Fonts.Draw_Text_Mono
                  (Canvas, 0, Y, Line (1 .. Len), Trinket.Text_Dark);
             end if;
          end;

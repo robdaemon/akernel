@@ -6,8 +6,13 @@ package body Trinket.Text_Edit is
 
    Pad : constant U64 := 6;  --  text inset inside the frame
 
-   function CW return U64 is (Fonts.Text_Width ("M"));
    function LH return U64 is (Fonts.Line_Height);
+
+   --  Pixel offset of the gap before character Col+1 (0-based
+   --  column) in S — prefix-sum against the proportional font.
+   function Col_X (S : String; Col : Natural) return U64 is
+     (if Col = 0 then 0
+      else Fonts.Text_Width (S (S'First .. S'First + Col - 1)));
 
    function New_Text_Edit return Widgets.Any_Widget is
       TE : constant Any_Text_Edit := new Text_Edit;
@@ -334,17 +339,33 @@ package body Trinket.Text_Edit is
    end On_Key;
 
    --  Coordinates -> (line, col); clamps into the document.
+   --  Column is the nearest cursor gap in the proportional run.
    procedure Locate
      (W : Text_Edit; PX, PY : U64; L, Col : out Natural)
    is
       Row : constant U64 :=
         (if PY > W.Y + Pad then (PY - W.Y - Pad) / LH else 0);
-      Cl : constant U64 :=
-        (if PX > W.X + Pad then (PX - W.X - Pad) / CW else 0);
+      T   : U64;
+      Acc : U64 := 0;
    begin
       L := Natural'Min
         (Natural (W.Top) + Natural (Row) + 1, W.N);
-      Col := Natural'Min (Natural (Cl), W.Lines (L).Len);
+      Col := W.Lines (L).Len;
+      T := (if PX > W.X + Pad then PX - W.X - Pad else 0);
+      if Col > 0 then
+         for P in 1 .. Col loop
+            declare
+               GW : constant U64 :=
+                 Fonts.Text_Width (W.Lines (L).Buf (P .. P));
+            begin
+               if Acc + GW / 2 >= T then
+                  Col := P - 1;
+                  exit;
+               end if;
+               Acc := Acc + GW;
+            end;
+         end loop;
+      end if;
    end Locate;
 
    function On_Pointer
@@ -430,18 +451,18 @@ package body Trinket.Text_Edit is
                if SL >= 0 and then EL > SL then
                   --  Selection band + white text on it.
                   Paint.Fill_Rect
-                    (C, TX0 + U64 (SL) * CW, LY,
-                     TX0 + U64 (EL) * CW, LY + LH, Sel_Blue);
+                    (C, TX0 + Col_X (S, SL), LY,
+                     TX0 + Col_X (S, EL), LY + LH, Sel_Blue);
                   if SL > 0 then
                      Fonts.Draw_Text
                        (C, TX0, LY, S (1 .. SL), Text_Dark);
                   end if;
                   Fonts.Draw_Text
-                    (C, TX0 + U64 (SL) * CW, LY,
+                    (C, TX0 + Col_X (S, SL), LY,
                      S (SL + 1 .. EL), Pane);
                   if EL < S'Length then
                      Fonts.Draw_Text
-                       (C, TX0 + U64 (EL) * CW, LY,
+                       (C, TX0 + Col_X (S, EL), LY,
                         S (EL + 1 .. S'Length), Text_Dark);
                   end if;
                else
@@ -450,8 +471,8 @@ package body Trinket.Text_Edit is
                --  Cursor bar.
                if LN = W.Cur_L then
                   Paint.Fill_Rect
-                    (C, TX0 + U64 (W.Cur_C) * CW, LY,
-                     TX0 + U64 (W.Cur_C) * CW + 1, LY + LH,
+                    (C, TX0 + Col_X (S, W.Cur_C), LY,
+                     TX0 + Col_X (S, W.Cur_C) + 1, LY + LH,
                      Text_Dark);
                end if;
             end;

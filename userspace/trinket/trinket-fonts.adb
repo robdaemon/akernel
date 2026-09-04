@@ -21,7 +21,11 @@ package body Trinket.Fonts is
       Rows        : Row_Array := (others => 0);
    end record;
 
-   Glyphs        : array (0 .. 127) of Glyph_Rec;
+   type Glyph_Table is array (0 .. 127) of Glyph_Rec;
+
+   Glyphs        : Glyph_Table;
+   Mono_Glyphs   : Glyph_Table;  --  compiled-in 8x8, advance 8
+   Mono_Ascent   : constant U64 := 6;
    F_Ascent      : U64 := 6;
    F_Descent     : U64 := 2;
    F_From_Disk   : Boolean := False;
@@ -57,14 +61,14 @@ package body Trinket.Fonts is
       return R;
    end Reverse_Bits;
 
-   procedure Install_Fallback is
+   procedure Install_Mono (T : out Glyph_Table) is
    begin
-      Glyphs := (others => (Valid => False, GW => 0, GH => 0,
-                            XOff => 0, YOff => 0, DW => 8,
-                            Rows => (others => 0)));
+      T := (others => (Valid => False, GW => 0, GH => 0,
+                       XOff => 0, YOff => 0, DW => 8,
+                       Rows => (others => 0)));
       for Ch in Character range ' ' .. '~' loop
          declare
-            G : Glyph_Rec renames Glyphs (Character'Pos (Ch));
+            G : Glyph_Rec renames T (Character'Pos (Ch));
          begin
             G.Valid := True;
             G.GW := 8;
@@ -77,7 +81,12 @@ package body Trinket.Fonts is
             end loop;
          end;
       end loop;
-      F_Ascent := 6;
+   end Install_Mono;
+
+   procedure Install_Fallback is
+   begin
+      Glyphs := Mono_Glyphs;
+      F_Ascent := Mono_Ascent;
       F_Descent := 2;
       F_From_Disk := False;
    end Install_Fallback;
@@ -196,7 +205,7 @@ package body Trinket.Fonts is
       end loop;
    end Parse_BDF;
 
-   procedure Init (Path : String := "Sys:Fonts/font8x8.bdf") is
+   procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf") is
       use Akernel_User;
       Size  : U64;
       Count : U64;
@@ -209,6 +218,7 @@ package body Trinket.Fonts is
          return;
       end if;
       Initialized := True;
+      Install_Mono (Mono_Glyphs);
       St := Files.Open (Path, Size);
       if St = Files.Status_Ok and then Size > 0
         and then Size <= 64 * 1024
@@ -249,21 +259,22 @@ package body Trinket.Fonts is
       return W;
    end Text_Width;
 
-   procedure Draw_Text
-     (C : Canvas; X, Y : U64; S : String; FG : Pixel)
+   procedure Draw_From
+     (C      : Canvas; X, Y : U64; S : String; FG : Pixel;
+      T      : Glyph_Table; Ascent : U64)
    is
       Pix      : Pixel_Array (0 .. C.W * C.H - 1)
         with Address => C.Base;
-      Baseline : constant Integer := Integer (Y) + Integer (F_Ascent);
+      Baseline : constant Integer := Integer (Y) + Integer (Ascent);
       Pen      : Integer := Integer (X);
    begin
       for Ch of S loop
          declare
             Code : constant Natural := Character'Pos (Ch);
          begin
-            if Code <= 127 and then Glyphs (Code).Valid then
+            if Code <= 127 and then T (Code).Valid then
                declare
-                  G : Glyph_Rec renames Glyphs (Code);
+                  G : Glyph_Rec renames T (Code);
                   GY : constant Integer :=
                     Baseline - G.YOff - Integer (G.GH);
                begin
@@ -300,6 +311,20 @@ package body Trinket.Fonts is
             end if;
          end;
       end loop;
+   end Draw_From;
+
+   procedure Draw_Text
+     (C : Canvas; X, Y : U64; S : String; FG : Pixel)
+   is
+   begin
+      Draw_From (C, X, Y, S, FG, Glyphs, F_Ascent);
    end Draw_Text;
+
+   procedure Draw_Text_Mono
+     (C : Canvas; X, Y : U64; S : String; FG : Pixel)
+   is
+   begin
+      Draw_From (C, X, Y, S, FG, Mono_Glyphs, Mono_Ascent);
+   end Draw_Text_Mono;
 
 end Trinket.Fonts;

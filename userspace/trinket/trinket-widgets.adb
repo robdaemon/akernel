@@ -229,27 +229,30 @@ package body Trinket.Widgets is
    end Set_Focused;
 
    --  Keep the cursor inside the visible window by scrolling
-   --  HOff (character granularity; the font is 8 px monospace).
+   --  HOff (pixel granularity against the proportional font:
+   --  drop leading chars until the cursor fits the inner width).
    procedure Ensure_Visible (W : in out Input) is
-      CW      : constant U64 := 8;
-      Visible : constant Natural :=
-        (if W.W > 8 then Natural ((W.W - 8) / CW) else 1);
+      Inner : constant U64 := (if W.W > 8 then W.W - 8 else 8);
    begin
       if W.Cur < W.HOff then
          W.HOff := W.Cur;
-      elsif W.Cur > W.HOff + Visible then
-         W.HOff := W.Cur - Visible;
+      else
+         while W.HOff < W.Cur
+           and then Fonts.Text_Width (W.Buf (W.HOff + 1 .. W.Cur))
+                    > Inner
+         loop
+            W.HOff := W.HOff + 1;
+         end loop;
       end if;
    end Ensure_Visible;
 
    procedure Draw (W : Input; C : Canvas) is
       C2 : Canvas := C;
       LH : constant U64 := Fonts.Line_Height;
-      CW : constant U64 := 8;
       TY : constant U64 :=
         W.Y + (if W.H > LH then (W.H - LH) / 2 else 0);
-      VN : constant Natural := Natural'Min (W.Len, W.HOff +
-        (if W.W > 8 then Natural ((W.W - 8) / CW) else 1));
+      CX : constant U64 := W.X + 4 +
+        Fonts.Text_Width (W.Buf (W.HOff + 1 .. W.Cur));
    begin
       if not Intersects (W, C) then
          return;
@@ -258,22 +261,18 @@ package body Trinket.Widgets is
       Paint.Fill_Rect (C2, W.X, W.Y, W.X + W.W, W.Y + W.H, Pane);
       Paint.Bevel2 (C2, W.X, W.Y, W.X + W.W, W.Y + W.H,
                     Raised => False);
-      if VN > W.HOff then
+      if W.Len > W.HOff then
          Fonts.Draw_Text
            (C2, W.X + 4, TY + 2,
-            W.Buf (W.HOff + 1 .. VN), Text_Dark);
+            W.Buf (W.HOff + 1 .. W.Len), Text_Dark);
       end if;
       if W.Focused then
          Paint.Fill_Rect
-           (C2, W.X + 4 + U64 (W.Cur - W.HOff) * CW, TY + 2,
-            W.X + 5 + U64 (W.Cur - W.HOff) * CW, TY + 2 + LH,
-            Text_Dark);
+           (C2, CX, TY + 2, CX + 1, TY + 2 + LH, Text_Dark);
       end if;
    end Draw;
 
    function On_Key (W : access Input; Code : U64) return Boolean is
-      CW : constant U64 := 8;
-      pragma Unreferenced (CW);
    begin
       if not W.Focused then
          return False;
@@ -354,17 +353,30 @@ package body Trinket.Widgets is
      (W : access Input; K : Pointer_Kind; PX, PY : U64)
       return Boolean
    is
-      CW : constant U64 := 8;
+      T : U64;
+      Acc : U64 := 0;
    begin
       if K /= Press or else not Inside (W.all, PX, PY) then
          return False;
       end if;
       W.Focused := True;
-      if PX > W.X + 4 then
-         W.Cur := Natural'Min
-           (W.Len, W.HOff + Natural ((PX - W.X - 4) / CW));
-      else
-         W.Cur := W.HOff;
+      --  Nearest cursor gap: walk the visible run until half of a
+      --  glyph's advance crosses the click point.
+      T := (if PX > W.X + 4 then PX - W.X - 4 else 0);
+      W.Cur := W.Len;
+      if W.Len > 0 then
+         for P in W.HOff .. W.Len - 1 loop
+            declare
+               CW : constant U64 :=
+                 Fonts.Text_Width (W.Buf (P + 1 .. P + 1));
+            begin
+               if Acc + CW / 2 >= T then
+                  W.Cur := P;
+                  exit;
+               end if;
+               Acc := Acc + CW;
+            end;
+         end loop;
       end if;
       Ensure_Visible (W.all);
       W.Dirty := True;

@@ -162,6 +162,8 @@ package body Tdemo_App is
          Widgets.New_Group (Widgets.Horizontal, "Worker");
        Choice_Grp : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal, "Choices");
+       Font_Grp : constant Widgets.Any_Widget :=
+         Widgets.New_Group (Widgets.Horizontal, "Font");
        Btn_Row  : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal);
       Sz       : U64;
@@ -265,6 +267,11 @@ package body Tdemo_App is
            ("Right", Choice_Set'Access,
             On_Change => Choice_Toggled'Access));
 
+       --  M86f: the proportional default font — narrow i/l vs
+       --  wide W/M in one string shows the per-glyph advance.
+       Widgets.Group (Font_Grp.all).Add
+         (Widgets.New_Label ("iiii llll vs WWW MMM"));
+
        --  Weighted so fixed-content groups keep their content
        --  inside the frame at the default 400x420: Text (5
        --  labels) and Images (64x48 bitmaps) need the tall
@@ -274,6 +281,7 @@ package body Tdemo_App is
        Widgets.Group (Root.all).Add (Img_Grp, 6);
        Widgets.Group (Root.all).Add (Work_Grp, 4);
        Widgets.Group (Root.all).Add (Choice_Grp, 4);
+       Widgets.Group (Root.all).Add (Font_Grp, 3);
        Widgets.Group (Root.all).Add (Btn_Row, 4);
 
        if Trinket.Window.Open

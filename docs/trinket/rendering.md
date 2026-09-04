@@ -84,20 +84,28 @@ scrollbars, and group frames.
 ## Text
 
 `Trinket.Fonts` loads BDF bitmap fonts from `Sys:Fonts/*.bdf` and
-falls back to a compiled-in 8x8 font if loading fails.
+falls back to a compiled-in 8x8 font if loading fails. The default UI
+font is `font8x8p.bdf` (M86f): the same 8x8 glyphs trimmed to their
+ink bounds with a 1px gap, so `Draw_Text`/`Text_Width` advance by
+per-glyph `DWIDTH` (pseudo-proportional, MUI XEN-font look). Bureau
+chrome stays monospace and does not use this package.
 
 ```ada
-procedure Init (Path : String := "Sys:Fonts/font8x8.bdf");
+procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf");
 function Loaded_From_Disk return Boolean;
 function Line_Height return U64;
 function Text_Width (S : String) return U64;
 procedure Draw_Text (C : Canvas; X, Y : U64; S : String; FG : Pixel);
+procedure Draw_Text_Mono (C : Canvas; X, Y : U64; S : String; FG : Pixel);
 ```
 
 - `Y` is the line top; glyph bitmaps are placed at their BDF baseline
   offsets.
 - `Draw_Text` has transparent background; the caller must fill the
   field or band first.
+- `Draw_Text_Mono` renders the compiled-in untrimmed 8x8 glyphs on
+  fixed 8px advances — for grid devices (the terminal), where cell
+  alignment matters more than look.
 - `Init` is idempotent and can be called again to reload a font.
 
 ## Images

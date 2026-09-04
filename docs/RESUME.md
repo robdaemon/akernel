@@ -11,6 +11,28 @@ repository.
 
 ## Recently shipped
 
+- **M86f** (this commit): proportional UI font. tools/font2bdf.py
+  gains `--proportional`: each glyph is trimmed to its ink bounds
+  with DWIDTH = ink + 1 (space = 4) — the classic pseudo-
+  proportional treatment on the SAME compiled-in 8x8 glyph data
+  (zero license risk; only metrics change). The Makefile now ships
+  both `Sys:Fonts/FONT8X8.BDF` (untouched) and `FONT8X8P.BDF`, and
+  `Trinket.Fonts.Init`'s default path flips to the p variant
+  (MUI XEN-font look; Bureau chrome never used this package and
+  stays monospace Topaz-style). The runtime keeps a second
+  `Mono_Glyphs` table — the compiled-in untrimmed 8x8 set on fixed
+  8px advances — behind the new `Draw_Text_Mono`; the terminal (a
+  grid device, cell alignment beats look) switches to it and is
+  pixel-identical to pre-M86f. Proportional fallout fixed in the
+  widgets: `Input` h-scroll (`Ensure_Visible`) and click-to-cursor
+  are now pixel-granular against `Text_Width` prefix sums (was
+  char-cells * 8), and `Text_Edit`'s `Locate`/selection
+  band/cursor bar ditto via a `Col_X` prefix-sum helper. tdemo
+  grew a "Font" group ("iiii llll vs WWW MMM") as the live
+  showcase. QMP-verified: screendump ink runs on the label row —
+  i/l advance 5px, W advance 8px (mono would be uniform 8).
+  1848/1846 PASS SMP4/SMP1, 0 FAIL.
+
 - **M86e** (this commit): toggle widgets. Trinket gains
   `Checkbox` and `Radio` (MUI CheckMark/RadioButton lineage):
   14px framed box (square / disc drawn with a doubled-coordinate
