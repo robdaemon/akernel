@@ -353,6 +353,27 @@ growth, attribute writes).
   **M82 complete** (a..i; a reverted with the vendored-C++
   route). Nothing else queued.
 
+- **M85a done** (this commit): EndCLI. New streams op
+  Op_Endcli = 5 (append-only) + Akernel_User.Streams.Endcli
+  (Endpoint) helper; reply Count 0 = "closing, exit" / 1 = "not
+  a window, stay up" / IPC failure = 1. Terminal handles it by
+  REPLYING FIRST (rendezvous discipline: calling Bureau before
+  the reply would deadlock the pair), then taking the
+  close-gadget path (Surface_Destroy + Process_Exit) — the
+  surface dies, the shell's channel with it, and the shell
+  exits on its own when its next Op_Read fails. Serial replies
+  Count = 1 explicitly (the unknown-op fallthrough replies 0,
+  which the shell would read as "closing"). Shell: "exit" is
+  gone, "endcli" replaces it — same running-jobs double-tap
+  warning (renamed Exit_Warned -> Endcli_Warned), then
+  Endcli (Console_EP): 0 -> Process_Exit; else prints "endcli:
+  console is not a window" and returns RC_Warn (5, below the
+  default failat 10, so scripts continue). fuzz: script
+  "endcli / set FZENDCLI=alive" — the marker proves the shell
+  survives endcli on serial. QMP smoke: typed endcli+ret into
+  the GUI terminal; window closed, File Manager frontmost, no
+  faults. 1750 PASS SMP4 / 1748 SMP1, 0 FAIL.
+
 - **M84c done** (this commit): double-click open. Detection lives
   in Trinket.Listview (Bureau pointer events carry no timestamps,
   so the widget times presses with Syscalls.Read_Time):

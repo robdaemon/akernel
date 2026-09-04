@@ -385,6 +385,13 @@ begin
                Response.Count := 1;
             end if;
             Response.Data := (others => 0);
+         elsif Label = Akernel_User.Streams.Op_Endcli then
+            --  EndCLI (M85a) on the serial console: no window
+            --  to close — answer 1 ("not a window console") and
+            --  keep serving; the shell stays up.  Without this
+            --  branch the unknown-op fallthrough would reply 0,
+            --  which the shell reads as "closing".
+            Response := (Count => 1, Data => (others => 0));
          else
             --  Unknown ops: no data.
             Response := (Count => 0, Data => (others => 0));

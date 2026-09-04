@@ -25,6 +25,12 @@ with Akernel_User.Syscalls;
 --              its own endpoint); reply Count is a status (0 =
 --              attached, 1 = rejected). A sink whose writes fail
 --              is dropped.
+--    Op_Endcli: Amiga EndCLI (M85a) — the shell asks its console
+--              server to close its window. Reply Count is a
+--              status: 0 = the server IS a window-owning console
+--              and is closing (the client should exit now; the
+--              channel dies with the server), 1 = no window
+--              (serial console; the client stays up).
 --  Caps slots are otherwise unused; badges are not interpreted.
 
 package Akernel_User.Streams is
@@ -35,6 +41,7 @@ package Akernel_User.Streams is
    Op_Read        : constant U64 := 2;
    Op_Input       : constant U64 := 3;
    Op_Attach_Sink : constant U64 := 4;
+   Op_Endcli      : constant U64 := 5;
    Max_Chunk : constant := 40;  --  6 message words - Count word
 
    type Stream_Request is record
@@ -67,8 +74,14 @@ package Akernel_User.Streams is
       Last   : out Stream_Element_Offset);
 
    overriding procedure Write
-     (Stream : in out Endpoint_Stream;
+     (Stream   : in out Endpoint_Stream;
       Item   : Stream_Element_Array);
+
+   --  Op_Endcli client call (M85a): ask the console server to
+   --  close its window. Returns the reply status: 0 = server is
+   --  closing (caller should exit), 1 = not a window console
+   --  (also on IPC failure — staying up is the safe default).
+   function Endcli (Endpoint : U64) return U64;
 
 private
    type Endpoint_Stream is new Root_Stream_Type with record

@@ -5674,6 +5674,13 @@ begin
             "failat 21" & ASCII.LF
             & "Sys:C/Elevate Sys:C/NoSuch" & ASCII.LF
             & "set FZFT=alive" & ASCII.LF;
+          --  EndCLI on the serial console (M85a): the serial
+          --  server answers "not a window" (RC_Warn, below the
+          --  default failat 10) and the shell stays up, so the
+          --  marker line after endcli still runs.
+          Script_Endcli : constant String :=
+            "endcli" & ASCII.LF
+            & "set FZENDCLI=alive" & ASCII.LF;
           Script22 : constant String :=
             "echo hello there > BD0:FZECHO.TXT" & ASCII.LF
             & "echo plain line" & ASCII.LF
@@ -6272,6 +6279,17 @@ begin
           Run_Command ("Sys:System/Shell", "execute BD0:FZFT.TXT",
                        0, "failat 21 lets RC 20 pass");
           Check_Env ("FZFT", "alive", "script continued past RC 20");
+
+          --  EndCLI (M85a): the fuzz console is serial, so the
+          --  serial server replies "not a window" and the shell
+          --  keeps serving — the marker after endcli must run.
+          Write_File ("BD0:FZENDCLI.TXT", Script_Endcli,
+                      "endcli script written");
+          Run_Command ("Sys:System/Shell",
+                       "execute BD0:FZENDCLI.TXT",
+                       0, "endcli on serial does not kill the shell");
+          Check_Env ("FZENDCLI", "alive",
+                     "shell kept running after endcli (no window)");
 
           Write_File ("BD0:FZECHOS.TXT", Script22,
                       "echo script written");

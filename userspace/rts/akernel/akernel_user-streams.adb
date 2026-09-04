@@ -108,4 +108,18 @@ package body Akernel_User.Streams is
       end loop;
    end Write;
 
+   function Endcli (Endpoint : U64) return U64 is
+      R_Label  : U64;
+      Response : Stream_Response;
+      Status   : U64;
+   begin
+      Status := RPC.Call
+        (Endpoint, Op_Endcli, (Count => 0, Data => (others => 0)),
+         RPC.No_Caps, R_Label, Response);
+      if Status /= IPC_Ok then
+         return 1;  --  channel dead/foreign: stay up
+      end if;
+      return Response.Count;
+   end Endcli;
+
 end Akernel_User.Streams;

@@ -29,7 +29,7 @@ with Scripting.Console_IO;
 --  Op_Read cannot block (the terminal is a single-threaded
 --  receiver), so the shell polls with yields between drains.
 --
---  Builtins: "help", "exit", "execute <script> [args]"
+--  Builtins: "help", "endcli", "execute <script> [args]"
 --  (milestones 42 + 70: the script runner — LF-separated command
 --  lines, ';' starts a comment, Amiga-failat stop, nesting capped
 --  at 4; Scripting.Interp is the AmigaDOS subset: .key args, .def
@@ -164,7 +164,7 @@ procedure Shell is
    package Job_Tab is new Akernel_User.Tables (Job_Rec);
    function Jobs (J : Natural) return Job_Tab.Element_Access
      renames Job_Tab.Ref;
-   Exit_Warned : Boolean := False;
+   Endcli_Warned : Boolean := False;
 
    procedure Harvest (Loud : Boolean) is
       Code : U64 := 0;
@@ -419,13 +419,14 @@ procedure Shell is
          Rest : constant String :=
            (if R_First > Cmd'Last then "" else Cmd (R_First .. Cmd'Last));
       begin
-         if Word /= "exit" then
-            Exit_Warned := False;
+         if Word /= "endcli" then
+            Endcli_Warned := False;
          end if;
          if Word = "help" then
             Akernel_User.Console.Put_Line ("akernel shell — builtins:");
             Akernel_User.Console.Put_Line ("  help            this text");
-            Akernel_User.Console.Put_Line ("  exit            leave the shell");
+            Akernel_User.Console.Put_Line
+              ("  endcli          close this console window and exit");
              Akernel_User.Console.Put_Line
                ("  execute <f> [a] run a script; args bind via .key");
              Akernel_User.Console.Put_Line
@@ -451,15 +452,24 @@ procedure Shell is
             Akernel_User.Console.Put_Line
               ("  pri <job> <n>   set a background job's priority");
             return 0;
-         elsif Word = "exit" then
-            if Jobs_Active > 0 and then not Exit_Warned then
-               Exit_Warned := True;
+         elsif Word = "endcli" then
+            if Jobs_Active > 0 and then not Endcli_Warned then
+               Endcli_Warned := True;
                Akernel_User.Console.Put_Line
-                 ("there are running jobs (exit again to abandon)");
+                 ("there are running jobs (endcli again to abandon)");
                return Akernel_User.CLI.RC_Warn;
             end if;
-            Process_Exit;
-            return 0;  --  unreachable; Process_Exit does not return
+            --  Amiga EndCLI (M85a): ask the console server to
+            --  close its window; a window console (the terminal)
+            --  answers 0 and closes, taking this channel down —
+            --  we exit.  The serial console answers 1 (no
+            --  window) and we stay up.
+            if Akernel_User.Streams.Endcli (Console_EP) = 0 then
+               Process_Exit;
+            end if;
+            Akernel_User.Console.Put_Line
+              ("endcli: console is not a window");
+            return Akernel_User.CLI.RC_Warn;
          elsif Word = "run" then
             return Run_Background (Rest);
          elsif Word = "jobs" then

@@ -863,6 +863,24 @@ begin
                null;
             end;
          end if;
+      elsif Label = Akernel_User.Streams.Op_Endcli then
+         --  EndCLI (M85a): the shell asks us to close its
+         --  console window. Reply FIRST (the shell is our
+         --  caller; calling Bureau before replying would
+         --  deadlock the rendezvous pair), then take the
+         --  close-gadget path: the surface dies and the shell's
+         --  channel with it — the shell exits on its own after
+         --  the Ok status.
+         Response := (Count => 0, Data => (others => 0));
+         if Reply_H /= 0
+           and then RPC.Reply (Reply_H, Label, Response) /= IPC_Ok
+         then
+            Debug_Put_Line ("terminal reply failed");
+            Process_Exit;
+         end if;
+         Result := Akernel_User.Window.Surface_Destroy
+           (Win_EP, Surf_Id);
+         Process_Exit;
       else
          --  Unknown: no data.
          Response := (Count => 0, Data => (others => 0));
