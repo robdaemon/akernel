@@ -11,6 +11,20 @@ repository.
 
 ## Recently shipped
 
+- **M87a** (this commit): Gauge widget — the M87 widget arc's
+  first slice (planned: b Slider, c horizontal Scrollbar +
+  d Separator, e Tabs, f Cycle, g Numeric, h Tab focus chain
+  with app-overridable ranks; M88 overlay/popups later,
+  in-window). Workbench fuelgauge lineage: sunken frame,
+  Sel_Blue fill, centered "NN%" label drawn light-on-fill /
+  dark-on-empty via two Set_Clip passes; Set_Fraction clamps
+  and dirties only on a rendered change. Min_Size from birth
+  (M86g): "100%" + 16 wide, LH + 8 tall. Pure display, no
+  input handling. tdemo "Worker" showcase: Work click -> 50%,
+  worker completion -> 100% (0% on failure). QMP-verified:
+  idle "0%" dark-on-pane, post-Work "100%" light-on-fill.
+  1848/1844 PASS SMP4/SMP1, 0 FAIL.
+
 - **M86g** (this commit): content-size negotiation. The Widget
   protocol gains `Min_Size (W; MW, MH : out U64)` (default 0x0),
   overridden per widget from the CURRENT font metrics — Label/

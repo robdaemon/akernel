@@ -279,6 +279,29 @@ pixels.
 
 See also `Trinket.Images` (Bmp/Xpm loaders) and `Trinket.Paint.Blit`.
 
+### `Gauge` (progress bar, M87a)
+
+```ada
+type Gauge is new Widget with record
+   Num      : U64 := 0;
+   Den      : U64 := 100;
+   Show_Pct : Boolean := True;
+end record;
+function New_Gauge (Show_Pct : Boolean := True) return Any_Widget;
+procedure Set_Fraction (W : in out Gauge; Num, Den : U64);
+```
+
+Workbench fuelgauge lineage: sunken frame, `Sel_Blue` fill
+left→right, and (with `Show_Pct`) a centered `NN%` label drawn light
+on the fill and dark on the empty half (two clip passes). Pure
+display — no pointer or key handling. `Set_Fraction` treats
+`Den = 0` as 1, clamps `Num` to `Den`, and marks the widget dirty
+only when the rendered pixels actually change. `Min_Size` floors at
+the `"100%"` label width + 16 and `Line_Height + 8` vertically.
+
+tdemo's "Worker" group showcases it: Work clicks set 50%, the
+worker task's completion message sets 100% (0% on failure).
+
 ## Layout container
 
 ### `Group`

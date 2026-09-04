@@ -56,6 +56,7 @@ package body Tdemo_App is
 
     Status_Lbl : Widgets.Any_Widget;
     Img_Widget : Widgets.Any_Widget;
+    Work_Gauge : Widgets.Any_Widget;
 
     --  M86e showcase: the three radios in the "Choices" group
     --  share this set, so selecting one clears the others.
@@ -110,6 +111,7 @@ package body Tdemo_App is
        end if;
        Busy := True;
        Widgets.Label (Status_Lbl.all).Set_Text ("loading...");
+       Widgets.Gauge (Work_Gauge.all).Set_Fraction (1, 2);
        Ignore := Ntfn_Signal (Work_Gate, 1);
     end Work_Clicked;
 
@@ -126,9 +128,11 @@ package body Tdemo_App is
              Swap_Img := Worker_Img;
              Widgets.Label (Status_Lbl.all).Set_Text
                ("decoded" & A1'Image & " x" & A2'Image);
+             Widgets.Gauge (Work_Gauge.all).Set_Fraction (1, 1);
           elsif A0 /= U64 (Images.Status'Pos (Images.Ok)) then
              Widgets.Label (Status_Lbl.all).Set_Text
                ("load failed:" & A0'Image);
+             Widgets.Gauge (Work_Gauge.all).Set_Fraction (0, 1);
           end if;
        end if;
     end App_Message;
@@ -231,9 +235,11 @@ package body Tdemo_App is
       end if;
 
        Status_Lbl := Widgets.New_Label ("idle", Inset => True);
+       Work_Gauge := Widgets.New_Gauge;
        Widgets.Group (Work_Grp.all).Add
          (Widgets.New_Button ("Work", Work_Clicked'Access));
        Widgets.Group (Work_Grp.all).Add (Status_Lbl);
+       Widgets.Group (Work_Grp.all).Add (Work_Gauge);
 
        Widgets.Group (Btn_Row.all).Add
          (Widgets.New_Button ("Save", Save_Clicked'Access));
