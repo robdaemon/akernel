@@ -11,18 +11,25 @@ repository.
 
 ## Recently shipped
 
-- **M87e** (this commit): Tabs widget — MUI register-group
+- **M87e restyle** (this commit): tabs look like tabs, not
+  buttons. User review of the first cut: inactive tabs drew as
+  full Bevel2 button boxes (bottom border included) sitting ON
+  the frame line. Now: 2px-chamfered (rounded) top corners, a
+  3px gap between tabs, and no bottom edge of their own — the
+  page frame's top line is the shared boundary, the active tab's
+  Face fill runs 2px lower to merge. Press feedback is a label
+  shift (no sunken box any more). QMP-verified: chamfers, gap,
+  hover brighten, merge on switch both ways. 1845/1847 PASS
+  SMP4/SMP1, 0 FAIL.
+
+- **M87e** (`190e2d0`): Tabs widget — MUI register-group
   lineage. `Tabs` is a `Group` subtype: pages are the kids
   (Add_Tab appends label + page), but only the SELECTED page is
   laid out / drawn / dispatched; hidden pages hold a zero rect
   and `Dirty_List` walks the active page only (their stale dirty
-  flags never union as zero-area bands). Strip: contiguous tabs
-  from X+2, active one Face-filled with open bottom merging into
-  the raised page frame (drawn last so it overdraws the frame's
-  top bevel), inactives as Win_Face buttons on the frame edge.
-  M86c battery: hover brightens (Face_Hi), held press sinks +
-  shifts the label, click commits on release-over; per-tab
-  disabled isn't modeled (apps add/remove pages instead).
+  flags never union as zero-area bands). Strip/draw restyled in
+  the follow-up commit above (rounded corners, gaps, shared
+  bottom boundary).
   Set_Selected re-lays-out immediately, full-redraws, fires
   On_Change. Min_Size: strip LH+8 + tallest page + frame; width
   = max(whole strip, widest page). Caps: labels Max_Text(48),

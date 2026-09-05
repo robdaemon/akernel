@@ -1901,21 +1901,23 @@ package body Trinket.Widgets is
 
    function Strip_H return U64 is (Fonts.Line_Height + 8);
 
+   Tab_Gap : constant U64 := 3;  --  breathing room between tabs
+
    function Tab_W (W : Tabs; I : Positive) return U64 is
      (Fonts.Text_Width (W.Labels (I).Buf (1 .. W.Labels (I).Len))
       + 16);
 
-   --  Left edge of tab I (contiguous tabs from X + 2).
+   --  Left edge of tab I (from X + 2, Tab_Gap between tabs).
    function Tab_X0 (W : Tabs; I : Positive) return U64 is
       X : U64 := W.X + 2;
    begin
       for J in 1 .. I - 1 loop
-         X := X + Tab_W (W, J);
+         X := X + Tab_W (W, J) + Tab_Gap;
       end loop;
       return X;
    end Tab_X0;
 
-   --  Tab under PX, 0 when past the last one.
+   --  Tab under PX, 0 when in a gap or past the last one.
    function Tab_At (W : Tabs; PX : U64) return Natural is
       X : U64 := W.X + 2;
    begin
@@ -1923,7 +1925,7 @@ package body Trinket.Widgets is
          if PX >= X and then PX < X + Tab_W (W, I) then
             return I;
          end if;
-         X := X + Tab_W (W, I);
+         X := X + Tab_W (W, I) + Tab_Gap;
       end loop;
       return 0;
    end Tab_At;
@@ -1996,76 +1998,73 @@ package body Trinket.Widgets is
          W.Kids (I).Min_Size (KW, KH);
          PW := Max (PW, KW);
          PH := Max (PH, KH);
-         TW := TW + Tab_W (W, I);
+         TW := TW + Tab_W (W, I)
+           + (if I < W.N then Tab_Gap else 0);
       end loop;
       MW := Max (PW + 4, TW + 2);
       MH := Strip_H + PH + 4;
    end Min_Size;
 
+   --  Rounded-top tab (M87e restyle): 2px-chamfered top corners,
+   --  NO bottom edge of its own — the page frame's top line is
+   --  the shared boundary; the active tab runs 2px lower, its
+   --  Face fill covering the frame bevel in its span (merged).
+   procedure Draw_Tab
+     (W : Tabs; C : Canvas; I : Positive; Active : Boolean)
+   is
+      TX  : constant U64 := Tab_X0 (W, I);
+      TW  : constant U64 := Tab_W (W, I);
+      X1  : constant U64 := TX + TW;
+      Bot : constant U64 :=
+        W.Y + Strip_H + (if Active then 2 else 0);
+      F   : constant Pixel :=
+        (if Active then Face
+         elsif I = W.Hover_Tab and then I /= W.Press_Tab
+         then Akernel_User.Theme.Face_Hi
+         else Win_Face);
+      LW  : constant U64 :=
+        Fonts.Text_Width (W.Labels (I).Buf (1 .. W.Labels (I).Len));
+      Shift : constant U64 := (if I = W.Press_Tab then 1 else 0);
+   begin
+      --  Outline (black): chamfered top, verticals to Bot.
+      Paint.Fill_Rect (C, TX + 2, W.Y, X1 - 2, W.Y + 1, Border);
+      Paint.Fill_Rect (C, TX + 1, W.Y + 1, TX + 2, W.Y + 2, Border);
+      Paint.Fill_Rect (C, X1 - 2, W.Y + 1, X1 - 1, W.Y + 2, Border);
+      Paint.Fill_Rect (C, TX, W.Y + 2, TX + 1, Bot, Border);
+      Paint.Fill_Rect (C, X1 - 1, W.Y + 2, X1, Bot, Border);
+      --  Face fill (the Y+1 row is the white inner top edge).
+      Paint.Fill_Rect (C, TX + 2, W.Y + 1, X1 - 2, W.Y + 2,
+                       Bevel_Hi);
+      Paint.Fill_Rect (C, TX + 1, W.Y + 2, X1 - 1, Bot, F);
+      --  3D: white inner left, dark inner right.
+      Paint.Fill_Rect (C, TX + 1, W.Y + 2, TX + 2, Bot, Bevel_Hi);
+      Paint.Fill_Rect (C, X1 - 2, W.Y + 2, X1 - 1, Bot, Bevel_Lo);
+      --  Label, centered; shifts one pixel while held.
+      Fonts.Draw_Text
+        (C, TX + (if TW > LW then (TW - LW) / 2 else 1) + Shift,
+         W.Y + 4 + Shift,
+         W.Labels (I).Buf (1 .. W.Labels (I).Len), Text_Dark);
+   end Draw_Tab;
+
    procedure Draw (W : Tabs; C : Canvas) is
-      LH : constant U64 := Fonts.Line_Height;
       PY : constant U64 := W.Y + Strip_H;
-      TX : U64;
-      TW : U64;
-      LW : U64;
-      LX : U64;
    begin
       if not Intersects (W, C) then
          return;
       end if;
-      --  Page: Face interior + raised frame whose top edge the
-      --  strip sits on.
+      --  Page: Face interior + raised frame whose top line is
+      --  the strip's shared bottom boundary.
       Paint.Fill_Rect (C, W.X, PY, W.X + W.W, W.Y + W.H, Face);
       Paint.Bevel2 (C, W.X, PY, W.X + W.W, W.Y + W.H);
-      --  Inactive tabs first: Win_Face buttons on the frame
-      --  edge (hover brightens, a held press sinks + shifts).
-      TX := W.X + 2;
+      --  Inactive tabs first; the active one LAST so its fill
+      --  overdraws the frame's top bevel (merged into the page).
       for I in 1 .. W.N loop
-         TW := Tab_W (W, I);
          if I /= W.Sel then
-            Paint.Fill_Rect
-              (C, TX, W.Y, TX + TW, PY,
-               (if I = W.Hover_Tab and then I /= W.Press_Tab
-                then Akernel_User.Theme.Face_Hi else Win_Face));
-            Paint.Bevel2 (C, TX, W.Y, TX + TW, PY,
-                         Raised => I /= W.Press_Tab);
-            LW := Fonts.Text_Width
-              (W.Labels (I).Buf (1 .. W.Labels (I).Len));
-            LX := TX + (if TW > LW then (TW - LW) / 2 else 1);
-            Fonts.Draw_Text
-              (C, LX + (if I = W.Press_Tab then 1 else 0),
-               W.Y + 4 + (if I = W.Press_Tab then 1 else 0),
-               W.Labels (I).Buf (1 .. W.Labels (I).Len),
-               Text_Dark);
+            Draw_Tab (W, C, I, False);
          end if;
-         TX := TX + TW;
       end loop;
-      --  Active tab LAST: Face fill covers the frame's top
-      --  bevel lines in its span (open bottom = merged into
-      --  the page), bevel lines on top/left/right only.
       if W.Sel >= 1 and then W.Sel <= W.N then
-         TX := Tab_X0 (W, W.Sel);
-         TW := Tab_W (W, W.Sel);
-         Paint.Fill_Rect (C, TX, W.Y, TX + TW, PY + 2, Face);
-         Paint.Fill_Rect (C, TX, W.Y, TX + TW, W.Y + 1, Border);
-         Paint.Fill_Rect (C, TX, W.Y, TX + 1, PY + 2, Border);
-         Paint.Fill_Rect
-           (C, TX + TW - 1, W.Y, TX + TW, PY + 2, Border);
-         Paint.Fill_Rect
-           (C, TX + 1, W.Y + 1, TX + TW - 1, W.Y + 2, Bevel_Hi);
-         Paint.Fill_Rect (C, TX + 1, W.Y + 1, TX + 2, PY + 2,
-                          Bevel_Hi);
-         Paint.Fill_Rect
-           (C, TX + TW - 2, W.Y + 1, TX + TW - 1, PY + 2,
-            Bevel_Lo);
-         LW := Fonts.Text_Width
-           (W.Labels (W.Sel).Buf (1 .. W.Labels (W.Sel).Len));
-         LX := TX + (if TW > LW then (TW - LW) / 2 else 1);
-         Fonts.Draw_Text
-           (C, LX, W.Y + 4,
-            W.Labels (W.Sel).Buf (1 .. W.Labels (W.Sel).Len),
-            Text_Dark);
-         --  The page itself.
+         Draw_Tab (W, C, W.Sel, True);
          W.Kids (W.Sel).Draw (C);
       end if;
    end Draw;
