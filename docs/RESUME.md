@@ -39,7 +39,7 @@ icon-code changes.
 
 ## Recently shipped
 
-- **M92**: Desktop backdrop launcher (userspace/desktop,
+- **M92** (`6239675`): Desktop backdrop launcher (userspace/desktop,
   DEST=system; Startup line right after Bureau). One
   full-screen Flag_Backdrop+Flag_Borderless window at
   (0, Screen_Bar_H+1) size W x (H-Bar_H-1) — geometry queried
