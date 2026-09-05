@@ -83,4 +83,28 @@ package body Akernel_User.Display is
       return Message.Words (0);
    end Present;
 
+   function Set_Mode
+     (EP                    : U64;
+      Req_W, Req_H          : U64;
+      Width, Height, Stride : out U64;
+      Total_Pages           : out U64) return U64
+   is
+      Status : U64;
+   begin
+      Message.Label := Op_Set_Mode;
+      Message.Words := (others => 0);
+      Message.Words (0) := Req_W;
+      Message.Words (1) := Req_H;
+      Message.Caps  := (others => 0);
+      Status := IPC_Call (EP);
+      Width       := Message.Words (1);
+      Height      := Message.Words (2);
+      Stride      := Message.Words (3);
+      Total_Pages := Message.Words (4);
+      if Status /= IPC_Ok then
+         return Status_Device;
+      end if;
+      return Message.Words (0);
+   end Set_Mode;
+
 end Akernel_User.Display;

@@ -49,6 +49,19 @@ with Akernel_User.Syscalls;
 --  Op_Set_Cursor (14) / Op_Move_Cursor (15): reserved for the
 --  hardware cursor (virtio cursorq UPDATE_CURSOR 0x300 /
 --  MOVE_CURSOR 0x301), slice 4.
+--
+--  Op_Set_Mode (16): request w0 = width, w1 = height (M90).
+--    Must fit the driver's static [640x480 .. 1920x1080] clamp
+--    or Status_Bad_Mode comes back (geometry words then hold the
+--    CURRENT mode). On success the driver DELETES any stored
+--    compositor chunk caps (they describe the old geometry — the
+--    compositor re-pushes with Op_Set_Buffer), destroys and
+--    re-creates the scanout resource, re-attaches its own boot
+--    framebuffer (extending the allocation when the new mode
+--    needs more pages) and clears to black. The compositor then
+--    repeats its boot dance: Set_Buffer x N + Commit_Buffer.
+--    reply w0 = Status_Ok / Status_Bad_Mode / Status_Device,
+--    w1..w5 = geometry, same layout as Op_Get_Info.
 
 package Akernel_User.Display is
    subtype U64 is Syscalls.U64;
@@ -59,12 +72,14 @@ package Akernel_User.Display is
    Op_Present       : constant U64 := 13;
    Op_Set_Cursor    : constant U64 := 14;  --  reserved
    Op_Move_Cursor   : constant U64 := 15;  --  reserved
+   Op_Set_Mode      : constant U64 := 16;  --  M90
 
    Status_Ok         : constant U64 := 0;
    Status_Bad_Index  : constant U64 := 1;
    Status_No_Buffer  : constant U64 := 2;
    Status_Bad_Caps   : constant U64 := 3;
    Status_Device     : constant U64 := 4;
+   Status_Bad_Mode   : constant U64 := 5;  --  M90
 
    --  Client-side helpers (compositor). Get_Info returns the
    --  mode geometry; Set_Buffer pushes up to 4 chunk caps per
@@ -82,9 +97,17 @@ package Akernel_User.Display is
       C1   : U64 := 0;
       C2   : U64 := 0;
       C3   : U64 := 0) return U64;
-   function Commit_Buffer (EP : U64) return U64;
-   function Present
-     (EP      : U64;
-      X, Y, W : U64;
-      H       : U64) return U64;
+    function Commit_Buffer (EP : U64) return U64;
+    function Present
+      (EP      : U64;
+       X, Y, W : U64;
+       H       : U64) return U64;
+    --  M90: switch the scanout mode. On Status_Ok the out
+    --  parameters carry the NEW geometry (the compositor rebuilds
+    --  its buffer from Total_Pages and re-pushes chunks).
+    function Set_Mode
+      (EP                    : U64;
+       Req_W, Req_H          : U64;
+       Width, Height, Stride : out U64;
+       Total_Pages           : out U64) return U64;
 end Akernel_User.Display;

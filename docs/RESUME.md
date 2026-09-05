@@ -11,7 +11,52 @@ repository.
 
 ## Recently shipped
 
-- **M89** (this commit): Prefs folder + Font prefs editor.
+- **M90** (this commit): ScreenMode prefs + runtime mode
+  switch. Display protocol gains Op_Set_Mode (16) +
+  Status_Bad_Mode (5): the driver validates against the static
+  640x480..1920x1080 clamp (BEFORE Natural conversion — a
+  garbage-huge word would raise), deletes the stored compositor
+  chunk caps (old geometry's), UNREFs and re-creates the scanout
+  resource, re-attaches its own FB and clears; the compositor
+  re-pushes and re-commits like boot. Backing/scanout plumbing
+  factored into Attach_Backing/Detach_Backing/Set_Scanout
+  helpers shared by boot, Commit_Buffer and Set_Mode
+  (Backing_Attached tracks whether DETACH is needed).
+  BURN + fix: FB objects must be FULL 64-page allocations — a
+  partial tail object (boot 1280x800 = 15x64+40) strands
+  capacity the M90 growth path cannot top up, so 1080p needed a
+  33rd object past the 32-slot table and the switch came back
+  Status_Device. Window protocol gains Op_Set_Screen_Mode (32,
+  w0/w1 = 0 queries; reply always carries the mode in effect) +
+  Status_Bad_Mode (6); Bureau's Apply_Mode folds cursor+menu,
+  runs the driver call, tears down and rebuilds the compositing
+  buffer (Teardown_Buffer/Build_Buffer, boot now uses the same
+  helper; old frames return to the PMM on last-cap close),
+  clamps window origins on-screen (saturating — a window bigger
+  than the new screen pins to 0, its title bar can slide under
+  the screen bar; cosmetic), full repaint. Prefs/ScreenMode
+  (userspace/prefs/screenmode, second nested crate): static
+  8-mode list, current mode queried+preselected on open, Okay =
+  Op_Set_Screen_Mode + ENV:Screen.Width/Height, Cancel quits.
+  Boot persistence: the Makefile run recipe mtypes those ENV
+  files out of disk.img into QEMU xres/yres (QEMU_GPU_FLAGS
+  still overrides) — which exposed that the disk recipe's
+  rm -f $@ WIPED ::Prefs/Env on every rebuild (M89's ENV:Font
+  survived exactly one boot); the recipe now carries ::Prefs/Env
+  across rebuilds (mcopy out before, restore after). QMP-verified:
+  1280x800 -> 640x480 (windows clamp, repaint clean) -> 1920x1080
+  (growth path), reboot boots 1080p via "gpu flags:,xres=1920,
+  yres=1080", back down to 1280x800, reboot follows again;
+  fsck.fat clean. QMP lesson: scale pointer coords by the CURRENT
+  console size — a stale 1280x800 scaling at 640x480 clicked the
+  terminal under the picker and buried the picker's window behind
+  it (clamped near-fullscreen), which reads exactly like a silent
+  app exit. 1846/1847 PASS SMP4/SMP1, 0 FAIL.
+  Next: per-app screen bar title, terminal UTF-8/codepage wiring
+  (the M89 extended glyphs are loadable but unreachable from
+  shell text), or a Trinket text editor.
+
+- **M89** (`8eb284e`): Prefs folder + Font prefs editor.
   Sys:Fonts/ grew real choices: font2bdf.py --tall doubles rows
   for font8x8t.bdf (same family, PIXEL_SIZE 16; font8x8p keeps
   its own family — different metrics), and Terminus 12/14/16
@@ -80,62 +125,6 @@ repository.
   top: Open_Popup initialized both locals from X ("PX, PY :
   U64 := X"), so the popup opened at (X, X) — split the
   declarations.
-
-## Planned: Prefs apps (M89/M90)
-
-Amiga-style Prefs drawer on Sys: (ENV:-backed persistence —
-`Sys:Prefs/Env/<NAME>` files via CLI.Set_Env/Get_Env, the
-netserv ENV:Net.* precedent). One crate per app, nested:
-`userspace/prefs/font`, `userspace/prefs/screenmode` — the
-generic `$(CRATES)` rule already tolerates path entries
-(`make -C userspace/prefs/font`); the new DISK_CRATES_PREFS
-mcopy loop uses basename for binary/staging/destination;
-nested gpr files carry one extra `../` (extends, Exec_Dir,
-Object_Dir); new-crate gains DEST=prefs. Binaries land at
-`::Prefs/Font`, `::Prefs/ScreenMode`; launched qualified from
-the shell (no ENV:Path change), no Startup line.
-
-**M89 Font editor** (Amiga fontrequester): families Listview
-left, sizes Listview right, live preview panel below (sample
-text rendered with a loaded preview handle), Okay/Cancel row.
-Okay writes ENV:Font (BDF path); Trinket.Fonts.Init consults
-ENV:Font before defaulting — applies to newly launched apps
-(global latch stays; live re-apply is future work). Needs a
-Fonts instance API (Load/Unload/Probe/Draw_Text per handle,
-singleton kept) since the preview must not disturb the global
-font. Inventory: font2bdf.py --tall makes an 8x16 from the
-in-git font8x8; Terminus 12/14/16 (all <=8px wide, parser
-reads one hex byte/row) via a sha256-pinned third_party
-tarball, shipped UNFILTERED (line-drawing/block glyphs stay
-on disk). Loader: raise the 64 KiB read cap (transient heap
-buffer, freed post-parse) and extend the glyph store — dense
-0..127 as today + a sparse (codepoint, glyph) extension table
-covering Latin-1 + box/block/geometric (sizing cap justified
-in comment), plus a Draw_Glyph codepoint primitive; terminal
-UTF-8/codepage wiring is a later milestone.
-
-**M90 ScreenMode** (runtime switch, not boot-only): append
-display Op_Set_Mode=16 (+Status_Bad_Mode) and window
-Op_Set_Screen_Mode=32 (reply = granted dims; W=0 queries).
-Driver: add RESOURCE_UNREF 0x102; disable scanout, unref,
-recompute Width/Height/Cols/Rows/FB_Pages, CREATE_2D new size
-(clamped 640x480..1920x1080 — VA windows and Max_* ceilings
-are 1080p-sized, above stays out), cap_delete session chunk
-caps and lift the New_Caps overwrite refusal; Bureau's
-existing Set_Buffer/Commit_Buffer attaches+presents (refuse
-Op_Present while unattached; gate the text-console TRANSFER
-post-commit — stale-stride garbage). Bureau (serialized loop,
-no interleave): cursor erase, grow/shrink the Buf_VA
-compositing buffer (unmap+delete+realloc only when the chunk
-count changes), re-push caps + commit, re-Get_Info, dismiss
-menus, clamp all window origins, full repaint; pointer
-scaling reads live dims per event (self-correcting); clients
-need nothing (surfaces are pixel-sized, screen-independent).
-Prefs app: static mode list (no EDID enumeration), current
-mode queried on open, Okay = switch + ENV:Screen.Width/Height;
-Makefile run mtypes those out of disk.img into QEMU_GPU_FLAGS
-for boot persistence. First bring-up step is a serial-driven
-Op_Set_Mode smoke before wiring the GUI.
 
 - **Widgets split** (`8bc1563`): Trinket.Widgets had grown to
   573+2760 lines — split into per-widget child packages. Root

@@ -29,6 +29,8 @@ QEMU_9P_FLAGS ?= -fsdev local,id=fs0,path=$(SHARE_DIR),security_model=none -devi
 #  m80g: display geometry opt-in — the driver/bureau/terminal
 #  ceilings are 1920x1080 but the device default stays 1024x768.
 #  Boot big with e.g. QEMU_GPU_FLAGS=",xres=1920,yres=1080".
+#  Overrides the saved ENV:Screen.Width/Height (M90); with neither,
+#  QEMU's default (1280x800) applies.
 QEMU_GPU_FLAGS ?=
 INITRD_ADDR ?= 0x84000000
 
@@ -83,7 +85,7 @@ DISK_CRATES_LIBS := testlib
 #  Prefs drawer apps (M89): nested crates userspace/prefs/<name>;
 #  binaries install in Sys:Prefs/<Capitalized>. Path entries ride
 #  the generic $(CRATES) rule (make -C userspace/prefs/<name>).
-DISK_CRATES_PREFS :=  prefs/font
+DISK_CRATES_PREFS :=  prefs/font prefs/screenmode
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS)
 
 #  The userspace crates link against a custom GNAT runtime that is
@@ -226,6 +228,10 @@ $(TERMINUS_STAMP): $(TERMINUS_TARBALL)
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
 $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS) $(TERMINUS_STAMP)
+	@if [ -f $@ ]; then \
+	  rm -rf /tmp/ak-prefs-env; \
+	  mcopy -s -i $@@@1048576 ::Prefs/Env /tmp/ak-prefs-env 2>/dev/null || true; \
+	fi
 	rm -f $@
 	@command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null \
 	  || { echo "disk image needs host sgdisk + mkfs.vfat + mtools"; exit 1; }; \
@@ -284,6 +290,11 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	  n=$$(basename $$c); \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$n.elf bin/userspace/$$n.elf; \
 	  mcopy -i $@@@1048576 /tmp/ak-$$n.elf "::Prefs/$$(printf '%s' $$n | sed 's/^./\u&/')"; done; \
+	if [ -d /tmp/ak-prefs-env ]; then \
+	  mmd -i $@@@1048576 ::Prefs/Env; \
+	  mcopy -i $@@@1048576 /tmp/ak-prefs-env/* ::Prefs/Env 2>/dev/null || true; \
+	  rm -rf /tmp/ak-prefs-env; \
+	fi; \
 	printf 'System/Bureau\nSystem/Demo\nSystem/Tdemo\nSystem/Fileman\nSystem/Terminal\n' > $(INITRD_OUT)/startup; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
@@ -370,7 +381,19 @@ $(INIT_ELF):
 #  SKIP_DISK=1 skips the disk-image dependency (test-replay
 #  injects a dirty journal into the built image; a rebuild would
 #  wipe it).
+#  M90: the GPU's boot resolution comes from the saved ScreenMode
+#  prefs (ENV:Screen.Width/Height on the FAT partition) unless
+#  QEMU_GPU_FLAGS is given explicitly.
 run: all $(if $(SKIP_DISK),,$(DISK_IMG))
+	@GPU="$(QEMU_GPU_FLAGS)"; \
+	if [ -z "$$GPU" ]; then \
+	  W=$$(mtype -i $(DISK_IMG)@@1048576 ::Prefs/Env/SCREEN.WIDTH 2>/dev/null | tr -d '\r\n'); \
+	  H=$$(mtype -i $(DISK_IMG)@@1048576 ::Prefs/Env/SCREEN.HEIGHT 2>/dev/null | tr -d '\r\n'); \
+	  case $$W in ''|*[!0-9]*) W= ;; esac; \
+	  case $$H in ''|*[!0-9]*) H= ;; esac; \
+	  if [ -n "$$W" ] && [ -n "$$H" ]; then GPU=",xres=$$W,yres=$$H"; fi; \
+	fi; \
+	if [ -n "$$GPU" ]; then echo "gpu flags:$$GPU"; fi; \
 	$(QEMU) \
 	  -semihosting \
 	  -machine virt,iommu-sys=on \
@@ -383,7 +406,7 @@ run: all $(if $(SKIP_DISK),,$(DISK_IMG))
 	  -device virtio-blk-pci,drive=hd0,addr=0x4 \
 	  -device virtio-keyboard-pci,addr=0x5 \
 	  -device virtio-tablet-pci,addr=0x6 \
-	  -device virtio-gpu-pci,addr=0x7$(QEMU_GPU_FLAGS) \
+	  -device virtio-gpu-pci,addr=0x7$$GPU \
 	  -netdev user,id=n0 \
 	  -device virtio-net-pci,netdev=n0,addr=0x8 \
 	  -monitor unix:/tmp/qmon.sock,server,nowait \

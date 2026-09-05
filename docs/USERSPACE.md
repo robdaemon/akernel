@@ -246,6 +246,18 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   (Bureau's terminal client takes the sink over in slice 3).
   Op_Set_Cursor/Op_Move_Cursor reserved for the hw cursor
   (cursorq UPDATE_CURSOR 0x300 / MOVE_CURSOR 0x301, slice 4).
+  Op_Set_Mode (16, M90) re-creates the scanout resource at a new
+  geometry at runtime (UNREF + CREATE_2D + SET_SCANOUT), clamped
+  to 640x480..1920x1080; stored compositor chunk caps are deleted
+  (the compositor re-pushes for the new geometry), and the
+  driver's own framebuffer GROWS to fit — always in full 64-page
+  objects, because a partial tail object strands capacity the
+  extension path cannot top up. Bureau exposes this as window
+  protocol Op_Set_Screen_Mode (32): it tears down and rebuilds
+  the compositing buffer for the new mode, clamps window origins
+  on-screen and repaints; Prefs/ScreenMode drives it and saves
+  ENV:Screen.Width/Height, which the Makefile run recipe feeds
+  back to QEMU's xres/yres on the next boot.
 - `userspace/bureau/` — Bureau, the compositor / window server
   (milestone 28, slice 2). Spawned by devmgr right after the
   GPU driver (image System/Bureau; handles: 1 = console Send

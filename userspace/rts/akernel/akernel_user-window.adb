@@ -156,4 +156,22 @@ package body Akernel_User.Window is
       return Call (EP);
    end Surface_Update;
 
+   function Set_Screen_Mode
+     (EP            : U64;
+      Width, Height : U64;
+      Cur_W, Cur_H  : out U64) return U64
+   is
+      St : U64;
+   begin
+      Message.Label := Op_Set_Screen_Mode;
+      Message.Words := (others => 0);
+      Message.Words (0) := Width;
+      Message.Words (1) := Height;
+      Message.Caps := (others => 0);
+      St := Call (EP);
+      Cur_W := Message.Words (1);
+      Cur_H := Message.Words (2);
+      return St;
+   end Set_Screen_Mode;
+
 end Akernel_User.Window;

@@ -44,6 +44,12 @@ with Font8x8;
 --  invisible then — Bureau's terminal client takes the sink
 --  over in slice 3).
 --
+--  M90: Op_Set_Mode re-creates the scanout resource at a new
+--  geometry at runtime (UNREF + CREATE_2D + own-FB re-attach +
+--  SET_SCANOUT). Stored compositor chunk caps are deleted (the
+--  compositor re-pushes for the new geometry); the driver's own
+--  framebuffer allocation GROWS to fit but never shrinks.
+--
 --  Burned: ALL driver log output (PASS/FAIL/online) goes through
 --  Debug_Put_Line (kernel UART), NEVER the console stream: the
 --  console server blocks in the sink-write RPC while this driver
@@ -97,6 +103,7 @@ procedure Virtio_Gpu is
    --  cross-checked against linux virtio_gpu.h).
    Cmd_Get_Display_Info : constant Virtio.U32 := 16#100#;
    Cmd_Resource_Create_2D  : constant Virtio.U32 := 16#101#;
+   Cmd_Resource_Unref   : constant Virtio.U32 := 16#102#;  --  m90
    Cmd_Set_Scanout      : constant Virtio.U32 := 16#103#;
    Cmd_Resource_Flush   : constant Virtio.U32 := 16#104#;
    Cmd_Transfer_To_Host : constant Virtio.U32 := 16#105#;
@@ -241,19 +248,29 @@ procedure Virtio_Gpu is
    --  m80g: ceil — 1080p is 2025 pages = 31.64 objects.
    FB_Objects : constant := (Max_W * Max_H * 4 + 4096 * 64 - 1)
      / 4096 / 64;  --  32
-   FB_Caps : array (0 .. FB_Objects - 1) of U64 := (others => 0);
+   type Cap_List is array (Natural range <>) of U64;
+   FB_Caps : Cap_List (0 .. FB_Objects - 1) := (others => 0);
    FB_Obj_Count : Natural := 0;
+   --  M90: total pages of the driver's own framebuffer actually
+   --  allocated+mapped at FB_VA. Op_Set_Mode GROWS this when the
+   --  new mode needs more (never shrinks: freed frames would need
+   --  a per-object Mem_Free dance for no real gain; the ceiling
+   --  is 8 MiB).
+   FB_Alloc_Pages : U64 := 0;
 
    --  Compositor buffer handoff (display-service protocol): chunk
    --  caps pushed by Op_Set_Buffer until Op_Commit_Buffer swaps
    --  the scanout backing. Kept for the session once received
    --  (deliberate exception to the per-op cap_delete rule — the
    --  frames must outlive the compositor).
-   New_Caps   : array (0 .. FB_Objects - 1) of U64 := (others => 0);
+   New_Caps   : Cap_List (0 .. FB_Objects - 1) := (others => 0);
    New_Chunks : Natural := 0;
+   --  M90: the resource's current backing state, so a commit
+   --  after a mode switch (resource freshly re-created, no
+   --  backing) skips the DETACH the boot-time commit needs.
+   Backing_Attached : Boolean := False;
 
    FB_Pages  : U64;
-   Obj_Pages : U64;
    PA        : U64;
    Ent_Count : U64;
 
@@ -555,25 +572,22 @@ procedure Virtio_Gpu is
       end if;
    end Present_Band;
 
-   --  Swap the scanout backing onto the compositor's chunks:
-   --  DETACH the driver's boot framebuffer, ATTACH the stored
-   --  caps' frames, push the full screen once.
-   function Commit_Buffer return U64 is
-      PA : U64;
-      Pages_In : U64;
-   begin
-      if New_Chunks = 0 then
-         return DSP.Status_No_Buffer;
-      end if;
-      if U64 (New_Chunks) /= (FB_Pages + 63) / 64 then
-         return DSP.Status_Bad_Index;
-      end if;
+   --  M90: shared attach/detach/scanout plumbing, used by boot,
+   --  Commit_Buffer and Set_Mode.
 
+   --  Build per-page attach-backing entries for Pages frames
+   --  drawn from the chunk caps in order, then ATTACH_BACKING.
+   --  Sets Backing_Attached on success.
+   function Attach_Backing (Caps : Cap_List; Pages : U64) return U64 is
+      Remaining : U64 := Pages;
+      Obj       : Natural := Caps'First;
+      Pages_In  : U64;
+   begin
       Ent_Count := 0;
-      for I in 0 .. New_Chunks - 1 loop
-         Pages_In := U64'Min (FB_Pages - U64 (I) * 64, 64);
+      while Remaining > 0 loop
+         Pages_In := U64'Min (Remaining, 64);
          for P in 0 .. Pages_In - 1 loop
-            PA := Mem_Object_PA (New_Caps (I), P);
+            PA := Mem_Object_PA (Caps (Obj), P);
             if PA = 0 then
                return DSP.Status_Bad_Caps;
             end if;
@@ -585,14 +599,9 @@ procedure Virtio_Gpu is
             Ent_Words (Natural (Ent_Count) * 4 + 3) := 0;
             Ent_Count := Ent_Count + 1;
          end loop;
+         Remaining := Remaining - Pages_In;
+         Obj := Obj + 1;
       end loop;
-
-      Set_Hdr (Cmd_Detach_Backing);
-      Cmd_Words (6) := Resource_Id;
-      Cmd_Words (7) := 0;
-      if Ctrl_Cmd (32) /= Resp_Ok_Nodata then
-         return DSP.Status_Device;
-      end if;
 
       Set_Hdr (Cmd_Attach_Backing);
       Cmd_Words (6) := Resource_Id;
@@ -602,10 +611,170 @@ procedure Virtio_Gpu is
       then
          return DSP.Status_Device;
       end if;
+      Backing_Attached := True;
+      return DSP.Status_Ok;
+   end Attach_Backing;
+
+   function Detach_Backing return U64 is
+   begin
+      Set_Hdr (Cmd_Detach_Backing);
+      Cmd_Words (6) := Resource_Id;
+      Cmd_Words (7) := 0;
+      if Ctrl_Cmd (32) /= Resp_Ok_Nodata then
+         return DSP.Status_Device;
+      end if;
+      Backing_Attached := False;
+      return DSP.Status_Ok;
+   end Detach_Backing;
+
+   --  Point scanout 0 at the resource with the current mode
+   --  geometry. Idempotent; REQUIRED after Op_Set_Mode re-created
+   --  the resource (an unref'd scanout disables itself).
+   function Set_Scanout return U64 is
+   begin
+      Set_Hdr (Cmd_Set_Scanout);
+      Set_Rect (0, 0, Virtio.U32 (Width), Virtio.U32 (Height));
+      Cmd_Words (10) := 0;  --  scanout_id
+      Cmd_Words (11) := Resource_Id;
+      if Ctrl_Cmd (48) /= Resp_Ok_Nodata then
+         return DSP.Status_Device;
+      end if;
+      return DSP.Status_Ok;
+   end Set_Scanout;
+
+   --  Swap the scanout backing onto the compositor's chunks:
+   --  DETACH the driver's boot framebuffer, ATTACH the stored
+   --  caps' frames, re-point the scanout, push the full screen
+   --  once.
+   function Commit_Buffer return U64 is
+      St : U64;
+   begin
+      if New_Chunks = 0 then
+         return DSP.Status_No_Buffer;
+      end if;
+      if U64 (New_Chunks) /= (FB_Pages + 63) / 64 then
+         return DSP.Status_Bad_Index;
+      end if;
+
+      --  Detach first (a boot commit drops the driver's own FB;
+      --  a commit after Set_Mode finds no backing and skips).
+      --  A Bad_Caps from here on leaves the resource unbacked —
+      --  the screen holds the last flushed frame until a good
+      --  commit lands.
+      if Backing_Attached then
+         St := Detach_Backing;
+         if St /= DSP.Status_Ok then
+            return St;
+         end if;
+      end if;
+      St := Attach_Backing (New_Caps (0 .. New_Chunks - 1), FB_Pages);
+      if St /= DSP.Status_Ok then
+         return St;
+      end if;
+      St := Set_Scanout;
+      if St /= DSP.Status_Ok then
+         return St;
+      end if;
 
       Present_Band (0, 0, Width, Height);
       return DSP.Status_Ok;
    end Commit_Buffer;
+
+   --  M90 Op_Set_Mode: recreate the scanout resource at a new
+   --  geometry. Stored compositor chunk caps are the old mode's —
+   --  delete them (the caller re-pushes). The driver's own
+   --  framebuffer grows if the new mode needs more pages than
+   --  were ever allocated, then goes back on screen (cleared)
+   --  until the compositor commits its fresh buffer.
+   function Set_Mode (New_W, New_H : Natural) return U64 is
+      Need : constant U64 :=
+        (U64 (New_W) * U64 (New_H) * 4 + 4095) / 4096;
+      St   : U64;
+   begin
+      if Need > Max_Entries then
+         return DSP.Status_Bad_Mode;
+      end if;
+
+      for I in New_Caps'Range loop
+         if New_Caps (I) /= 0 then
+            Result := Cap_Delete (New_Caps (I));
+            New_Caps (I) := 0;
+         end if;
+      end loop;
+      New_Chunks := 0;
+
+      while FB_Alloc_Pages < Need loop
+         if FB_Obj_Count >= FB_Objects then
+            --  Unreachable: Need <= Max_Entries = 2048 pages and
+            --  the table holds 32 full 64-page objects = 2048.
+            Debug_Put_Line ("virtio-gpu set-mode: fb table full");
+            return DSP.Status_Device;
+         end if;
+         FB_Caps (FB_Obj_Count) := Mem_Alloc (64);
+         if FB_Caps (FB_Obj_Count) = Syscall_Failed then
+            Debug_Put_Line ("virtio-gpu set-mode: alloc failed");
+            return DSP.Status_Device;
+         end if;
+         Result := Mem_Map
+           (Address_Space => Address_Space_Cap,
+            Cap           => FB_Caps (FB_Obj_Count),
+            VA            => FB_VA + U64 (FB_Obj_Count) * 64 * 4096,
+            Offset        => 0,
+            Length        => 64 * 4096,
+            Flags         => 3);
+         if Result /= 0 then
+            Debug_Put_Line ("virtio-gpu set-mode: map failed");
+            return DSP.Status_Device;
+         end if;
+         FB_Alloc_Pages := FB_Alloc_Pages + 64;
+         FB_Obj_Count := FB_Obj_Count + 1;
+      end loop;
+
+      Set_Hdr (Cmd_Resource_Unref);
+      Cmd_Words (6) := Resource_Id;
+      Cmd_Words (7) := 0;
+      if Ctrl_Cmd (32) /= Resp_Ok_Nodata then
+         Debug_Put_Line ("virtio-gpu set-mode: unref failed");
+         return DSP.Status_Device;
+      end if;
+      Backing_Attached := False;
+
+      Width  := New_W;
+      Height := New_H;
+      FB_Pages := Need;
+      Cols := Width / 8;
+      Rows := Height / 16;
+      Cur_Col := 0;
+      Cur_Row := 0;
+
+      Set_Hdr (Cmd_Resource_Create_2D);
+      Cmd_Words (6) := Resource_Id;
+      Cmd_Words (7) := Format_B8G8R8A8;
+      Cmd_Words (8) := Virtio.U32 (Width);
+      Cmd_Words (9) := Virtio.U32 (Height);
+      if Ctrl_Cmd (40) /= Resp_Ok_Nodata then
+         Debug_Put_Line ("virtio-gpu set-mode: create failed");
+         return DSP.Status_Device;
+      end if;
+
+      St := Attach_Backing (FB_Caps (0 .. FB_Obj_Count - 1), Need);
+      if St /= DSP.Status_Ok then
+         Debug_Put_Line ("virtio-gpu set-mode: attach failed");
+         return St;
+      end if;
+      St := Set_Scanout;
+      if St /= DSP.Status_Ok then
+         Debug_Put_Line ("virtio-gpu set-mode: scanout failed");
+         return St;
+      end if;
+
+      Fill_Rect (0, 0, Width, Height, BG);
+      Flush_Dirty;
+      Debug_Put_Line
+        ("virtio-gpu mode" & Natural'Image (Width) & " x" &
+         Natural'Image (Height));
+      return DSP.Status_Ok;
+   end Set_Mode;
 
    ------------------------------------------------------------------
 
@@ -761,69 +930,38 @@ begin
    --  Framebuffer: list of 64-page memory objects (kernel object
    --  page cap), mapped contiguously at FB_VA; ATTACH_BACKING
    --  entries are per page because object frames are not
-   --  physically contiguous.
-   FB_Pages := U64 (Width * Height * 4) / 4096;
+   --  physically contiguous. Objects are ALWAYS full 64-page
+   --  allocations (M90): Op_Set_Mode can only grow the FB in
+   --  whole objects, so a partial tail object here would strand
+   --  capacity the extension path cannot top up (boot 1280x800 =
+   --  1000 pages as 15x64+40; growing to 1080p's 2025 pages would
+   --  then need a 33rd object past the 32-object table).
+   FB_Pages := (U64 (Width) * U64 (Height) * 4 + 4095) / 4096;
    if FB_Pages > Max_Entries then
       Fail ("virtio-gpu framebuffer too large");
    end if;
 
-   Obj_Pages := FB_Pages;
-   while Obj_Pages > 0 loop
-      declare
-         This : constant U64 := U64'Min (Obj_Pages, 64);
-         VA   : constant U64 :=
-           FB_VA + U64 (FB_Obj_Count) * 64 * 4096;
-      begin
-         FB_Caps (FB_Obj_Count) := Mem_Alloc (This);
-         if FB_Caps (FB_Obj_Count) = Syscall_Failed then
-            Fail ("virtio-gpu fb alloc failed");
-         end if;
-         Result := Mem_Map
-           (Address_Space => Address_Space_Cap,
-            Cap           => FB_Caps (FB_Obj_Count),
-            VA            => VA,
-            Offset        => 0,
-            Length        => This * 4096,
-            Flags         => 3);
-         if Result /= 0 then
-            Fail ("virtio-gpu fb map failed");
-         end if;
-         Obj_Pages := Obj_Pages - This;
-         FB_Obj_Count := FB_Obj_Count + 1;
-      end;
+   while FB_Alloc_Pages < FB_Pages loop
+      FB_Caps (FB_Obj_Count) := Mem_Alloc (64);
+      if FB_Caps (FB_Obj_Count) = Syscall_Failed then
+         Fail ("virtio-gpu fb alloc failed");
+      end if;
+      Result := Mem_Map
+        (Address_Space => Address_Space_Cap,
+         Cap           => FB_Caps (FB_Obj_Count),
+         VA            => FB_VA + U64 (FB_Obj_Count) * 64 * 4096,
+         Offset        => 0,
+         Length        => 64 * 4096,
+         Flags         => 3);
+      if Result /= 0 then
+         Fail ("virtio-gpu fb map failed");
+      end if;
+      FB_Alloc_Pages := FB_Alloc_Pages + 64;
+      FB_Obj_Count := FB_Obj_Count + 1;
    end loop;
 
-   Ent_Count := 0;
-   declare
-      Remaining : U64 := FB_Pages;
-      Obj       : Natural := 0;
-      In_Obj    : U64;
-   begin
-      while Remaining > 0 loop
-         In_Obj := U64'Min (Remaining, 64);
-         for P in 0 .. In_Obj - 1 loop
-            PA := Mem_Object_PA (FB_Caps (Obj), P);
-            if PA = 0 then
-               Fail ("virtio-gpu fb pa query failed");
-            end if;
-            Ent_Words (Natural (Ent_Count) * 4) :=
-              Virtio.U32 (PA and 16#FFFF_FFFF#);
-            Ent_Words (Natural (Ent_Count) * 4 + 1) :=
-              Virtio.U32 (PA / 16#1_0000_0000#);
-            Ent_Words (Natural (Ent_Count) * 4 + 2) := 4096;
-            Ent_Words (Natural (Ent_Count) * 4 + 3) := 0;
-            Ent_Count := Ent_Count + 1;
-         end loop;
-         Remaining := Remaining - In_Obj;
-         Obj := Obj + 1;
-      end loop;
-   end;
-
-   Set_Hdr (Cmd_Attach_Backing);
-   Cmd_Words (6) := Resource_Id;
-   Cmd_Words (7) := Virtio.U32 (Ent_Count);
-   if Ctrl_Cmd (32, Extra_Len => Virtio.U32 (Ent_Count) * 16)
-     /= Resp_Ok_Nodata
+   if Attach_Backing (FB_Caps (0 .. FB_Obj_Count - 1), FB_Pages)
+     /= DSP.Status_Ok
    then
       Fail ("virtio-gpu attach backing failed");
    end if;
@@ -909,8 +1047,32 @@ begin
             Display_Reply (Reply_H, Label, St);
          end;
 
-      elsif Label = DSP.Op_Commit_Buffer then
-         Display_Reply (Reply_H, Label, Commit_Buffer);
+       elsif Label = DSP.Op_Commit_Buffer then
+          Display_Reply (Reply_H, Label, Commit_Buffer);
+
+       elsif Label = DSP.Op_Set_Mode then
+          --  M90: validate against the static clamp BEFORE
+          --  converting (a garbage-huge word would raise in
+          --  Natural (..)). A no-change request is a cheap Ok.
+          declare
+             St : U64;
+          begin
+             if Message.Words (0) < U64 (Min_W)
+               or else Message.Words (0) > U64 (Max_W)
+               or else Message.Words (1) < U64 (Min_H)
+               or else Message.Words (1) > U64 (Max_H)
+             then
+                St := DSP.Status_Bad_Mode;
+             elsif Natural (Message.Words (0)) = Width
+               and then Natural (Message.Words (1)) = Height
+             then
+                St := DSP.Status_Ok;
+             else
+                St := Set_Mode (Natural (Message.Words (0)),
+                                Natural (Message.Words (1)));
+             end if;
+             Display_Reply (Reply_H, Label, St);
+          end;
 
       elsif Label = DSP.Op_Present then
          declare

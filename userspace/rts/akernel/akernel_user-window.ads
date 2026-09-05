@@ -151,6 +151,20 @@ use type Akernel_User.Syscalls.U64;
 --    Op_Pointer (31): w0 = x, w1 = y (raw absolute tablet
 --      coords, 0..32767 — Bureau scales to the mode), w2 =
 --      button bits (0 = left). Reply w0 = status.
+--
+--  Screen mode (M90): runtime geometry switch, Amiga ScreenMode
+--  prefs lineage.
+--    Op_Set_Screen_Mode (32): w0 = width, w1 = height; 0/0 is a
+--      pure query. A real request goes Bureau -> display service
+--      (Op_Set_Mode): the scanout resource is recreated, Bureau
+--      tears down and rebuilds its compositing buffer for the new
+--      geometry (old frames return to the PMM on last-cap close),
+--      window origins clamp into the new screen, and the full
+--      frame repaints. Client surface buffers are untouched.
+--      Reply w0 = status (Status_Bad_Mode when the driver rejects
+--      the geometry), w1 = current width, w2 = current height —
+--      the actual mode AFTER the call, so a rejected switch still
+--      answers the query.
 
 package Akernel_User.Window is
    subtype U64 is Syscalls.U64;
@@ -166,6 +180,7 @@ package Akernel_User.Window is
     Op_Surface_Resize        : constant U64 := 28;  --  v5
     Op_Key                   : constant U64 := 30;
     Op_Pointer               : constant U64 := 31;
+    Op_Set_Screen_Mode       : constant U64 := 32;  --  M90
 
     --  Op_Surface_Create w2 flags (v5).
     Flag_Resizable : constant U64 := 1;
@@ -176,6 +191,7 @@ package Akernel_User.Window is
    Status_Bad_Index : constant U64 := 3;
    Status_Bad_Caps  : constant U64 := 4;
    Status_Device    : constant U64 := 5;
+   Status_Bad_Mode  : constant U64 := 6;  --  M90
 
    --  Input queue (v3): one page, u64 words; see the header.
    Input_Queue_Head   : constant := 0;  --  word index
@@ -246,4 +262,11 @@ package Akernel_User.Window is
       Id      : U64;
       X, Y, W : U64;
       H       : U64) return U64;
+    --  M90: query (Width = Height = 0) or switch the screen mode.
+    --  Cur_W/Cur_H always come back with the mode in effect
+    --  after the call.
+    function Set_Screen_Mode
+      (EP            : U64;
+       Width, Height : U64;
+       Cur_W, Cur_H  : out U64) return U64;
 end Akernel_User.Window;

@@ -30,6 +30,13 @@ with Font8x8;
 --  (desktop -> windows bottom-to-top -> screen bar), then one
 --  Present; the terminal's scroll path stays a narrow band. The
 --  WHOLE display stack logs via Debug_Put_Line only.
+--
+--  M90: Op_Set_Screen_Mode switches the display geometry at
+--  runtime (Apply_Mode): cursor/menu fold away, the display
+--  service recreates the scanout resource, the compositing
+--  buffer is torn down (frames return to the PMM on last-cap
+--  close) and rebuilt for the new mode, window origins clamp
+--  on-screen, full repaint. Boot uses the same Build_Buffer.
 
 procedure Bureau is
    use Akernel_User.Syscalls;
@@ -1382,6 +1389,176 @@ procedure Bureau is
    Label      : U64;
    Reply_H    : U64;
 
+   ------------------------------------------------------------------
+   --  M90: compositing-buffer lifecycle, shared by boot and the
+   --  Op_Set_Screen_Mode dance.
+   ------------------------------------------------------------------
+
+   --  Unmap + delete every chunk of the current buffer (the
+   --  display service has already dropped ITS caps if the
+   --  teardown follows a Set_Mode, so the frames return to the
+   --  PMM on these closes).
+   procedure Teardown_Buffer is
+      Left : U64 := Pages;
+   begin
+      if Objects = 0 then
+         return;
+      end if;
+      for I in 0 .. Natural (Objects) - 1 loop
+         This := U64'Min (Left, 64);
+         if Mem_Unmap (Address_Space_Cap,
+                       Buf_VA + U64 (I) * 64 * 4096,
+                       This * 4096) /= 0
+         then
+            Debug_Put_Line ("bureau buffer unmap failed");
+         end if;
+         if Obj_Caps (I) /= 0 then
+            Result := Cap_Delete (Obj_Caps (I));
+            Obj_Caps (I) := 0;
+         end if;
+         Left := Left - This;
+      end loop;
+      Objects := 0;
+   end Teardown_Buffer;
+
+   --  Allocate + map the buffer for the current Pages, push the
+   --  chunk caps to the display service (4 per call; the driver
+   --  needs the Manage right for Mem_Object_PA — minted copies
+   --  are deleted after each call, the transfer keeps the
+   --  receiver's slot), and commit the scanout swap.
+   function Build_Buffer return U64 is
+      Base : U64 := 0;
+      Send : array (0 .. 3) of U64;
+      St   : U64;
+   begin
+      Objects := (Pages + 63) / 64;
+      if Objects > Max_Objects then
+         return Win.Status_Device;
+      end if;
+
+      Pages_Left := Pages;
+      Count := 0;
+      while Pages_Left > 0 loop
+         This := U64'Min (Pages_Left, 64);
+         Obj_Caps (Count) := Mem_Alloc (This);
+         if Obj_Caps (Count) = Syscall_Failed then
+            return Win.Status_Device;
+         end if;
+         Result := Mem_Map
+           (Address_Space => Address_Space_Cap,
+            Cap           => Obj_Caps (Count),
+            VA            => Buf_VA + U64 (Count) * 64 * 4096,
+            Offset        => 0,
+            Length        => This * 4096,
+            Flags         => 3);
+         if Result /= 0 then
+            return Win.Status_Device;
+         end if;
+         Pages_Left := Pages_Left - This;
+         Count := Count + 1;
+      end loop;
+
+      while Base < Objects loop
+         Send := (others => 0);
+         for I in 0 .. 3 loop
+            exit when Base + U64 (I) >= Objects;
+            Minted := Cap_Mint
+              (Obj_Caps (Natural (Base + U64 (I))),
+               Right_Map + Right_Read + Right_Write + Right_Manage +
+                 Right_Transfer,
+               0);
+            if Minted = Syscall_Failed then
+               for J in 0 .. 3 loop
+                  if Send (J) /= 0 then
+                     Result := Cap_Delete (Send (J));
+                  end if;
+               end loop;
+               return Win.Status_Device;
+            end if;
+            Send (I) := Minted;
+         end loop;
+         St := Akernel_User.Display.Set_Buffer
+           (Display_EP, Base, Send (0), Send (1), Send (2), Send (3));
+         for I in 0 .. 3 loop
+            if Send (I) /= 0 then
+               Result := Cap_Delete (Send (I));
+            end if;
+         end loop;
+         if St /= Akernel_User.Display.Status_Ok then
+            return Win.Status_Device;
+         end if;
+         Base := Base + 4;
+      end loop;
+
+      if Akernel_User.Display.Commit_Buffer (Display_EP) /=
+        Akernel_User.Display.Status_Ok
+      then
+         return Win.Status_Device;
+      end if;
+      return Win.Status_Ok;
+   end Build_Buffer;
+
+   --  Op_Set_Screen_Mode (M90): switch the display geometry.
+   --  Sequence: cursor sprite + open menu fold away while the old
+   --  buffer is still on screen; the driver recreates its scanout
+   --  resource (dropping our old chunk caps); we tear down,
+   --  rebuild and recommit the compositing buffer; window origins
+   --  clamp into the new screen; full repaint. Client surface
+   --  buffers are untouched — their windows just repaint.
+   function Apply_Mode (Req_W, Req_H : U64) return U64 is
+      NW, NH, NS, NP : U64;
+      St : U64;
+   begin
+      Cursor_Erase;
+      Dismiss_Menu;
+      St := Akernel_User.Display.Set_Mode
+        (Display_EP, Req_W, Req_H, NW, NH, NS, NP);
+      if St = Akernel_User.Display.Status_Bad_Mode then
+         return Win.Status_Bad_Mode;
+      elsif St /= Akernel_User.Display.Status_Ok then
+         return Win.Status_Device;
+      end if;
+      if NW = 0 or else NW > Max_W or else NH = 0
+        or else NH > Max_H or else NS /= NW * 4
+      then
+         --  The driver answered Ok with nonsense geometry — the
+         --  old mode is already gone, so there is nothing sane
+         --  to report back beyond failure.
+         return Win.Status_Device;
+      end if;
+
+      Teardown_Buffer;
+      Width := NW;
+      Height := NH;
+      Stride := NS;
+      Pages := NP;
+      St := Build_Buffer;
+      if St /= Win.Status_Ok then
+         --  No buffer, no compositor: the screen is dead either
+         --  way, so die loudly.
+         Fail ("screen mode rebuild failed");
+      end if;
+
+      for S in 1 .. Win_Tab.Last loop
+         if Wins (S).Used then
+            Wins (S).X := (if Wins (S).FW >= Width then 0
+                           else U64'Min (Wins (S).X,
+                                         Width - Wins (S).FW));
+            Wins (S).Y := (if Wins (S).FH >= Height then 0
+                           else U64'Min (Wins (S).Y,
+                                         Height - Wins (S).FH));
+         end if;
+      end loop;
+
+      Paint_Band (0, 0, Width, Height);
+      Present_Band (0, 0, Width, Height);
+      Cursor_Draw (Cur_X, Cur_Y);
+      Debug_Put_Line
+        ("bureau screen mode" & Natural'Image (Natural (Width))
+         & " x" & Natural'Image (Natural (Height)));
+      return Win.Status_Ok;
+   end Apply_Mode;
+
 begin
    --  1. Mode geometry from the display service.
    if Akernel_User.Display.Get_Info
@@ -1397,77 +1574,11 @@ begin
    end if;
    Debug_Put_Line ("PASS bureau display info ok");
 
-   --  2. Compositing buffer: chunks of at most 64 pages, mapped
-   --  contiguously at Buf_VA.
-   Objects := (Pages + 63) / 64;
-   if Objects > Max_Objects then
-      Fail ("buffer too large");
-   end if;
-
-   Pages_Left := Pages;
-   Count := 0;
-   while Pages_Left > 0 loop
-      This := U64'Min (Pages_Left, 64);
-      Obj_Caps (Count) := Mem_Alloc (This);
-      if Obj_Caps (Count) = Syscall_Failed then
-         Fail ("buffer alloc failed");
-      end if;
-      Result := Mem_Map
-        (Address_Space => Address_Space_Cap,
-         Cap           => Obj_Caps (Count),
-         VA            => Buf_VA + U64 (Count) * 64 * 4096,
-         Offset        => 0,
-         Length        => This * 4096,
-         Flags         => 3);
-      if Result /= 0 then
-         Fail ("buffer map failed");
-      end if;
-      Pages_Left := Pages_Left - This;
-      Count := Count + 1;
-   end loop;
-
-   --  3. Push chunk caps to the display service (4 per call).
-   --  The driver needs the Manage right for Mem_Object_PA;
-   --  minted copies are deleted after each call (transfer keeps
-   --  the sender's slot; Bureau's originals stay for mapping).
-   declare
-      Base : U64 := 0;
-      Send : array (0 .. 3) of U64;
-      St   : U64;
-   begin
-      while Base < Objects loop
-         Send := (others => 0);
-         for I in 0 .. 3 loop
-            exit when Base + U64 (I) >= Objects;
-            Minted := Cap_Mint
-              (Obj_Caps (Natural (Base + U64 (I))),
-               Right_Map + Right_Read + Right_Write + Right_Manage +
-                 Right_Transfer,
-               0);
-            if Minted = Syscall_Failed then
-               Fail ("buffer mint failed");
-            end if;
-            Send (I) := Minted;
-         end loop;
-         St := Akernel_User.Display.Set_Buffer
-           (Display_EP, Base, Send (0), Send (1), Send (2), Send (3));
-         for I in 0 .. 3 loop
-            if Send (I) /= 0 then
-               Result := Cap_Delete (Send (I));
-            end if;
-         end loop;
-         if St /= Akernel_User.Display.Status_Ok then
-            Fail ("set buffer rejected");
-         end if;
-         Base := Base + 4;
-      end loop;
-   end;
-
-   --  4. Commit: the scanout backing is now Bureau's buffer.
-   if Akernel_User.Display.Commit_Buffer (Display_EP) /=
-     Akernel_User.Display.Status_Ok
-   then
-      Fail ("buffer commit failed");
+   --  2-4. Compositing buffer: chunks of at most 64 pages mapped
+   --  contiguously at Buf_VA, pushed to the display service, then
+   --  committed (the scanout backing is now Bureau's buffer).
+   if Build_Buffer /= Win.Status_Ok then
+      Fail ("buffer setup failed");
    end if;
    Debug_Put_Line ("PASS bureau display commit ok");
 
@@ -1995,6 +2106,23 @@ begin
             Result := Cap_Delete (Message.Caps (0));
          end if;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
+
+      elsif Label = Win.Op_Set_Screen_Mode then
+         --  M90: 0/0 is a pure query; anything else runs the
+         --  mode dance unless it is the mode already running.
+         --  The reply always carries the mode in effect.
+         declare
+            Req_W : constant U64 := Message.Words (0);
+            Req_H : constant U64 := Message.Words (1);
+            St    : U64 := Win.Status_Ok;
+         begin
+            if (Req_W /= 0 or else Req_H /= 0)
+              and then (Req_W /= Width or else Req_H /= Height)
+            then
+               St := Apply_Mode (Req_W, Req_H);
+            end if;
+            Win_Reply (Reply_H, Label, St, Width, Height, 0, 0);
+         end;
 
       elsif Label = Win.Op_Key then
          --  While a menu is open, Esc dismisses it and is eaten;
