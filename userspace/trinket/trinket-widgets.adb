@@ -12,6 +12,7 @@ package body Trinket.Widgets is
     type Label_Access is access Label;
     type Button_Access is access Button;
     type Gauge_Access is access Gauge;
+    type Separator_Access is access Separator;
     type Checkbox_Access is access Checkbox;
     type Radio_Access is access Radio;
     type Group_Access is access Group;
@@ -559,6 +560,32 @@ package body Trinket.Widgets is
       MH := Fonts.Line_Height + 8;
    end Min_Size;
 
+   --  Separator
+
+   function New_Separator return Any_Widget is
+      S : constant Separator_Access := new Separator;
+   begin
+      return Any_Widget (S);
+   end New_Separator;
+
+   procedure Draw (W : Separator; C : Canvas) is
+      Y : constant U64 := W.Y + W.H / 2;
+   begin
+      if not Intersects (W, C) then
+         return;
+      end if;
+      --  Groove: dark line, light line directly under it.
+      Paint.Fill_Rect (C, W.X, Y - 1, W.X + W.W, Y, Bevel_Lo);
+      Paint.Fill_Rect (C, W.X, Y, W.X + W.W, Y + 1, Bevel_Hi);
+   end Draw;
+
+   procedure Min_Size (W : Separator; MW, MH : out U64) is
+      pragma Unreferenced (W);
+   begin
+      MW := 0;
+      MH := 2;
+   end Min_Size;
+
    function On_Pointer
      (W : access Button; K : Pointer_Kind; PX, PY : U64)
       return Boolean
@@ -922,12 +949,21 @@ package body Trinket.Widgets is
       then W.Y + W.H - 2 * Arrow
       else W.Y + 2);
 
+   --  M87c: horizontal twins — the arrow cluster sits at the
+   --  RIGHT (left-arrow box over... beside the right one).
+   function Track_R (W : Scrollbar) return U64 is
+     (if W.W > 2 * Arrow + 2
+      then W.X + W.W - 2 * Arrow
+      else W.X + 2);
+
    function New_Scrollbar
-     (On_Change : Change_Callback := null) return Any_Widget
+     (On_Change : Change_Callback := null;
+      Dir       : Direction := Vertical) return Any_Widget
    is
       S : constant Scrollbar_Access := new Scrollbar;
    begin
       S.On_Change := On_Change;
+      S.Dir := Dir;
       return Any_Widget (S);
    end New_Scrollbar;
 
@@ -944,12 +980,25 @@ package body Trinket.Widgets is
      (W : in out Scrollbar; Min, Max, Visible : U64)
    is
    begin
+      --  No-op when nothing changed: apps re-sync on every
+      --  content change (M87c Text_Edit hook) and an
+      --  unconditional Dirty would redraw the bar per key.
+      if Min = W.Min and then Max = W.Max
+        and then U64'Max (Visible, 1) = W.Visible
+      then
+         return;
+      end if;
       W.Min := Min;
       W.Max := Max;
       W.Visible := U64'Max (Visible, 1);
       Clamp_Pos (W);
       W.Dirty := True;
    end Set_Range;
+
+   procedure Set_Step (W : in out Scrollbar; S : U64) is
+   begin
+      W.Step := U64'Max (S, 1);
+   end Set_Step;
 
    procedure Set_Pos (W : in out Scrollbar; P : U64) is
    begin
@@ -1007,6 +1056,30 @@ package body Trinket.Widgets is
       Bottom := Top + U64'Min (Knob_H, Track_H);
    end Knob_Rect;
 
+   --  Horizontal knob geometry, mirrored across the diagonal.
+   procedure Knob_Rect_H
+     (W : Scrollbar; Left, Right : out U64)
+   is
+      Track_L : constant U64 := W.X + 2;
+      Track_Rn : constant U64 := Track_R (W);
+      Track_W : constant U64 := Track_Rn - Track_L;
+      Total   : constant U64 := W.Max - W.Min + W.Visible;
+      Knob_W  : constant U64 :=
+        U64'Max (12, Track_W * W.Visible / U64'Max (Total, 1));
+      Travel  : constant U64 := Track_W - U64'Min (Knob_W, Track_W);
+   begin
+      if Track_W <= 12 then
+         Left := Track_L;
+         Right := Track_L;
+         return;
+      end if;
+      Left := Track_L +
+        (if W.Max > W.Min
+         then Travel * (W.Pos - W.Min) / (W.Max - W.Min)
+         else 0);
+      Right := Left + U64'Min (Knob_W, Track_W);
+   end Knob_Rect_H;
+
    procedure Draw (W : Scrollbar; C : Canvas) is
       KT, KB : U64;
 
@@ -1040,6 +1113,38 @@ package body Trinket.Widgets is
          end loop;
       end Fill_Stripes;
 
+      procedure Fill_HStripes (X0, Y0, X1, Y1 : U64) is
+         --  Horizontal-bar version: 1px stripes by row.
+         Y : U64 := Y0;
+      begin
+         while Y < Y1 loop
+            Paint.Fill_Rect (C, X0, Y, X1, Y + 1,
+                             (if (Y - Y0) mod 2 = 0
+                              then Win_Face else Face));
+            Y := Y + 1;
+         end loop;
+      end Fill_HStripes;
+
+      procedure Chevron_LR (X0, CY : U64; Left : Boolean; Sh : U64) is
+         --  Horizontal mirror of Chevron: < or > pointing glyph,
+         --  white shadow ABOVE (mirrored from "to the left").
+         P : U64;
+      begin
+         for I in U64'(0) .. 3 loop
+            P := (if Left then X0 + I else X0 + 3 - I);
+            Paint.Fill_Rect (C, P + Sh, CY - I - 1 + Sh,
+                             P + 1 + Sh, CY - I + Sh, Bevel_Hi);
+            Paint.Fill_Rect (C, P + Sh, CY + I - 1 + Sh,
+                             P + 1 + Sh, CY + I + Sh, Bevel_Hi);
+            Paint.Fill_Rect (C, P + Sh, CY - I + Sh,
+                             P + 1 + Sh, CY - I + 1 + Sh,
+                             Text_Dark);
+            Paint.Fill_Rect (C, P + Sh, CY + I + Sh,
+                             P + 1 + Sh, CY + I + 1 + Sh,
+                             Text_Dark);
+         end loop;
+      end Chevron_LR;
+
       procedure Chevron (CX, Y0 : U64; Up : Boolean; Sh : U64) is
          --  Thin single-pixel chevron, white shadow to the left
          --  (MUI "shadow" style); Sh shifts when pressed.
@@ -1067,9 +1172,61 @@ package body Trinket.Widgets is
       if not Intersects (W, C) then
          return;
       end if;
-      if W.H <= 2 * Arrow + 2 or else W.W <= 6 then
+      if W.Dir = Vertical
+        and then (W.H <= 2 * Arrow + 2 or else W.W <= 6)
+      then
          --  Degenerate bar: plain face, nothing fits.
          Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
+         return;
+      end if;
+      if W.Dir = Horizontal
+        and then (W.W <= 2 * Arrow + 2 or else W.H <= 6)
+      then
+         Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Face);
+         return;
+      end if;
+
+      if W.Dir = Horizontal then
+         --  M87c: mirrored across the diagonal — cluster at the
+         --  RIGHT, stripes by row, < > chevrons.
+         Fill_HStripes (W.X + 2, W.Y + 2, Track_R (W),
+                        W.Y + W.H - 2);
+         Paint.Fill_Rect (C, Track_R (W), W.Y + 2,
+                          W.X + W.W - 2, W.Y + W.H - 2, Face);
+         Frame_Flat (W.X, W.Y, W.X + W.W, W.Y + W.H);
+
+         Knob_Rect_H (W, KT, KB);  --  KT/KB are LEFT/RIGHT here
+         if KB > KT then
+            Fill_HStripes (KT + 2, W.Y + 2, KB - 2, W.Y + W.H - 2);
+            Frame_Flat (KT, W.Y + 1, KB, W.Y + W.H - 1);
+         end if;
+
+         Paint.Fill_Rect
+           (C, W.X + W.W - 2 * Arrow + 1, W.Y + 2,
+            W.X + W.W - Arrow - 1, W.Y + W.H - 2, Face);
+         Frame_Flat (W.X + W.W - 2 * Arrow, W.Y + 1,
+                     W.X + W.W - Arrow, W.Y + W.H - 1);
+         if W.Arrow_Dn = -1 then
+            Paint.Bevel2
+              (C, W.X + W.W - 2 * Arrow + 1, W.Y + 2,
+               W.X + W.W - Arrow - 1, W.Y + W.H - 2,
+               Raised => False);
+         end if;
+         Paint.Fill_Rect
+           (C, W.X + W.W - Arrow + 1, W.Y + 2,
+            W.X + W.W - 2, W.Y + W.H - 2, Face);
+         Frame_Flat (W.X + W.W - Arrow, W.Y + 1,
+                     W.X + W.W - 1, W.Y + W.H - 1);
+         if W.Arrow_Dn = 1 then
+            Paint.Bevel2
+              (C, W.X + W.W - Arrow + 1, W.Y + 2,
+               W.X + W.W - 2, W.Y + W.H - 2,
+               Raised => False);
+         end if;
+         Chevron_LR (W.X + W.W - 2 * Arrow + 6, W.Y + W.H / 2,
+                     True, SU);
+         Chevron_LR (W.X + W.W - Arrow + 6, W.Y + W.H / 2,
+                     False, SD);
          return;
       end if;
 
@@ -1113,12 +1270,16 @@ package body Trinket.Widgets is
    end Draw;
 
    procedure Min_Size (W : Scrollbar; MW, MH : out U64) is
-      pragma Unreferenced (W);
    begin
-      --  Vertical only: Arrow wide; the bottom cluster (two
-      --  arrow boxes) plus a minimal knob track tall.
-      MW := Arrow;
-      MH := 3 * Arrow;
+      --  Arrow in the cross axis; the arrow cluster (two boxes)
+      --  plus a minimal knob track in the layout axis.
+      if W.Dir = Vertical then
+         MW := Arrow;
+         MH := 3 * Arrow;
+      else
+         MW := 3 * Arrow;
+         MH := Arrow;
+      end if;
    end Min_Size;
 
    function On_Pointer
@@ -1128,7 +1289,70 @@ package body Trinket.Widgets is
        KT, KB : U64;
        Track_T  : constant U64 := W.Y + 2;
        Track_Bt : constant U64 := Track_B (W.all);
+       Track_L  : constant U64 := W.X + 2;
+       Track_Rt : constant U64 := Track_R (W.all);
     begin
+       if W.Dir = Horizontal then
+          --  M87c mirror: cluster at the right, PX-driven.
+          if W.W <= 2 * Arrow + 2 then
+             return False;
+          end if;
+          case K is
+             when Press =>
+                if not Inside (W.all, PX, PY) then
+                   return False;
+                end if;
+                Knob_Rect_H (W.all, KT, KB);  --  LEFT/RIGHT here
+                if PX >= W.X + W.W - Arrow then
+                   W.Arrow_Dn := 1;
+                   W.Dirty := True;
+                   User_Move (W, W.Pos + W.Step);
+                elsif PX >= W.X + W.W - 2 * Arrow then
+                   W.Arrow_Dn := -1;
+                   W.Dirty := True;
+                   Step_Down (W, W.Step);
+                elsif PX >= KT and then PX < KB then
+                   W.Dragging := True;
+                   W.Dirty := True;
+                   W.Grab_DY := PX - KT;  --  grab offset in X
+                elsif PX < KT then
+                   Step_Down (W, W.Visible);
+                else
+                   User_Move (W, W.Pos + W.Visible);
+                end if;
+                return True;
+             when Move =>
+                if W.Dragging then
+                   Knob_Rect_H (W.all, KT, KB);
+                   declare
+                      Knob_W : constant U64 := KB - KT;
+                      Travel : constant U64 :=
+                        Track_Rt - Track_L - Knob_W;
+                      Rel : constant U64 :=
+                        (if PX > Track_L + W.Grab_DY
+                         then PX - Track_L - W.Grab_DY else 0);
+                   begin
+                      User_Move (W, W.Min +
+                        (if Travel > 0
+                         then (W.Max - W.Min) * Rel / Travel
+                         else 0));
+                   end;
+                   return True;
+                end if;
+             when Release =>
+                if W.Arrow_Dn /= 0 then
+                   W.Arrow_Dn := 0;
+                   W.Dirty := True;
+                   return True;
+                end if;
+                if W.Dragging then
+                   W.Dragging := False;
+                   W.Dirty := True;
+                   return True;
+                end if;
+          end case;
+          return False;
+       end if;
        if W.H <= 2 * Arrow + 2 then
           return False;  --  degenerate bar, nothing to hit
        end if;
@@ -1143,11 +1367,11 @@ package body Trinket.Widgets is
              if PY >= W.Y + W.H - Arrow then
                 W.Arrow_Dn := 1;
                 W.Dirty := True;
-                User_Move (W, W.Pos + 1);
+                User_Move (W, W.Pos + W.Step);
              elsif PY >= W.Y + W.H - 2 * Arrow then
                 W.Arrow_Dn := -1;
                 W.Dirty := True;
-                Step_Down (W, 1);
+                Step_Down (W, W.Step);
              elsif PY >= KT and then PY < KB then
                W.Dragging := True;
                W.Dirty := True;
@@ -1435,6 +1659,16 @@ package body Trinket.Widgets is
       Base    : U64 := 0;
       Cum     : U64;
       Prev    : U64;
+
+      --  M87c: scrollbars pin to Arrow in the CROSS axis of the
+      --  group that holds them (vertical bars in horizontal
+      --  groups, horizontal bars in vertical groups).
+      function Pinned_V (K : Any_Widget) return Boolean is
+        (K.all in Scrollbar
+         and then Scrollbar (K.all).Dir = Vertical);
+      function Pinned_H (K : Any_Widget) return Boolean is
+        (K.all in Scrollbar
+         and then Scrollbar (K.all).Dir = Horizontal);
    begin
       if W.N = 0 then
          return;
@@ -1447,28 +1681,47 @@ package body Trinket.Widgets is
       --  font degrades to clipping, never to a negative size.
       if W.Dir = Vertical then
          for I in 1 .. W.N loop
-            W.Kids (I).Min_Size (KW, KH);
-            Mins (I) := KH;
-            Base := Base + KH;
-            Total_W := Total_W + W.Wts (I);
+            if Pinned_H (W.Kids (I)) then
+               Mins (I) := Arrow;  --  pinned, no weight share
+            else
+               W.Kids (I).Min_Size (KW, KH);
+               Mins (I) := KH;
+               Total_W := Total_W + W.Wts (I);
+            end if;
+            Base := Base + Mins (I);
          end loop;
          Avail := IY1 - IY0 - Spacing * U64 (W.N - 1);
          Extra := (if Avail > Base then Avail - Base else 0);
          Pos   := IY0;
          Cum   := 0;
          for I in 1 .. W.N loop
-            Prev := Cum;
-            Cum  := Cum + W.Wts (I);
-            W.Kids (I).X := IX0;
             W.Kids (I).Y := Pos;
-            W.Kids (I).W := IX1 - IX0;
-            W.Kids (I).H := Mins (I)
-              + (Extra * Cum / Total_W - Extra * Prev / Total_W);
+            if Pinned_H (W.Kids (I)) then
+               W.Kids (I).X := IX0;
+               W.Kids (I).W := IX1 - IX0;
+               W.Kids (I).H := Mins (I);
+            else
+               Prev := Cum;
+               Cum  := Cum + W.Wts (I);
+               W.Kids (I).H := Mins (I)
+                 + (if Total_W > 0
+                    then Extra * Cum / Total_W
+                      - Extra * Prev / Total_W
+                    else 0);
+               if Pinned_V (W.Kids (I)) then
+                  W.Kids (I).W := U64'Min (Arrow, IX1 - IX0);
+                  W.Kids (I).X :=
+                    IX0 + (IX1 - IX0 - W.Kids (I).W) / 2;
+               else
+                  W.Kids (I).X := IX0;
+                  W.Kids (I).W := IX1 - IX0;
+               end if;
+            end if;
             Pos := Pos + W.Kids (I).H + Spacing;
          end loop;
       else
          for I in 1 .. W.N loop
-            if W.Kids (I).all in Scrollbar then
+            if Pinned_V (W.Kids (I)) then
                Fixed := Fixed + 1;
             else
                W.Kids (I).Min_Size (Mins (I), KH);
@@ -1482,9 +1735,9 @@ package body Trinket.Widgets is
          Pos := IX0;
          Cum := 0;
          for I in 1 .. W.N loop
-            W.Kids (I).Y := IY0;
-            W.Kids (I).H := IY1 - IY0;
-            if W.Kids (I).all in Scrollbar then
+            if Pinned_V (W.Kids (I)) then
+               W.Kids (I).Y := IY0;
+               W.Kids (I).H := IY1 - IY0;
                W.Kids (I).X := Pos;
                W.Kids (I).W := Arrow;
                Pos := Pos + Arrow + Spacing;
@@ -1497,6 +1750,14 @@ package body Trinket.Widgets is
                     then Extra * Cum / Total_W
                       - Extra * Prev / Total_W
                     else 0);
+               if Pinned_H (W.Kids (I)) then
+                  W.Kids (I).H := U64'Min (Arrow, IY1 - IY0);
+                  W.Kids (I).Y :=
+                    IY0 + (IY1 - IY0 - W.Kids (I).H) / 2;
+               else
+                  W.Kids (I).Y := IY0;
+                  W.Kids (I).H := IY1 - IY0;
+               end if;
                Pos := Pos + W.Kids (I).W + Spacing;
             end if;
          end loop;

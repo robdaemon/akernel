@@ -14,6 +14,29 @@ package body Trinket.Text_Edit is
      (if Col = 0 then 0
       else Fonts.Text_Width (S (S'First .. S'First + Col - 1)));
 
+   --  M87c: split a line at the horizontal scroll offset — Drop
+   --  leading chars lie fully left of it; Spill (0 <= Spill <
+   --  width of the first visible char) is the partial-pixel
+   --  spill of that char into the left padding.
+   procedure HSkip
+     (S : String; Off : U64; Drop : out Natural; Spill : out U64)
+   is
+      Acc : U64 := 0;
+   begin
+      Drop := 0;
+      while Drop < S'Length loop
+         declare
+            CW : constant U64 := Fonts.Text_Width
+              (S (S'First + Drop .. S'First + Drop));
+         begin
+            exit when Acc + CW > Off;
+            Acc := Acc + CW;
+            Drop := Drop + 1;
+         end;
+      end loop;
+      Spill := Off - Acc;
+   end HSkip;
+
    function New_Text_Edit return Widgets.Any_Widget is
       TE : constant Any_Text_Edit := new Text_Edit;
    begin
@@ -25,6 +48,20 @@ package body Trinket.Text_Edit is
 
    --  Content API
 
+   --  M87c: content/cursor hook — apps re-sync scrollbars.
+   procedure Changed (W : in out Text_Edit) is
+   begin
+      if W.On_Change /= null then
+         W.On_Change.all;
+      end if;
+   end Changed;
+
+   procedure Set_On_Change
+     (W : in out Text_Edit; CB : Change_Callback) is
+   begin
+      W.On_Change := CB;
+   end Set_On_Change;
+
    procedure Clear (W : in out Text_Edit) is
    begin
       W.N := 0;  --  Ensure_Line recreates line 1 lazily, so a
@@ -33,9 +70,11 @@ package body Trinket.Text_Edit is
       W.Cur_L := 1;
       W.Cur_C := 0;
       W.Top := 0;
+      W.HOff := 0;
       W.Sel := False;
       W.Dirty_F := False;
       W.Dirty := True;
+      Changed (W);
    end Clear;
 
    procedure Append_Line (W : in out Text_Edit; S : String) is
@@ -48,6 +87,7 @@ package body Trinket.Text_Edit is
       W.Lines (W.N).Buf (1 .. W.Lines (W.N).Len) :=
         S (S'First .. S'First + W.Lines (W.N).Len - 1);
       W.Dirty := True;
+      Changed (W);
    end Append_Line;
 
    function Line_Count (W : Text_Edit) return Natural is (W.N);
@@ -74,6 +114,38 @@ package body Trinket.Text_Edit is
    end Set_Top;
 
    function Top_Line (W : Text_Edit) return U64 is (W.Top);
+
+   --  M87c: horizontal scroll (pixels, proportional font).
+   function Visible_Width (W : Text_Edit) return U64 is
+     (if W.W > 2 * Pad + 2 then W.W - 2 * Pad - 2 else 0);
+
+   function Content_Width (W : Text_Edit) return U64 is
+      M : U64 := 0;
+   begin
+      for I in 1 .. W.N loop
+         M := U64'Max
+           (M, Fonts.Text_Width (W.Lines (I).Buf (1 .. W.Lines (I).Len)));
+      end loop;
+      return M;
+   end Content_Width;
+
+   function Max_HOff (W : Text_Edit) return U64 is
+      CW : constant U64 := Content_Width (W);
+      VW : constant U64 := Visible_Width (W);
+   begin
+      return (if CW > VW then CW - VW else 0);
+   end Max_HOff;
+
+   procedure Set_HOff (W : in out Text_Edit; O : U64) is
+      Clamped : constant U64 := U64'Min (O, Max_HOff (W));
+   begin
+      if Clamped /= W.HOff then
+         W.HOff := Clamped;
+         W.Dirty := True;
+      end if;
+   end Set_HOff;
+
+   function H_Offset (W : Text_Edit) return U64 is (W.HOff);
 
    procedure Ensure_Line (W : in out Text_Edit) is
    begin
@@ -248,6 +320,7 @@ package body Trinket.Text_Edit is
    end Forward_Delete;
 
    procedure Ensure_Cursor_Visible (W : in out Text_Edit) is
+      VW : constant U64 := Visible_Width (W);
    begin
       if U64 (W.Cur_L - 1) < W.Top then
          W.Top := U64 (W.Cur_L - 1);
@@ -255,6 +328,23 @@ package body Trinket.Text_Edit is
       elsif U64 (W.Cur_L - 1) >= W.Top + W.Visible_Rows then
          W.Top := U64 (W.Cur_L - 1) - W.Visible_Rows + 1;
          W.Dirty := True;
+      end if;
+      --  M87c: keep the cursor gap inside the inner width too
+      --  (pixels, proportional). Skipped before layout (VW = 0).
+      if VW > 0 then
+         declare
+            CX : constant U64 := Col_X
+              (W.Lines (W.Cur_L).Buf (1 .. W.Lines (W.Cur_L).Len),
+               W.Cur_C);
+         begin
+            if CX < W.HOff then
+               W.HOff := CX;
+               W.Dirty := True;
+            elsif CX + 2 > W.HOff + VW then
+               W.HOff := CX + 2 - VW;
+               W.Dirty := True;
+            end if;
+         end;
       end if;
    end Ensure_Cursor_Visible;
 
@@ -335,6 +425,7 @@ package body Trinket.Text_Edit is
       end if;
       Ensure_Cursor_Visible (W.all);
       W.Dirty := True;
+      Changed (W.all);
       return True;
    end On_Key;
 
@@ -351,7 +442,9 @@ package body Trinket.Text_Edit is
       L := Natural'Min
         (Natural (W.Top) + Natural (Row) + 1, W.N);
       Col := W.Lines (L).Len;
-      T := (if PX > W.X + Pad then PX - W.X - Pad else 0);
+      --  M87c: into full-line coordinates (pixels + HOff).
+      T := (if PX > W.X + Pad then PX - W.X - Pad else 0)
+        + W.HOff;
       if Col > 0 then
          for P in 1 .. Col loop
             declare
@@ -447,32 +540,58 @@ package body Trinket.Text_Edit is
                  (if W.Sel and then LN >= L1 and then LN <= L2
                   then (if LN = L2 then C2 else W.Lines (LN).Len)
                   else -1);
+               --  M87c: horizontal scroll — Drop chars lie left
+               --  of HOff; the line draws from X0 = TX0 - Spill
+               --  (Spill < 8 and TX0 >= Pad + group margin, so
+               --  X0 stays non-negative; the clamp covers the
+               --  pathological W.X = 0 layout).
+               Drop : Natural;
+               Spill : U64;
+               X0   : U64;
+               XD   : U64;  --  width of the dropped prefix
             begin
+               HSkip (S, W.HOff, Drop, Spill);
+               X0 := (if Spill <= TX0 then TX0 - Spill else 0);
+               XD := Col_X (S, Drop);
+               --  Absolute X of 0-based column Col (>= Drop):
+               --  X0 + Col_X (S, Col) - XD, inlined below.
                if SL >= 0 and then EL > SL then
-                  --  Selection band + white text on it.
-                  Paint.Fill_Rect
-                    (C, TX0 + Col_X (S, SL), LY,
-                     TX0 + Col_X (S, EL), LY + LH, Sel_Blue);
-                  if SL > 0 then
-                     Fonts.Draw_Text
-                       (C, TX0, LY, S (1 .. SL), Text_Dark);
-                  end if;
-                  Fonts.Draw_Text
-                    (C, TX0 + Col_X (S, SL), LY,
-                     S (SL + 1 .. EL), Pane);
-                  if EL < S'Length then
-                     Fonts.Draw_Text
-                       (C, TX0 + Col_X (S, EL), LY,
-                        S (EL + 1 .. S'Length), Text_Dark);
-                  end if;
+                  declare
+                     BSL : constant Natural :=
+                       Natural'Max (SL, Drop);
+                  begin
+                     if EL > BSL then
+                        --  Selection band + white text on it.
+                        Paint.Fill_Rect
+                          (C, X0 + Col_X (S, BSL) - XD, LY,
+                           X0 + Col_X (S, EL) - XD, LY + LH,
+                           Sel_Blue);
+                        if SL > Drop then
+                           Fonts.Draw_Text
+                             (C, X0, LY, S (Drop + 1 .. SL),
+                              Text_Dark);
+                        end if;
+                        Fonts.Draw_Text
+                          (C, X0 + Col_X (S, BSL) - XD, LY,
+                           S (BSL + 1 .. EL), Pane);
+                        if EL < S'Length then
+                           Fonts.Draw_Text
+                             (C, X0 + Col_X (S, EL) - XD, LY,
+                              S (EL + 1 .. S'Length), Text_Dark);
+                        end if;
+                     end if;
+                  end;
                else
-                  Fonts.Draw_Text (C, TX0, LY, S, Text_Dark);
+                  Fonts.Draw_Text
+                    (C, X0, LY, S (Drop + 1 .. S'Length),
+                     Text_Dark);
                end if;
-               --  Cursor bar.
-               if LN = W.Cur_L then
+               --  Cursor bar (never offscreen left once
+               --  Ensure_Cursor_Visible ran; guard anyway).
+               if LN = W.Cur_L and then W.Cur_C >= Drop then
                   Paint.Fill_Rect
-                    (C, TX0 + Col_X (S, W.Cur_C), LY,
-                     TX0 + Col_X (S, W.Cur_C) + 1, LY + LH,
+                    (C, X0 + Col_X (S, W.Cur_C) - XD, LY,
+                     X0 + Col_X (S, W.Cur_C) - XD + 1, LY + LH,
                      Text_Dark);
                end if;
             end;

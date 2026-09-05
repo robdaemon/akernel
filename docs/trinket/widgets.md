@@ -216,8 +216,7 @@ procedure Set_Selected (W : in out Radio; On : Boolean);
 The programmatic setters mark dirty and never fire `On_Change`;
 `Set_Selected (W, True)` also clears the peers.
 
-### `Scrollbar` (vertical)
-
+### `Scrollbar`
 
 ```ada
 type Scrollbar is new Widget with record
@@ -225,6 +224,8 @@ type Scrollbar is new Widget with record
    Max       : U64 := 0;
    Visible   : U64 := 1;
    Pos       : U64 := 0;
+   Step      : U64 := 1;   --  M87c: arrow-click delta
+   Dir       : Direction := Vertical;  --  M87c
    On_Change : Change_Callback := null;
    Dragging  : Boolean := False;
    Grab_DY   : U64 := 0;
@@ -232,10 +233,11 @@ type Scrollbar is new Widget with record
 end record;
 ```
 
-Vertical scrollbar in the MUI/Xen look (M86d): flat black/white
-frame, track and knob of vertical 1px window-gray/gadget-gray
-stripes, and — MUI's signature layout — **both arrow boxes stacked
-at the bottom** (up over down) with thin embossed chevron glyphs.
+Scrollbar in the MUI/Xen look (M86d): flat black/white
+frame, track and knob of 1px window-gray/gadget-gray
+stripes, and — MUI's signature layout — **both arrow boxes
+clustered together** (bottom for vertical, right for
+horizontal) with thin embossed chevron glyphs.
 Pointer capture (Bureau v4) delivers drag and release outside the
 window. `On_Change` fires **only for user moves**, not for
 programmatic `Set_Pos`. M86c press feedback: a held arrow draws
@@ -246,14 +248,35 @@ while dragged.
 type Change_Callback is access procedure (Pos : U64);
 
 function New_Scrollbar
-  (On_Change : Change_Callback := null) return Any_Widget;
+  (On_Change : Change_Callback := null;
+   Dir       : Direction := Vertical) return Any_Widget;
 
 procedure Set_Range
   (W : in out Scrollbar; Min, Max, Visible : U64);
 procedure Set_Pos (W : in out Scrollbar; P : U64);
+procedure Set_Step (W : in out Scrollbar; S : U64);
 ```
 
-`Set_Range` clamps `Pos` and marks dirty without firing `On_Change`.
+`Set_Range` clamps `Pos` and marks dirty without firing `On_Change`
+(and no-ops entirely when the metrics didn't change, so apps can
+re-sync on every content edit). **M87c**: `Dir => Horizontal`
+mirrors the bar across the diagonal — arrow cluster at the right,
+`<`/`>` chevrons, stripes by row; `Min_Size` is `3*Arrow x Arrow`
+(vs `Arrow x 3*Arrow`). Groups pin a scrollbar to `Arrow` in its
+cross axis automatically. `Set_Step` sets the arrow-click delta in
+`Pos` units (default 1; pixel-based bars want ~a char cell, edit
+uses 8). The edit app wires one to `Text_Edit`'s h-scroll.
+
+### `Separator` (M87d)
+
+```ada
+function New_Separator return Any_Widget;
+```
+
+Etched horizontal groove (1px `Bevel_Lo` line with a `Bevel_Hi`
+line right under it), for visual grouping inside a vertical group —
+tdemo has one between the Choices and Font groups. `Min_Size` is
+`0 x 2`.
 
 ### `Image_Widget`
 
@@ -362,8 +385,9 @@ child's `Weight` (MUI lineage) — weights express who gets the slack,
 never who gives up content. If the minimums exceed the inner extent
 (a huge user font), children keep their minimums and the canvas clip
 takes the overflow. Default weight is 1; a tall listview might get 5
-while surrounding buttons stay thin. Horizontal groups pin scrollbars
-to arrow-width before splitting the remainder.
+while surrounding buttons stay thin. Groups pin scrollbars to `Arrow`
+in the cross axis before splitting the remainder (M87c: both
+orientations, in either group direction; the cross axis centers).
 
 ```ada
 type Direction is (Vertical, Horizontal);
@@ -419,6 +443,54 @@ function Max_Top (W : Listview) return U64;
   it changed.
 - `Icon_Size = 16`. The first `Set_Item_Icon` flips every row to icon
   height (`Icon_Size + 2`); the list borrows the image.
+
+## Text editor widget
+
+`Trinket.Text_Edit` is a separate package (own line storage, like
+Listview) — the multi-line editor behind the edit app.
+
+```ada
+function New_Text_Edit return Widgets.Any_Widget;
+
+procedure Clear (W : in out Text_Edit);
+procedure Append_Line (W : in out Text_Edit; S : String);
+function Line_Count (W : Text_Edit) return Natural;
+function Get_Line (W : Text_Edit; I : Natural) return String;
+function Modified (W : Text_Edit) return Boolean;
+procedure Clear_Modified (W : in out Text_Edit);
+
+--  Scroll coupling for the app's scrollbars
+procedure Set_Top (W : in out Text_Edit; T : U64);
+function Top_Line (W : Text_Edit) return U64;
+function Visible_Rows (W : Text_Edit) return U64;
+
+--  Horizontal scroll (M87c): a PIXEL offset against the
+--  proportional font
+procedure Set_HOff (W : in out Text_Edit; O : U64);
+function H_Offset (W : Text_Edit) return U64;
+function Max_HOff (W : Text_Edit) return U64;
+function Visible_Width (W : Text_Edit) return U64;
+
+--  Content/cursor hook (M87c): re-sync scrollbars here
+type Change_Callback is access procedure;
+procedure Set_On_Change (W : in out Text_Edit; CB : Change_Callback);
+```
+
+- Fixed capacity: `Max_Lines` x `Max_Cols` per line.
+- Full cursor/selection editing: arrows/Home/End/PgUp/PgDn,
+  shift-selection, drag-select, insert/backspace/delete/enter.
+- `Ensure_Cursor_Visible` auto-scrolls both axes on every handled
+  key; the horizontal side scrolls in pixels (proportional font).
+- M87c h-scroll rendering skips whole dropped characters plus a
+  sub-char `Spill`, so text slides smoothly rather than jumping per
+  character. `Locate` (click → cursor position) maps through `HOff`.
+- `Set_On_Change` fires after every handled key and after
+  `Clear`/`Append_Line` — the app re-syncs both scrollbars there
+  (typed growth changes `Max_HOff`/max top; auto-scroll changes the
+  positions). `Scrollbar.Set_Range`/`Set_Pos` no-op on unchanged
+  metrics, so this is cheap and feedback-loop-free.
+- The edit app wires it with a vertical `Scrollbar` beside it and a
+  horizontal one under it (`Set_Step 8` — Pos units are pixels).
 
 ## Event dispatch notes
 

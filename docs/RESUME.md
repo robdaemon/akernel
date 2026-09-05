@@ -11,6 +11,32 @@ repository.
 
 ## Recently shipped
 
+- **M87c+M87d** (this commit): horizontal Scrollbar + Separator,
+  and Text_Edit h-scroll. Scrollbar takes `Dir : Direction` —
+  Horizontal mirrors everything across the diagonal (arrow cluster
+  at the RIGHT, < > chevrons, stripes by row, PX-driven pointer
+  path, Min_Size 3*Arrow x Arrow); Group.Layout pins a scrollbar
+  to Arrow in its cross axis in BOTH group directions now, so a
+  horizontal bar drops into a vertical group without a weight
+  share. New `Step` field + Set_Step: arrow-click delta in Pos
+  units (default 1; pixel bars want ~a char cell, edit uses 8).
+  Set_Range no-ops on unchanged metrics (per-keystroke re-syncs
+  stay free). Text_Edit: HOff pixel scroll against the
+  proportional font — HSkip drops whole chars + sub-char Spill so
+  text slides smoothly, Draw/Locate/Ensure_Cursor_Visible all
+  HOff-aware; new Set_On_Change hook fires after handled keys and
+  Clear/Append_Line so apps re-sync bars on typed growth (the
+  once-after-Open sync left the bar dead when an empty document
+  grew past the view — found via QMP). Separator (M87d): etched
+  groove (Bevel_Lo + Bevel_Hi under), Min_Size 0x2, tdemo shows
+  one between Choices and Font. edit app wires HScroller under
+  the text area. QMP-verified: auto-scroll while typing past the
+  edge, Home snaps to 0, arrow steps 8px/click both ways, knob
+  drag scrolls live; separator groove pixel-checked
+  (Bevel_Lo/Bevel_Hi pair). 1848/1846 PASS SMP4/SMP1, 0 FAIL.
+  Next: M87e Tabs, f Cycle, g Numeric, h Tab focus chain with
+  app-overridable ranks; M88 in-window overlay/popups later.
+
 - **M87b** (this commit): Slider widget. Horizontal continuous
   value gadget, Scrollbar's sibling: sunken track channel,
   raised 12px knob with grip lines, track-click pages 10% of

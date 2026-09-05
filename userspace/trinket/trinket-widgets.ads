@@ -20,6 +20,8 @@ package Trinket.Widgets is
 
    type Pointer_Kind is (Move, Press, Release);
 
+   type Direction is (Vertical, Horizontal);
+
    procedure Layout (W : in out Widget);
    --  Computes child geometry from W's own rect. Default: no
    --  children, nothing to do. Group overrides.
@@ -181,6 +183,15 @@ package Trinket.Widgets is
     overriding procedure Draw (W : Gauge; C : Canvas);
     overriding procedure Min_Size (W : Gauge; MW, MH : out U64);
 
+    --  Separator (M87d): etched horizontal rule — a Bevel_Lo
+    --  line with a Bevel_Hi line directly under it (the frame
+    --  groove look). Pure decoration: no input, Min_Size 0x2,
+    --  and its weight only stretches the gaps around the lines.
+    type Separator is new Widget with null record;
+    function New_Separator return Any_Widget;
+    overriding procedure Draw (W : Separator; C : Canvas);
+    overriding procedure Min_Size (W : Separator; MW, MH : out U64);
+
     --  Checkbox / Radio (M86e): toggle gadgets — a 14px framed
     --  box at the left (square for checkboxes, a disc for
     --  radios), label to the right; the whole rect is the hit
@@ -255,28 +266,38 @@ package Trinket.Widgets is
        return Boolean;
 
 
-   --  Scrollbar (milestone 57): vertical; sunken track, arrow
-   --  boxes, striped knob proportional to Visible / range.
-   --  Arrow press steps 1, track press pages, knob drags (v4
-   --  pointer capture delivers the drag + release even outside
-   --  the window). On_Change fires on USER moves only.
+   --  Scrollbar (milestone 57): sunken track, arrow boxes,
+   --  striped knob proportional to Visible / range. Arrow press
+   --  steps 1, track press pages, knob drags (v4 pointer capture
+   --  delivers the drag + release even outside the window).
+   --  On_Change fires on USER moves only.
    --  M86c press feedback: the pressed arrow draws sunken with
    --  its glyph shifted, the knob draws sunken while dragged.
+   --  M87c: Dir selects the axis — Vertical (default) stacks the
+   --  arrow cluster at the bottom, Horizontal mirrors everything
+   --  with the cluster at the right. Groups pin the bar to Arrow
+   --  in the cross axis.
    type Change_Callback is access procedure (Pos : U64);
    type Scrollbar is new Widget with record
       Min       : U64 := 0;
       Max       : U64 := 0;
       Visible   : U64 := 1;
       Pos       : U64 := 0;
+      Step      : U64 := 1;   --  arrow-click delta (Pos units)
+      Dir       : Direction := Vertical;
       On_Change : Change_Callback := null;
       Dragging  : Boolean := False;
       Grab_DY   : U64 := 0;
-      Arrow_Dn  : Integer := 0;  --  0, -1 up pressed, +1 down
+      Arrow_Dn  : Integer := 0;  --  0, -1 up/left pressed, +1 down/right
    end record;
    function New_Scrollbar
-     (On_Change : Change_Callback := null) return Any_Widget;
+     (On_Change : Change_Callback := null;
+      Dir       : Direction := Vertical) return Any_Widget;
    procedure Set_Range
      (W : in out Scrollbar; Min, Max, Visible : U64);
+   --  Arrow-click delta; default 1 (one Pos unit). Pixel-based
+   --  bars (Text_Edit h-scroll) want ~a char width.
+   procedure Set_Step (W : in out Scrollbar; S : U64);
    --  Clamps Pos; marks dirty; does NOT fire On_Change.
    procedure Set_Pos (W : in out Scrollbar; P : U64);
    overriding procedure Draw (W : Scrollbar; C : Canvas);
@@ -326,7 +347,6 @@ package Trinket.Widgets is
    --  a tall row takes Weight 5+ and the labels/buttons stay
    --  thin. Horizontal groups still pin scrollbars to Arrow
    --  wide before splitting the remainder by weight.
-   type Direction is (Vertical, Horizontal);
    Max_Children : constant := 12;
    type Kid_Array is array (1 .. Max_Children) of Any_Widget;
    type Wt_Array is array (1 .. Max_Children) of U64;

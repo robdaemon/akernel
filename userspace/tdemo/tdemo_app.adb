@@ -295,6 +295,8 @@ package body Tdemo_App is
        Widgets.Group (Root.all).Add (Img_Grp, 6);
        Widgets.Group (Root.all).Add (Work_Grp, 4);
        Widgets.Group (Root.all).Add (Choice_Grp, 4);
+       --  M87d showcase: the etched rule between groups.
+       Widgets.Group (Root.all).Add (Widgets.New_Separator);
        Widgets.Group (Root.all).Add (Font_Grp, 3);
        Widgets.Group (Root.all).Add (Btn_Row, 4);
 

@@ -31,10 +31,30 @@ package Trinket.Text_Edit is
    function Modified (W : Text_Edit) return Boolean;
    procedure Clear_Modified (W : in out Text_Edit);
 
-   --  Scroll coupling for the app's scrollbar.
-   procedure Set_Top (W : in out Text_Edit; T : U64);
-   function Top_Line (W : Text_Edit) return U64;
-   function Visible_Rows (W : Text_Edit) return U64;
+    --  Scroll coupling for the app's scrollbar.
+    procedure Set_Top (W : in out Text_Edit; T : U64);
+    function Top_Line (W : Text_Edit) return U64;
+    function Visible_Rows (W : Text_Edit) return U64;
+
+    --  Horizontal scrolling (M87c): a PIXEL offset against the
+    --  proportional font. The app wires a horizontal Scrollbar
+    --  exactly like the vertical one (sync Max_HOff /
+    --  Visible_Width into Set_Range; On_Change -> Set_HOff).
+    procedure Set_HOff (W : in out Text_Edit; O : U64);
+    function H_Offset (W : Text_Edit) return U64;
+    function Max_HOff (W : Text_Edit) return U64;
+    --  Widest line's pixel width past the inner width (0 when
+    --  every line fits).
+    function Visible_Width (W : Text_Edit) return U64;
+    --  Inner text width: widget width minus frame and Pad.
+
+    --  Content/cursor hook (M87c): fired after any handled key
+    --  and after Clear/Append_Line, so the app can re-sync its
+    --  scrollbars (content growth changes Max_HOff / Max_Top;
+    --  Ensure_Cursor_Visible changes the positions).
+    type Change_Callback is access procedure;
+    procedure Set_On_Change
+      (W : in out Text_Edit; CB : Change_Callback);
 
    overriding procedure Draw (W : Text_Edit; C : Canvas);
    overriding procedure Min_Size (W : Text_Edit; MW, MH : out U64);
@@ -61,12 +81,14 @@ private
       Cur_L    : Natural := 1;       --  1-based line
       Cur_C    : Natural := 0;       --  0-based column (insert
                                      --  BEFORE this column)
-      Top      : U64 := 0;           --  first visible line (0-based)
+       Top      : U64 := 0;           --  first visible line (0-based)
+       HOff     : U64 := 0;           --  horizontal scroll, pixels
       Sel      : Boolean := False;   --  selection active
       Anch_L   : Natural := 1;
       Anch_C   : Natural := 0;
       Dragging : Boolean := False;
       Dirty_F  : Boolean := False;   --  content modified
+      On_Change : Change_Callback := null;
    end record;
 
 end Trinket.Text_Edit;

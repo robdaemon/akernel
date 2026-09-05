@@ -19,6 +19,7 @@ package body Edit_App is
    --  callbacks.
    Edit_Box : TE.Any_Text_Edit;
    Scroller : Widgets.Any_Widget;
+   HScroller : Widgets.Any_Widget;
    Path     : access String := null;
 
    procedure Save_Clicked is
@@ -65,6 +66,12 @@ package body Edit_App is
       TE.Set_Top (Edit_Box.all, Pos);
    end Scroll_Moved;
 
+   --  M87c: horizontal twin (pixels).
+   procedure HScroll_Moved (Pos : U64) is
+   begin
+      TE.Set_HOff (Edit_Box.all, Pos);
+   end HScroll_Moved;
+
    procedure Sync_Scrollbar is
       N    : constant U64 := U64 (TE.Line_Count (Edit_Box.all));
       Vis  : constant U64 := TE.Visible_Rows (Edit_Box.all);
@@ -74,7 +81,19 @@ package body Edit_App is
                          0, MaxT, Vis);
       Widgets.Set_Pos (Widgets.Scrollbar (Scroller.all),
                        TE.Top_Line (Edit_Box.all));
+      Widgets.Set_Range (Widgets.Scrollbar (HScroller.all),
+                         0, TE.Max_HOff (Edit_Box.all),
+                         TE.Visible_Width (Edit_Box.all));
+      Widgets.Set_Pos (Widgets.Scrollbar (HScroller.all),
+                       TE.H_Offset (Edit_Box.all));
    end Sync_Scrollbar;
+
+   --  M87c: typed/pasted content changes the scroll ranges
+   --  (and Ensure_Cursor_Visible the positions) — re-sync.
+   procedure Editor_Changed is
+   begin
+      Sync_Scrollbar;
+   end Editor_Changed;
 
    procedure Load (P : String) is
       use Ada.Text_IO;
@@ -105,6 +124,11 @@ package body Edit_App is
    begin
       Edit_Box := TE.Any_Text_Edit (TE.New_Text_Edit);
       Scroller := Widgets.New_Scrollbar (Scroll_Moved'Access);
+      HScroller := Widgets.New_Scrollbar
+        (HScroll_Moved'Access, Widgets.Horizontal);
+      --  Pos units are pixels; step arrows by a char cell.
+      Widgets.Set_Step (Widgets.Scrollbar (HScroller.all), 8);
+      TE.Set_On_Change (Edit_Box.all, Editor_Changed'Access);
 
       if Akernel_User.CLI.Arg_Count >= 1 then
          Path := new String'(Akernel_User.CLI.Argument (1));
@@ -117,6 +141,8 @@ package body Edit_App is
       Widgets.Group (Mid_Row.all).Add (Widgets.Any_Widget (Edit_Box));
       Widgets.Group (Mid_Row.all).Add (Scroller);
       Widgets.Group (Root.all).Add (Mid_Row);
+      --  Pinned Arrow tall by the vertical group's M87c rule.
+      Widgets.Group (Root.all).Add (HScroller);
       Widgets.Group (Btn_Row.all).Add
         (Widgets.New_Button ("Save", Save_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
