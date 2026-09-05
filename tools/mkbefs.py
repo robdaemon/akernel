@@ -36,6 +36,7 @@
 #  attribute. After writing, the image is parsed back and verified
 #  (magics, bitmap/used_blocks agreement, tree walk, file bytes).
 
+import os
 import struct
 import sys
 
@@ -363,27 +364,7 @@ def build(path, mib):
             img.mark(b)
     img.finish_bitmap()
 
-    sb = bytearray(512)
-    sb[0:32] = b"Befs" + bytes(28)
-    sb[32:36] = le32(SB_MAGIC1)
-    sb[36:40] = le32(SB_FS_LENDIAN)
-    sb[40:44] = le32(BLK)
-    sb[44:48] = le32(SHIFT)
-    sb[48:56] = le64(num_blocks)
-    sb[56:64] = le64(img.used)
-    sb[64:68] = le32(BLK)                    #  inode_size
-    sb[68:72] = le32(SB_MAGIC2)
-    sb[72:76] = le32(1)                       #  blocks_per_ag
-    sb[76:80] = le32(AG_SHIFT)
-    sb[80:84] = le32(img.num_ags)             #  num_ags
-    sb[84:88] = le32(SB_CLEAN)                #  flags
-    sb[88:96] = rblk(1 + img.num_ags, LOG_LEN)  #  log_blocks
-    sb[96:104] = le64(2)                      #  log_start
-    sb[104:112] = le64(2)                     #  log_end
-    sb[112:116] = le32(SB_MAGIC3)
-    sb[116:124] = rblk(root_i, 1)             #  root_dir
-    sb[124:132] = rblk(idx_i, 1)              #  indices
-    img.buf[512:1024] = sb
+    img.buf[512:1024] = superblock(img, num_blocks, root_i, idx_i)
 
     with open(path, "wb") as f:
         f.write(img.buf)
@@ -392,6 +373,31 @@ def build(path, mib):
            fragment_r1, fragment_r2, fragment_body, readme_body)
     print("mkbefs: %s: %d MiB, %d blocks, %d used, root inode block %d"
           % (path, mib, num_blocks, img.used, root_i))
+
+
+def superblock(img, num_blocks, root_i, idx_i):
+    #  Shared 512-byte superblock (block 0, offset 512).
+    sb = bytearray(512)
+    sb[0:32] = b"Befs" + bytes(28)
+    sb[32:36] = le32(SB_MAGIC1)
+    sb[36:40] = le32(SB_FS_LENDIAN)
+    sb[40:44] = le32(BLK)
+    sb[44:48] = le32(SHIFT)
+    sb[48:56] = le64(num_blocks)
+    sb[56:64] = le64(img.used)
+    sb[64:68] = le32(BLK)                      #  inode_size
+    sb[68:72] = le32(SB_MAGIC2)
+    sb[72:76] = le32(1)                        #  blocks_per_ag
+    sb[76:80] = le32(AG_SHIFT)
+    sb[80:84] = le32(img.num_ags)              #  num_ags
+    sb[84:88] = le32(SB_CLEAN)                 #  flags
+    sb[88:96] = rblk(1 + img.num_ags, LOG_LEN)  #  log_blocks
+    sb[96:104] = le64(2)                       #  log_start
+    sb[104:112] = le64(2)                      #  log_end
+    sb[112:116] = le32(SB_MAGIC3)
+    sb[116:124] = rblk(root_i, 1)              #  root_dir
+    sb[124:132] = rblk(idx_i, 1)               #  indices
+    return bytes(sb)
 
 
 def verify(buf, num_blocks, used_blocks, root_i, readme_d,
@@ -443,11 +449,272 @@ def verify(buf, num_blocks, used_blocks, root_i, readme_d,
     assert frag == fragment_body, "FRAGMENT body"
 
 
+def parse_manifest(manifest_path):
+    #  Attr manifest: TAB-separated lines
+    #    VOLUME_PATH \t TYPE4CC \t ATTR_NAME \t VALUE
+    #  (VALUE is the raw attr data; the type fourcc is a literal
+    #  like CSTR/MIMS/LLNG). One entry per (path, attr) pair; a
+    #  path may repeat. The name pseudo-attribute is added
+    #  automatically and must NOT be listed here.
+    attrs = {}
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.rstrip("\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 4:
+                raise SystemExit(
+                    "manifest %s:%d: want PATH<TAB>TYPE<TAB>NAME<TAB>VALUE"
+                    % (manifest_path, lineno))
+            vpath, typ, name, value = parts
+            vpath = vpath.lstrip("/")
+            attrs.setdefault(vpath, []).append(
+                (ccode(typ), name.encode("utf-8"), value.encode("utf-8")))
+    return attrs
+
+
+def build_stage(path, mib, root_host, manifest):
+    #  Populate a volume from a host staging tree (M93): every host
+    #  file/dir under root_host becomes a BeFS entry under the
+    #  volume root, name-preserving. Extra attributes (ICON etc.)
+    #  come from the manifest (volume-relative path -> attrs).
+    #  The volume-wide name/size/last_modified index trees are left
+    #  EMPTY: staged files are static, and the engine keeps those
+    #  indices in sync only for files it creates/modifies at
+    #  runtime (documented deviation — queries match runtime files).
+    #  Each directory's own btree must fit ONE leaf (entries <= the
+    #  ~1024-byte node); assert loudly rather than write an invalid
+    #  tree (the OS tree keeps every dir well under that).
+    num_blocks = mib * 1024 * 1024 // BLK
+    img = Image(num_blocks)
+
+    #  --- pass 1: allocate inode/data/stream blocks + snapshot
+    #  host metadata (recursive; returns the record tree) ---
+    def alloc_node(host_path, vol_path, parent_block, is_dir):
+        rec = {"is_dir": is_dir, "vol": vol_path,
+               "block": img.alloc(1), "parent": parent_block,
+               "name": os.path.basename(host_path).encode("utf-8")}
+        if is_dir:
+            rec["stream"] = img.alloc(2)
+            rec["size"] = 2 * BLK
+            rec["children"] = []
+            for nm in sorted(os.listdir(host_path)):
+                hp = os.path.join(host_path, nm)
+                vp = vol_path + "/" + nm if vol_path else nm
+                rec["children"].append(
+                    alloc_node(hp, vp, rec["block"],
+                               os.path.isdir(hp)))
+        else:
+            with open(host_path, "rb") as f:
+                rec["data"] = f.read()
+            rec["size"] = len(rec["data"])
+            need = (rec["size"] + BLK - 1) // BLK
+            runs = []
+            if need > 0:
+                start = img.alloc(need)   #  bump-allocated contiguous
+                #  split at AG boundaries so no run crosses a group
+                pos = 0
+                while pos < need:
+                    seg = min(need - pos,
+                              GROUPSIZE - ((start + pos) % GROUPSIZE))
+                    runs.append((start + pos, seg))
+                    pos += seg
+            rec["runs"] = runs
+        return rec
+
+    root = alloc_node(root_host, "", 0, True)
+    #  the volume root's ".." points at itself (fixture parity)
+    root["parent"] = root["block"]
+
+    #  Indices root (referenced by the superblock, not the root
+    #  dir): name/size/last_modified/appsig with EMPTY streams.
+    idx_i = img.alloc(1)
+    idx_s = img.alloc(2)
+    index_names = [("name", BTREE_STRING, B_STRING_TYPE),
+                   ("size", BTREE_INT64, B_INT64_TYPE),
+                   ("last_modified", BTREE_INT64, B_INT64_TYPE),
+                   ("BEOS:APP_SIG", BTREE_STRING, B_STRING_TYPE)]
+    ix = {}
+    for nm, dtype, typecode in index_names:
+        ino = img.alloc(1)
+        stb = img.alloc(2)
+        ix[nm] = (ino, stb, dtype, typecode)
+
+    #  --- pass 2: write file data, dir btrees, inodes ---
+    def write_node(rec):
+        if rec["is_dir"]:
+            entries = [(b".", rec["block"]), (b"..", rec["parent"])]
+            for ch in rec["children"]:
+                entries.append((ch["name"], ch["block"]))
+            stream = btree_stream(BTREE_STRING, entries)
+            if len(stream) > 2 * BLK:
+                raise SystemExit(
+                    "mkbefs: dir %s does not fit one leaf" % rec["vol"])
+            img.put(rec["stream"], stream[:BLK])
+            img.put(rec["stream"] + 1, stream[BLK:2 * BLK])
+            runs = [(rec["stream"], 2)]
+            size = 2 * BLK
+            mode = S_IFDIR | S_STR_INDEX | 0o755
+        else:
+            runs = rec["runs"]
+            size = len(rec["data"])
+            mode = S_IFREG | 0o644
+            off = 0
+            for (start, ln) in runs:
+                base = start * BLK
+                for k in range(ln):
+                    chunk = rec["data"][off:off + BLK]
+                    img.buf[base + k * BLK:base + (k + 1) * BLK] = \
+                        chunk + bytes(BLK - len(chunk))
+                    off += BLK
+        #  the volume root carries no name pseudo-attribute (fixture
+        #  parity); every other named inode has it first.
+        attrs = [] if rec["vol"] == "" else \
+            [(FILE_NAME_TYPE, bytes([FILE_NAME_NAME]), rec["name"])]
+        attrs += manifest.get(rec["vol"], [])
+        img.put(rec["block"], inode(
+            rec["block"], mode, rec["parent"], attrs, runs, size))
+        if rec["is_dir"]:
+            for ch in rec["children"]:
+                write_node(ch)
+
+    write_node(root)
+
+    #  indices root inode + children
+    idx_entries = [(b"name", ix["name"][0]),
+                   (b"size", ix["size"][0]),
+                   (b"last_modified", ix["last_modified"][0]),
+                   (b"BEOS:APP_SIG", ix["BEOS:APP_SIG"][0])]
+    #  byte order: 'B'(0x42) < 'l'(0x6C) < 'n'(0x6E) < 's'(0x73) —
+    #  the list above is already ascending.
+    idx_stream = btree_stream(BTREE_STRING, idx_entries)
+    img.put(idx_s, idx_stream[:BLK])
+    img.put(idx_s + 1, idx_stream[BLK:2 * BLK])
+    for nm, (ino, stb, dtype, typecode) in ix.items():
+        st = btree_stream(dtype, [])
+        img.put(stb, st[:BLK])
+        img.put(stb + 1, st[BLK:])
+        img.put(ino, inode(ino, S_INDEX_DIR | S_IFDIR |
+                           (S_STR_INDEX if dtype == BTREE_STRING
+                            else S_LONG_LONG_INDEX),
+                           idx_i, [], [(stb, 2)], 2 * BLK,
+                           type_code=typecode))
+    img.put(idx_i, inode(idx_i,
+                         S_INDEX_DIR | S_STR_INDEX | S_IFDIR | 0o700,
+                         idx_i, [], [(idx_s, 2)], 2 * BLK))
+
+    #  the volume root keeps its be:volume_id attribute
+    attrs = [(B_UINT64_TYPE, b"be:volume_id", le64(0x4D3933_4245_4653))]
+    attrs += manifest.get("", [])
+    img.put(root["block"], inode(
+        root["block"], S_IFDIR | S_STR_INDEX | 0o755,
+        root["block"], attrs, [(root["stream"], 2)], 2 * BLK))
+
+    #  --- bitmap + superblock ---
+    for b in range(img.reserved, img.next_free):
+        img.mark(b)
+    img.finish_bitmap()
+    img.buf[512:1024] = superblock(img, num_blocks, root["block"], idx_i)
+
+    with open(path, "wb") as f:
+        f.write(img.buf)
+
+    #  read-back self-check: tree walk + sizes + data hashes
+    buf = bytes(img.buf)
+    sb = buf[512:1024]
+    assert sb[32:36] == le32(SB_MAGIC1) and \
+        sb[112:116] == le32(SB_MAGIC3), "sb magics"
+    num_ags = struct.unpack("<I", sb[80:84])[0]
+    pop = sum(bin(b).count("1")
+              for blk in range(num_ags)
+              for b in buf[(1 + blk) * BLK:(2 + blk) * BLK])
+    assert pop == img.used, "bitmap popcount %d != used %d" % (
+        pop, img.used)
+
+    def rd_entry(leaf):
+        count = struct.unpack_from("<H", leaf, 24)[0]
+        klen = struct.unpack_from("<H", leaf, 26)[0]
+        keys = leaf[28:28 + klen]
+        pos = key_align(28 + klen)
+        lens = [struct.unpack_from("<H", leaf, pos + 2 * j)[0]
+                for j in range(count)]
+        pos += 2 * count
+        koff = 0
+        names, vals = [], []
+        for j in range(count):
+            names.append(keys[koff:koff + lens[j]])
+            vals.append(struct.unpack_from("<q", leaf, pos + 8 * j)[0])
+            koff += lens[j]
+        return names, vals
+
+    def inode_runs(node):
+        runs = []
+        for j in range(12):
+            ag, start, ln = struct.unpack_from("<iHH", node, 72 + 8 * j)
+            if ln == 0:
+                break
+            runs.append(((ag << AG_SHIFT) + start, ln))
+        return runs
+
+    def check_node(rec):
+        node = buf[rec["block"] * BLK:(rec["block"] + 1) * BLK]
+        assert node[0:4] == le32(INODE_MAGIC1), "inode magic %s" % (
+            rec["vol"])
+        size = struct.unpack_from("<q", node, 208)[0]
+        assert size == rec["size"], "size mismatch %s" % rec["vol"]
+        if rec["is_dir"]:
+            srun = struct.unpack_from("<iHH", node, 72)
+            base = (srun[0] << AG_SHIFT) + srun[1]
+            hdr = buf[base * BLK:(base + 1) * BLK]
+            assert hdr[0:4] == le32(BTREE_MAGIC), "btree magic %s" % (
+                rec["vol"])
+            leaf = buf[(base + 1) * BLK:(base + 2) * BLK]
+            names, vals = rd_entry(leaf)
+            expect = [b".", b".."] + [ch["name"] for ch in
+                                      rec["children"]]
+            assert names == expect, "dir entries %s: %r != %r" % (
+                rec["vol"], names, expect)
+            for ch, blk in zip(rec["children"], vals[2:]):
+                assert blk == ch["block"], "child block %s" % ch["vol"]
+                check_node(ch)
+        else:
+            runs = inode_runs(node)
+            assert runs == rec["runs"], "runs mismatch %s: %r != %r" % (
+                rec["vol"], runs, rec["runs"])
+            total = b""
+            for (start, ln) in runs:
+                base = start * BLK
+                for k in range(ln):
+                    total += buf[base + k * BLK:base + (k + 1) * BLK]
+            assert total[:size] == rec["data"], "data mismatch %s" % (
+                rec["vol"])
+
+    check_node(root)
+    print("mkbefs --stage: %s: %d MiB, %d blocks, %d used, staged"
+          " tree verified"
+          % (path, mib, num_blocks, img.used))
+
+
 def main():
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        raise SystemExit("usage: mkbefs.py OUTPUT [SIZE_MIB]")
-    mib = int(sys.argv[2]) if len(sys.argv) == 3 else 8
-    build(sys.argv[1], mib)
+    if len(sys.argv) >= 4 and sys.argv[1] == "--stage":
+        root_host = sys.argv[2]
+        path = sys.argv[3]
+        mib = int(sys.argv[4]) if len(sys.argv) >= 5 else 8
+        manifest = parse_manifest(sys.argv[5]) if len(sys.argv) >= 6 \
+            else {}
+        if not os.path.isdir(root_host):
+            raise SystemExit("staging root %s is not a directory"
+                             % root_host)
+        build_stage(path, mib, root_host, manifest)
+    elif len(sys.argv) < 2 or len(sys.argv) > 3:
+        raise SystemExit(
+            "usage: mkbefs.py OUTPUT [SIZE_MIB]\n"
+            "       mkbefs.py --stage ROOT_DIR OUTPUT [SIZE_MIB] "
+            "[ATTRS_MANIFEST]")
+    else:
+        mib = int(sys.argv[2]) if len(sys.argv) == 3 else 8
+        build(sys.argv[1], mib)
 
 
 if __name__ == "__main__":
