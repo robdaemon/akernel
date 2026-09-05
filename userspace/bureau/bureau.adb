@@ -1389,16 +1389,15 @@ procedure Bureau is
       then
          return;
       end if;
-      --  Content-relative; outside the content nothing is
-      --  delivered UNLESS captured (v4) — then coordinates clamp
-      --  into content bounds so drags track to the edge.
+      --  Content-relative (pane origin is borderless-aware); outside
+      --  the content nothing is delivered UNLESS captured (v4) —
+      --  then coordinates clamp into content bounds so drags track
+      --  to the edge.
       declare
          IX : constant Long_Long_Integer :=
-           Long_Long_Integer (PX) -
-             Long_Long_Integer (Wins (T).X + Frame);
+           Long_Long_Integer (PX) - Long_Long_Integer (Pane_X (T));
          IY : constant Long_Long_Integer :=
-           Long_Long_Integer (PY) -
-             Long_Long_Integer (Wins (T).Y + Frame + Title_H);
+           Long_Long_Integer (PY) - Long_Long_Integer (Pane_Y (T));
       begin
          if Capture = 0 then
             if IX < 0 or else IY < 0
@@ -2367,12 +2366,10 @@ begin
                 if not Eat_Gesture
                   and then Focus /= 0 and then Wins (Focus).Queue_Cap /= 0
                   and then Drag_Slot = 0
-                  and then NX >= Wins (Focus).X + Frame
-                  and then NX < Wins (Focus).X + Frame +
-                    Wins (Focus).PW
-                  and then NY >= Wins (Focus).Y + Frame + Title_H
-                  and then NY < Wins (Focus).Y + Frame + Title_H +
-                    Wins (Focus).PH
+                  and then NX >= Pane_X (Focus)
+                  and then NX < Pane_X (Focus) + Wins (Focus).PW
+                  and then NY >= Pane_Y (Focus)
+                  and then NY < Pane_Y (Focus) + Wins (Focus).PH
                 then
                    Capture := Focus;
                 end if;

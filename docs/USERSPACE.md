@@ -359,7 +359,21 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   dimensions persist via the DRAWER:GEOM attribute ("WxH"
   content size, written from On_Resize): journaled on BeFS,
   a silent Bad_Args no-op on FAT32. No Snapshot menu — saving
-  is automatic and invisible.
+  is automatic and invisible. `userspace/desktop/` (M92,
+  System/Desktop, Startup right after Bureau) is the Workbench
+  backdrop: one full-screen Flag_Backdrop+Flag_Borderless
+  window at (0, Screen_Bar_H+1) with a bare Trinket.Iconview
+  of the mounted disks (Op_List_Volumes filtered by a
+  successful Op_Volume_Info — capacity is the disk
+  discriminator), 32x32 volume deficon, double-click spawns
+  System/Drawer on the volume, "Desktop" menu Refresh re-polls.
+  It spawns with the Fileman 4-handle GUI-tool pattern, NOT
+  Scripting.Exec.Spawn_Cmd: the Startup ABI (4=elevation,
+  5=netserv, no 6) is not the command ABI, and Spawn_Cmd's
+  Net_EP=6 grant fails the whole spawn from there. Bureau's
+  Forward_Pointer/capture content origin is pane-based
+  (Pane_X/Pane_Y) so borderless windows get correct,
+  unshifted coordinates.
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the

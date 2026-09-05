@@ -9,7 +9,7 @@ per-milestone detail too.
 Project rules are stored in the AGENTS.md file in the root of the
 repository.
 
-## Planned: Desktop icons + launcher (M92/M93)
+## Planned: Desktop icons + launcher (M93)
 
 Desktop icons + drawer icon views, Amiga Workbench lineage but
 native (NEXT.md's "skipped forever" covers the CLI ports
@@ -21,14 +21,8 @@ NO Snapshot concept — drawer window dimensions save
 automatically on every resize (BeFS attribute, silent no-op on
 FAT32); per-file icons come from an ICON attribute (CSTR path
 to an XPM) with defdraw/deffile/deftool-style fallback.
-M91 shipped the protocol + Iconview + Drawer (below).
-
-**M92**: System/Desktop — full-screen borderless backdrop
-window at (0, Bar_H+1), volumes from Op_List_Volumes (fs
-volumes only), double-click spawns System/Drawer <label:>,
-Refresh menu (no mount fan-out exists; poll). Kind-6 keeps it
-screen-sized across M90 switches. Startup line gains Desktop
-right after Bureau.
+M91 shipped the protocol + Iconview + Drawer, M92 the Desktop
+launcher (both below).
 
 **M93**: BeFS becomes Sys: (partition 1, device BD0 so
 hardcoded paths survive). Engine: bitmap allocator indexes the
@@ -44,6 +38,40 @@ per-app icons + drawer geometry persistence light up with zero
 icon-code changes.
 
 ## Recently shipped
+
+- **M92**: Desktop backdrop launcher (userspace/desktop,
+  DEST=system; Startup line right after Bureau). One
+  full-screen Flag_Backdrop+Flag_Borderless window at
+  (0, Screen_Bar_H+1) size W x (H-Bar_H-1) — geometry queried
+  via the Set_Screen_Mode pure-query form — holding a bare
+  Trinket.Iconview of mounted volumes: Op_List_Volumes scan
+  filtered to fs volumes whose Op_Volume_Info answers Ok
+  (capacity is the disk discriminator — Proc:/Net: answer
+  Bad_Args), all with the 32x32 VOLUME.XPM deficon.
+  Double-click spawns Sys:System/Drawer <label:>; "Desktop"
+  menu has Refresh (re-poll; no mount fan-out exists). Kind-6
+  re-fills the screen across M90 switches. Two real bugs found
+  by QMP: (1) Bureau's Forward_Pointer and the v4 capture test
+  hardcoded the chrome content origin (X+Frame,
+  Y+Frame+Title_H) — for a borderless window the pane IS the
+  frame, so the desktop's top 24 px band dropped every click
+  and the rest arrived offset; both now use the
+  borderless-aware Pane_X/Pane_Y. (2) The Startup-spawn ABI is
+  NOT the command ABI (4=elevation, 5=netserv, no handle 6),
+  so Scripting.Exec.Spawn_Cmd's Net_EP=6 grant fails the whole
+  spawn from a Startup context — Desktop spawns Drawer with
+  Fileman's local 4-handle GUI-tool pattern instead. QMP
+  verified at both 1024x768 and 1280x800: volume icons render,
+  dbl-click spawns Drawer on Sys:/Befs:, backdrop clicks focus
+  but never raise (z-order stable), Refresh picks, kind-6
+  re-fill + full interactivity after a live mode switch, depth
+  gadget and ScreenMode Okay/Cancel exit paths clean. Wild
+  goose chase worth recording: an apparent "process wedge on
+  Cancel" + "dead depth gadget" was entirely stale QMP pointer
+  scaling — qmp.py cached W/H=1280x800 across a 1024x768 boot,
+  so clicks landed at ~80% coords; the helper now re-syncs
+  from a screendump on every invocation. Gates: 1851/0 SMP4,
+  1847/0 SMP1. Next: M93 BeFS-as-Sys: swap.
 
 - **M91** (`ac7fab9`): Icon view + Drawer app (desktop icons
   phase 1). Window protocol: Op_Surface_Create w2 gains

@@ -79,7 +79,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
-DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer
+DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer desktop
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib
 #  Prefs drawer apps (M89): nested crates userspace/prefs/<name>;
@@ -298,7 +298,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	  mcopy -i $@@@1048576 /tmp/ak-prefs-env/* ::Prefs/Env 2>/dev/null || true; \
 	  rm -rf /tmp/ak-prefs-env; \
 	fi; \
-	printf 'System/Bureau\nSystem/Demo\nSystem/Tdemo\nSystem/Fileman\nSystem/Terminal\n' > $(INITRD_OUT)/startup; \
+	printf 'System/Bureau\nSystem/Desktop\nSystem/Demo\nSystem/Tdemo\nSystem/Fileman\nSystem/Terminal\n' > $(INITRD_OUT)/startup; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
 initrd: $(INITRD_IMG)

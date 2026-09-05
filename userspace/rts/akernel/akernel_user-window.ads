@@ -182,6 +182,8 @@ use type Akernel_User.Syscalls.U64;
 --      owns the target position (0, Bar_H+1) through the same
 --      pending-geometry machinery as zoom, and the client acks
 --      with Op_Surface_Resize exactly like a kind-5 resize.
+--    The screen bar height is part of the geometry contract
+--      (a backdrop's initial open needs it): Screen_Bar_H.
 
 package Akernel_User.Window is
    subtype U64 is Syscalls.U64;
@@ -224,6 +226,12 @@ package Akernel_User.Window is
     Input_Event_Resize : constant U64 := 5;  --  v5, Pack_Size value
     Input_Event_Screen_Mode : constant U64 := 6;  --  M91, backdrop only
     Input_Signal_Bit   : constant U64 := 1;
+
+    --  Bureau's screen bar height (M92): a backdrop window's
+    --  initial frame is (0, Screen_Bar_H + 1) with height
+    --  Screen_H - Screen_Bar_H - 1; later mode switches arrive
+    --  as kind-6 events with Bureau-computed targets.
+    Screen_Bar_H : constant U64 := 18;
 
     --  Pointer event value packing (content-relative).
     function Pack_Pointer (X, Y, Buttons : U64) return U64 is

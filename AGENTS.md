@@ -60,4 +60,8 @@
    for 'shell online' from SEPARATE short commands (never sleep in
    the launch call). QMP screendump + `input-send-event` over
    `/tmp/qqmp.sock` is the headless GUI smoke-test path (see the
-   M84 entry in docs/RESUME.md).
+   M84 entry in docs/RESUME.md). Pointer coords are scaled by the
+   helper's cached screen size — after a boot or a ScreenMode
+   switch, take a screendump BEFORE clicking or every click lands
+   at stale-scaled coordinates (the M92 "wedged process" hunt was
+   exactly this).
