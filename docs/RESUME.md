@@ -45,7 +45,7 @@ icon-code changes.
 
 ## Recently shipped
 
-- **M91** (`STAMP`): Icon view + Drawer app (desktop icons
+- **M91** (`ac7fab9`): Icon view + Drawer app (desktop icons
   phase 1). Window protocol: Op_Surface_Create w2 gains
   Flag_Backdrop=2 (focus on click, NEVER raises; z-bottom;
   send-to-back lands above it) and Flag_Borderless=4 (no chrome:
