@@ -332,7 +332,13 @@ package body Trinket.Window is
                     + (Tail mod Win.Input_Queue_Events) * 2;
                   Val := Queue (Slot + 1);
                   if Queue (Slot) = Win.Input_Event_Key then
-                     Consumed := W.Root.On_Key (Val and 16#FF#);
+                     if (Val and 16#FF#) = Key_Tab then
+                        --  M87h: Tab never reaches widgets; it
+                        --  cycles the window's focus chain.
+                        Widgets.Cycle_Focus (W.Root);
+                     else
+                        Consumed := W.Root.On_Key (Val and 16#FF#);
+                     end if;
                   elsif Queue (Slot) = Win.Input_Event_Pointer then
                      X := Win.Pointer_X (Val);
                      Y := Win.Pointer_Y (Val);
@@ -340,6 +346,9 @@ package body Trinket.Window is
                      if (Btn and 1) /= 0
                        and then (W.Prev_Buttons and 1) = 0
                      then
+                        --  M87h: single-focus invariant — drop all
+                        --  focus, the pressed gadget re-takes it.
+                        Widgets.Clear_Focus (W.Root);
                         Consumed := W.Root.On_Pointer
                           (Widgets.Press, X, Y);
                      elsif (Btn and 1) = 0

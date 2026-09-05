@@ -11,7 +11,35 @@ repository.
 
 ## Recently shipped
 
-- **M87g** (this commit): Numeric gadget — Cycle's integer
+- **M87h** (this commit): Tab focus chain with app-overridable
+  ranks — the M87 arc's closer. Base Widget gains Tab_Rank/
+  Focused + Wants_Focus (default False), Set_Tab_Rank/
+  Set_Focused/Is_Focused primitives, and the Cycle_Focus/
+  Clear_Focus tree walks. Window.Run intercepts Tab (never
+  delivered to widgets) -> Cycle_Focus: chain rebuilt fresh
+  each press (depth-first add-order collect, stable sort by
+  rank; rank 0 = add position, ranked beats the natural slot
+  occupant so rank 1 really is "first", equal ranks keep add
+  order) and clears+sets focus. Single-focus invariant:
+  Clear_Focus before every pointer Press, the pressed gadget
+  re-takes it — clicking a dead spot defocuses (subsumes the
+  old app-side Input defocus; Input.Focused moved to base).
+  Members: Input, Button, Checkbox, Radio, Cycle, Numeric,
+  Slider, Tabs (disabled toggles/buttons skip; Text_Edit/
+  Listview deliberately not in — their key paths predate
+  focus). Focused gadgets draw a dotted Paint.Focus_Ring and
+  answer keys: Enter/Space activates buttons/toggles/cycle,
+  arrows step Numeric/Slider, Left/Right switch Tabs pages.
+  Max_Focus_Chain 64 = transient per-Tab staging, justified in
+  comment. tdemo ranks its Worker numeric 1. QMP-verified:
+  tab order numeric -> Work -> Slider -> Bold (rank override
+  visible), space toggles focused Bold + clicks focused Save,
+  arrows step the focused numeric, 14th tab wraps to numeric,
+  dead-spot click clears the ring. 1846/1846 PASS SMP4/SMP1,
+  0 FAIL.
+  Next: M88 in-window overlay/popups.
+
+- **M87g** (`41e43d6`): Numeric gadget — Cycle's integer
   sibling. Sunken Pane field, value right-aligned against a
   separated 18px glyph column with independent up/down arrow
   mini-buttons (split at mid-height). Release-over steps by the

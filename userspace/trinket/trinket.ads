@@ -39,6 +39,11 @@ package Trinket is
    Key_Pagedown : constant U64 := 16#87#;
    Key_Delete   : constant U64 := 16#88#;
 
+   --  Printable-range keys with widget-level semantics (M87h):
+   --  the US keymap delivers Tab as HT and Return as LF.
+   Key_Tab      : constant U64 := 9;
+   Key_Return   : constant U64 := 10;
+
    type Pixel_Array is
      array (U64 range <>) of Pixel with Volatile_Components;
 

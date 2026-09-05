@@ -191,6 +191,7 @@ package body Tdemo_App is
          Widgets.New_Group (Widgets.Horizontal, "Images");
        Work_Grp : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal, "Worker");
+       Work_Num : Widgets.Any_Widget;
        Choice_Grp : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal, "Choices");
        Font_Grp : constant Widgets.Any_Widget :=
@@ -274,8 +275,12 @@ package body Tdemo_App is
        Widgets.Group (Work_Grp.all).Add (Work_Gauge);
        Widgets.Group (Work_Grp.all).Add
          (Widgets.New_Slider (0, 100, Slider_Moved'Access));
-       Widgets.Group (Work_Grp.all).Add
-         (Widgets.New_Numeric (0, 100, Numeric_Moved'Access));
+       Work_Num := Widgets.New_Numeric (0, 100, Numeric_Moved'Access);
+       --  M87h showcase: rank 1 pulls the numeric to the head of
+       --  the Tab focus chain (default would be add order, after
+       --  every sibling).
+       Widgets.Set_Tab_Rank (Work_Num.all, 1);
+       Widgets.Group (Work_Grp.all).Add (Work_Num);
 
        Widgets.Group (Btn_Row.all).Add
          (Widgets.New_Button ("Save", Save_Clicked'Access));

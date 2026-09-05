@@ -673,6 +673,8 @@ package body Fileman_App is
    procedure Main is
       Root : constant Trinket.Widgets.Any_Widget := new Root_Group'
         (X => 0, Y => 0, W => 0, H => 0, Dirty => True,
+         Tab_Rank  => 0,
+         Focused   => False,
          Dir       => Trinket.Widgets.Vertical,
          Title     => "File Manager            ",
          Title_Len => 12,

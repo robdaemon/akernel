@@ -12,4 +12,9 @@ package Trinket.Paint is
    --  Half-open rect frame, 3 lines per edge. Does NOT fill the
    --  interior.
 
+   procedure Focus_Ring
+     (C : Canvas; X0, Y0, X1, Y1 : U64; Col : Pixel);
+   --  M87h: dotted 1px focus rectangle (half-open, clipped);
+   --  callers inset it inside the widget's bevel.
+
 end Trinket.Paint;

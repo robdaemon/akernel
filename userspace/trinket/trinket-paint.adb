@@ -77,4 +77,27 @@ package body Trinket.Paint is
       VLine (C, X1 - 3, Y0 + 2, Y1 - 3, I2_Lo);
    end Bevel2;
 
+   procedure Focus_Ring
+     (C : Canvas; X0, Y0, X1, Y1 : U64; Col : Pixel)
+   is
+   begin
+      if X1 <= X0 + 2 or else Y1 <= Y0 + 2 then
+         return;
+      end if;
+      --  Dots phase off the rect origin so the four edges meet
+      --  at the corners.
+      for X in X0 .. X1 - 1 loop
+         if (X - X0) mod 2 = 0 then
+            Plot (C, X, Y0, Col);
+            Plot (C, X, Y1 - 1, Col);
+         end if;
+      end loop;
+      for Y in Y0 .. Y1 - 1 loop
+         if (Y - Y0) mod 2 = 0 then
+            Plot (C, X0, Y, Col);
+            Plot (C, X1 - 1, Y, Col);
+         end if;
+      end loop;
+   end Focus_Ring;
+
 end Trinket.Paint;

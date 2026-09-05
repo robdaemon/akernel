@@ -129,6 +129,113 @@ package body Trinket.Widgets is
       return False;
    end On_Key;
 
+   function Wants_Focus (W : Widget) return Boolean is
+      pragma Unreferenced (W);
+   begin
+      return False;
+   end Wants_Focus;
+
+   procedure Set_Tab_Rank (W : in out Widget; Rank : Natural) is
+   begin
+      W.Tab_Rank := Rank;
+   end Set_Tab_Rank;
+
+   procedure Set_Focused (W : in out Widget; F : Boolean) is
+   begin
+      if W.Focused /= F then
+         W.Focused := F;
+         W.Dirty := True;
+      end if;
+   end Set_Focused;
+
+   function Is_Focused (W : Widget) return Boolean is (W.Focused);
+
+   procedure Clear_Focus (Root : Any_Widget) is
+   begin
+      if Root = null then
+         return;
+      end if;
+      Set_Focused (Root.all, False);
+      if Root.all in Group'Class then
+         for I in 1 .. Group (Root.all).N loop
+            Clear_Focus (Group (Root.all).Kids (I));
+         end loop;
+      end if;
+   end Clear_Focus;
+
+   procedure Cycle_Focus (Root : Any_Widget) is
+      Chain  : array (1 .. Max_Focus_Chain) of Any_Widget;
+      Keys   : array (1 .. Max_Focus_Chain) of Natural;
+      Ranked : array (1 .. Max_Focus_Chain) of Boolean;
+      N      : Natural := 0;
+
+      --  Depth-first collect of chain members in add order.
+      procedure Collect (W : Any_Widget) is
+      begin
+         if W = null then
+            return;
+         end if;
+         if Wants_Focus (W.all) and then N < Max_Focus_Chain then
+            N := N + 1;
+            Chain (N) := W;
+         end if;
+         if W.all in Group'Class then
+            for I in 1 .. Group (W.all).N loop
+               Collect (Group (W.all).Kids (I));
+            end loop;
+         end if;
+      end Collect;
+
+      Cur  : Natural := 0;
+      Next : Positive;
+   begin
+      Collect (Root);
+      if N = 0 then
+         return;
+      end if;
+      --  Sort key: rank 0 keeps the flattened add position; a
+      --  positive rank sorts AS that position. Ties: a RANKED
+      --  widget goes before the natural occupant (rank 1 really
+      --  means "focus first"); ties between two ranked widgets
+      --  keep add order (stable insertion sort).
+      for I in 1 .. N loop
+         Ranked (I) := Chain (I).Tab_Rank /= 0;
+         Keys (I) :=
+           (if Ranked (I) then Chain (I).Tab_Rank else I);
+      end loop;
+      for I in 2 .. N loop
+         declare
+            Tmp : constant Any_Widget := Chain (I);
+            TK  : constant Natural := Keys (I);
+            TR  : constant Boolean := Ranked (I);
+            J   : Natural := I;
+         begin
+            while J > 1
+              and then (Keys (J - 1) > TK
+                        or else (Keys (J - 1) = TK
+                                 and then not Ranked (J - 1)
+                                 and then TR))
+            loop
+               Chain (J) := Chain (J - 1);
+               Keys (J) := Keys (J - 1);
+               Ranked (J) := Ranked (J - 1);
+               J := J - 1;
+            end loop;
+            Chain (J) := Tmp;
+            Keys (J) := TK;
+            Ranked (J) := TR;
+         end;
+      end loop;
+      for I in 1 .. N loop
+         if Chain (I).Focused then
+            Cur := I;
+            Set_Focused (Chain (I).all, False);
+         end if;
+      end loop;
+      Next := (if Cur = 0 or else Cur = N then 1 else Cur + 1);
+      Set_Focused (Chain (Next).all, True);
+   end Cycle_Focus;
+
    function Inside (W : Widget; PX, PY : U64) return Boolean is
      (PX >= W.X and then PX < W.X + W.W
       and then PY >= W.Y and then PY < W.Y + W.H);
@@ -249,13 +356,11 @@ package body Trinket.Widgets is
       W.Dirty := True;
    end Set_Text;
 
-   procedure Set_Focused (W : in out Input; F : Boolean) is
+   function Wants_Focus (W : Input) return Boolean is
+      pragma Unreferenced (W);
    begin
-      if W.Focused /= F then
-         W.Focused := F;
-         W.Dirty := True;   --  cursor bar appears/disappears
-      end if;
-   end Set_Focused;
+      return True;
+   end Wants_Focus;
 
    --  Keep the cursor inside the visible window by scrolling
    --  HOff (pixel granularity against the proportional font:
@@ -466,6 +571,10 @@ package body Trinket.Widgets is
          Fonts.Draw_Text (C, TX, TY, W.Txt (1 .. W.Len),
                           Text_Dark);
       end if;
+      if W.Focused then
+         Paint.Focus_Ring (C, W.X + 3, W.Y + 3,
+                           W.X + W.W - 3, W.Y + W.H - 3, Text_Dark);
+      end if;
    end Draw;
 
    procedure Min_Size (W : Button; MW, MH : out U64) is
@@ -601,6 +710,7 @@ package body Trinket.Widgets is
          when Press =>
             if Inside (W.all, PX, PY) then
                W.Pressed := True;
+               W.Focused := True;   --  M87h: click takes focus
                W.Dirty := True;
                return True;
             end if;
@@ -630,6 +740,24 @@ package body Trinket.Widgets is
       end case;
       return False;
    end On_Pointer;
+
+   function Wants_Focus (W : Button) return Boolean is
+     (not W.Disabled);  --  M87h: disabled gadgets skip the chain
+
+   function On_Key (W : access Button; Code : U64) return Boolean is
+   begin
+      --  M87h: Enter/Space activates the focused button.
+      if not W.Focused or else W.Disabled then
+         return False;
+      end if;
+      if Code = Key_Return or else Code = 13 or else Code = 32 then
+         if W.On_Click /= null then
+            W.On_Click.all;
+         end if;
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
    --  Checkbox / Radio
 
@@ -736,6 +864,11 @@ package body Trinket.Widgets is
          end loop;
       end if;
       Toggle_Label (W, C, W.Txt, W.Len, W.Disabled, Sh);
+      if W.Focused then
+         --  No frame of its own: ring hugs the whole hit rect.
+         Paint.Focus_Ring (C, W.X + 1, W.Y + 1,
+                           W.X + W.W - 1, W.Y + W.H - 1, Text_Dark);
+      end if;
    end Draw;
 
    --  Shared floor: box at X+2, label Toggle_Gap right of it,
@@ -764,6 +897,7 @@ package body Trinket.Widgets is
          when Press =>
             if Inside (W.all, PX, PY) then
                W.Pressed := True;
+               W.Focused := True;   --  M87h: click takes focus
                W.Dirty := True;
                return True;
             end if;
@@ -792,6 +926,28 @@ package body Trinket.Widgets is
       end case;
       return False;
    end On_Pointer;
+
+   function Wants_Focus (W : Checkbox) return Boolean is
+     (not W.Disabled);  --  M87h: disabled gadgets skip the chain
+
+   function On_Key
+     (W : access Checkbox; Code : U64) return Boolean
+   is
+   begin
+      --  M87h: Enter/Space toggles the focused checkbox.
+      if not W.Focused or else W.Disabled then
+         return False;
+      end if;
+      if Code = Key_Return or else Code = 13 or else Code = 32 then
+         W.Checked := not W.Checked;
+         W.Dirty := True;
+         if W.On_Change /= null then
+            W.On_Change (W.Checked);
+         end if;
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
    function New_Radio
      (S         : String;
@@ -891,6 +1047,10 @@ package body Trinket.Widgets is
          end loop;
       end if;
       Toggle_Label (W, C, W.Txt, W.Len, W.Disabled, Sh);
+      if W.Focused then
+         Paint.Focus_Ring (C, W.X + 1, W.Y + 1,
+                           W.X + W.W - 1, W.Y + W.H - 1, Text_Dark);
+      end if;
    end Draw;
 
    procedure Min_Size (W : Radio; MW, MH : out U64) is
@@ -910,6 +1070,7 @@ package body Trinket.Widgets is
          when Press =>
             if Inside (W.all, PX, PY) then
                W.Pressed := True;
+               W.Focused := True;   --  M87h: click takes focus
                W.Dirty := True;
                return True;
             end if;
@@ -938,6 +1099,27 @@ package body Trinket.Widgets is
       end case;
       return False;
    end On_Pointer;
+
+   function Wants_Focus (W : Radio) return Boolean is
+     (not W.Disabled);  --  M87h: disabled gadgets skip the chain
+
+   function On_Key (W : access Radio; Code : U64) return Boolean is
+   begin
+      --  M87h: Enter/Space selects the focused radio.
+      if not W.Focused or else W.Disabled then
+         return False;
+      end if;
+      if Code = Key_Return or else Code = 13 or else Code = 32 then
+         if not W.Selected then
+            Set_Selected (W.all, True);
+            if W.On_Change /= null then
+               W.On_Change (True);
+            end if;
+         end if;
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
    --  Scrollbar
 
@@ -1515,6 +1697,11 @@ package body Trinket.Widgets is
            (C, GX, W.Y + 3 + Sh, GX + 1, W.Y + W.H - 3 + Sh,
             Bevel_Lo);
       end loop;
+      if W.Focused then
+         --  No outer frame: ring just outside the track channel.
+         Paint.Focus_Ring (C, W.X + 1, W.Y + 1,
+                           W.X + W.W - 1, W.Y + W.H - 1, Text_Dark);
+      end if;
    end Draw;
 
    procedure Min_Size (W : Slider; MW, MH : out U64) is
@@ -1540,6 +1727,8 @@ package body Trinket.Widgets is
             if not Inside (W.all, PX, PY) then
                return False;
             end if;
+            W.Focused := True;   --  M87h: click takes focus
+            W.Dirty := True;
             if PX >= KX and then PX < KX + Slider_Knob then
                W.Dragging := True;
                W.Grab_DX := PX - KX;
@@ -1587,6 +1776,35 @@ package body Trinket.Widgets is
       end case;
       return False;
    end On_Pointer;
+
+   function Wants_Focus (W : Slider) return Boolean is
+      pragma Unreferenced (W);
+   begin
+      return True;
+   end Wants_Focus;
+
+   function On_Key (W : access Slider; Code : U64) return Boolean is
+      Rng  : constant U64 :=
+        (if W.Max > W.Min then W.Max - W.Min else 0);
+      Step : constant U64 := U64'Max (Rng / 100, 1);
+   begin
+      --  M87h: a focused slider's Left/Down step -1%, Right/Up
+      --  +1% (1 Pos unit floor); same U64 wrap guard as the
+      --  track page-down.
+      if not W.Focused then
+         return False;
+      end if;
+      if Code = Key_Left or else Code = Key_Down then
+         User_Move
+           (W, (if W.Pos > W.Min + Step
+                then W.Pos - Step else W.Min));
+         return True;
+      elsif Code = Key_Right or else Code = Key_Up then
+         User_Move (W, W.Pos + Step);
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
    --  Group
 
@@ -2069,6 +2287,12 @@ package body Trinket.Widgets is
          Draw_Tab (W, C, W.Sel, True);
          W.Kids (W.Sel).Draw (C);
       end if;
+      if W.Focused then
+         --  M87h: ring hugs the strip, not the page frame.
+         Paint.Focus_Ring (C, W.X + 2, W.Y + 2,
+                           W.X + W.W - 2, W.Y + Strip_H - 2,
+                           Text_Dark);
+      end if;
    end Draw;
 
    function On_Pointer
@@ -2099,6 +2323,7 @@ package body Trinket.Widgets is
       elsif K = Press then
          if In_Strip then
             W.Press_Tab := Tab_At (W.all, PX);
+            W.Focused := True;   --  M87h: click takes focus
             W.Dirty := True;
             return True;  --  dead strip pixels included
          end if;
@@ -2122,8 +2347,27 @@ package body Trinket.Widgets is
       end if;
    end On_Pointer;
 
+   function Wants_Focus (W : Tabs) return Boolean is
+      pragma Unreferenced (W);
+   begin
+      return True;
+   end Wants_Focus;
+
    function On_Key (W : access Tabs; Code : U64) return Boolean is
    begin
+      --  M87h: a focused strip's Left/Right switch pages (wrap);
+      --  everything else goes to the active page as before.
+      if W.Focused and then W.N > 0 and then W.Sel >= 1 then
+         if Code = Key_Left then
+            Set_Selected
+              (W.all, (if W.Sel = 1 then W.N else W.Sel - 1));
+            return True;
+         elsif Code = Key_Right then
+            Set_Selected
+              (W.all, (if W.Sel = W.N then 1 else W.Sel + 1));
+            return True;
+         end if;
+      end if;
       return W.Sel >= 1 and then W.Sel <= W.N
         and then W.Kids (W.Sel).On_Key (Code);
    end On_Key;
@@ -2233,6 +2477,10 @@ package body Trinket.Widgets is
             W.Entries (W.Sel).Buf (1 .. W.Entries (W.Sel).Len),
             Text_Dark);
       end if;
+      if W.Focused then
+         Paint.Focus_Ring (C, W.X + 3, W.Y + 3,
+                           W.X + W.W - 3, W.Y + W.H - 3, Text_Dark);
+      end if;
    end Draw;
 
    procedure Min_Size (W : Cycle; MW, MH : out U64) is
@@ -2256,6 +2504,7 @@ package body Trinket.Widgets is
          when Press =>
             if Inside (W.all, PX, PY) then
                W.Pressed := True;
+               W.Focused := True;   --  M87h: click takes focus
                W.Dirty := True;
                return True;
             end if;
@@ -2284,6 +2533,33 @@ package body Trinket.Widgets is
       end case;
       return False;
    end On_Pointer;
+
+   function Wants_Focus (W : Cycle) return Boolean is
+      pragma Unreferenced (W);
+   begin
+      return True;
+   end Wants_Focus;
+
+   function On_Key (W : access Cycle; Code : U64) return Boolean is
+   begin
+      --  M87h: a focused cycle rotates on Enter/Space/Right
+      --  (forward) and Left (back), wrapping. Set_Selected
+      --  fires On_Change on a real change.
+      if not W.Focused or else W.N = 0 then
+         return False;
+      end if;
+      if Code = Key_Return or else Code = 13 or else Code = 32
+        or else Code = Key_Right
+      then
+         Set_Selected (W.all, W.Sel mod W.N + 1);
+         return True;
+      elsif Code = Key_Left then
+         Set_Selected
+           (W.all, (if W.Sel <= 1 then W.N else W.Sel - 1));
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
    --  Numeric (M87g)
 
@@ -2408,6 +2684,10 @@ package body Trinket.Widgets is
       end if;
       Draw_Arrow (True);
       Draw_Arrow (False);
+      if W.Focused then
+         Paint.Focus_Ring (C, W.X + 3, W.Y + 3,
+                           W.X + W.W - 3, W.Y + W.H - 3, Text_Dark);
+      end if;
    end Draw;
 
    procedure Min_Size (W : Numeric; MW, MH : out U64) is
@@ -2428,6 +2708,7 @@ package body Trinket.Widgets is
             if not Inside (W.all, PX, PY) then
                return False;
             end if;
+            W.Focused := True;   --  M87h: click takes focus
             W.Arrow_Dn := Arrow_At (W.all, PX, PY);
             W.Dirty := True;
             return True;
@@ -2451,5 +2732,29 @@ package body Trinket.Widgets is
             return W.Arrow_Dn /= 0;
       end case;
    end On_Pointer;
+
+   function Wants_Focus (W : Numeric) return Boolean is
+      pragma Unreferenced (W);
+   begin
+      return True;
+   end Wants_Focus;
+
+   function On_Key (W : access Numeric; Code : U64) return Boolean is
+   begin
+      --  M87h: a focused numeric's Up/Right step +Step, Down/Left
+      --  -Step; User_Step pre-clamps and fires On_Change on a
+      --  real change.
+      if not W.Focused then
+         return False;
+      end if;
+      if Code = Key_Up or else Code = Key_Right then
+         User_Step (W, True);
+         return True;
+      elsif Code = Key_Down or else Code = Key_Left then
+         User_Step (W, False);
+         return True;
+      end if;
+      return False;
+   end On_Key;
 
 end Trinket.Widgets;

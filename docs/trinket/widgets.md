@@ -422,8 +422,7 @@ shifts the chevron one pixel; the field itself is static. `Min_Size`:
 tdemo: a 0..100 numeric in the Worker row, steps drive the Gauge
 alongside the slider.
 
-### `Gauge` (progress bar, M87a)
-```ada
+### `Gauge` (progress bar, M87a)```ada
 type Gauge is new Widget with record
    Num      : U64 := 0;
    Den      : U64 := 100;
@@ -587,7 +586,8 @@ function Visible_Width (W : Text_Edit) return U64;
 ## Event dispatch notes
 
 - `Trinket.Window.Run` reads Bureau input events and calls the root
-  widget's `On_Pointer`/`On_Key`.
+  widget's `On_Pointer`/`On_Key` — except Tab, which the window
+  intercepts for the focus chain (M87h, below).
 - `Group.On_Pointer` hit-tests children in reverse add order so the
   top-most widget gets the press.
 - `Group.On_Key` walks children in reverse add order; focused inputs
@@ -596,3 +596,52 @@ function Visible_Width (W : Text_Edit) return U64;
 - A widget that changes state sets `Dirty := True`. `Window.Run`
   unions all dirty rects into one band and calls `Draw` on the root
   with a `Canvas` clipped to that band.
+
+## Focus chain (M87h)
+
+```ada
+function Wants_Focus (W : Widget) return Boolean;  -- default False
+procedure Set_Tab_Rank (W : in out Widget; Rank : Natural);
+procedure Set_Focused (W : in out Widget; F : Boolean);
+function Is_Focused (W : Widget) return Boolean;
+procedure Cycle_Focus (Root : Any_Widget);
+procedure Clear_Focus (Root : Any_Widget);
+```
+
+The window owns a single focused widget. Tab (never delivered to
+widgets) calls `Cycle_Focus`: the chain is rebuilt fresh — a
+depth-first collect of `Wants_Focus` members in add order, then a
+stable sort by rank — the current focus clears and the next member
+takes it (wraps; first member when none was). Rank 0 (default) =
+add position; a positive rank sorts AS that position and beats the
+natural occupant of the slot on a tie (rank 1 = focus FIRST);
+equal ranks keep add order. `Max_Focus_Chain = 64` is transient
+per-Tab staging, not a capacity table.
+
+Single-focus invariant: `Window.Run` calls `Clear_Focus` before
+dispatching any pointer press, and the pressed gadget re-takes
+focus in its own Press handler — clicking a dead spot therefore
+drops focus (this subsumes the old app-side "clear the Input's
+focus on selection" pattern; `Input.Focused` moved to the base
+`Widget`).
+
+Focused gadgets draw a dotted 1px `Paint.Focus_Ring` (inset inside
+their bevel) and answer keys; the chain members and their key
+activation:
+
+| Widget    | Focused keys                                   |
+|-----------|------------------------------------------------|
+| Input     | full text editing (pre-M87h behavior)          |
+| Button    | Enter/Space clicks                             |
+| Checkbox  | Enter/Space toggles                            |
+| Radio     | Enter/Space selects                            |
+| Cycle     | Enter/Space/Right next, Left previous (wrap)   |
+| Numeric   | Up/Right +Step, Down/Left -Step                |
+| Slider    | Right/Up +1% (1 unit floor), Left/Down -1%     |
+| Tabs      | Left/Right switch page (wrap); other keys fall through to the active page |
+
+Disabled gadgets (`Button`/`Checkbox`/`Radio`) skip the chain.
+`Text_Edit` and `Listview` are NOT chain members yet — their key
+paths predate focus and stay pointer-driven for now. tdemo sets
+`Set_Tab_Rank (numeric, 1)` so its Worker numeric focuses first
+(default would put it after the slider).

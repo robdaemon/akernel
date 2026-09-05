@@ -15,6 +15,15 @@ package Trinket.Widgets is
    type Widget is abstract tagged record
       X, Y, W, H : U64 := 0;
       Dirty      : Boolean := True;
+      --  M87h focus chain state. Tab_Rank 0 = the widget's add
+      --  position; a positive rank sorts it as that chain
+      --  position (ties keep add order). Focused draws the
+      --  dotted ring and lets the gadget answer keys; the
+      --  window keeps at most one widget focused (it clears
+      --  focus on every pointer press, the pressed gadget
+      --  re-takes it).
+      Tab_Rank   : Natural := 0;
+      Focused    : Boolean := False;
    end record;
    type Any_Widget is access all Widget'Class;
 
@@ -51,6 +60,39 @@ package Trinket.Widgets is
 
    function On_Key (W : access Widget; Code : U64) return Boolean;
    --  Default: not consumed. Focus chains land with Text_Edit.
+
+   function Wants_Focus (W : Widget) return Boolean;
+   --  M87h: membership in the window's Tab focus chain. Default
+   --  False; the interactive gadgets override True.
+
+   procedure Set_Tab_Rank (W : in out Widget; Rank : Natural);
+   --  M87h: 0 (default) = chain position is the add position; a
+   --  positive Rank sorts the widget as if added Rank-th. Ties:
+   --  a ranked widget beats the natural occupant of the slot
+   --  (rank 1 = focus FIRST); two widgets with the same rank
+   --  keep add order. Applies to the NEXT Tab press — the chain
+   --  is rebuilt on every cycle.
+
+   procedure Set_Focused (W : in out Widget; F : Boolean);
+   --  M87h: set the focus flag, dirty on change. Apps rarely
+   --  call this — Tab cycles and pointer presses manage focus.
+   function Is_Focused (W : Widget) return Boolean;
+
+   procedure Cycle_Focus (Root : Any_Widget);
+   --  M87h: move focus to the next member of Root's focus chain
+   --  (wraps; focuses the first member when none was). The
+   --  window calls this on Tab.
+
+   procedure Clear_Focus (Root : Any_Widget);
+   --  M87h: drop every Focused flag in the subtree. The window
+   --  calls this before dispatching a pointer press; the pressed
+   --  gadget re-takes focus in its Press handler.
+
+   Max_Focus_Chain : constant := 64;
+   --  Transient staging for one Tab press, rebuilt each time —
+   --  not a capacity table. The biggest app tree (tdemo) has
+   --  ~20 focusable gadgets; past the ceiling the rest are just
+   --  unreachable via Tab (pointer focus is unaffected).
 
    function Inside (W : Widget; PX, PY : U64) return Boolean;
 
@@ -125,8 +167,9 @@ package Trinket.Widgets is
    --  insert, BS/Del edit, Left/Right/Home/End move, Enter fires
    --  On_Commit. Keys are consumed ONLY while Focused — an
    --  unfocused Input is transparent so sibling widgets (a
-   --  listview's arrows) keep working; the app clears focus when
-   --  the user clicks elsewhere (e.g. from a selection callback).
+   --  listview's arrows) keep working. M87h: the window manages
+   --  the focus flag (click takes it, Tab cycles, clicking
+   --  elsewhere drops it); Focused moved to the base Widget.
    type Click_Callback is access procedure;
    Max_Input : constant := 96;
    type Input is new Widget with record
@@ -134,14 +177,12 @@ package Trinket.Widgets is
       Len       : Natural := 0;
       Cur       : Natural := 0;      --  0-based, insert BEFORE Cur
       HOff      : Natural := 0;      --  first visible char
-      Focused   : Boolean := False;
       On_Commit : Click_Callback := null;
    end record;
    function New_Input return Any_Widget;
    function Get_Text (W : Input) return String;
    procedure Set_Text (W : in out Input; S : String);
-   procedure Set_Focused (W : in out Input; F : Boolean);
-   function Is_Focused (W : Input) return Boolean is (W.Focused);
+   overriding function Wants_Focus (W : Input) return Boolean;
    overriding procedure Draw (W : Input; C : Canvas);
    overriding procedure Min_Size (W : Input; MW, MH : out U64);
    overriding function On_Key
@@ -171,6 +212,10 @@ package Trinket.Widgets is
      overriding function On_Pointer
       (W : access Button; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
+     overriding function Wants_Focus (W : Button) return Boolean;
+     --  M87h: Enter/Space activates the focused button.
+     overriding function On_Key
+      (W : access Button; Code : U64) return Boolean;
 
     --  Gauge (M87a): progress bar — sunken frame, accent fill
     --  left->right, optional centered NN% label drawn light on
@@ -232,6 +277,10 @@ package Trinket.Widgets is
     overriding function On_Pointer
       (W : access Checkbox; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
+    overriding function Wants_Focus (W : Checkbox) return Boolean;
+    --  M87h: Enter/Space toggles the focused checkbox.
+    overriding function On_Key
+      (W : access Checkbox; Code : U64) return Boolean;
 
     Max_Radio : constant := 8;
     type Radio_Members is array (1 .. Max_Radio) of Any_Widget;
@@ -269,6 +318,10 @@ package Trinket.Widgets is
     overriding function On_Pointer
       (W : access Radio; K : Pointer_Kind; PX, PY : U64)
        return Boolean;
+    overriding function Wants_Focus (W : Radio) return Boolean;
+    --  M87h: Enter/Space selects the focused radio.
+    overriding function On_Key
+      (W : access Radio; Code : U64) return Boolean;
 
 
    --  Scrollbar (milestone 57): sunken track, arrow boxes,
@@ -347,6 +400,11 @@ package Trinket.Widgets is
    overriding function On_Pointer
      (W : access Slider; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
+   overriding function Wants_Focus (W : Slider) return Boolean;
+   --  M87h: a focused slider's Left/Down step -1%, Right/Up +1%
+   --  (min 1 Pos unit); fires On_Change on real moves.
+   overriding function On_Key
+     (W : access Slider; Code : U64) return Boolean;
 
    --  Group: H/V layout container with an optional frame +
    --  centered title breaking the top edge (the mockup's
@@ -431,6 +489,9 @@ package Trinket.Widgets is
    overriding function On_Pointer
      (W : access Tabs; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
+   overriding function Wants_Focus (W : Tabs) return Boolean;
+   --  M87h: a focused strip's Left/Right switch pages (wrap);
+   --  all other keys fall through to the active page.
    overriding function On_Key
      (W : access Tabs; Code : U64) return Boolean;
    --  Damage: a dirty Tabs redraws whole; otherwise only the
@@ -467,8 +528,14 @@ package Trinket.Widgets is
    overriding function On_Pointer
      (W : access Cycle; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
+   overriding function Wants_Focus (W : Cycle) return Boolean;
+   --  M87h: a focused cycle rotates on Enter/Space/Right
+   --  (forward) and Left (back), wrapping.
+   overriding function On_Key
+     (W : access Cycle; Code : U64) return Boolean;
 
    --  Numeric (M87g): MUI numeric gadget — a sunken Pane field
+   --  showing an integer value, up/down arrow mini-buttons in a
    --  showing an integer value, up/down arrow mini-buttons in a
    --  right column (step on release-over, clamped, pre-clamped
    --  down-steps like Scrollbar). No auto-repeat (the widget
@@ -497,5 +564,10 @@ package Trinket.Widgets is
    overriding function On_Pointer
      (W : access Numeric; K : Pointer_Kind; PX, PY : U64)
       return Boolean;
+   overriding function Wants_Focus (W : Numeric) return Boolean;
+   --  M87h: a focused numeric's Up/Right step +Step, Down/Left
+   --  -Step (pre-clamped); fires On_Change on real changes.
+   overriding function On_Key
+     (W : access Numeric; Code : U64) return Boolean;
 
 end Trinket.Widgets;
