@@ -11,6 +11,13 @@ its ink bounds and gets DWIDTH = ink width + 1 (space = 4), the
 classic pseudo-proportional treatment. No new font data is shipped
 (the glyphs stay the compiled-in 8x8 set, zero license risk); only
 the metrics change.
+
+--tall emits font8x8t.bdf: each row is replicated vertically (the
+Bureau chrome Stretch trick) for an 8x16 variant — same family
+font8x8, PIXEL_SIZE 16, so the Prefs/Font picker sees one family
+with two sizes. font8x8p's trimmed metrics make it its own
+family. FAMILY_NAME/PIXEL_SIZE properties are emitted so the
+picker can group data-driven (Trinket.Fonts.Probe reads them).
 """
 import re
 import sys
@@ -41,7 +48,10 @@ def trim(vals):
             for v in vals], w, w + 1
 
 def main():
-    prop = len(sys.argv) > 2 and sys.argv[2] == "--proportional"
+    prop = "--proportional" in sys.argv[2:]
+    tall = "--tall" in sys.argv[2:]
+    if prop and tall:
+        sys.exit("--tall and --proportional don't combine (yet)")
     src = open(sys.argv[1]).read()
     entries = re.findall(
         r"'(.)'\s*=>\s*\(((?:\s*16#[0-9A-Fa-f]{2}#,){7}\s*16#[0-9A-Fa-f]{2}#)\)",
@@ -49,14 +59,23 @@ def main():
     if len(entries) != 95:
         sys.exit(f"expected 95 glyphs, parsed {len(entries)}")
     out = []
+    size = 16 if tall else 8
+    ascent = 12 if tall else 6
+    descent = 4 if tall else 2
     out.append("STARTFONT 2.1")
-    name = "font8x8p" if prop else "font8x8"
-    out.append(f"FONT -akernel-{name}-medium-r-normal--8-80-75-75-c-80-iso10646-1")
-    out.append("SIZE 8 75 75")
-    out.append("FONTBOUNDINGBOX 8 8 0 -2")
-    out.append("STARTPROPERTIES 2")
-    out.append("FONT_ASCENT 6")
-    out.append("FONT_DESCENT 2")
+    name = "font8x8p" if prop else ("font8x8t" if tall else "font8x8")
+    out.append(f"FONT -akernel-{name}-medium-r-normal--{size}-80-75-75-c-80-iso10646-1")
+    out.append(f"SIZE {size} 75 75")
+    out.append(f"FONTBOUNDINGBOX 8 {size} 0 {-descent}")
+    out.append("STARTPROPERTIES 4")
+    #  font8x8t is the same typeface doubled — same family, its
+    #  size distinguishes it. font8x8p's different metrics make
+    #  it a different family for the picker.
+    fam = "font8x8p" if prop else "font8x8"
+    out.append(f'FAMILY_NAME "{fam}"')
+    out.append(f"PIXEL_SIZE {size}")
+    out.append(f"FONT_ASCENT {ascent}")
+    out.append(f"FONT_DESCENT {descent}")
     out.append("ENDPROPERTIES")
     out.append(f"CHARS {len(entries)}")
     for ch, rows in entries:
@@ -71,10 +90,12 @@ def main():
         out.append(f"ENCODING {ord(ch)}")
         out.append("SWIDTH 500 0")
         out.append(f"DWIDTH {dw} 0")
-        out.append(f"BBX {w} 8 0 -2")
+        out.append(f"BBX {w} {size} 0 {-descent}")
         out.append("BITMAP")
         for v in vals:
             out.append(f"{v:02X}")
+            if tall:
+                out.append(f"{v:02X}")
         out.append("ENDCHAR")
     out.append("ENDFONT")
     print("\n".join(out))

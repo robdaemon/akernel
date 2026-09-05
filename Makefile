@@ -80,7 +80,11 @@ INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_serve
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib
-CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
+#  Prefs drawer apps (M89): nested crates userspace/prefs/<name>;
+#  binaries install in Sys:Prefs/<Capitalized>. Path entries ride
+#  the generic $(CRATES) rule (make -C userspace/prefs/<name>).
+DISK_CRATES_PREFS :=  prefs/font
+CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS)
 
 #  The userspace crates link against a custom GNAT runtime that is
 #  vendored under userspace/gnat-rts.  It is not part of Alire's
@@ -162,6 +166,30 @@ $(LWIP_STAMP): $(LWIP_TARBALL) $(wildcard third_party/patches/lwip-*.patch)
 
 netserv: $(LWIP_STAMP)
 
+#  Terminus font (milestone 89): OFL-licensed BDFs for Sys:Fonts/
+#  so Prefs/Font has real families/sizes to offer. Fetch is
+#  sha256-pinned per the no-vendored-code rule; the disk recipe
+#  copies the three <=8px-wide normal weights plus OFL.TXT.
+TERMINUS_VER := 4.49.1
+TERMINUS_TARBALL := third_party/download/terminus-font-$(TERMINUS_VER).tar.gz
+TERMINUS_SHA256 := d961c1b781627bf417f9b340693d64fc219e0113ad3a3af1a3424c7aa373ef79
+TERMINUS_STAMP := third_party/terminus/.stamp-$(TERMINUS_VER)
+
+$(TERMINUS_TARBALL):
+	mkdir -p third_party/download
+	curl -sL --fail --max-time 600 -o $@.tmp \
+	  https://sourceforge.net/projects/terminus-font/files/terminus-font-4.49/terminus-font-$(TERMINUS_VER).tar.gz/download
+	echo "$(TERMINUS_SHA256)  $@.tmp" | sha256sum -c -
+	mv $@.tmp $@
+
+$(TERMINUS_STAMP): $(TERMINUS_TARBALL)
+	rm -rf third_party/terminus third_party/.terminus-extract
+	mkdir -p third_party/.terminus-extract
+	tar xzf $(TERMINUS_TARBALL) -C third_party/.terminus-extract
+	mv third_party/.terminus-extract/terminus-font-$(TERMINUS_VER) third_party/terminus
+	rmdir third_party/.terminus-extract
+	touch $@
+
 
 
 
@@ -197,7 +225,7 @@ netserv: $(LWIP_STAMP)
 #  (BD0 = the FAT32 filesystem, label Sys, milestone 29).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being mcopy'd.
-$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
+$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS) $(TERMINUS_STAMP)
 	rm -f $@
 	@command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null \
 	  || { echo "disk image needs host sgdisk + mkfs.vfat + mtools"; exit 1; }; \
@@ -225,6 +253,12 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 	mcopy -i $@@@1048576 $(INITRD_OUT)/font8x8.bdf ::Fonts/FONT8X8.BDF; \
 	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads --proportional > $(INITRD_OUT)/font8x8p.bdf; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/font8x8p.bdf ::Fonts/FONT8X8P.BDF; \
+	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads --tall > $(INITRD_OUT)/font8x8t.bdf; \
+	mcopy -i $@@@1048576 $(INITRD_OUT)/font8x8t.bdf ::Fonts/FONT8X8T.BDF; \
+	for f in ter-u12n ter-u14n ter-u16n; do \
+	  up=$$(printf '%s' $$f | tr a-z A-Z); \
+	  mcopy -i $@@@1048576 third_party/terminus/$$f.bdf "::Fonts/$$up.BDF"; done; \
+	mcopy -i $@@@1048576 third_party/terminus/OFL.TXT ::Fonts/OFL.TXT; \
 	mmd -i $@@@1048576 ::Tests; \
 	mmd -i $@@@1048576 ::Tests/Img; \
 	python3 tools/gen_images.py $(INITRD_OUT)/img; \
@@ -245,6 +279,11 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 	for c in $(DISK_CRATES_C); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \
 	  mcopy -i $@@@1048576 /tmp/ak-$$c.elf "::C/$$(printf '%s' $$c | sed 's/^./\u&/')"; done; \
+	mmd -i $@@@1048576 ::Prefs; \
+	for c in $(DISK_CRATES_PREFS); do \
+	  n=$$(basename $$c); \
+	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$n.elf bin/userspace/$$n.elf; \
+	  mcopy -i $@@@1048576 /tmp/ak-$$n.elf "::Prefs/$$(printf '%s' $$n | sed 's/^./\u&/')"; done; \
 	printf 'System/Bureau\nSystem/Demo\nSystem/Tdemo\nSystem/Fileman\nSystem/Terminal\n' > $(INITRD_OUT)/startup; \
 	mcopy -i $@@@1048576 $(INITRD_OUT)/startup ::System/Startup
 
@@ -418,18 +457,25 @@ clean-userspace:
 #  command (Akernel_User.CLI); DEST=system installs into
 #  Sys:System/, DEST=c into Sys:C/.
 new-crate:
-	@test -n "$(NAME)" || { echo "usage: make new-crate NAME=foo DEST=c|system"; exit 1; }
-	@test "$(DEST)" = "c" -o "$(DEST)" = "system" || { echo "DEST must be c or system"; exit 1; }
-	@test ! -e userspace/$(NAME) || { echo "userspace/$(NAME) exists"; exit 1; }
-	mkdir -p userspace/$(NAME)
-	printf '.PHONY: all clean\n\nall:\n\talr build\n\nclean:\n\talr clean\n' > userspace/$(NAME)/Makefile
-	printf 'name = "akernel_$(NAME)"\ndescription = "akernel $(NAME)"\nversion = "0.1.0-dev"\n\nauthors = ["Robert Roland"]\nmaintainers = ["Robert Roland <rob@retronauts.org>"]\nlicenses = "MIT OR Apache-2.0 WITH LLVM-exception"\ntags = []\n\nproject-files = ["$(NAME).gpr"]\nexecutables = ["$(NAME).elf"]\n\n[[depends-on]]\ngnat_riscv64_elf = "15.3.1"\n' > userspace/$(NAME)/alire.toml
+	@test -n "$(NAME)" || { echo "usage: make new-crate NAME=foo DEST=c|system|prefs"; exit 1; }
+	@test "$(DEST)" = "c" -o "$(DEST)" = "system" -o "$(DEST)" = "prefs" || { echo "DEST must be c, system or prefs"; exit 1; }
+	@if [ "$(DEST)" = "prefs" ]; then dir="userspace/prefs/$(NAME)"; up="../.."; \
+	else dir="userspace/$(NAME)"; up=".."; fi; \
+	test ! -e $$dir || { echo "$$dir exists"; exit 1; }; \
+	mkdir -p $$dir; \
+	if [ "$(DEST)" = "prefs" ]; then \
+	  rt='   for Runtime ("Ada") use "../../gnat-rts";\n'; else rt=''; fi; \
+	printf '.PHONY: all clean\n\nall:\n\talr build\n\nclean:\n\talr clean\n' > $$dir/Makefile; \
+	printf 'name = "akernel_$(NAME)"\ndescription = "akernel $(NAME)"\nversion = "0.1.0-dev"\n\nauthors = ["Robert Roland"]\nmaintainers = ["Robert Roland <rob@retronauts.org>"]\nlicenses = "MIT OR Apache-2.0 WITH LLVM-exception"\ntags = []\n\nproject-files = ["$(NAME).gpr"]\nexecutables = ["$(NAME).elf"]\n\n[[depends-on]]\ngnat_riscv64_elf = "15.3.1"\n' > $$dir/alire.toml; \
 	cap=$$(printf '%s' $(NAME) | sed 's/^./\u&/'); \
-	printf 'project %s extends "../rts/akernel_program.gpr" is\n   for Source_Dirs use (".");\n   for Exec_Dir use "../../bin/userspace";\n   for Object_Dir use "../../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $(NAME) $(NAME) $(NAME) $(NAME) $$cap > userspace/$(NAME)/$(NAME).gpr; \
-	printf 'with Akernel_User.CLI;\nwith Akernel_User.Console;\n\nprocedure %s is\n   package CLI renames Akernel_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Akernel_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > userspace/$(NAME)/$(NAME).adb
+	printf 'project %s extends "%s/rts/akernel_program.gpr" is\n%b   for Source_Dirs use (".");\n   for Exec_Dir use "%s/../bin/userspace";\n   for Object_Dir use "%s/../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $$up "$$rt" $$up $$up $(NAME) $(NAME) $(NAME) $(NAME) $$cap > $$dir/$(NAME).gpr; \
+	printf 'with Akernel_User.CLI;\nwith Akernel_User.Console;\n\nprocedure %s is\n   package CLI renames Akernel_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Akernel_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > $$dir/$(NAME).adb
 	@if [ "$(DEST)" = "c" ]; then \
 	  sed -i 's/^DISK_CRATES_C := \(.*\)/DISK_CRATES_C := \1 $(NAME)/' Makefile; \
 	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:C/"; \
+	elif [ "$(DEST)" = "prefs" ]; then \
+	  sed -i 's/^DISK_CRATES_PREFS :=\(.*\)/DISK_CRATES_PREFS :=\1 prefs\/$(NAME)/' Makefile; \
+	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:Prefs/"; \
 	else \
 	  sed -i 's/^DISK_CRATES_SYSTEM := \(.*\)/DISK_CRATES_SYSTEM := \1 $(NAME)/' Makefile; \
 	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:System/ (add to System/Startup in the disk recipe to launch)"; \

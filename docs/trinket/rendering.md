@@ -106,7 +106,46 @@ procedure Draw_Text_Mono (C : Canvas; X, Y : U64; S : String; FG : Pixel);
 - `Draw_Text_Mono` renders the compiled-in untrimmed 8x8 glyphs on
   fixed 8px advances — for grid devices (the terminal), where cell
   alignment matters more than look.
-- `Init` is idempotent and can be called again to reload a font.
+- `Init` latches: the first call fixes the global font for the
+  process's lifetime, so a saved font change applies to apps
+  launched afterwards. `Init` consults `ENV:Font` (M89) before the
+  default path — that is the Prefs/Font save target.
+
+M89 additions:
+
+```ada
+type Handle is private;                 --  private font instance
+function Load (Path : String) return Handle;
+procedure Unload (H : in out Handle);
+function Line_Height (H : Handle) return U64;
+function Text_Width (H : Handle; S : String) return U64;
+procedure Draw_Text (C : Canvas; H : Handle; X, Y : U64; S : String; FG : Pixel);
+procedure Draw_Glyph (C : Canvas; H : Handle; CP : Natural; X, Y : U64; FG : Pixel);
+procedure Probe (Path : String; Family : out String; Family_Len : out Natural;
+                 Pixel_Size : out Natural; OK : out Boolean);
+```
+
+- `Load`/`Unload` give callers a heap font off the global latch —
+  the Prefs/Font live preview renders with one while the UI keeps
+  the global font.
+- Glyph coverage reaches codepoint 16#25FF# (Latin-1, box drawing,
+  block elements, geometric shapes) through a sparse extension
+  table; `Draw_Glyph`/`Has_Glyph` (global and per-handle) address
+  any codepoint. Bytes 16#A0#..16#FF# in `Draw_Text` map straight
+  to Latin-1.
+- `Probe` reads only the BDF header properties (`FAMILY_NAME`,
+  `PIXEL_SIZE`) so listings can group fonts without loading them.
+- Files larger than the fs one-shot read buffer load in a loop —
+  full Terminus BDFs (~180 KiB) parse whole. The pre-M89 64 KiB
+  "font cap" was that one-shot read semantic, and `Files.Open`
+  needs the fs endpoint bound — Fonts binds handle 2 lazily if
+  the program hasn't (never clobbering a custom binding).
+
+The fonts shipped in `Sys:Fonts/`: `font8x8.bdf` (mono 8x8),
+`font8x8p.bdf` (pseudo-proportional 8), `font8x8t.bdf` (8x16,
+rows doubled — same family, second size), and Terminus
+`ter-u12n/14n/16n.bdf` (OFL, sha256-pinned third_party fetch,
+license at `Sys:Fonts/OFL.TXT`).
 
 ## Images
 

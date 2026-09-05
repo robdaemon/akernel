@@ -1,0 +1,13 @@
+with "../../trinket/trinket.gpr";
+
+project Font extends "../../rts/akernel_program.gpr" is
+   for Runtime ("Ada") use "../../gnat-rts";
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../../bin/userspace";
+   for Object_Dir use "../../../obj/userspace/font";
+   for Main use ("font.adb");
+
+   package Builder is
+      for Executable ("font.adb") use "font.elf";
+   end Builder;
+end Font;

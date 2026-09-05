@@ -11,6 +11,47 @@ repository.
 
 ## Recently shipped
 
+- **M89** (this commit): Prefs folder + Font prefs editor.
+  Sys:Fonts/ grew real choices: font2bdf.py --tall doubles rows
+  for font8x8t.bdf (same family, PIXEL_SIZE 16; font8x8p keeps
+  its own family — different metrics), and Terminus 12/14/16
+  arrives via a sha256-pinned third_party tarball (SourceForge
+  4.49.1, OFL; license ships as Sys:Fonts/OFL.TXT; BDFs shipped
+  UNFILTERED — line-drawing glyphs stay). Trinket.Fonts:
+  glyph coverage extends past ASCII to 16#25FF# via a sparse
+  (codepoint, glyph) table (768 slots, ~1.7x the Terminus
+  set — sizing argument in comment) with Draw_Glyph/Has_Glyph
+  codepoint primitives; a loadable Handle API (Load/Unload/
+  per-handle Draw_Text/Line_Height/Text_Width) plus a
+  header-only Probe (FAMILY_NAME/PIXEL_SIZE) back the picker's
+  live preview and family grouping; Init consults ENV:Font
+  before the default path (saved choice applies to newly
+  launched apps; the global latch stays). Two latent loader
+  bugs fixed on the way: raw Files.Open needs the fs endpoint
+  bound — Fonts now binds handle 2 lazily, never clobbering a
+  custom binding (fonts from disk silently fell back since
+  m56 in apps whose first fs touch was the font load), and
+  Files.Read answers at most Buf_Bytes per call — the read now
+  loops (the old 64 KiB "font cap" was that one-shot
+  semantics). Prefs/Font (userspace/prefs/font, first nested
+  crate; new-crate gains DEST=prefs, DISK_CRATES_PREFS list,
+  ::Prefs mcopy loop with basename handling; nested gpr needs
+  an explicit Runtime override — relative Runtime paths
+  resolve against the extending project): the Amiga
+  fontrequester — families listview left, sizes right, live
+  preview panel (custom widget drawing two sample lines with a
+  preview Handle), Okay/Cancel. Okay writes ENV:Font.
+  Preselection happens AFTER Window.Open — a zero-height
+  listview reports Visible_Rows = 1, so selecting before
+  layout parked Top at row 1 and hid the first family.
+  QMP-verified: scan finds 6 fonts, preselect font8x8p,
+  Terminus -> 12/14/16 -> 16 repaints the preview in Terminus,
+  Okay persists ENV:Font = Sys:Fonts/TER-U16N.BDF (confirmed
+  on the image afterwards, fsck clean), a second tdemo
+  instance renders wholly in Terminus 16. 1846/1847 PASS
+  SMP4/SMP1, 0 FAIL.
+  Next: M90 ScreenMode editor + runtime Op_Set_Mode.
+
 - **M88** (this commit): in-window popup/overlay. New
   `Trinket.Widgets.Popup` menu-list widget (MUI popup-list
   lineage): raised Pane panel, one row per item, hover inverts
@@ -35,7 +76,66 @@ repository.
   Beta inverts -> click picks ("picked Beta" on status line),
   reopen -> click-outside dismisses, reopen -> Esc dismisses,
   vacated rects repaint clean (no ghosting).
-  1848/1846 PASS SMP4/SMP1, 0 FAIL.
+  1848/1846 PASS SMP4/SMP1, 0 FAIL. Anchor fix `f55c0a0` on
+  top: Open_Popup initialized both locals from X ("PX, PY :
+  U64 := X"), so the popup opened at (X, X) — split the
+  declarations.
+
+## Planned: Prefs apps (M89/M90)
+
+Amiga-style Prefs drawer on Sys: (ENV:-backed persistence —
+`Sys:Prefs/Env/<NAME>` files via CLI.Set_Env/Get_Env, the
+netserv ENV:Net.* precedent). One crate per app, nested:
+`userspace/prefs/font`, `userspace/prefs/screenmode` — the
+generic `$(CRATES)` rule already tolerates path entries
+(`make -C userspace/prefs/font`); the new DISK_CRATES_PREFS
+mcopy loop uses basename for binary/staging/destination;
+nested gpr files carry one extra `../` (extends, Exec_Dir,
+Object_Dir); new-crate gains DEST=prefs. Binaries land at
+`::Prefs/Font`, `::Prefs/ScreenMode`; launched qualified from
+the shell (no ENV:Path change), no Startup line.
+
+**M89 Font editor** (Amiga fontrequester): families Listview
+left, sizes Listview right, live preview panel below (sample
+text rendered with a loaded preview handle), Okay/Cancel row.
+Okay writes ENV:Font (BDF path); Trinket.Fonts.Init consults
+ENV:Font before defaulting — applies to newly launched apps
+(global latch stays; live re-apply is future work). Needs a
+Fonts instance API (Load/Unload/Probe/Draw_Text per handle,
+singleton kept) since the preview must not disturb the global
+font. Inventory: font2bdf.py --tall makes an 8x16 from the
+in-git font8x8; Terminus 12/14/16 (all <=8px wide, parser
+reads one hex byte/row) via a sha256-pinned third_party
+tarball, shipped UNFILTERED (line-drawing/block glyphs stay
+on disk). Loader: raise the 64 KiB read cap (transient heap
+buffer, freed post-parse) and extend the glyph store — dense
+0..127 as today + a sparse (codepoint, glyph) extension table
+covering Latin-1 + box/block/geometric (sizing cap justified
+in comment), plus a Draw_Glyph codepoint primitive; terminal
+UTF-8/codepage wiring is a later milestone.
+
+**M90 ScreenMode** (runtime switch, not boot-only): append
+display Op_Set_Mode=16 (+Status_Bad_Mode) and window
+Op_Set_Screen_Mode=32 (reply = granted dims; W=0 queries).
+Driver: add RESOURCE_UNREF 0x102; disable scanout, unref,
+recompute Width/Height/Cols/Rows/FB_Pages, CREATE_2D new size
+(clamped 640x480..1920x1080 — VA windows and Max_* ceilings
+are 1080p-sized, above stays out), cap_delete session chunk
+caps and lift the New_Caps overwrite refusal; Bureau's
+existing Set_Buffer/Commit_Buffer attaches+presents (refuse
+Op_Present while unattached; gate the text-console TRANSFER
+post-commit — stale-stride garbage). Bureau (serialized loop,
+no interleave): cursor erase, grow/shrink the Buf_VA
+compositing buffer (unmap+delete+realloc only when the chunk
+count changes), re-push caps + commit, re-Get_Info, dismiss
+menus, clamp all window origins, full repaint; pointer
+scaling reads live dims per event (self-correcting); clients
+need nothing (surfaces are pixel-sized, screen-independent).
+Prefs app: static mode list (no EDID enumeration), current
+mode queried on open, Okay = switch + ENV:Screen.Width/Height;
+Makefile run mtypes those out of disk.img into QEMU_GPU_FLAGS
+for boot persistence. First bring-up step is a serial-driven
+Op_Set_Mode smoke before wiring the GUI.
 
 - **Widgets split** (`8bc1563`): Trinket.Widgets had grown to
   573+2760 lines — split into per-widget child packages. Root
