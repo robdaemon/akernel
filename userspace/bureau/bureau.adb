@@ -870,15 +870,21 @@ procedure Bureau is
    end Cursor_Erase;
 
    --  Drag the grabbed window to follow the pointer; repaint
-   --  the union band of the old and new frames.
+   --  the union band of the old and new frames. The title bar
+   --  never goes under the screen bar (Y >= Bar_H + 1, same as
+   --  the zoom target); the bottom may clip instead when the
+   --  frame is taller than the screen below the bar (M90 small
+   --  modes — Height - FH wraps huge on a modular U64 and the
+   --  Min/Max pair still lands on Bar_H + 1).
    procedure Drag_Move (PX, PY : U64) is
       S : constant Natural := Drag_Slot;
       NX : constant U64 := U64'Min
         ((if PX > Drag_DX then PX - Drag_DX else 0),
          Width - Wins (S).FW);
-      NY : constant U64 := U64'Min
-        ((if PY > Drag_DY then PY - Drag_DY else 0),
-         Height - Wins (S).FH);
+      NY : constant U64 := U64'Max
+        (Bar_H + 1,
+         U64'Min ((if PY > Drag_DY then PY - Drag_DY else 0),
+                  Height - Wins (S).FH));
       X0 : constant U64 := U64'Min (Wins (S).X, NX);
       Y0 : constant U64 := U64'Min (Wins (S).Y, NY);
       X1 : constant U64 := U64'Max (Wins (S).X + Wins (S).FW,

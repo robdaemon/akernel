@@ -11,7 +11,7 @@ repository.
 
 ## Recently shipped
 
-- **M90** (this commit): ScreenMode prefs + runtime mode
+- **M90** (`d5293d7`): ScreenMode prefs + runtime mode
   switch. Display protocol gains Op_Set_Mode (16) +
   Status_Bad_Mode (5): the driver validates against the static
   640x480..1920x1080 clamp (BEFORE Natural conversion — a
