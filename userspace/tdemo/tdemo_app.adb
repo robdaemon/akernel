@@ -58,6 +58,12 @@ package body Tdemo_App is
     Img_Widget : Widgets.Any_Widget;
     Work_Gauge : Widgets.Any_Widget;
 
+    --  M87b showcase: the slider positions the gauge directly.
+    procedure Slider_Moved (Pos : U64) is
+    begin
+       Widgets.Gauge (Work_Gauge.all).Set_Fraction (Pos, 100);
+    end Slider_Moved;
+
     --  M86e showcase: the three radios in the "Choices" group
     --  share this set, so selecting one clears the others.
     Choice_Set : aliased Widgets.Radio_Set;
@@ -240,6 +246,8 @@ package body Tdemo_App is
          (Widgets.New_Button ("Work", Work_Clicked'Access));
        Widgets.Group (Work_Grp.all).Add (Status_Lbl);
        Widgets.Group (Work_Grp.all).Add (Work_Gauge);
+       Widgets.Group (Work_Grp.all).Add
+         (Widgets.New_Slider (0, 100, Slider_Moved'Access));
 
        Widgets.Group (Btn_Row.all).Add
          (Widgets.New_Button ("Save", Save_Clicked'Access));

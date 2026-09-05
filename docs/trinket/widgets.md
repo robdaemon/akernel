@@ -279,8 +279,39 @@ pixels.
 
 See also `Trinket.Images` (Bmp/Xpm loaders) and `Trinket.Paint.Blit`.
 
-### `Gauge` (progress bar, M87a)
+### `Slider` (M87b)
 
+```ada
+type Slider is new Widget with record
+   Min       : U64 := 0;
+   Max       : U64 := 100;
+   Pos       : U64 := 0;
+   On_Change : Change_Callback := null;
+   ...
+end record;
+function New_Slider
+  (Min : U64 := 0; Max : U64 := 100;
+   On_Change : Change_Callback := null) return Any_Widget;
+procedure Set_Range (W : in out Slider; Min, Max : U64);
+procedure Set_Pos (W : in out Slider; P : U64);
+```
+
+Horizontal continuous-value gadget, Scrollbar's sibling: sunken
+track channel, raised 12px knob with grip lines. Clicking the track
+pages toward the point (10% of range); the knob drags (same v4
+pointer capture — drag and release arrive even outside the window).
+State battery: hover brightens the knob face, dragging sinks it and
+shifts the grips. `On_Change` fires on user moves only; `Set_Pos` /
+`Set_Range` clamp and mark dirty without firing. `Min_Size` is
+64x14. tdemo wires it to the Gauge (slider position = gauge
+percent).
+
+Down-steps (here and in `Scrollbar`, fixed in M87b) are pre-clamped:
+`Pos - Page` is U64 and wraps past `Min`, and the clamp would read
+the wrap as "past Max" — the up arrow at the top used to jump to
+the bottom.
+
+### `Gauge` (progress bar, M87a)
 ```ada
 type Gauge is new Widget with record
    Num      : U64 := 0;

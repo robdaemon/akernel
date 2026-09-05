@@ -11,6 +11,20 @@ repository.
 
 ## Recently shipped
 
+- **M87b** (this commit): Slider widget. Horizontal continuous
+  value gadget, Scrollbar's sibling: sunken track channel,
+  raised 12px knob with grip lines, track-click pages 10% of
+  range, knob drag over the same v4 pointer capture; M86c state
+  battery (hover face, sunken+shifted grips while dragging);
+  On_Change on user moves only. Min_Size 64x14. tdemo wires it
+  to the Gauge (slider % = gauge fill). Latent Scrollbar bug
+  fixed in passing: down-steps (up arrow / track-above) computed
+  Pos - By in U64, WRAPPED past Min, and Clamp_Pos read the wrap
+  as past-Max — the up arrow at the top jumped to the bottom;
+  both widgets now pre-clamp (Step_Down helper). QMP-verified:
+  knob drag 20% -> 94% with the gauge label tracking live, track
+  click pages +10. 1848/1847 PASS SMP4/SMP1, 0 FAIL.
+
 - **M87a** (this commit): Gauge widget — the M87 widget arc's
   first slice (planned: b Slider, c horizontal Scrollbar +
   d Separator, e Tabs, f Cycle, g Numeric, h Tab focus chain
