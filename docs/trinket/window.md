@@ -149,6 +149,32 @@ dirty widgets no longer repaint everything between them. More than
 `Max_Damage` (8) disjoint dirty rects overflows the list and degrades
 to the old single `Dirty_Union` band.
 
+With a popup overlay open (below), the flush also collects the
+overlay's own `Dirty_List` and appends the pending-damage band —
+the rect the overlay last occupied, stashed by `Close_Popup` so
+the area it vacated is repainted on the next flush. The overlay draws last in every band (z-order).
+
+## Popup overlays (M88)
+
+```ada
+procedure Open_Popup
+  (W : in out Window; Panel : Widgets.Any_Widget; X, Y : U64);
+procedure Close_Popup (W : in out Window);
+function Popup_Active (W : Window) return Boolean;
+```
+
+`Open_Popup` floats a widget (typically `Widgets.Popup`) above
+the content: sized to its `Min_Size`, positioned at content-absolute
+`(X, Y)` and clamped into the surface. While active, the event
+loop routes input to the overlay only: pointer presses outside it
+and Escape dismiss (the outside click is **swallowed** — no focus
+change, no content widget sees it); Tab is suppressed. A
+`Widgets.Popup` pick also closes it (the app callback runs
+first). The rect the overlay vacates is repainted via the
+pending-damage band in `Flush_Dirty`. `Open_Popup`/`Close_Popup`
+are event-loop calls (EDT rule, like `Set_Title`). Only one
+overlay at a time; opening replaces.
+
 ## Menus
 
 Screen-bar menus are chrome owned by Bureau (Amiga convention):

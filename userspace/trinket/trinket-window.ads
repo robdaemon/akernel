@@ -81,6 +81,21 @@ package Trinket.Window is
 
    procedure Close (W : in out Window);
 
+   --  M88: in-window popup/overlay. Open_Popup floats a widget
+   --  tree ABOVE the content at a content-absolute position
+   --  (sized to its Min_Size, clamped into the surface; a second
+   --  Open closes the first). While active the overlay draws
+   --  last and gets input first; dismissal rules live here, not
+   --  in the widget: a pick (completed release inside), a press
+   --  outside, or Escape closes it — the closing press is
+   --  swallowed, and keys/Tab never reach the tree behind.
+   --  Open_Popup is an event-loop call (EDT rule, like
+   --  everything widget-touching).
+   procedure Open_Popup
+     (W : in out Window; Panel : Widgets.Any_Widget; X, Y : U64);
+   procedure Close_Popup (W : in out Window);
+   function Popup_Active (W : Window) return Boolean;
+
    function Surf_Width (W : Window) return U64;
    function Surf_Height (W : Window) return U64;
 
@@ -109,6 +124,11 @@ private
        On_Menu      : Menu_Callback := null;
        On_App       : App_Port.Msg_Callback := null;
        App_Port     : Trinket.App_Port.Port;
+       --  M88 overlay: the floating widget + the repaint band
+       --  it vacated on Close_Popup.
+       Overlay      : Widgets.Any_Widget := null;
+       Pend_X0, Pend_Y0, Pend_X1, Pend_Y1 : U64 := 0;
+       Has_Pending  : Boolean := False;
     end record;
 
 end Trinket.Window;

@@ -337,6 +337,32 @@ covers the whole strip (gaps included) or the widest page,
 whichever is larger. tdemo showcases a two-page strip reporting
 switches on the status line.
 
+### `Popup` (M88)
+
+```ada
+package Trinket.Widgets.Popup ...
+
+type Pick_Callback is access procedure (Index : Natural);
+
+function New_Popup
+  (On_Pick : Pick_Callback := null) return Any_Widget;
+procedure Add_Item (W : in out Popup; S : String);
+```
+
+The menu-list panel for the window's overlay layer
+(`Trinket.Window.Open_Popup`) — MUI popup-list lineage. A raised
+`Pane` panel with one row per item; hover inverts the row
+(listview selection style), release-over fires `On_Pick` with the
+1-based index. The window owns the dismissal rules (pick,
+click-outside, Escape) and the placement; the widget only reports
+picks — it is **not a layout citizen** and **not a focus-chain
+member**. Items cap at `Max_Children` (12) of `Max_Text` (48)
+chars — Group's ceiling, same justification (transient menu
+text). `Min_Size` is the widest item (`+ Pad_X` each side) by
+`N * (LH + 4)` rows plus the frame. tdemo wires a Popup button
+to a three-item menu anchored above it, picks reporting on the
+status line.
+
 ### `Image_Widget`
 
 ```ada

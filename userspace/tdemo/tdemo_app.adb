@@ -12,6 +12,7 @@ with Trinket.Widgets.Slider;
 with Trinket.Widgets.Tabs;
 with Trinket.Widgets.Cycle;
 with Trinket.Widgets.Numeric;
+with Trinket.Widgets.Popup;
 with Trinket.Window;
 with Trinket.Menus;
 
@@ -103,6 +104,31 @@ package body Tdemo_App is
     begin
        Widgets.Label.Label (Status_Lbl.all).Set_Text (S);
     end Cycle_Moved;
+
+    --  M88 showcase: a popup menu over the content, anchored
+    --  above the Popup button; picks report on the status line.
+    Pop_Btn  : Widgets.Any_Widget;
+    Pop_Menu : Widgets.Any_Widget;
+
+    procedure Popup_Picked (Index : Natural) is
+       Names : constant array (1 .. 3) of String (1 .. 5) :=
+         ("Alpha", "Beta ", "Gamma");
+       S : constant String := "picked " & Names (Index);
+    begin
+       Widgets.Label.Label (Status_Lbl.all).Set_Text (S);
+    end Popup_Picked;
+
+    procedure Popup_Clicked is
+       PW, PH : U64;
+    begin
+       Pop_Menu.Min_Size (PW, PH);
+       --  Open anchored above the button (Btn_Row sits at the
+       --  bottom of the window); the window clamps into the
+       --  surface anyway.
+       Trinket.Window.Open_Popup
+         (Win, Pop_Menu,
+          Pop_Btn.X, (if Pop_Btn.Y > PH then Pop_Btn.Y - PH else 0));
+    end Popup_Clicked;
 
     --  Worker gate: the worker task creates its own gate
     --  notification, publishes the handle, then blocks in
@@ -301,6 +327,13 @@ package body Tdemo_App is
       --  M86c: a ghosted button to show the disabled state.
       Widgets.Group (Btn_Row.all).Add
         (Widgets.Button.New_Button ("Ghost", Disabled => True));
+      --  M88: popup overlay menu.
+      Pop_Menu := Widgets.Popup.New_Popup (Popup_Picked'Access);
+      Widgets.Popup.Popup (Pop_Menu.all).Add_Item ("Alpha");
+      Widgets.Popup.Popup (Pop_Menu.all).Add_Item ("Beta");
+      Widgets.Popup.Popup (Pop_Menu.all).Add_Item ("Gamma");
+      Pop_Btn := Widgets.Button.New_Button ("Popup", Popup_Clicked'Access);
+      Widgets.Group (Btn_Row.all).Add (Pop_Btn);
 
       --  M86e: toggles — two checkboxes and a three-way radio
       --  set (Choice_Set enforces mutual exclusion).

@@ -8,6 +8,7 @@ with Trinket.Menus;
 package body Trinket.Window is
    use Akernel_User.Syscalls;
    use type Trinket.U64;
+   use type Widgets.Any_Widget;
    package Win renames Akernel_User.Window;
    package SSE renames System.Storage_Elements;
 
@@ -268,12 +269,31 @@ package body Trinket.Window is
        --  Overflow (more than Max_Damage disjoint dirty rects)
        --  degrades to the old single union band.
        W.Root.Dirty_List (Rects, N, Ovfl);
+       if W.Overlay /= null then
+          --  M88: the overlay damages like any widget, but is not
+          --  part of the tree's list.
+          W.Overlay.Dirty_List (Rects, N, Ovfl);
+       end if;
        if Ovfl then
           if not W.Root.Dirty_Union (X0, Y0, X1, Y1) then
              return;  --  unreachable (Ovfl implies dirty)
           end if;
           N := 1;
           Rects (1) := (X0, Y0, X1, Y1);
+       end if;
+       if W.Has_Pending then
+          --  M88: the band a closed popup vacated — not reachable
+          --  through any widget's Dirty flag.
+          W.Has_Pending := False;
+          if N < Widgets.Max_Damage then
+             N := N + 1;
+             Rects (N) := (W.Pend_X0, W.Pend_Y0, W.Pend_X1, W.Pend_Y1);
+          else
+             Rects (1) := (U64'Min (Rects (1).X0, W.Pend_X0),
+                           U64'Min (Rects (1).Y0, W.Pend_Y0),
+                           U64'Max (Rects (1).X1, W.Pend_X1),
+                           U64'Max (Rects (1).Y1, W.Pend_Y1));
+          end if;
        end if;
        if N = 0 then
           return;
@@ -293,6 +313,10 @@ package body Trinket.Window is
           Trinket.Paint.Fill_Rect (W.Cnv, X0, Y0, X1, Y1,
                                    Win_Face);
           W.Root.Draw (W.Cnv);
+          if W.Overlay /= null then
+             --  M88: overlay paints last, on top, in every band.
+             W.Overlay.Draw (W.Cnv);
+          end if;
           if Win.Surface_Update
             (W.EP, W.Id, X0, Y0, X1 - X0, Y1 - Y0) /= Win.Status_Ok
           then
@@ -300,6 +324,9 @@ package body Trinket.Window is
           end if;
        end loop;
        W.Root.Clear_Dirty;
+       if W.Overlay /= null then
+          W.Overlay.Clear_Dirty;
+       end if;
        Reset_Clip (W.Cnv);
     end Flush_Dirty;
 
@@ -332,7 +359,17 @@ package body Trinket.Window is
                     + (Tail mod Win.Input_Queue_Events) * 2;
                   Val := Queue (Slot + 1);
                   if Queue (Slot) = Win.Input_Event_Key then
-                     if (Val and 16#FF#) = Key_Tab then
+                     if W.Overlay /= null then
+                        --  M88: modal-ish — Escape closes, other
+                        --  keys go to the overlay only; Tab never
+                        --  cycles the tree behind it.
+                        if (Val and 16#FF#) = 27 then
+                           Close_Popup (W);
+                        else
+                           Consumed := W.Overlay.On_Key
+                             (Val and 16#FF#);
+                        end if;
+                     elsif (Val and 16#FF#) = Key_Tab then
                         --  M87h: Tab never reaches widgets; it
                         --  cycles the window's focus chain.
                         Widgets.Cycle_Focus (W.Root);
@@ -346,19 +383,46 @@ package body Trinket.Window is
                      if (Btn and 1) /= 0
                        and then (W.Prev_Buttons and 1) = 0
                      then
-                        --  M87h: single-focus invariant — drop all
-                        --  focus, the pressed gadget re-takes it.
-                        Widgets.Clear_Focus (W.Root);
-                        Consumed := W.Root.On_Pointer
-                          (Widgets.Press, X, Y);
+                        if W.Overlay /= null then
+                           --  M88: press-in goes to the overlay;
+                           --  press-outside dismisses (swallowed,
+                           --  tree focus untouched).
+                           if Widgets.Inside (W.Overlay.all, X, Y)
+                           then
+                              Consumed := W.Overlay.On_Pointer
+                                (Widgets.Press, X, Y);
+                           else
+                              Close_Popup (W);
+                           end if;
+                        else
+                           --  M87h: single-focus invariant — drop
+                           --  all focus, the pressed gadget
+                           --  re-takes it.
+                           Widgets.Clear_Focus (W.Root);
+                           Consumed := W.Root.On_Pointer
+                             (Widgets.Press, X, Y);
+                        end if;
                      elsif (Btn and 1) = 0
                        and then (W.Prev_Buttons and 1) /= 0
                      then
-                        Consumed := W.Root.On_Pointer
-                          (Widgets.Release, X, Y);
+                        if W.Overlay /= null then
+                           --  M88: a completed click ends the
+                           --  popup (the release picks first).
+                           Consumed := W.Overlay.On_Pointer
+                             (Widgets.Release, X, Y);
+                           Close_Popup (W);
+                        else
+                           Consumed := W.Root.On_Pointer
+                             (Widgets.Release, X, Y);
+                        end if;
                      else
-                        Consumed := W.Root.On_Pointer
-                          (Widgets.Move, X, Y);
+                        if W.Overlay /= null then
+                           Consumed := W.Overlay.On_Pointer
+                             (Widgets.Move, X, Y);
+                        else
+                           Consumed := W.Root.On_Pointer
+                             (Widgets.Move, X, Y);
+                        end if;
                      end if;
                      W.Prev_Buttons := Btn;
                    elsif Queue (Slot) = Win.Input_Event_Close then
@@ -473,6 +537,55 @@ package body Trinket.Window is
          W.Opened := False;
       end if;
    end Close;
+
+   --  M88: overlay lifecycle. Open sizes the panel to its
+   --  Min_Size, clamps it into the surface, lays it out (a group
+   --  panel gets its kids placed) and marks it dirty; Flush_Dirty
+   --  picks the rect up from there. Close records the vacated
+   --  band as pending damage (no widget owns that rect anymore).
+   procedure Open_Popup
+     (W : in out Window; Panel : Widgets.Any_Widget; X, Y : U64)
+   is
+      PW, PH : U64;
+      PX, PY : U64 := X;
+   begin
+      if Panel = null then
+         return;
+      end if;
+      if W.Overlay /= null then
+         Close_Popup (W);
+      end if;
+      Panel.Min_Size (PW, PH);
+      if PX + PW > W.Cnv.W then
+         PX := (if PW < W.Cnv.W then W.Cnv.W - PW else 0);
+      end if;
+      if PY + PH > W.Cnv.H then
+         PY := (if PH < W.Cnv.H then W.Cnv.H - PH else 0);
+      end if;
+      Panel.X := PX;
+      Panel.Y := PY;
+      Panel.W := PW;
+      Panel.H := PH;
+      Panel.Layout;
+      Panel.Dirty := True;
+      W.Overlay := Panel;
+   end Open_Popup;
+
+   procedure Close_Popup (W : in out Window) is
+   begin
+      if W.Overlay = null then
+         return;
+      end if;
+      W.Pend_X0 := W.Overlay.X;
+      W.Pend_Y0 := W.Overlay.Y;
+      W.Pend_X1 := W.Overlay.X + W.Overlay.W;
+      W.Pend_Y1 := W.Overlay.Y + W.Overlay.H;
+      W.Has_Pending := True;
+      W.Overlay := null;
+   end Close_Popup;
+
+   function Popup_Active (W : Window) return Boolean is
+     (W.Overlay /= null);
 
    function Surf_Width (W : Window) return U64 is (W.Cnv.W);
    function Surf_Height (W : Window) return U64 is (W.Cnv.H);

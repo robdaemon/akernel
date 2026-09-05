@@ -11,7 +11,33 @@ repository.
 
 ## Recently shipped
 
-- **Widgets split** (this commit): Trinket.Widgets had grown to
+- **M88** (this commit): in-window popup/overlay. New
+  `Trinket.Widgets.Popup` menu-list widget (MUI popup-list
+  lineage): raised Pane panel, one row per item, hover inverts
+  the row (listview selection style), release-over fires
+  Pick_Callback with the 1-based index; items cap at
+  Max_Children/Max_Text (transient menu text, Group's
+  justification). Not a layout citizen, not a focus-chain
+  member — `Trinket.Window` owns it: Open_Popup sizes to
+  Min_Size, clamps the anchor into the surface, installs as
+  W.Overlay; while active the Run loop routes keys to the
+  overlay only (Tab suppressed, Esc dismisses), pointer presses
+  inside go to it, presses outside dismiss and are SWALLOWED
+  (no focus change, no content dispatch), and a Popup pick
+  closes after the app callback runs. Flush_Dirty collects the
+  overlay's Dirty_List plus a pending-damage band (the rect the
+  overlay vacated, stashed by Close_Popup, unioned into the
+  first cluster if the list is full) and draws the overlay
+  last in every band (z-order). One overlay at a time; opening
+  replaces. tdemo showcase: a Popup button in Btn_Row opens a
+  3-item Alpha/Beta/Gamma menu anchored above itself, picks
+  reporting on the status line. QMP-verified: open -> hover
+  Beta inverts -> click picks ("picked Beta" on status line),
+  reopen -> click-outside dismisses, reopen -> Esc dismisses,
+  vacated rects repaint clean (no ghosting).
+  1848/1846 PASS SMP4/SMP1, 0 FAIL.
+
+- **Widgets split** (`8bc1563`): Trinket.Widgets had grown to
   573+2760 lines — split into per-widget child packages. Root
   keeps the framework only: Widget base, damage machinery, M87h
   focus chain, shared callback profiles (Click/Change), Group,
