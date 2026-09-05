@@ -20,7 +20,8 @@ package body Akernel_User.Window is
        Id, Pages      : out U64;
        Grant_W        : out U64;
        Grant_H        : out U64;
-       Flags          : U64 := 0) return U64
+       Flags          : U64 := 0;
+       Pos_X, Pos_Y   : U64 := 0) return U64
     is
     begin
        Message.Label := Op_Surface_Create;
@@ -28,6 +29,8 @@ package body Akernel_User.Window is
        Message.Words (0) := Width;
        Message.Words (1) := Height;
        Message.Words (2) := Flags;
+       Message.Words (3) := Pos_X;
+       Message.Words (4) := Pos_Y;
        Message.Caps  := (others => 0);
        Message.Caps (0) := Queue_Cap;
        Message.Caps (1) := Ntfn_Cap;

@@ -815,8 +815,64 @@ procedure Fileserver is
             Seen := Seen + 1;
          end if;
       end loop;
+       Reply2 (Files.Status_Not_Found, 0);
+    end Handle_Assign_List;
+
+   --  Op_List_Volumes (M91): word 0 = index; reply word 1 = kind
+   --  (Files.Vol_Kind_*), words 2..5 pack the label (or device
+   --  when unlabeled), NUL-padded. Stateless, ReadDir-style:
+   --  index N returns the N-th live volume. The desktop's volume
+   --  icons poll this.
+   procedure Handle_Volume_List is
+      Idx   : constant U64 := Syscalls.Message.Words (0);
+      Seen  : U64 := 0;
+      Name  : String (1 .. 16);
+      N_Len : Natural;
+      Kind  : U64;
+   begin
+      for I in 1 .. Vol_Tab.Last loop
+         if Volumes (I).Valid then
+            if Seen = Idx then
+               if Volumes (I).Is_FS then
+                  Kind := Files.Vol_Kind_FS;
+               elsif Volumes (I).Is_Block then
+                  Kind := Files.Vol_Kind_Block;
+               elsif Volumes (I).Is_Pipe or else Volumes (I).Is_Nil
+               then
+                  Kind := Files.Vol_Kind_Virtual;
+               else
+                  Kind := Files.Vol_Kind_Boot;
+               end if;
+               if Volumes (I).Lab_Len > 0 then
+                  N_Len := Volumes (I).Lab_Len;
+                  Name (1 .. N_Len) := Volumes (I).Label (1 .. N_Len);
+               else
+                  N_Len := Volumes (I).Dev_Len;
+                  Name (1 .. N_Len) := Volumes (I).Device (1 .. N_Len);
+               end if;
+
+               Syscalls.Message.Label := 0;
+               Syscalls.Message.Words := (others => 0);
+               Syscalls.Message.Words (1) := Kind;
+               for P in 0 .. N_Len - 1 loop
+                  Syscalls.Message.Words (2 + P / 8) :=
+                    Syscalls.Message.Words (2 + P / 8)
+                      or Shl (U64 (Character'Pos (Name (P + 1))),
+                              (P mod 8) * 8);
+               end loop;
+               Syscalls.Message.Words (0) := Files.Status_Ok;
+               Syscalls.Message.Caps := (others => 0);
+               if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
+                  Akernel_User.Console.Put_Line
+                    ("fileserver: reply failed");
+               end if;
+               return;
+            end if;
+            Seen := Seen + 1;
+         end if;
+      end loop;
       Reply2 (Files.Status_Not_Found, 0);
-   end Handle_Assign_List;
+    end Handle_Volume_List;
 
    --  Pack Name (Pos .. Len) into the outgoing message words
    --  First_Word .. 5 (NUL-padded): the VFS forwards the path
@@ -2773,6 +2829,8 @@ begin
          Handle_Assign;
       elsif Syscalls.Message.Label = Files.Op_Assign_List then
          Handle_Assign_List;
+      elsif Syscalls.Message.Label = Files.Op_List_Volumes then
+         Handle_Volume_List;
       elsif Syscalls.Message.Label = Files.Op_Sync then
          Handle_Sync;
       elsif Syscalls.Message.Label = Files.Op_Rename then

@@ -29,23 +29,29 @@ package Trinket.Window is
 
    type Window is limited private;
 
-    function Open
-      (W         : in out Window;
-       Bureau_EP : U64;
-       Req_W     : U64;
-       Req_H     : U64;
-       Title     : String;
-       Root      : Widgets.Any_Widget;
-       Resizable : Boolean := True) return Boolean;
-    --  False on any setup failure (nothing left mapped/created
-    --  that Close wouldn't release anyway — process teardown
-    --  reclaims). Resizable (v5) opts into the zoom gadget: the
-    --  window then answers Bureau's kind-5 resize events by
-    --  reallocating its surface and re-laying out the widget
-    --  tree. Group-based proportional layouts zoom for free.
-    --  Req_W/Req_H are a REQUEST: the surface opens at least at
-    --  the root's Min_Size (M86g content negotiation), so apps
-    --  express a preference, not a load-bearing pixel budget.
+     function Open
+       (W         : in out Window;
+        Bureau_EP : U64;
+        Req_W     : U64;
+        Req_H     : U64;
+        Title     : String;
+        Root      : Widgets.Any_Widget;
+        Resizable : Boolean := True;
+        Flags     : U64 := 0;
+        Pos_X     : U64 := 0;
+        Pos_Y     : U64 := 0) return Boolean;
+     --  False on any setup failure (nothing left mapped/created
+     --  that Close wouldn't release anyway — process teardown
+     --  reclaims). Resizable (v5) opts into the zoom gadget: the
+     --  window then answers Bureau's kind-5 resize events by
+     --  reallocating its surface and re-laying out the widget
+     --  tree. Group-based proportional layouts zoom for free.
+     --  Req_W/Req_H are a REQUEST: the surface opens at least at
+     --  the root's Min_Size (M86g content negotiation), so apps
+     --  express a preference, not a load-bearing pixel budget.
+     --  Flags/Pos_X/Pos_Y (M91) pass Bureau's desktop-window
+     --  flags (Flag_Backdrop/Flag_Borderless) and an explicit
+     --  frame position (0,0 = cascade).
 
    procedure Run (W : in out Window);
    --  Event loop: returns when Bureau delivers the close-gadget
@@ -73,11 +79,19 @@ package Trinket.Window is
    --  installs the pick callback (item Id). Set_Menus needs the
    --  surface id, so call it AFTER Open; a window with no
    --  Set_Menus shows no bar menus.
-   type Menu_Callback is access procedure (Id : U64);
-   procedure Set_Menus
-     (W : in out Window; Menus : Trinket.Menus.Menu_Array);
-   procedure Set_Menu_Handler
-     (W : in out Window; Cb : Menu_Callback);
+    type Menu_Callback is access procedure (Id : U64);
+    procedure Set_Menus
+      (W : in out Window; Menus : Trinket.Menus.Menu_Array);
+    procedure Set_Menu_Handler
+      (W : in out Window; Cb : Menu_Callback);
+
+    --  M91: resize notification for the APP — fired from
+    --  Handle_Resize after the fresh buffer is up and the tree
+    --  has re-laid out (the Drawer's DRAWER:GEOM attribute save
+    --  hooks here). Event-loop thread only (EDT rule).
+    type Resize_Callback is access procedure (New_W, New_H : U64);
+    procedure Set_Resize_Handler
+      (W : in out Window; Cb : Resize_Callback);
 
    procedure Close (W : in out Window);
 
@@ -121,8 +135,9 @@ private
        Opened       : Boolean := False;
        Quit_Wanted  : Boolean := False;
        Prev_Buttons : U64 := 0;
-       On_Menu      : Menu_Callback := null;
-       On_App       : App_Port.Msg_Callback := null;
+        On_Menu      : Menu_Callback := null;
+        On_App       : App_Port.Msg_Callback := null;
+        On_Resize    : Resize_Callback := null;
        App_Port     : Trinket.App_Port.Port;
        --  M88 overlay: the floating widget + the repaint band
        --  it vacated on Close_Popup.

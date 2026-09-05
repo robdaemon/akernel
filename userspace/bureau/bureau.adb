@@ -189,12 +189,21 @@ procedure Bureau is
        --  Op_Surface_Resize ack (geometry is applied ONLY at
        --  ack — a client that never answers leaves the window
        --  untouched).
-       Resizable      : Boolean := False;
-       Zoomed         : Boolean := False;
-       Resize_Pending : Boolean := False;
-       Save_X, Save_Y : U64 := 0;
-       Save_PW, Save_PH : U64 := 0;
-       Pend_X, Pend_Y : U64 := 0;
+        Resizable      : Boolean := False;
+        Zoomed         : Boolean := False;
+        Resize_Pending : Boolean := False;
+        Save_X, Save_Y : U64 := 0;
+        Save_PW, Save_PH : U64 := 0;
+        Pend_X, Pend_Y : U64 := 0;
+        --  M91: the pending resize came from a screen-mode switch
+        --  (kind-6 event), not a zoom click — the ack applies the
+        --  position but must NOT toggle Zoomed.
+        Pend_Screen_Mode : Boolean := False;
+        --  M91 desktop windows: Borderless = no chrome at all
+        --  (FW=PW, pane = whole window; no title drag / gadgets);
+        --  Backdrop = a content click focuses but never raises.
+        Borderless     : Boolean := False;
+        Backdrop       : Boolean := False;
     end record;
 
    package Win_Tab is new Akernel_User.Tables (Window_Rec);
@@ -232,10 +241,13 @@ procedure Bureau is
      (Surf_VA0 + U64 (Natural'Max (Slot, 1) - 1) *
         Surf_Slot_Stride);
 
-   --  Pane rectangle of a slot (absolute coords).
-   function Pane_X (S : Natural) return U64 is (Wins (S).X + Frame);
-   function Pane_Y (S : Natural) return U64 is
-     (Wins (S).Y + Frame + Title_H);
+    --  Pane rectangle of a slot (absolute coords). A borderless
+    --  window's pane IS the whole window (M91).
+    function Pane_X (S : Natural) return U64 is
+      (Wins (S).X + (if Wins (S).Borderless then 0 else Frame));
+    function Pane_Y (S : Natural) return U64 is
+      (Wins (S).Y
+       + (if Wins (S).Borderless then 0 else Frame + Title_H));
 
     --  Raw word reply (same pattern as the display driver). Caps
     --  are cleared (m75): replies transfer them now, and request
@@ -490,12 +502,15 @@ procedure Bureau is
           (System.Storage_Elements.Integer_Address (Surf_VA (S)));
       Stride_Px : constant U64 := Stride / 4;
       BX0, BY0, BX1, BY1, SW, SH : U64;
-   begin
-      --  Frame (M86b Xen): the WHOLE window border takes the
-      --  focus color — steel blue when focused, gray when not —
-      --  with a raised bevel ring on top.
-      Fill_Rect (FX, FY, FX + FW, FY + FH, Title_C);
-      Bevel (FX + 2, FY + 2, FX + FW - 2, FY + FH - 2);
+    begin
+       --  M91: borderless windows are pane only — no frame, no
+       --  title bar, no gadgets.
+       if not Wins (S).Borderless then
+       --  Frame (M86b Xen): the WHOLE window border takes the
+       --  focus color — steel blue when focused, gray when not —
+       --  with a raised bevel ring on top.
+       Fill_Rect (FX, FY, FX + FW, FY + FH, Title_C);
+       Bevel (FX + 2, FY + 2, FX + FW - 2, FY + FH - 2);
       --  Title bar + gadgets + title text. Gadgets are the full
       --  title-band height, flush against the frame's inner
       --  edges (Workbench): close left; zoom + depth right,
@@ -510,19 +525,20 @@ procedure Bureau is
          Draw_Gadget (FX + FW - Frame - Title_H, Title_Y,
                       Title_H, Gad_Depth);
       end if;
-      if Wins (S).Title_Len > 0 then
-         --  M86b Xen: focused titles use MUI's "shadow" style —
-         --  a dark offset copy under the light glyph.
-         if S = Focus then
-            Draw_Text (FX + Frame + Title_H + 9, Title_Y + 3,
-                       Wins (S).Title (1 .. Wins (S).Title_Len),
-                       Border, Title_C);
-         end if;
-         Draw_Text (FX + Frame + Title_H + 8, Title_Y + 2,
-                    Wins (S).Title (1 .. Wins (S).Title_Len),
-                    Text_C, Title_C);
-      end if;
-      --  Pane: surface pixels if mapped, blank pane color else.
+       if Wins (S).Title_Len > 0 then
+          --  M86b Xen: focused titles use MUI's "shadow" style —
+          --  a dark offset copy under the light glyph.
+          if S = Focus then
+             Draw_Text (FX + Frame + Title_H + 9, Title_Y + 3,
+                        Wins (S).Title (1 .. Wins (S).Title_Len),
+                        Border, Title_C);
+          end if;
+          Draw_Text (FX + Frame + Title_H + 8, Title_Y + 2,
+                     Wins (S).Title (1 .. Wins (S).Title_Len),
+                     Text_C, Title_C);
+       end if;
+       end if;  --  not Borderless
+       --  Pane: surface pixels if mapped, blank pane color else.
       if Wins (S).Mapped then
          BX0 := U64'Max (Pane_X (S), Clip_X0);
          BY0 := U64'Max (Pane_Y (S), Clip_Y0);
@@ -745,11 +761,15 @@ procedure Bureau is
                       Wins (S).Y + Frame + Title_H);
    end Repaint_Title;
 
-   --  Move a slot to the top of the z-order.
-   procedure Raise_Slot (S : Natural) is
-      Idx : Natural := 0;
-   begin
-      for I in 1 .. Z_N loop
+    --  Move a slot to the top of the z-order. Backdrop windows
+    --  (M91) never leave the bottom.
+    procedure Raise_Slot (S : Natural) is
+       Idx : Natural := 0;
+    begin
+       if Wins (S).Backdrop then
+          return;
+       end if;
+       for I in 1 .. Z_N loop
          if Z (I).all = S then
             Idx := I;
             exit;
@@ -764,24 +784,32 @@ procedure Bureau is
        Z (Z_N).all := S;
     end Raise_Slot;
 
-    --  Move a slot to the bottom of the z-order (depth gadget).
-    procedure Lower_Slot (S : Natural) is
-       Idx : Natural := 0;
-    begin
-       for I in 1 .. Z_N loop
-          if Z (I).all = S then
-             Idx := I;
-             exit;
-          end if;
-       end loop;
-       if Idx = 0 then
-          return;
-       end if;
-       for I in reverse 2 .. Idx loop
-          Z (I).all := Z (I - 1).all;
-       end loop;
-       Z (1).all := S;
-    end Lower_Slot;
+     --  Move a slot to the bottom of the z-order (depth gadget) —
+     --  but never BELOW a backdrop window (M91): send-to-back
+     --  lands just above the desktop.
+     procedure Lower_Slot (S : Natural) is
+        Idx   : Natural := 0;
+        First : Natural := 1;
+     begin
+        for I in 1 .. Z_N loop
+           if Z (I).all = S then
+              Idx := I;
+              exit;
+           end if;
+        end loop;
+        if Idx = 0 then
+           return;
+        end if;
+        while First <= Z_N
+          and then Wins (Z (First).all).Backdrop
+        loop
+           First := First + 1;
+        end loop;
+        for I in reverse First + 1 .. Idx loop
+           Z (I).all := Z (I - 1).all;
+        end loop;
+        Z (First).all := S;
+     end Lower_Slot;
 
    procedure Focus_Slot (S : Natural) is
       Old : constant Natural := Focus;
@@ -919,8 +947,24 @@ procedure Bureau is
                and then PX < Wins (S).X + Wins (S).FW
                and then PY >= Wins (S).Y
                and then PY < Wins (S).Y + Wins (S).FH
-             then
-                --  Depth gadget (right, outermost): WB toggle
+              then
+                 --  M91 desktop windows: no chrome handling at
+                 --  all. A backdrop click focuses but NEVER
+                 --  raises; a borderless click behaves like a
+                 --  content click (raise allowed, no title
+                 --  band / gadgets / drag).
+                 if Wins (S).Backdrop then
+                    Focus_Slot (S);
+                    return;
+                 elsif Wins (S).Borderless then
+                    if I /= Z_N then
+                       Raise_Slot (S);
+                       Repaint_Window (S);
+                    end if;
+                    Focus_Slot (S);
+                    return;
+                 end if;
+                 --  Depth gadget (right, outermost): WB toggle
                 --  semantics — already at the back pops the
                 --  window to the front, otherwise it drops
                 --  behind everything. Handled BEFORE the raise
@@ -1112,12 +1156,51 @@ procedure Bureau is
        Q (Slot)     := Win.Input_Event_Resize;
        Q (Slot + 1) := Win.Pack_Size (New_W, New_H);
        Q (Win.Input_Queue_Head) := Head + 1;
-       Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
-                           Win.Input_Signal_Bit);
-       if Res /= 0 then
-          Debug_Put_Line ("bureau input signal failed");
-       end if;
-    end Forward_Resize;
+        Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
+                            Win.Input_Signal_Bit);
+        if Res /= 0 then
+           Debug_Put_Line ("bureau input signal failed");
+        end if;
+     end Forward_Resize;
+
+     --  M91: a screen-mode switch asks every BACKDROP window to
+     --  re-fill the new screen (kind 6, value = Pack_Size of the
+     --  target content size). Bureau owns the target position
+     --  (0, Bar_H+1) through the same pending-geometry machinery
+     --  as zoom; the client acks with Op_Surface_Resize.
+     procedure Forward_Screen_Mode (S : Natural) is
+        Q  : Word_Array
+          with Address => System.Storage_Elements.To_Address
+            (System.Storage_Elements.Integer_Address (Queue_VA (S)));
+        Head : U64;
+        Tail : U64;
+        Slot : U64;
+        Res  : U64;
+     begin
+        if Wins (S).Queue_Cap = 0 or else Wins (S).Resize_Pending
+        then
+           return;
+        end if;
+        Head := Q (Win.Input_Queue_Head);
+        Tail := Q (Win.Input_Queue_Tail);
+        if Head - Tail >= Win.Input_Queue_Events then
+           return;  --  full: drop
+        end if;
+        Wins (S).Pend_X := 0;
+        Wins (S).Pend_Y := Bar_H + 1;
+        Wins (S).Resize_Pending := True;
+        Wins (S).Pend_Screen_Mode := True;
+        Slot := Win.Input_Queue_First
+          + (Head mod Win.Input_Queue_Events) * 2;
+        Q (Slot)     := Win.Input_Event_Screen_Mode;
+        Q (Slot + 1) := Win.Pack_Size (Width, Height - Bar_H - 1);
+        Q (Win.Input_Queue_Head) := Head + 1;
+        Res := Ntfn_Signal (Wins (S).Ntfn_Cap,
+                            Win.Input_Signal_Bit);
+        if Res /= 0 then
+           Debug_Put_Line ("bureau input signal failed");
+        end if;
+     end Forward_Screen_Mode;
 
    ------------------------------------------------------------------
    --  Milestone 61: menu actions
@@ -1545,16 +1628,21 @@ procedure Bureau is
          Fail ("screen mode rebuild failed");
       end if;
 
-      for S in 1 .. Win_Tab.Last loop
-         if Wins (S).Used then
-            Wins (S).X := (if Wins (S).FW >= Width then 0
-                           else U64'Min (Wins (S).X,
-                                         Width - Wins (S).FW));
-            Wins (S).Y := (if Wins (S).FH >= Height then 0
-                           else U64'Min (Wins (S).Y,
-                                         Height - Wins (S).FH));
-         end if;
-      end loop;
+       for S in 1 .. Win_Tab.Last loop
+          if Wins (S).Used then
+             Wins (S).X := (if Wins (S).FW >= Width then 0
+                            else U64'Min (Wins (S).X,
+                                          Width - Wins (S).FW));
+             Wins (S).Y := (if Wins (S).FH >= Height then 0
+                            else U64'Min (Wins (S).Y,
+                                          Height - Wins (S).FH));
+             --  M91: backdrop windows re-fill the new screen via
+             --  the kind-6 handshake.
+             if Wins (S).Backdrop then
+                Forward_Screen_Mode (S);
+             end if;
+          end if;
+       end loop;
 
       Paint_Band (0, 0, Width, Height);
       Present_Band (0, 0, Width, Height);
@@ -1636,44 +1724,79 @@ begin
             elsif Message.Words (0) = 0 or else Message.Words (1) = 0
             then
                Win_Reply (Reply_H, Label, Win.Status_Bad_Index, 0, 0, 0, 0);
-            else
-               PW := U64'Min (Message.Words (0), Width - 2 * Frame);
-               PH := U64'Min (Message.Words (1),
-                              Height - 2 * Frame - Title_H);
-               if (PW * PH * 4 + 4095) / 4096 >
-                 U64 (Surf_Max_Objects) * 64
-               then
-                  Win_Reply (Reply_H, Label, Win.Status_No_Slot, 0, 0, 0, 0);
-               else
-                  Next_Id := Next_Id + 1;
-                  Wins (Slot).Used     := True;
-                  Wins (Slot).Id       := Next_Id;
-                  Wins (Slot).PW       := PW;
-                  Wins (Slot).PH       := PH;
-                  Wins (Slot).FW       := PW + 2 * Frame;
-                  Wins (Slot).FH       := PH + 2 * Frame + Title_H;
-                  --  Cascade placement, clamped on-screen.
-                  Wins (Slot).X := U64'Min
-                    (32 + 48 * U64 (Slot - 1),
-                     Width - Wins (Slot).FW);
-                  Wins (Slot).Y := U64'Min
-                    (40 + 36 * U64 (Slot - 1),
-                     Height - Wins (Slot).FH);
-                  Wins (Slot).Pages    := (PW * PH * 4 + 4095) / 4096;
-                  Wins (Slot).Got      := 0;
-                  Wins (Slot).Mapped   := False;
-                  Wins (Slot).Caps     := (others => 0);
-                   Wins (Slot).Queue_Cap := Message.Caps (0);
-                   Wins (Slot).Ntfn_Cap  := Message.Caps (1);
-                   Wins (Slot).Title    := (others => ' ');
-                   Wins (Slot).Title_Len := 0;
-                   --  Slot reuse must not leak the previous
-                   --  window's menus or zoom state.
-                   Wins (Slot).Menu_Count := 0;
-                   Wins (Slot).Resizable :=
-                     (Message.Words (2) and Win.Flag_Resizable) /= 0;
-                   Wins (Slot).Zoomed := False;
-                   Wins (Slot).Resize_Pending := False;
+             else
+                declare
+                   Fl : constant U64 := Message.Words (2);
+                   Borderless : constant Boolean :=
+                     (Fl and Win.Flag_Borderless) /= 0;
+                   Backdrop : constant Boolean :=
+                     (Fl and Win.Flag_Backdrop) /= 0;
+                   Req_X : constant U64 := Message.Words (3);
+                   Req_Y : constant U64 := Message.Words (4);
+                begin
+                if Borderless then
+                   PW := U64'Min (Message.Words (0), Width);
+                   PH := U64'Min (Message.Words (1), Height);
+                else
+                   PW := U64'Min (Message.Words (0), Width - 2 * Frame);
+                   PH := U64'Min (Message.Words (1),
+                                  Height - 2 * Frame - Title_H);
+                end if;
+                if (PW * PH * 4 + 4095) / 4096 >
+                  U64 (Surf_Max_Objects) * 64
+                then
+                   Win_Reply (Reply_H, Label, Win.Status_No_Slot, 0, 0, 0, 0);
+                else
+                   Next_Id := Next_Id + 1;
+                   Wins (Slot).Used     := True;
+                   Wins (Slot).Id       := Next_Id;
+                   Wins (Slot).PW       := PW;
+                   Wins (Slot).PH       := PH;
+                   if Borderless then
+                      Wins (Slot).FW := PW;
+                      Wins (Slot).FH := PH;
+                   else
+                      Wins (Slot).FW := PW + 2 * Frame;
+                      Wins (Slot).FH := PH + 2 * Frame + Title_H;
+                   end if;
+                   --  M91: desktop windows may request an explicit
+                   --  frame position (0,0 = cascade); normal
+                   --  windows always cascade. Clamp on-screen.
+                   if (Borderless or else Backdrop)
+                     and then (Req_X /= 0 or else Req_Y /= 0)
+                   then
+                      Wins (Slot).X :=
+                        (if Wins (Slot).FW >= Width then 0
+                         else U64'Min (Req_X, Width - Wins (Slot).FW));
+                      Wins (Slot).Y :=
+                        (if Wins (Slot).FH >= Height then 0
+                         else U64'Min (Req_Y, Height - Wins (Slot).FH));
+                   else
+                      Wins (Slot).X := U64'Min
+                        (32 + 48 * U64 (Slot - 1),
+                         Width - Wins (Slot).FW);
+                      Wins (Slot).Y := U64'Min
+                        (40 + 36 * U64 (Slot - 1),
+                         Height - Wins (Slot).FH);
+                   end if;
+                   Wins (Slot).Pages    := (PW * PH * 4 + 4095) / 4096;
+                   Wins (Slot).Got      := 0;
+                   Wins (Slot).Mapped   := False;
+                   Wins (Slot).Caps     := (others => 0);
+                    Wins (Slot).Queue_Cap := Message.Caps (0);
+                    Wins (Slot).Ntfn_Cap  := Message.Caps (1);
+                    Wins (Slot).Title    := (others => ' ');
+                    Wins (Slot).Title_Len := 0;
+                    --  Slot reuse must not leak the previous
+                    --  window's menus or zoom state.
+                    Wins (Slot).Menu_Count := 0;
+                    Wins (Slot).Resizable :=
+                      (Fl and Win.Flag_Resizable) /= 0;
+                    Wins (Slot).Borderless := Borderless;
+                    Wins (Slot).Backdrop   := Backdrop;
+                    Wins (Slot).Zoomed := False;
+                    Wins (Slot).Resize_Pending := False;
+                    Wins (Slot).Pend_Screen_Mode := False;
                   --  v3: map the client's input queue RW (the
                   --  one-page memobj arrives with Map+Read+
                   --  Write+Transfer).
@@ -1695,8 +1818,17 @@ begin
                         end if;
                      end if;
                   end if;
-                  Z_N := Z_N + 1;
-                  Z (Z_N).all := Slot;
+                   Z_N := Z_N + 1;
+                   if Backdrop then
+                      --  Backdrop windows sit at the BOTTOM of
+                      --  the z-order (M91).
+                      for I in reverse 2 .. Z_N loop
+                         Z (I).all := Z (I - 1).all;
+                      end loop;
+                      Z (1).all := Slot;
+                   else
+                      Z (Z_N).all := Slot;
+                   end if;
                   Focus_Slot (Slot);
                   --  A new window takes the focus: any open menu
                   --  belonged to the previous owner.
@@ -1705,11 +1837,12 @@ begin
                   Win_Reply (Reply_H, Label, Win.Status_Ok,
                              Wins (Slot).Id, Wins (Slot).Pages,
                              PW, PH);
-               end if;
-            end if;
-         end;
+                end if;
+                end;
+             end if;
+          end;
 
-      elsif Label = Win.Op_Surface_Set_Buffer then
+       elsif Label = Win.Op_Surface_Set_Buffer then
          declare
             S : constant Natural := Slot_Of (Message.Words (0));
          begin
@@ -1815,17 +1948,21 @@ begin
              if S = 0 then
                 Win_Reply (Reply_H, Label, Win.Status_Bad_Id,
                            0, 0, 0, 0);
-             else
-                declare
-                   PW : constant U64 := U64'Min
-                     (Message.Words (1), Width - 2 * Frame);
-                   PH : constant U64 := U64'Min
-                     (Message.Words (2), Height - 2 * Frame - Title_H);
-                   FX : constant U64 := Wins (S).X;
-                   FY : constant U64 := Wins (S).Y;
-                   FW : constant U64 := Wins (S).FW;
-                   FH : constant U64 := Wins (S).FH;
-                begin
+              else
+                 declare
+                    PW : constant U64 := U64'Min
+                      (Message.Words (1),
+                       (if Wins (S).Borderless then Width
+                        else Width - 2 * Frame));
+                    PH : constant U64 := U64'Min
+                      (Message.Words (2),
+                       (if Wins (S).Borderless then Height
+                        else Height - 2 * Frame - Title_H));
+                    FX : constant U64 := Wins (S).X;
+                    FY : constant U64 := Wins (S).Y;
+                    FW : constant U64 := Wins (S).FW;
+                    FH : constant U64 := Wins (S).FH;
+                 begin
                    if (PW * PH * 4 + 4095) / 4096 >
                      U64 (Surf_Max_Objects) * 64
                    then
@@ -1851,19 +1988,29 @@ begin
                             Wins (S).Caps (I) := 0;
                          end if;
                       end loop;
-                      Wins (S).Got    := 0;
-                      Wins (S).Mapped := False;
-                      Wins (S).PW     := PW;
-                      Wins (S).PH     := PH;
-                      Wins (S).FW     := PW + 2 * Frame;
-                      Wins (S).FH     := PH + 2 * Frame + Title_H;
-                      Wins (S).Pages  := (PW * PH * 4 + 4095) / 4096;
-                      if Wins (S).Resize_Pending then
-                         Wins (S).X := Wins (S).Pend_X;
-                         Wins (S).Y := Wins (S).Pend_Y;
-                         Wins (S).Zoomed := not Wins (S).Zoomed;
-                         Wins (S).Resize_Pending := False;
-                      end if;
+                       Wins (S).Got    := 0;
+                       Wins (S).Mapped := False;
+                       Wins (S).PW     := PW;
+                       Wins (S).PH     := PH;
+                       if Wins (S).Borderless then
+                          Wins (S).FW := PW;
+                          Wins (S).FH := PH;
+                       else
+                          Wins (S).FW := PW + 2 * Frame;
+                          Wins (S).FH := PH + 2 * Frame + Title_H;
+                       end if;
+                       Wins (S).Pages  := (PW * PH * 4 + 4095) / 4096;
+                       if Wins (S).Resize_Pending then
+                          Wins (S).X := Wins (S).Pend_X;
+                          Wins (S).Y := Wins (S).Pend_Y;
+                          --  A screen-mode-driven resize (M91) is
+                          --  not a zoom toggle.
+                          if not Wins (S).Pend_Screen_Mode then
+                             Wins (S).Zoomed := not Wins (S).Zoomed;
+                          end if;
+                          Wins (S).Resize_Pending := False;
+                          Wins (S).Pend_Screen_Mode := False;
+                       end if;
                       --  Keep the frame on-screen: an in-place
                       --  GROW can push the right/bottom edge off.
                       Wins (S).X := U64'Min

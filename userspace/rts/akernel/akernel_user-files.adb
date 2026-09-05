@@ -984,4 +984,39 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Assign_List;
 
+   function Volume_List
+     (Index : U64; Name : out String; Name_Len : out Natural;
+      Kind : out U64) return U64
+   is
+      Ch : Character;
+   begin
+      Name_Len := 0;
+      Kind := Vol_Kind_Boot;
+      if FS_Cap = 0 then
+         return Status_Bad_Args;
+      end if;
+
+      Syscalls.Message.Label := Op_List_Volumes;
+      Syscalls.Message.Words := (others => 0);
+      Syscalls.Message.Words (0) := Index;
+      Syscalls.Message.Caps := (others => 0);
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Kind := Syscalls.Message.Words (1);
+         for P in 0 .. 31 loop
+            exit when P >= Name'Length;
+            Ch := Character'Val (Natural
+              ((Syscalls.Message.Words (2 + P / 8)
+                  / Shift_Left (1, (P mod 8) * 8)) and 16#FF#));
+            exit when Ch = Character'Val (0);
+            Name_Len := Name_Len + 1;
+            Name (Name'First + Name_Len - 1) := Ch;
+         end loop;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Volume_List;
+
 end Akernel_User.Files;

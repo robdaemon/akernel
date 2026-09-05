@@ -157,7 +157,7 @@ use type Akernel_User.Syscalls.U64;
 --    Op_Set_Screen_Mode (32): w0 = width, w1 = height; 0/0 is a
 --      pure query. A real request goes Bureau -> display service
 --      (Op_Set_Mode): the scanout resource is recreated, Bureau
---      tears down and rebuilds its compositing buffer for the new
+--      tears down and rebuilds the compositing buffer for the new
 --      geometry (old frames return to the PMM on last-cap close),
 --      window origins clamp into the new screen, and the full
 --      frame repaints. Client surface buffers are untouched.
@@ -165,6 +165,23 @@ use type Akernel_User.Syscalls.U64;
 --      the geometry), w1 = current width, w2 = current height —
 --      the actual mode AFTER the call, so a rejected switch still
 --      answers the query.
+--
+--  Desktop windows (M91): two create flags make a client window
+--  behave like the Workbench backdrop.
+--    Flag_Borderless (w2 bit 1): no frame/title/gadgets — FW=PW,
+--      the pane is the whole window. No title drag, no close,
+--      no zoom (there is no chrome to hit).
+--    Flag_Backdrop (w2 bit 2): a content click focuses but NEVER
+--      raises — the window stays below every normal window.
+--    w3/w4 = requested frame X/Y (0,0 = Bureau cascade, the old
+--      behavior; honored only when one of the new flags is set,
+--      so pre-M91 clients that zero the words are unaffected).
+--    Screen-mode switches (M90) enqueue a kind-6 event
+--      (Input_Event_Screen_Mode, value = Pack_Size of the new
+--      content target) into BACKDROP windows' queues; Bureau
+--      owns the target position (0, Bar_H+1) through the same
+--      pending-geometry machinery as zoom, and the client acks
+--      with Op_Surface_Resize exactly like a kind-5 resize.
 
 package Akernel_User.Window is
    subtype U64 is Syscalls.U64;
@@ -184,6 +201,8 @@ package Akernel_User.Window is
 
     --  Op_Surface_Create w2 flags (v5).
     Flag_Resizable : constant U64 := 1;
+    Flag_Backdrop  : constant U64 := 2;  --  M91: never raises
+    Flag_Borderless : constant U64 := 4; --  M91: no chrome
 
    Status_Ok        : constant U64 := 0;
    Status_No_Slot   : constant U64 := 1;
@@ -203,6 +222,7 @@ package Akernel_User.Window is
     Input_Event_Close  : constant U64 := 3;
     Input_Event_Menu   : constant U64 := 4;
     Input_Event_Resize : constant U64 := 5;  --  v5, Pack_Size value
+    Input_Event_Screen_Mode : constant U64 := 6;  --  M91, backdrop only
     Input_Signal_Bit   : constant U64 := 1;
 
     --  Pointer event value packing (content-relative).
@@ -223,6 +243,8 @@ package Akernel_User.Window is
       ((V / 2**16) and 16#FFFF#);
 
     --  Client-side helpers (raw IPC_Call; replies are words-only).
+    --  M91: Pos_X/Pos_Y request a frame position (0,0 = cascade;
+    --  honored only with Flag_Backdrop/Flag_Borderless).
     function Surface_Create
       (EP             : U64;
        Width, Height  : U64;
@@ -231,7 +253,8 @@ package Akernel_User.Window is
        Id, Pages      : out U64;
        Grant_W        : out U64;
        Grant_H        : out U64;
-       Flags          : U64 := 0) return U64;  --  v5: Flag_Resizable
+       Flags          : U64 := 0;
+       Pos_X, Pos_Y   : U64 := 0) return U64;
    function Surface_Set_Title
      (EP : U64; Id : U64; S : String) return U64;
    function Surface_Set_Menus

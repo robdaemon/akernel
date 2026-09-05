@@ -582,6 +582,55 @@ function Max_Top (W : Listview) return U64;
 - `Icon_Size = 16`. The first `Set_Item_Icon` flips every row to icon
   height (`Icon_Size + 2`); the list borrows the image.
 
+## Iconview (M91)
+
+`Trinket.Iconview` is the icon-grid widget — the Workbench "view by
+icon" look. Like Listview it carries its own item storage.
+
+```ada
+type Iconview is new Widgets.Widget with private;
+type Any_Iconview is access all Iconview;
+
+function New_Iconview
+  (On_Change : Selected_Callback := null) return Any_Iconview;
+
+--  The grid with its v-bar as one component (flush right,
+--  self-wired). Preferred over bare New_Iconview + Scrollbar.
+function New_Scrolled_Icons
+  (IV        : out Any_Iconview;
+   On_Change : Selected_Callback := null) return Widgets.Any_Widget;
+
+procedure Set_On_Double_Click
+  (W : in out Iconview; Cb : Selected_Callback);
+procedure Clear (W : in out Iconview);
+procedure Add_Item
+  (W : in out Iconview; Label : String;
+   Icon : access constant Trinket.Images.Image);
+
+function Item_Count (W : Iconview) return Natural;
+function Get_Label (W : Iconview; I : Positive) return String;
+procedure Set_Selected (W : in out Iconview; I : Natural);
+function Selected (W : Iconview) return Natural;
+procedure Set_Top (W : in out Iconview; T : U64);   --  pixels
+function Top (W : Iconview) return U64;
+function Columns (W : Iconview) return U64;
+function Content_Height (W : Iconview) return U64;
+function Max_Top (W : Iconview) return U64;
+```
+
+- Cells are `Cell_W x Cell_H` (96x64): a 32x32 icon centered on top
+  with a centered label beneath (truncated to what fits the cell).
+- The column count is derived from the widget width at draw and
+  hit-test time — **a resize reflows the grid for free** (no stored
+  layout state to sync).
+- Double-click is widget-timed like Listview's (400 ms threshold on
+  the same cell): selection updates first, `On_Double_Click` fires
+  after. A press outside any cell clears the selection.
+- Arrow keys move by cell (Up/Down jump a whole row), Home/End work.
+- The scrolled composite's bar range is PIXELS; the composite sets
+  the arrow step to one cell row itself.
+- The app owns the Image objects and must outlive the widget.
+
 ## Text editor widget
 
 `Trinket.Text_Edit` is a separate package (own line storage, like

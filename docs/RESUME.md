@@ -9,7 +9,88 @@ per-milestone detail too.
 Project rules are stored in the AGENTS.md file in the root of the
 repository.
 
+## Planned: Desktop icons + launcher (M92/M93)
+
+Desktop icons + drawer icon views, Amiga Workbench lineage but
+native (NEXT.md's "skipped forever" covers the CLI ports
+LoadWB/WBRun/IconX, not this). User rulings: icons BEFORE the
+BeFS primary swap (FAT32 runs everything with generic icons +
+no-op geometry saves); drawers navigate in the SAME window;
+32x32 icons drawn fresh; desktop shows mounted volumes only;
+NO Snapshot concept — drawer window dimensions save
+automatically on every resize (BeFS attribute, silent no-op on
+FAT32); per-file icons come from an ICON attribute (CSTR path
+to an XPM) with defdraw/deffile/deftool-style fallback.
+M91 shipped the protocol + Iconview + Drawer (below).
+
+**M92**: System/Desktop — full-screen borderless backdrop
+window at (0, Bar_H+1), volumes from Op_List_Volumes (fs
+volumes only), double-click spawns System/Drawer <label:>,
+Refresh menu (no mount fan-out exists; poll). Kind-6 keeps it
+screen-sized across M90 switches. Startup line gains Desktop
+right after Bureau.
+
+**M93**: BeFS becomes Sys: (partition 1, device BD0 so
+hardcoded paths survive). Engine: bitmap allocator indexes the
+right bitmap block (bit / 8192) — lifts the 8 MiB ceiling,
+single AG, deviation documented. mkbefs.py populates a host
+staging tree + attrs manifest (ICON attrs on the five GUI apps
+land here); tools/befs_get.py extracts files host-side (the
+run recipe's ScreenMode env read currently mtypes FAT).
+Makefile: repartition, all @@1048576 literals computed,
+ENV carry-over via befs_get + manifest overlay, CS mount audit,
+fuzz BD0/BD1 literal audit, test-replay offsets. Payoff:
+per-app icons + drawer geometry persistence light up with zero
+icon-code changes.
+
 ## Recently shipped
+
+- **M91** (`STAMP`): Icon view + Drawer app (desktop icons
+  phase 1). Window protocol: Op_Surface_Create w2 gains
+  Flag_Backdrop=2 (focus on click, NEVER raises; z-bottom;
+  send-to-back lands above it) and Flag_Borderless=4 (no chrome:
+  FW=PW, no title band/gadgets/drag), w3/w4 = explicit frame
+  X/Y (0,0 = cascade; honored only with the new flags so
+  pre-M91 clients are untouched); input event kind 6
+  (Input_Event_Screen_Mode) goes to backdrop windows on an M90
+  switch — Bureau owns the target (0, Bar_H+1) through the zoom
+  pending-geometry machinery with Pend_Screen_Mode suppressing
+  the Zoomed toggle, Trinket.Window acks it like kind 5 and
+  gained an On_Resize callback (post-layout). File protocol:
+  Op_List_Volumes=26 (stateless index scan -> Vol_Kind_* +
+  label/device name) + Files.Volume_List. Trinket.Iconview:
+  96x64 cells (32x32 icon + centered label), column count
+  derived from width at draw/hit-test time so RESIZE REFLOWS
+  for free, widget-timed double-click (Listview's M84c
+  pattern), arrow-key nav, New_Scrolled_Icons composite
+  (pixel-range bar, cell-row step). Nine fresh 32x32 XPMs in
+  assets/icons32/ (volume/drawer/file/tool deficons + fileman/
+  terminal/edit/font/screenmode app icons) ->
+  Sys:System/Icons32/; the 16x16 set stays for Fileman rows.
+  System/Drawer (userspace/drawer, DEST=system): arg = drawer
+  path (default Sys:); drawers-first Ada.Directories scan with
+  per-entry fault isolation; ICON attr (CSTR XPM path) wins,
+  else 32x32 deficons with ELF-magic tool sniffing; the FAT32
+  driver answers Bad_Args for attr ops so No_Attrs latches for
+  the rest of the drawer (BeFS attr-less Not_Found must NOT
+  latch); double-click navigates same-window (Parent button +
+  path label; Parent_Of cuts the last component —
+  Normalize_Path ignores TRAILING empties by design, "c/" is c
+  not its parent), spawns ELFs via Scripting.Exec.Spawn_Cmd,
+  opens other files in System/Edit with the path; Drawer menu
+  Refresh/Parent. Geometry persistence WITHOUT any Snapshot
+  concept: On_Resize writes DRAWER:GEOM "WxH" on the drawer
+  (journaled on BeFS, silent Bad_Args no-op on FAT32), open
+  reads it back. The initial scan runs BEFORE Window.Open
+  (~1.6 s of FAT path resolutions — every VFS op costs ~100 ms
+  there; BeFS btrees should crush it at M93) so the window
+  appears populated. QMP-verified: populated open, Icons32
+  navigate, Parent back (found the trailing-slash bug), Edit
+  tool spawn (no-arg) and file->Edit (path arg), zoom reflow
+  to 12 columns with the attr write no-op clean, Refresh menu
+  pick. Fuzz: Op_List_Volumes enumeration PASSes.
+  Gates: 1847/0 SMP4, 1849/0 SMP1 (both fuzz
+  volume-list PASSes present). Next: M92 Desktop launcher.
 
 - **M90** (`d5293d7`): ScreenMode prefs + runtime mode
   switch. Display protocol gains Op_Set_Mode (16) +

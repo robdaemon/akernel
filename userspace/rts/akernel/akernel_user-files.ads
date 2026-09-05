@@ -105,7 +105,22 @@ package Akernel_User.Files is
     Op_Query_Open  : constant U64 := 22;
     Op_Query_Poll  : constant U64 := 23;
     Op_Query_Close : constant U64 := 24;
-    Op_Attr_Write  : constant U64 := 25;
+     Op_Attr_Write  : constant U64 := 25;
+     Op_List_Volumes : constant U64 := 26;
+   --    Op_List_Volumes = 26  word 0 = volume index -> (status,
+   --                      kind, name[24] in words 2..5, NUL-padded).
+   --                      Stateless like Op_ReadDir: index N
+   --                      returns the N-th live volume;
+   --                      Status_Not_Found ends the enumeration.
+   --                      The name is the volume LABEL when it has
+   --                      one, else the device name (no colon).
+   --                      M91: the desktop's volume icons poll
+   --                      this.
+   --    Volume kinds (word 1 of Op_List_Volumes):
+   Vol_Kind_Boot    : constant U64 := 0;  --  boot-file set
+   Vol_Kind_Block   : constant U64 := 1;  --  raw block device
+   Vol_Kind_FS      : constant U64 := 2;  --  fs-driver volume
+   Vol_Kind_Virtual : constant U64 := 3;  --  pipe / NIL:
    --    Op_Attr_List = 19  words 0..3 = path (32 chars, "" =
    --                      volume root), word 4 = attribute index
    --                      -> (status, attr type code, attr data
@@ -449,6 +464,13 @@ package Akernel_User.Files is
    function Assign_List
      (Index : U64; Text : out String; Text_Len : out Natural)
       return U64;
+
+   --  M91: enumerate mounted volumes by index until
+   --  Status_Not_Found. Name = label when present, else device
+   --  (no colon); Kind is Vol_Kind_*.
+   function Volume_List
+     (Index : U64; Name : out String; Name_Len : out Natural;
+      Kind : out U64) return U64;
    function Truncate (Name : String) return U64;
    function Mkdir (Name : String) return U64;
    function Rmdir (Name : String) return U64;

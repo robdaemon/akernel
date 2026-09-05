@@ -116,22 +116,30 @@ package body Trinket.Window is
        Trinket.Paint.Fill_Rect (W.Cnv, 0, 0, GW, GH, Win_Face);
        W.Root.Draw (W.Cnv);
        W.Root.Clear_Dirty;
-       if Win.Surface_Update (W.EP, W.Id, 0, 0, GW, GH) /=
-         Win.Status_Ok
-       then
-          Debug_Put_Line ("trinket: update failed");
-       end if;
-    end Handle_Resize;
+        if Win.Surface_Update (W.EP, W.Id, 0, 0, GW, GH) /=
+          Win.Status_Ok
+        then
+           Debug_Put_Line ("trinket: update failed");
+        end if;
+        --  M91: the app sees the resize too (geometry
+        --  persistence).
+        if W.On_Resize /= null then
+           W.On_Resize (GW, GH);
+        end if;
+     end Handle_Resize;
 
-    function Open
-      (W         : in out Window;
-       Bureau_EP : U64;
-       Req_W     : U64;
-       Req_H     : U64;
-       Title     : String;
-       Root      : Widgets.Any_Widget;
-       Resizable : Boolean := True) return Boolean
-    is
+     function Open
+       (W         : in out Window;
+        Bureau_EP : U64;
+        Req_W     : U64;
+        Req_H     : U64;
+        Title     : String;
+        Root      : Widgets.Any_Widget;
+        Resizable : Boolean := True;
+        Flags     : U64 := 0;
+        Pos_X     : U64 := 0;
+        Pos_Y     : U64 := 0) return Boolean
+     is
        Pages   : U64;
        Result  : U64;
        Q_Mint  : U64;
@@ -221,10 +229,12 @@ package body Trinket.Window is
       if Q_Mint = Syscall_Failed or else N_Mint = Syscall_Failed then
          return False;
       end if;
-        Result := Win.Surface_Create
-          (Bureau_EP, Open_W, Open_H, Q_Mint, N_Mint,
-          W.Id, Pages, W.Cnv.W, W.Cnv.H,
-          Flags => (if Resizable then Win.Flag_Resizable else 0));
+         Result := Win.Surface_Create
+           (Bureau_EP, Open_W, Open_H, Q_Mint, N_Mint,
+           W.Id, Pages, W.Cnv.W, W.Cnv.H,
+           Flags => (if Resizable then Flags or Win.Flag_Resizable
+                     else Flags),
+           Pos_X => Pos_X, Pos_Y => Pos_Y);
       declare
          D1 : constant U64 := Cap_Delete (Q_Mint);
          D2 : constant U64 := Cap_Delete (N_Mint);
@@ -336,8 +346,8 @@ package body Trinket.Window is
           (SSE.Integer_Address (Queue_VA));
       Reply_H : U64;
       Done    : Boolean := False;
-   begin
-      while not Done and then not W.Quit_Wanted loop
+    begin
+       while not Done and then not W.Quit_Wanted loop
          Flush_Dirty (W);
          if IPC_Recv (W.Sink_EP, Reply_H) /= IPC_Ok then
             Debug_Put_Line ("trinket: recv failed");
@@ -431,13 +441,16 @@ package body Trinket.Window is
                       if W.On_Menu /= null then
                          W.On_Menu (Val and 16#FFFF_FFFF#);
                       end if;
-                   elsif Queue (Slot) = Win.Input_Event_Resize then
-                      --  v5: the zoom gadget. Resize the surface
-                      --  and re-layout; only arrives when Open
-                      --  was called with Resizable => True.
-                      Handle_Resize (W, Win.Size_W (Val),
-                                     Win.Size_H (Val));
-                   end if;
+                    elsif Queue (Slot) = Win.Input_Event_Resize
+                      or else Queue (Slot) = Win.Input_Event_Screen_Mode
+                    then
+                       --  v5: the zoom gadget; M91: a screen-mode
+                       --  switch refills a backdrop window. Same
+                       --  ack dance either way: resize the
+                       --  surface and re-layout.
+                       Handle_Resize (W, Win.Size_W (Val),
+                                      Win.Size_H (Val));
+                    end if;
                   Tail := Tail + 1;
                end loop;
                 Queue (Win.Input_Queue_Tail) := Tail;
@@ -528,6 +541,12 @@ package body Trinket.Window is
    begin
       W.On_Menu := Cb;
    end Set_Menu_Handler;
+
+   procedure Set_Resize_Handler
+     (W : in out Window; Cb : Resize_Callback) is
+   begin
+      W.On_Resize := Cb;
+   end Set_Resize_Handler;
 
    procedure Close (W : in out Window) is
       Result : U64;

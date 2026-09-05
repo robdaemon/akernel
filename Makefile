@@ -79,7 +79,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
-DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman
+DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib
 #  Prefs drawer apps (M89): nested crates userspace/prefs/<name>;
@@ -275,6 +275,9 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	mmd -i $@@@1048576 ::System/Icons; \
 	for f in defdraw deffile deftool; do \
 	  mcopy -i $@@@1048576 assets/icons/$$f.xpm "::System/Icons/$$(printf '%s' $$f | tr a-z A-Z).XPM"; done; \
+	mmd -i $@@@1048576 ::System/Icons32; \
+	for f in volume drawer file tool fileman terminal edit font screenmode; do \
+	  mcopy -i $@@@1048576 assets/icons32/$$f.xpm "::System/Icons32/$$(printf '%s' $$f | tr a-z A-Z).XPM"; done; \
 	mmd -i $@@@1048576 ::Libs; \
 	for c in $(DISK_CRATES_LIBS); do \
 	  alr exec -- riscv64-elf-strip -o /tmp/ak-$$c.elf bin/userspace/$$c.elf; \

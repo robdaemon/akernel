@@ -7359,10 +7359,38 @@ begin
       Check (Akernel_User.Files.Assign_Set ("FZ", "") =
                Akernel_User.Files.Status_Ok,
              "assign removed");
-      Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
-               Akernel_User.Files.Status_Not_Found,
-             "removed assign stops resolving");
-   end;
+       Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
+                Akernel_User.Files.Status_Not_Found,
+              "removed assign stops resolving");
+
+       --  M91: Op_List_Volumes enumerates mounted volumes with
+       --  kinds; the Sys label (FAT32 primary) must show up as
+       --  an fs-driver volume.
+       declare
+          V_Idx   : U64 := 0;
+          V_Name  : String (1 .. 24);
+          V_Len   : Natural;
+          V_Kind  : U64;
+          V_Count : Natural := 0;
+          Found_Sys : Boolean := False;
+       begin
+          loop
+             Status := Akernel_User.Files.Volume_List
+               (V_Idx, V_Name, V_Len, V_Kind);
+             exit when Status /= Akernel_User.Files.Status_Ok;
+             V_Count := V_Count + 1;
+             if V_Len = 3
+               and then V_Name (1 .. 3) = "Sys"
+               and then V_Kind = Akernel_User.Files.Vol_Kind_FS
+             then
+                Found_Sys := True;
+             end if;
+             V_Idx := V_Idx + 1;
+          end loop;
+          Check (V_Count >= 2, "volume list enumerates volumes");
+          Check (Found_Sys, "volume list finds Sys: fs volume");
+       end;
+    end;
 
    --  Notification objects: pending bits, OR-accumulation, the
    --  thread-bound fast path delivering a synthetic message through

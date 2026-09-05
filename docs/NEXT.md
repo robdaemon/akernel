@@ -1426,8 +1426,10 @@ Next candidates (order open):
     SKIPPED FOREVER (no such hardware concept):
     printer (PrintFiles/PRT:), sound/speech (Say),
     requesters (RequestChoice/RequestFile),
-    palette/overscan/pointer/screenmode/font prefs,
-    Workbench (LoadWB/WBRun/IconX), CPU/SetPatch/
+    palette/overscan/pointer prefs,
+    Workbench CLI ports (LoadWB/WBRun/IconX — the
+    NATIVE desktop/icons line ships as M91+ instead),
+    CPU/SetPatch/
     NoFastMem, Mount (boot protocol does mounts),
     DiskChange/Lock/Format/Install/AddBuffers/
     RemRAD, MakeLink (FAT has no links). LATER:

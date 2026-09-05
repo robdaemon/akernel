@@ -319,10 +319,47 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   Bureau scales) -> Bureau's SOFTWARE cursor sprite (chosen
   over the virtio hw cursor: arch-independent, works on any
   dumb display driver; Bureau re-saves/redraws the sprite when
-  an update band clobbers it). Burned: HMP mouse_move produces
-  no absolute events for the virtio tablet — absolute pointer
-  injection needs QMP input-send-event (run target exposes
-  -qmp unix:/tmp/qqmp.sock alongside the HMP socket).
+   an update band clobbers it). Burned: HMP mouse_move produces
+   no absolute events for the virtio tablet — absolute pointer
+   injection needs QMP input-send-event (run target exposes
+   -qmp unix:/tmp/qqmp.sock alongside the HMP socket).
+- Desktop windows (M91): window protocol gains
+  Flag_Backdrop=2 (a content click focuses but NEVER raises;
+  the window sits at the bottom of the z-order and send-to-back
+  lands above it) and Flag_Borderless=4 (no chrome: FW=PW, no
+  title band/gadgets/drag) on Op_Surface_Create w2, with
+  w3/w4 = an explicit frame X/Y (0,0 = cascade; honored only
+  with the new flags). Screen-mode switches (M90) enqueue a
+  kind-6 event (Input_Event_Screen_Mode, value = Pack_Size of
+  the new content target) into backdrop windows' queues; Bureau
+  owns the target position (0, Bar_H+1) through the same
+  pending-geometry machinery as zoom (Pend_Screen_Mode
+  suppresses the Zoomed toggle), and the client acks with
+  Op_Surface_Resize exactly like a kind-5 resize. Trinket.Window
+  answers kind 6 identically and gained an On_Resize callback
+  (post-layout; the Drawer's geometry save hooks it). File
+  protocol gains Op_List_Volumes=26 (stateless index scan ->
+  kind + label/device name; Vol_Kind_Boot/Block/FS/Virtual).
+  `userspace/drawer/` (System/Drawer) is the icon-view drawer
+  window: arg = drawer path (default Sys:), Trinket.Iconview
+  grid (96x64 cells, resize reflows), Workbench order (drawers
+  first), 32x32 deficons from Sys:System/Icons32/ (ELF magic
+  decides tool vs file), per-entry ICON attribute override
+  (CSTR path to an XPM; the FAT32 driver answers Bad_Args for
+  attr ops so the app latches "no attrs" for the rest of the
+  drawer — BeFS attr-less files answer Not_Found and do NOT
+  latch). Double-click navigates drawers in the same window
+  (Parent button + path label; Parent_Of cuts the last
+  component — Normalize_Path deliberately ignores TRAILING
+  empties), spawns ELFs via Scripting.Exec.Spawn_Cmd (full
+  uniform ABI) and opens everything else in System/Edit. The
+  initial scan runs BEFORE the window opens (~1.6 s of FAT
+  path resolutions for Sys:System — every VFS op costs ~100
+  ms there) so the window appears populated. Drawer window
+  dimensions persist via the DRAWER:GEOM attribute ("WxH"
+  content size, written from On_Resize): journaled on BeFS,
+  a silent Bad_Args no-op on FAT32. No Snapshot menu — saving
+  is automatic and invisible.
 - `userspace/virtio_input/` — virtio-input driver (one image for
   every function: virtio-keyboard-pci addr 0x5, virtio-tablet-pci
   addr 0x6; class 18 spawns one instance each, role from the
