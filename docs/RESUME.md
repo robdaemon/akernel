@@ -11,7 +11,30 @@ repository.
 
 ## Recently shipped
 
-- **M87e-prep** (this commit): scrollbars are component parts,
+- **M87e** (this commit): Tabs widget — MUI register-group
+  lineage. `Tabs` is a `Group` subtype: pages are the kids
+  (Add_Tab appends label + page), but only the SELECTED page is
+  laid out / drawn / dispatched; hidden pages hold a zero rect
+  and `Dirty_List` walks the active page only (their stale dirty
+  flags never union as zero-area bands). Strip: contiguous tabs
+  from X+2, active one Face-filled with open bottom merging into
+  the raised page frame (drawn last so it overdraws the frame's
+  top bevel), inactives as Win_Face buttons on the frame edge.
+  M86c battery: hover brightens (Face_Hi), held press sinks +
+  shifts the label, click commits on release-over; per-tab
+  disabled isn't modeled (apps add/remove pages instead).
+  Set_Selected re-lays-out immediately, full-redraws, fires
+  On_Change. Min_Size: strip LH+8 + tallest page + frame; width
+  = max(whole strip, widest page). Caps: labels Max_Text(48),
+  pages Max_Children(12) — Group's ceiling. tdemo: two-page
+  strip between Font and the button row, switches report "tab N"
+  on the Worker status line. QMP-verified both directions (page
+  swap + status text + active-tab merge pixels). 1848/1847 PASS
+  SMP4/SMP1, 0 FAIL.
+  Next: M87f Cycle, g Numeric, h Tab focus chain with
+  app-overridable ranks; M88 in-window overlay/popups later.
+
+- **M87e-prep** (`0642014`): scrollbars are component parts,
   not app wiring. User feedback on M87c: the bars sat a group
   spacing away from the edit box and the h-bar spanned the full
   group width (past the v-bar). Fix is architectural: new

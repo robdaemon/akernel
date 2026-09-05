@@ -286,6 +286,36 @@ line right under it), for visual grouping inside a vertical group —
 tdemo has one between the Choices and Font groups. `Min_Size` is
 `0 x 2`.
 
+### `Tabs` (M87e)
+
+```ada
+type Tab_Callback is access procedure (Index : Natural);
+
+function New_Tabs
+  (On_Change : Tab_Callback := null) return Any_Widget;
+procedure Add_Tab (W : in out Tabs; Label : String; Page : Any_Widget);
+procedure Set_Selected (W : in out Tabs; I : Natural);
+function Selected (W : Tabs) return Natural;
+```
+
+MUI register-group lineage: a tab strip across the top, one page
+per tab. `Tabs` IS a `Group` subtype — pages are the kids — but
+only the **selected** page is laid out, drawn and dispatched;
+hidden pages hold a zero rect and contribute no damage (`Dirty_List`
+walks the active page only). The active tab connects to the raised
+page frame (its bottom edge merges into it); inactive tabs sit on
+the frame edge as `Win_Face` buttons. M86c battery: hover brightens
+an inactive tab, a held press sinks it and shifts the label; a
+click commits only on release-over the same tab. Per-tab disabled
+doesn't map onto a strip (apps add/remove pages instead), so it
+isn't modeled. `Set_Selected` re-lays-out immediately, full-redraws,
+and fires `On_Change`. Labels cap at `Max_Text` (48) chars, pages at
+`Max_Children` (12) — Group's ceiling, same justification.
+`Min_Size`: strip height (`LH + 8`) + tallest page + frame; width
+covers the whole strip or the widest page, whichever is larger.
+tdemo showcases a two-page strip reporting switches on the status
+line.
+
 ### `Image_Widget`
 
 ```ada

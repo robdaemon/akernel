@@ -393,4 +393,49 @@ package Trinket.Widgets is
        Overflow : in out Boolean);
     overriding procedure Clear_Dirty (W : in out Group);
 
+   --  Tabs (M87e): MUI register-group lineage — a tab strip
+   --  across the top, one page per tab. Pages are the Group
+   --  kids (Add_Tab appends); only the SELECTED page is laid
+   --  out, drawn and dispatched. The active tab connects to the
+   --  page frame (its bottom edge merges into it); inactive
+   --  tabs sit on the frame edge as Win_Face buttons. M86c
+   --  battery: hover brightens an inactive tab, a held press
+   --  sinks it; per-tab disabled doesn't map onto a strip (apps
+   --  add/remove pages instead), so it isn't modeled. Switching
+   --  pages full-redraws the widget and re-lays-out.
+   type Tab_Callback is access procedure (Index : Natural);
+   type Tab_Label_Rec is record
+      Buf : String (1 .. Max_Text);
+      Len : Text_Len := 0;
+   end record;
+   type Tab_Label_Array is array (1 .. Max_Children) of Tab_Label_Rec;
+   type Tabs is new Group with record
+      Labels    : Tab_Label_Array;
+      Sel       : Natural := 0;   --  1-based; 0 until first Add_Tab
+      Hover_Tab : Natural := 0;   --  0 = pointer not on a tab
+      Press_Tab : Natural := 0;   --  tab held down (M86c)
+      On_Change : Tab_Callback := null;
+   end record;
+   function New_Tabs
+     (On_Change : Tab_Callback := null) return Any_Widget;
+   procedure Add_Tab (W : in out Tabs; Label : String; Page : Any_Widget);
+   procedure Set_Selected (W : in out Tabs; I : Natural);
+   function Selected (W : Tabs) return Natural;
+   overriding procedure Layout (W : in out Tabs);
+   overriding procedure Min_Size (W : Tabs; MW, MH : out U64);
+   overriding procedure Draw (W : Tabs; C : Canvas);
+   overriding function On_Pointer
+     (W : access Tabs; K : Pointer_Kind; PX, PY : U64)
+      return Boolean;
+   overriding function On_Key
+     (W : access Tabs; Code : U64) return Boolean;
+   --  Damage: a dirty Tabs redraws whole; otherwise only the
+   --  ACTIVE page can contribute bands (hidden pages' stale
+   --  flags are dropped, not unioned as zero rects).
+   overriding procedure Dirty_List
+      (W        : Tabs;
+       Rects    : in out Rect_Array;
+       N        : in out Natural;
+       Overflow : in out Boolean);
+
 end Trinket.Widgets;

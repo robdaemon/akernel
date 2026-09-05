@@ -73,6 +73,13 @@ package body Tdemo_App is
        Debug_Put_Line ("tdemo: choice toggled" & Boolean'Image (On));
     end Choice_Toggled;
 
+    --  M87e showcase: tab switches report on the status line.
+    procedure Tab_Moved (Index : Natural) is
+       S : constant String := "tab" & Natural'Image (Index);
+    begin
+       Widgets.Label (Status_Lbl.all).Set_Text (S);
+    end Tab_Moved;
+
     --  Worker gate: the worker task creates its own gate
     --  notification, publishes the handle, then blocks in
     --  Ntfn_Wait — no CPU burned while idle (protected entries are
@@ -176,7 +183,12 @@ package body Tdemo_App is
          Widgets.New_Group (Widgets.Horizontal, "Font");
        Btn_Row  : constant Widgets.Any_Widget :=
          Widgets.New_Group (Widgets.Horizontal);
-      Sz       : U64;
+       --  M87e showcase: a two-page tab strip; switches report
+       --  on the Worker group's status line. Pages are built
+       --  below; kid order in Root = add order.
+       Tabs_W   : constant Widgets.Any_Widget :=
+         Widgets.New_Tabs (Tab_Moved'Access);
+       Sz       : U64;
       T0, T1   : U64;
       NS       : U64;
    begin
@@ -298,6 +310,27 @@ package body Tdemo_App is
        --  M87d showcase: the etched rule between groups.
        Widgets.Group (Root.all).Add (Widgets.New_Separator);
        Widgets.Group (Root.all).Add (Font_Grp, 3);
+       --  M87e: the tab strip between the groups and the
+       --  button row.
+       declare
+          Page1 : constant Widgets.Any_Widget :=
+            Widgets.New_Group (Widgets.Vertical);
+          Page2 : constant Widgets.Any_Widget :=
+            Widgets.New_Group (Widgets.Vertical);
+       begin
+          Widgets.Group (Page1.all).Add
+            (Widgets.New_Label ("First tab page"));
+          Widgets.Group (Page1.all).Add
+            (Widgets.New_Label ("labels, centered",
+             Widgets.Center));
+          Widgets.Group (Page2.all).Add
+            (Widgets.New_Label ("Second tab page"));
+          Widgets.Group (Page2.all).Add
+            (Widgets.New_Label ("pages swap on click"));
+          Widgets.Tabs (Tabs_W.all).Add_Tab ("One", Page1);
+          Widgets.Tabs (Tabs_W.all).Add_Tab ("Two", Page2);
+       end;
+       Widgets.Group (Root.all).Add (Tabs_W, 3);
        Widgets.Group (Root.all).Add (Btn_Row, 4);
 
        if Trinket.Window.Open
