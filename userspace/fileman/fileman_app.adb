@@ -7,6 +7,9 @@ with Akernel_User.Files;
 with Trinket;
 with Trinket.Images;
 with Trinket.Widgets;
+with Trinket.Widgets.Input;
+with Trinket.Widgets.Label;
+with Trinket.Widgets.Button;
 with Trinket.Listview;
 with Trinket.Window;
 with Trinket.Menus;
@@ -78,8 +81,7 @@ package body Fileman_App is
         (Any : Trinket.Widgets.Any_Widget) return Boolean
       is
       begin
-         return Trinket.Widgets.Is_Focused
-                  (Trinket.Widgets.Input (Any.all))
+         return Any.all.Is_Focused
            and then Any.On_Key (Code);
       end Try_Input;
    begin
@@ -121,8 +123,8 @@ package body Fileman_App is
 
    procedure Set_Status (S : String) is
    begin
-      Trinket.Widgets.Set_Text
-        (Trinket.Widgets.Label (Status_Label.all), S);
+      Trinket.Widgets.Label.Set_Text
+        (Trinket.Widgets.Label.Label (Status_Label.all), S);
    end Set_Status;
 
    --  Pane activation: click or selection in a pane makes it the
@@ -143,15 +145,12 @@ package body Fileman_App is
    procedure Selection_Changed (P : Positive; Index : Natural) is
    begin
       Set_Active (P);
-      Trinket.Widgets.Set_Focused
-        (Trinket.Widgets.Input (Panes (1).Path_Input.all), False);
-      Trinket.Widgets.Set_Focused
-        (Trinket.Widgets.Input (Panes (2).Path_Input.all), False);
-      Trinket.Widgets.Set_Focused
-        (Trinket.Widgets.Input (Name_Input.all), False);
+      Panes (1).Path_Input.all.Set_Focused (False);
+      Panes (2).Path_Input.all.Set_Focused (False);
+      Name_Input.all.Set_Focused (False);
       if Index > 0 then
-         Trinket.Widgets.Set_Text
-           (Trinket.Widgets.Input (Name_Input.all),
+         Trinket.Widgets.Input.Set_Text
+           (Trinket.Widgets.Input.Input (Name_Input.all),
             Trinket.Listview.Get_Item (Panes (P).List.all, Index));
       end if;
    end Selection_Changed;
@@ -194,8 +193,8 @@ package body Fileman_App is
    --  names resolve inside pane P's directory.
    function Field_Path (P : Positive) return String is
       T : constant String :=
-        Trinket.Widgets.Get_Text
-          (Trinket.Widgets.Input (Name_Input.all));
+        Trinket.Widgets.Input.Get_Text
+          (Trinket.Widgets.Input.Input (Name_Input.all));
    begin
       if T'Length = 0 then
          return "";
@@ -220,13 +219,13 @@ package body Fileman_App is
    --  drawer; anything else reverts the gadget.
    procedure Path_Commit (P : Positive) is
       T : constant String :=
-        Trinket.Widgets.Get_Text
-          (Trinket.Widgets.Input (Panes (P).Path_Input.all));
+        Trinket.Widgets.Input.Get_Text
+          (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all));
       Qualified : Boolean := False;
    begin
       if T'Length = 0 then
-         Trinket.Widgets.Set_Text
-           (Trinket.Widgets.Input (Panes (P).Path_Input.all),
+         Trinket.Widgets.Input.Set_Text
+           (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all),
             Panes (P).Path.all);
          return;
       end if;
@@ -247,20 +246,18 @@ package body Fileman_App is
             Load_Directory (P, Target);
             Set_Active (P);
             --  Editing is done; arrows belong to the list.
-            Trinket.Widgets.Set_Focused
-              (Trinket.Widgets.Input (Panes (P).Path_Input.all),
-               False);
+            Panes (P).Path_Input.all.Set_Focused (False);
          else
             Set_Status ("No such drawer");
-            Trinket.Widgets.Set_Text
-              (Trinket.Widgets.Input (Panes (P).Path_Input.all),
+            Trinket.Widgets.Input.Set_Text
+              (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all),
                Panes (P).Path.all);
          end if;
       exception
          when others =>
             Set_Status ("No such drawer");
-            Trinket.Widgets.Set_Text
-              (Trinket.Widgets.Input (Panes (P).Path_Input.all),
+            Trinket.Widgets.Input.Set_Text
+              (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all),
                Panes (P).Path.all);
       end;
    end Path_Commit;
@@ -369,8 +366,8 @@ package body Fileman_App is
       Sniffed : Natural := 0;
    begin
       Panes (P).Path := new String'(Path);
-      Trinket.Widgets.Set_Text
-        (Trinket.Widgets.Input (Panes (P).Path_Input.all), Path);
+      Trinket.Widgets.Input.Set_Text
+        (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all), Path);
       Trinket.Listview.Clear (Panes (P).List.all);
 
       begin
@@ -707,9 +704,9 @@ package body Fileman_App is
               Trinket.Widgets.New_Group (Trinket.Widgets.Vertical);
             Frame : Trinket.Widgets.Any_Widget;
          begin
-            Panes (P).Path_Input := Trinket.Widgets.New_Input;
+            Panes (P).Path_Input := Trinket.Widgets.Input.New_Input;
             if P = 1 then
-               Trinket.Widgets.Input
+               Trinket.Widgets.Input.Input
                  (Panes (P).Path_Input.all).On_Commit :=
                    Path_Commit_L'Access;
                Frame := Trinket.Listview.New_Scrolled_List
@@ -719,7 +716,7 @@ package body Fileman_App is
                Trinket.Listview.Set_On_Double_Click
                  (Panes (P).List.all, Double_L'Access);
             else
-               Trinket.Widgets.Input
+               Trinket.Widgets.Input.Input
                  (Panes (P).Path_Input.all).On_Commit :=
                    Path_Commit_R'Access;
                Frame := Trinket.Listview.New_Scrolled_List
@@ -736,8 +733,8 @@ package body Fileman_App is
          end;
       end loop;
 
-      Name_Input := Trinket.Widgets.New_Input;
-      Status_Label := Trinket.Widgets.New_Label ("", Inset => True);
+      Name_Input := Trinket.Widgets.Input.New_Input;
+      Status_Label := Trinket.Widgets.Label.New_Label ("", Inset => True);
 
       --  Weights (MUI lineage): the panes take the bulk of the
       --  window; field/buttons/status split the rest evenly.
@@ -745,24 +742,24 @@ package body Fileman_App is
       Trinket.Widgets.Group (Root.all).Add (Panes_Row, 6);
       Trinket.Widgets.Group (Root.all).Add (Name_Input);
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Open", Open_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Open", Open_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Parent", Parent_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Parent", Parent_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Copy", Copy_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Copy", Copy_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Move", Move_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Move", Move_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Rename", Rename_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Rename", Rename_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Swap", Swap_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Swap", Swap_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button
+        (Trinket.Widgets.Button.New_Button
            ("New Drawer", Newdir_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Delete", Delete_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Delete", Delete_Clicked'Access));
       Trinket.Widgets.Group (Btn_Row.all).Add
-        (Trinket.Widgets.New_Button ("Quit", Quit_Clicked'Access));
+        (Trinket.Widgets.Button.New_Button ("Quit", Quit_Clicked'Access));
       Trinket.Widgets.Group (Root.all).Add (Btn_Row);
       Trinket.Widgets.Group (Root.all).Add (Status_Label);
 

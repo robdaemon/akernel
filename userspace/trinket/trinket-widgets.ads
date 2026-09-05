@@ -1,8 +1,11 @@
 --  Trinket widgets (milestone 56): the retained widget tree.
 --  MUI classes map to Ada tagged types — Widget is the abstract
---  root; Group (H/V layout), Label and Button ship in 56;
---  String, Text_Edit, Listview, Scrollbar follow in 57+.
-with Trinket.Images;
+--  root. This package holds the framework: the Widget base type,
+--  geometry/damage, the M87h focus chain, and the Group layout
+--  container. The gadgets live in per-widget child packages:
+--  Image, Label, Input, Button, Gauge, Separator, Toggles
+--  (Checkbox+Radio), Scrollbar, Slider, Tabs, Cycle, Numeric
+--  (Text_Edit and Listview are older flat Trinket children).
 --
 --  Geometry: X/Y/W/H are window-content-absolute, assigned by the
 --  parent's Layout. Damage: a widget sets Dirty when its look
@@ -96,6 +99,16 @@ package Trinket.Widgets is
 
    function Inside (W : Widget; PX, PY : U64) return Boolean;
 
+   --  Group layout hooks (M87c): how the widget sits in a Group
+   --  with direction Group_Dir. A Scrollbar overrides both: a
+   --  bar whose own Dir DIFFERS from the group's takes a fixed
+   --  Arrow slot along the main axis (no weight share); a bar
+   --  whose Dir MATCHES shrinks to Arrow in the cross axis,
+   --  centered. Defaults False: weight split both ways. Keeps
+   --  Group decoupled from the Scrollbar child package.
+   function Fixed_Main (W : Widget; Group_Dir : Direction) return Boolean;
+   function Narrow_Cross (W : Widget; Group_Dir : Direction) return Boolean;
+
     function Dirty_Union
       (W : Widget; X0, Y0, X1, Y1 : out U64) return Boolean;
     --  True + union rect when this subtree has dirty widgets.
@@ -123,288 +136,11 @@ package Trinket.Widgets is
 
    function Intersects (W : Widget; C : Canvas) return Boolean;
 
-
-   --  Image widget (milestone 63): a decoded Trinket.Images.Image
-   --  painted centered in its layout rect (clip does the rest).
-   --  The widget borrows the image — the app owns Load/Free.
-   type Image_Widget is new Widget with record
-      Img : Trinket.Images.Image;
-   end record;
-   function New_Image (Img : Trinket.Images.Image) return Any_Widget;
-   overriding procedure Draw (W : Image_Widget; C : Canvas);
-   overriding procedure Min_Size (W : Image_Widget; MW, MH : out U64);
-   procedure Set_Image (W : in out Image_Widget; Img : Trinket.Images.Image);
-   --  Swap the borrowed image and mark dirty (milestone 68: worker
-   --  tasks decode images off the event thread and hand them over
-   --  via the window app port). The app still owns Load/Free — free
-   --  the PREVIOUS image only after the swap, so the widget never
-   --  references freed pixels.
-
-   Max_Text : constant := 48;
-   subtype Text_Len is Natural range 0 .. Max_Text;
-
-   type Alignment is (Left, Center);
-
-   --  Label: static text, optionally an inset field (sunken
-   --  bevel + pane background — the mockup's path gadget look).
-   type Label is new Widget with record
-      Txt       : String (1 .. Max_Text);
-      Len       : Text_Len := 0;
-      Align     : Alignment := Left;
-      Inset     : Boolean := False;
-   end record;
-   function New_Label
-     (S : String; Align : Alignment := Left; Inset : Boolean := False)
-      return Any_Widget;
-   overriding procedure Draw (W : Label; C : Canvas);
-   overriding procedure Min_Size (W : Label; MW, MH : out U64);
-   procedure Set_Text (W : in out Label; S : String);
-   --  Update an existing label's text and mark it dirty.
-
-   --  Input (milestone 64): the single-line string gadget the
-   --  m56 plan deferred (MUI String class lineage). Sunken pane
-   --  field, click focuses + positions the cursor, printables
-   --  insert, BS/Del edit, Left/Right/Home/End move, Enter fires
-   --  On_Commit. Keys are consumed ONLY while Focused — an
-   --  unfocused Input is transparent so sibling widgets (a
-   --  listview's arrows) keep working. M87h: the window manages
-   --  the focus flag (click takes it, Tab cycles, clicking
-   --  elsewhere drops it); Focused moved to the base Widget.
+   --  Shared callback profiles: Click_Callback serves Button's
+   --  On_Click and Input's On_Commit; Change_Callback is the
+   --  Slider's (and Scrollbar's legacy) position report.
    type Click_Callback is access procedure;
-   Max_Input : constant := 96;
-   type Input is new Widget with record
-      Buf       : String (1 .. Max_Input);
-      Len       : Natural := 0;
-      Cur       : Natural := 0;      --  0-based, insert BEFORE Cur
-      HOff      : Natural := 0;      --  first visible char
-      On_Commit : Click_Callback := null;
-   end record;
-   function New_Input return Any_Widget;
-   function Get_Text (W : Input) return String;
-   procedure Set_Text (W : in out Input; S : String);
-   overriding function Wants_Focus (W : Input) return Boolean;
-   overriding procedure Draw (W : Input; C : Canvas);
-   overriding procedure Min_Size (W : Input; MW, MH : out U64);
-   overriding function On_Key
-     (W : access Input; Code : U64) return Boolean;
-   overriding function On_Pointer
-     (W : access Input; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-
-   --  Button: raised face, sunken while pressed, centered bold-ish
-   --  label; fires On_Click on release-inside.  M86c: lighter
-   --  face while the pointer hovers; Disabled ghosts the label
-   --  (embossed) and ignores the pointer entirely.
-   type Button is new Widget with record
-      Txt      : String (1 .. Max_Text);
-      Len      : Text_Len := 0;
-      Pressed  : Boolean := False;
-      Hover    : Boolean := False;
-      Disabled : Boolean := False;
-      On_Click : Click_Callback := null;
-   end record;
-    function New_Button
-      (S        : String;
-       On_Click : Click_Callback := null;
-       Disabled : Boolean        := False) return Any_Widget;
-     overriding procedure Draw (W : Button; C : Canvas);
-     overriding procedure Min_Size (W : Button; MW, MH : out U64);
-     overriding function On_Pointer
-      (W : access Button; K : Pointer_Kind; PX, PY : U64)
-       return Boolean;
-     overriding function Wants_Focus (W : Button) return Boolean;
-     --  M87h: Enter/Space activates the focused button.
-     overriding function On_Key
-      (W : access Button; Code : U64) return Boolean;
-
-    --  Gauge (M87a): progress bar — sunken frame, accent fill
-    --  left->right, optional centered NN% label drawn light on
-    --  the fill and dark on the empty half (Workbench fuelgauge
-    --  lineage). Pure display: no pointer/key handling.
-    type Gauge is new Widget with record
-       Num      : U64 := 0;
-       Den      : U64 := 100;
-       Show_Pct : Boolean := True;
-    end record;
-    function New_Gauge (Show_Pct : Boolean := True) return Any_Widget;
-    procedure Set_Fraction (W : in out Gauge; Num, Den : U64);
-    --  Den = 0 is treated as 1; Num is clamped to Den. Marks
-    --  dirty only when the rendered pixels actually change.
-    overriding procedure Draw (W : Gauge; C : Canvas);
-    overriding procedure Min_Size (W : Gauge; MW, MH : out U64);
-
-    --  Separator (M87d): etched horizontal rule — a Bevel_Lo
-    --  line with a Bevel_Hi line directly under it (the frame
-    --  groove look). Pure decoration: no input, Min_Size 0x2,
-    --  and its weight only stretches the gaps around the lines.
-    type Separator is new Widget with null record;
-    function New_Separator return Any_Widget;
-    overriding procedure Draw (W : Separator; C : Canvas);
-    overriding procedure Min_Size (W : Separator; MW, MH : out U64);
-
-    --  Checkbox / Radio (M86e): toggle gadgets — a 14px framed
-    --  box at the left (square for checkboxes, a disc for
-    --  radios), label to the right; the whole rect is the hit
-    --  area (MUI behavior). The M86c state battery applies:
-    --  hover brightens the box face, a held press sinks it and
-    --  shifts the glyph, Disabled ghosts the label and ignores
-    --  the pointer. The state flips on release-inside and fires
-    --  On_Change with the NEW state. Radios sharing one
-    --  Radio_Set are mutually exclusive (selecting one clears
-    --  the others and marks them dirty); On_Change fires only
-    --  for the radio that became selected.
-    type Toggle_Callback is access procedure (On : Boolean);
-
-    type Checkbox is new Widget with record
-       Txt       : String (1 .. Max_Text);
-       Len       : Text_Len := 0;
-       Checked   : Boolean := False;
-       Pressed   : Boolean := False;
-       Hover     : Boolean := False;
-       Disabled  : Boolean := False;
-       On_Change : Toggle_Callback := null;
-    end record;
-    function New_Checkbox
-      (S         : String;
-       Checked   : Boolean := False;
-       On_Change : Toggle_Callback := null;
-       Disabled  : Boolean := False) return Any_Widget;
-    procedure Set_Checked (W : in out Checkbox; On : Boolean);
-    --  Programmatic set; marks dirty; does NOT fire On_Change.
-    function Is_Checked (W : Checkbox) return Boolean is (W.Checked);
-    overriding procedure Draw (W : Checkbox; C : Canvas);
-    overriding procedure Min_Size (W : Checkbox; MW, MH : out U64);
-    overriding function On_Pointer
-      (W : access Checkbox; K : Pointer_Kind; PX, PY : U64)
-       return Boolean;
-    overriding function Wants_Focus (W : Checkbox) return Boolean;
-    --  M87h: Enter/Space toggles the focused checkbox.
-    overriding function On_Key
-      (W : access Checkbox; Code : U64) return Boolean;
-
-    Max_Radio : constant := 8;
-    type Radio_Members is array (1 .. Max_Radio) of Any_Widget;
-    type Radio_Set is record
-       Members : Radio_Members := (others => null);
-       N       : Natural := 0;
-    end record;
-    type Radio_Set_Access is access all Radio_Set;
-
-    type Radio is new Widget with record
-       Txt       : String (1 .. Max_Text);
-       Len       : Text_Len := 0;
-       Selected  : Boolean := False;
-       Pressed   : Boolean := False;
-       Hover     : Boolean := False;
-       Disabled  : Boolean := False;
-       Peers     : Radio_Set_Access := null;
-       On_Change : Toggle_Callback := null;
-    end record;
-    function New_Radio
-      (S         : String;
-       Peers     : Radio_Set_Access := null;
-       Selected  : Boolean := False;
-       On_Change : Toggle_Callback := null;
-       Disabled  : Boolean := False) return Any_Widget;
-    --  Registers the new radio in Peers (silently ungrouped past
-    --  Max_Radio members — headroom note: 8 per set is the M86e
-    --  policy constant, way past any dialog we ship).
-    procedure Set_Selected (W : in out Radio; On : Boolean);
-    --  On => True also clears + dirties the Peers; On => False
-    --  clears only W. Never fires On_Change.
-    function Is_Selected (W : Radio) return Boolean is (W.Selected);
-    overriding procedure Draw (W : Radio; C : Canvas);
-    overriding procedure Min_Size (W : Radio; MW, MH : out U64);
-    overriding function On_Pointer
-      (W : access Radio; K : Pointer_Kind; PX, PY : U64)
-       return Boolean;
-    overriding function Wants_Focus (W : Radio) return Boolean;
-    --  M87h: Enter/Space selects the focused radio.
-    overriding function On_Key
-      (W : access Radio; Code : U64) return Boolean;
-
-
-   --  Scrollbar (milestone 57): sunken track, arrow boxes,
-   --  striped knob proportional to Visible / range. Arrow press
-   --  steps 1, track press pages, knob drags (v4 pointer capture
-   --  delivers the drag + release even outside the window).
-   --  On_Change fires on USER moves only.
-   --  M86c press feedback: the pressed arrow draws sunken with
-   --  its glyph shifted, the knob draws sunken while dragged.
-   --  M87c: Dir selects the axis — Vertical (default) stacks the
-   --  arrow cluster at the bottom, Horizontal mirrors everything
-   --  with the cluster at the right. Scrolled composites
-   --  (Text_Edit.New_Scrolled_Editor, Listview.New_Scrolled_List)
-   --  attach the bars flush to their content; wiring by hand is
-   --  only for custom canvases (terminal).
    type Change_Callback is access procedure (Pos : U64);
-   --  Bar callback carrying the bar itself; Bar.Ctx holds the
-   --  owner's context object (set via New_Scrollbar), so one
-   --  package-level handler can serve every instance.
-   type Bar_Callback is access procedure (Bar : Any_Widget; Pos : U64);
-   type Scrollbar is new Widget with record
-      Min       : U64 := 0;
-      Max       : U64 := 0;
-      Visible   : U64 := 1;
-      Pos       : U64 := 0;
-      Step      : U64 := 1;   --  arrow-click delta (Pos units)
-      Dir       : Direction := Vertical;
-      Ctx       : Any_Widget := null;
-      On_Change : Bar_Callback := null;
-      Dragging  : Boolean := False;
-      Grab_DY   : U64 := 0;
-      Arrow_Dn  : Integer := 0;  --  0, -1 up/left pressed, +1 down/right
-   end record;
-   function New_Scrollbar
-     (On_Change : Bar_Callback := null;
-      Dir       : Direction := Vertical;
-      Ctx       : Any_Widget := null) return Any_Widget;
-   procedure Set_Range
-     (W : in out Scrollbar; Min, Max, Visible : U64);
-   --  Arrow-click delta; default 1 (one Pos unit). Pixel-based
-   --  bars (Text_Edit h-scroll) want ~a char width.
-   procedure Set_Step (W : in out Scrollbar; S : U64);
-   --  Clamps Pos; marks dirty; does NOT fire On_Change.
-   procedure Set_Pos (W : in out Scrollbar; P : U64);
-   overriding procedure Draw (W : Scrollbar; C : Canvas);
-   overriding procedure Min_Size (W : Scrollbar; MW, MH : out U64);
-   overriding function On_Pointer
-     (W : access Scrollbar; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-
-   --  Slider (M87b): horizontal continuous-value gadget — sunken
-   --  track, raised knob with grip lines; click on the track
-   --  pages toward the point, the knob drags (same v4 pointer
-   --  capture as Scrollbar: drag + release arrive even outside
-   --  the window). M86c state battery: hover brightens the knob,
-   --  dragging sinks it and shifts the grips. On_Change fires
-   --  on USER moves only (Set_Pos never does).
-   type Slider is new Widget with record
-      Min       : U64 := 0;
-      Max       : U64 := 100;
-      Pos       : U64 := 0;
-      On_Change : Change_Callback := null;
-      Dragging  : Boolean := False;
-      Grab_DX   : U64 := 0;
-      Hover     : Boolean := False;
-   end record;
-   function New_Slider
-     (Min       : U64 := 0;
-      Max       : U64 := 100;
-      On_Change : Change_Callback := null) return Any_Widget;
-   procedure Set_Range (W : in out Slider; Min, Max : U64);
-   procedure Set_Pos (W : in out Slider; P : U64);
-   --  Clamps Pos; marks dirty; does NOT fire On_Change.
-   overriding procedure Draw (W : Slider; C : Canvas);
-   overriding procedure Min_Size (W : Slider; MW, MH : out U64);
-   overriding function On_Pointer
-     (W : access Slider; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-   overriding function Wants_Focus (W : Slider) return Boolean;
-   --  M87h: a focused slider's Left/Down step -1%, Right/Up +1%
-   --  (min 1 Pos unit); fires On_Change on real moves.
-   overriding function On_Key
-     (W : access Slider; Code : U64) return Boolean;
 
    --  Group: H/V layout container with an optional frame +
    --  centered title breaking the top edge (the mockup's
@@ -451,123 +187,54 @@ package Trinket.Widgets is
        Overflow : in out Boolean);
     overriding procedure Clear_Dirty (W : in out Group);
 
-   --  Tabs (M87e): MUI register-group lineage — a tab strip
-   --  across the top, one page per tab. Pages are the Group
-   --  kids (Add_Tab appends); only the SELECTED page is laid
-   --  out, drawn and dispatched. Tabs have chamfered (rounded)
-   --  top corners, Tab_Gap between them, and NO bottom edge of
-   --  their own — the page frame's top line is the shared
-   --  boundary; the active tab's fill runs 2px lower, covering
-   --  the frame bevel in its span (merged into the page).
-   --  M86c battery: hover brightens an inactive tab, a held
-   --  press shifts its label; per-tab disabled doesn't map onto
-   --  a strip (apps add/remove pages instead), so it isn't
-   --  modeled. Switching pages full-redraws the widget and
-   --  re-lays-out.
-   type Tab_Callback is access procedure (Index : Natural);
-   --  Shared short-string cell: Tabs labels, Cycle entries.
+   --  Shared short-string cells: Label/Button/Toggles text,
+   --  Tabs labels, Cycle entries. Public because the gadget
+   --  child packages embed them in their records (a public
+   --  child spec cannot see this package's private part).
+   Max_Text : constant := 48;
+   subtype Text_Len is Natural range 0 .. Max_Text;
    type Text_Rec is record
       Buf : String (1 .. Max_Text);
       Len : Text_Len := 0;
    end record;
    type Text_Array is array (1 .. Max_Children) of Text_Rec;
-   type Tabs is new Group with record
-      Labels    : Text_Array;
-      Sel       : Natural := 0;   --  1-based; 0 until first Add_Tab
-      Hover_Tab : Natural := 0;   --  0 = pointer not on a tab
-      Press_Tab : Natural := 0;   --  tab held down (M86c)
-      On_Change : Tab_Callback := null;
-   end record;
-   function New_Tabs
-     (On_Change : Tab_Callback := null) return Any_Widget;
-   procedure Add_Tab (W : in out Tabs; Label : String; Page : Any_Widget);
-   procedure Set_Selected (W : in out Tabs; I : Natural);
-   function Selected (W : Tabs) return Natural;
-   overriding procedure Layout (W : in out Tabs);
-   overriding procedure Min_Size (W : Tabs; MW, MH : out U64);
-   overriding procedure Draw (W : Tabs; C : Canvas);
-   overriding function On_Pointer
-     (W : access Tabs; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-   overriding function Wants_Focus (W : Tabs) return Boolean;
-   --  M87h: a focused strip's Left/Right switch pages (wrap);
-   --  all other keys fall through to the active page.
-   overriding function On_Key
-     (W : access Tabs; Code : U64) return Boolean;
-   --  Damage: a dirty Tabs redraws whole; otherwise only the
-   --  ACTIVE page can contribute bands (hidden pages' stale
-   --  flags are dropped, not unioned as zero rects).
-   overriding procedure Dirty_List
-      (W        : Tabs;
-       Rects    : in out Rect_Array;
-       N        : in out Natural;
-       Overflow : in out Boolean);
 
-   --  Cycle (M87f): MUI cycle gadget — a raised field showing
-   --  the current entry, up/down chevron pair in a right glyph
-   --  column; each click rotates to the next entry (wraps).
-   --  M86c battery: hover brightens, press sinks + shifts.
-   --  Entries cap at Max_Children (12) of Max_Text (48) chars —
-   --  Group's ceiling, same justification.
-   type Cycle_Callback is access procedure (Index : Natural);
-   type Cycle is new Widget with record
-      Entries   : Text_Array;
-      N         : Natural := 0;
-      Sel       : Natural := 0;   --  1-based
-      Hover     : Boolean := False;
-      Pressed   : Boolean := False;
-      On_Change : Cycle_Callback := null;
-   end record;
-   function New_Cycle
-     (On_Change : Cycle_Callback := null) return Any_Widget;
-   procedure Add_Entry (W : in out Cycle; S : String);
-   procedure Set_Selected (W : in out Cycle; I : Natural);
-   function Selected (W : Cycle) return Natural;
-   overriding procedure Draw (W : Cycle; C : Canvas);
-   overriding procedure Min_Size (W : Cycle; MW, MH : out U64);
-   overriding function On_Pointer
-     (W : access Cycle; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-   overriding function Wants_Focus (W : Cycle) return Boolean;
-   --  M87h: a focused cycle rotates on Enter/Space/Right
-   --  (forward) and Left (back), wrapping.
-   overriding function On_Key
-     (W : access Cycle; Code : U64) return Boolean;
+private
 
-   --  Numeric (M87g): MUI numeric gadget — a sunken Pane field
-   --  showing an integer value, up/down arrow mini-buttons in a
-   --  showing an integer value, up/down arrow mini-buttons in a
-   --  right column (step on release-over, clamped, pre-clamped
-   --  down-steps like Scrollbar). No auto-repeat (the widget
-   --  event model has no timers) and no keyboard editing —
-   --  it's a spinner, not an Input. M86c battery: hover
-   --  brightens the arrow under the pointer, a held arrow sinks
-   --  + shifts its chevron. On_Change fires on USER steps only
-   --  (Set_Value never fires it).
-   type Numeric_Callback is access procedure (Value : U64);
-   type Numeric is new Widget with record
-      Min        : U64 := 0;
-      Max        : U64 := 100;
-      Step       : U64 := 1;
-      Val        : U64 := 0;
-      Hover_Arr  : Integer := 0;  --  0, -1 down-half, +1 up-half
-      Arrow_Dn   : Integer := 0;  --  0, -1 down held, +1 up held
-      On_Change  : Numeric_Callback := null;
-   end record;
-   function New_Numeric
-     (Min : U64 := 0; Max : U64 := 100;
-      On_Change : Numeric_Callback := null) return Any_Widget;
-   procedure Set_Value (W : in out Numeric; V : U64);
-   function Value (W : Numeric) return U64;
-   overriding procedure Draw (W : Numeric; C : Canvas);
-   overriding procedure Min_Size (W : Numeric; MW, MH : out U64);
-   overriding function On_Pointer
-     (W : access Numeric; K : Pointer_Kind; PX, PY : U64)
-      return Boolean;
-   overriding function Wants_Focus (W : Numeric) return Boolean;
-   --  M87h: a focused numeric's Up/Right step +Step, Down/Left
-   --  -Step (pre-clamped); fires On_Change on real changes.
-   overriding function On_Key
-     (W : access Numeric; Code : U64) return Boolean;
+   --  Internals shared by the per-widget child packages
+   --  (Trinket.Widgets.*) — visible to their BODIES only, not
+   --  client API.
+
+   function Max (A, B : U64) return U64 is (if A > B then A else B);
+   function Min (A, B : U64) return U64 is (if A < B then A else B);
+
+   --  Copy S into a fixed text cell, truncating at Buf'Length.
+   procedure Set_Text (Buf : out String; Len : out Text_Len; S : String);
+
+   --  Damage-list append with in-place merge: a rect that
+   --  intersects an existing entry unions into it (single pass —
+   --  a merge that bridges a THIRD entry is left as-is; the
+   --  overlap repaints identically, just twice). A full list
+   --  sets Overflow; the caller degrades to Dirty_Union.
+   procedure Add_Rect
+     (Rects    : in out Rect_Array;
+      N        : in out Natural;
+      Overflow : in out Boolean;
+      X0, Y0, X1, Y1 : U64);
+
+   --  Box geometry shared by both Toggles: box at the left edge,
+   --  vertically centered; the label sits Toggle_Gap right of it.
+   Toggle_Box : constant U64 := 14;  --  square box / disc size
+   Toggle_Gap : constant U64 := 6;   --  box-to-label spacing
+   procedure Toggle_Metrics
+     (W : Widget'Class; BX, BY, TX, TY : out U64);
+   procedure Toggle_Label
+     (W : Widget'Class; C : Canvas; Txt : String; Len : Text_Len;
+      Disabled : Boolean; Shift : U64);
+   --  Shared toggle floor: the taller of box/text plus padding.
+   procedure Toggle_Min (Txt : String; MW, MH : out U64);
+
+   --  Right chevron column width (Cycle, Numeric).
+   Glyph_Col : constant U64 := 18;
 
 end Trinket.Widgets;

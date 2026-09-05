@@ -2,6 +2,16 @@ with Akernel_User.Syscalls;
 with Akernel_User.Files;
 with Trinket.Images;
 with Trinket.Widgets;
+with Trinket.Widgets.Image;
+with Trinket.Widgets.Label;
+with Trinket.Widgets.Button;
+with Trinket.Widgets.Toggles;
+with Trinket.Widgets.Gauge;
+with Trinket.Widgets.Separator;
+with Trinket.Widgets.Slider;
+with Trinket.Widgets.Tabs;
+with Trinket.Widgets.Cycle;
+with Trinket.Widgets.Numeric;
 with Trinket.Window;
 with Trinket.Menus;
 
@@ -61,19 +71,19 @@ package body Tdemo_App is
     --  M87b showcase: the slider positions the gauge directly.
     procedure Slider_Moved (Pos : U64) is
     begin
-       Widgets.Gauge (Work_Gauge.all).Set_Fraction (Pos, 100);
+       Widgets.Gauge.Gauge (Work_Gauge.all).Set_Fraction (Pos, 100);
     end Slider_Moved;
 
     --  M87g showcase: numeric steps drive the gauge too.
     procedure Numeric_Moved (Val : U64) is
     begin
        Debug_Put_Line ("tdemo: numeric moved" & U64'Image (Val));
-       Widgets.Gauge (Work_Gauge.all).Set_Fraction (Val, 100);
+       Widgets.Gauge.Gauge (Work_Gauge.all).Set_Fraction (Val, 100);
     end Numeric_Moved;
 
     --  M86e showcase: the three radios in the "Choices" group
     --  share this set, so selecting one clears the others.
-    Choice_Set : aliased Widgets.Radio_Set;
+    Choice_Set : aliased Widgets.Toggles.Radio_Set;
 
     procedure Choice_Toggled (On : Boolean) is
     begin
@@ -84,14 +94,14 @@ package body Tdemo_App is
     procedure Tab_Moved (Index : Natural) is
        S : constant String := "tab" & Natural'Image (Index);
     begin
-       Widgets.Label (Status_Lbl.all).Set_Text (S);
+       Widgets.Label.Label (Status_Lbl.all).Set_Text (S);
     end Tab_Moved;
 
     --  M87f showcase: cycle rotations report on the status line.
     procedure Cycle_Moved (Index : Natural) is
        S : constant String := "cycle" & Natural'Image (Index);
     begin
-       Widgets.Label (Status_Lbl.all).Set_Text (S);
+       Widgets.Label.Label (Status_Lbl.all).Set_Text (S);
     end Cycle_Moved;
 
     --  Worker gate: the worker task creates its own gate
@@ -137,8 +147,8 @@ package body Tdemo_App is
           return;
        end if;
        Busy := True;
-       Widgets.Label (Status_Lbl.all).Set_Text ("loading...");
-       Widgets.Gauge (Work_Gauge.all).Set_Fraction (1, 2);
+       Widgets.Label.Label (Status_Lbl.all).Set_Text ("loading...");
+       Widgets.Gauge.Gauge (Work_Gauge.all).Set_Fraction (1, 2);
        Ignore := Ntfn_Signal (Work_Gate, 1);
     end Work_Clicked;
 
@@ -150,16 +160,16 @@ package body Tdemo_App is
           if A0 = U64 (Images.Status'Pos (Images.Ok))
             and then Img_Widget /= null
           then
-             Widgets.Image_Widget (Img_Widget.all).Set_Image (Worker_Img);
+             Widgets.Image.Image_Widget (Img_Widget.all).Set_Image (Worker_Img);
              Images.Free (Swap_Img);
              Swap_Img := Worker_Img;
-             Widgets.Label (Status_Lbl.all).Set_Text
+             Widgets.Label.Label (Status_Lbl.all).Set_Text
                ("decoded" & A1'Image & " x" & A2'Image);
-             Widgets.Gauge (Work_Gauge.all).Set_Fraction (1, 1);
+             Widgets.Gauge.Gauge (Work_Gauge.all).Set_Fraction (1, 1);
           elsif A0 /= U64 (Images.Status'Pos (Images.Ok)) then
-             Widgets.Label (Status_Lbl.all).Set_Text
+             Widgets.Label.Label (Status_Lbl.all).Set_Text
                ("load failed:" & A0'Image);
-             Widgets.Gauge (Work_Gauge.all).Set_Fraction (0, 1);
+             Widgets.Gauge.Gauge (Work_Gauge.all).Set_Fraction (0, 1);
           end if;
        end if;
     end App_Message;
@@ -202,7 +212,7 @@ package body Tdemo_App is
        --  on the Worker group's status line. Pages are built
        --  below; kid order in Root = add order.
        Tabs_W   : constant Widgets.Any_Widget :=
-         Widgets.New_Tabs (Tab_Moved'Access);
+         Widgets.Tabs.New_Tabs (Tab_Moved'Access);
        Sz       : U64;
       T0, T1   : U64;
       NS       : U64;
@@ -242,40 +252,40 @@ package body Tdemo_App is
 
 
       Widgets.Group (File_Grp.all).Add
-        (Widgets.New_Label ("BD0:README.TXT", Inset => True));
+        (Widgets.Label.New_Label ("BD0:README.TXT", Inset => True));
 
-      Widgets.Group (Text_Grp.all).Add (Widgets.New_Label ("# Akernel"));
+      Widgets.Group (Text_Grp.all).Add (Widgets.Label.New_Label ("# Akernel"));
       Widgets.Group (Text_Grp.all).Add
-        (Widgets.New_Label ("Trinket widget tree, live."));
+        (Widgets.Label.New_Label ("Trinket widget tree, live."));
       Widgets.Group (Text_Grp.all).Add
-        (Widgets.New_Label ("Groups, labels and buttons"));
+        (Widgets.Label.New_Label ("Groups, labels and buttons"));
       Widgets.Group (Text_Grp.all).Add
-        (Widgets.New_Label ("draw client-side; Bureau"));
+        (Widgets.Label.New_Label ("draw client-side; Bureau"));
       Widgets.Group (Text_Grp.all).Add
-        (Widgets.New_Label ("keeps the chrome."));
+        (Widgets.Label.New_Label ("keeps the chrome."));
 
        if Bars_St = Images.Ok then
-          Img_Widget := Widgets.New_Image (Bars_Img);
+          Img_Widget := Widgets.Image.New_Image (Bars_Img);
           Swap_Img := Bars_Img;
           Widgets.Group (Img_Grp.all).Add (Img_Widget);
        end if;
       if Keyed_St = Images.Ok then
-         Widgets.Group (Img_Grp.all).Add (Widgets.New_Image (Keyed_Img));
+         Widgets.Group (Img_Grp.all).Add (Widgets.Image.New_Image (Keyed_Img));
       end if;
       if Bars_St /= Images.Ok and then Keyed_St /= Images.Ok then
          Widgets.Group (Img_Grp.all).Add
-           (Widgets.New_Label ("Images unavailable"));
+           (Widgets.Label.New_Label ("Images unavailable"));
       end if;
 
-       Status_Lbl := Widgets.New_Label ("idle", Inset => True);
-       Work_Gauge := Widgets.New_Gauge;
+       Status_Lbl := Widgets.Label.New_Label ("idle", Inset => True);
+       Work_Gauge := Widgets.Gauge.New_Gauge;
        Widgets.Group (Work_Grp.all).Add
-         (Widgets.New_Button ("Work", Work_Clicked'Access));
+         (Widgets.Button.New_Button ("Work", Work_Clicked'Access));
        Widgets.Group (Work_Grp.all).Add (Status_Lbl);
        Widgets.Group (Work_Grp.all).Add (Work_Gauge);
        Widgets.Group (Work_Grp.all).Add
-         (Widgets.New_Slider (0, 100, Slider_Moved'Access));
-       Work_Num := Widgets.New_Numeric (0, 100, Numeric_Moved'Access);
+         (Widgets.Slider.New_Slider (0, 100, Slider_Moved'Access));
+       Work_Num := Widgets.Numeric.New_Numeric (0, 100, Numeric_Moved'Access);
        --  M87h showcase: rank 1 pulls the numeric to the head of
        --  the Tab focus chain (default would be add order, after
        --  every sibling).
@@ -283,52 +293,52 @@ package body Tdemo_App is
        Widgets.Group (Work_Grp.all).Add (Work_Num);
 
        Widgets.Group (Btn_Row.all).Add
-         (Widgets.New_Button ("Save", Save_Clicked'Access));
+         (Widgets.Button.New_Button ("Save", Save_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Revert", Revert_Clicked'Access));
+        (Widgets.Button.New_Button ("Revert", Revert_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Cancel", Cancel_Clicked'Access));
+        (Widgets.Button.New_Button ("Cancel", Cancel_Clicked'Access));
       --  M86c: a ghosted button to show the disabled state.
       Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Ghost", Disabled => True));
+        (Widgets.Button.New_Button ("Ghost", Disabled => True));
 
       --  M86e: toggles — two checkboxes and a three-way radio
       --  set (Choice_Set enforces mutual exclusion).
       Widgets.Group (Choice_Grp.all).Add
-        (Widgets.New_Checkbox
+        (Widgets.Toggles.New_Checkbox
            ("Bold", Checked => True,
             On_Change => Choice_Toggled'Access));
       Widgets.Group (Choice_Grp.all).Add
-        (Widgets.New_Checkbox
+        (Widgets.Toggles.New_Checkbox
            ("Italic", On_Change => Choice_Toggled'Access));
       Widgets.Group (Choice_Grp.all).Add
-        (Widgets.New_Radio
+        (Widgets.Toggles.New_Radio
            ("Left", Choice_Set'Access, Selected => True,
             On_Change => Choice_Toggled'Access));
       Widgets.Group (Choice_Grp.all).Add
-        (Widgets.New_Radio
+        (Widgets.Toggles.New_Radio
            ("Center", Choice_Set'Access,
             On_Change => Choice_Toggled'Access));
       Widgets.Group (Choice_Grp.all).Add
-        (Widgets.New_Radio
+        (Widgets.Toggles.New_Radio
            ("Right", Choice_Set'Access,
             On_Change => Choice_Toggled'Access));
       --  M87f showcase: cycle gadget, rotations report on the
       --  Worker group's status line.
       declare
          Cyc : constant Widgets.Any_Widget :=
-           Widgets.New_Cycle (Cycle_Moved'Access);
+           Widgets.Cycle.New_Cycle (Cycle_Moved'Access);
       begin
-         Widgets.Cycle (Cyc.all).Add_Entry ("first");
-         Widgets.Cycle (Cyc.all).Add_Entry ("second");
-         Widgets.Cycle (Cyc.all).Add_Entry ("third");
+         Widgets.Cycle.Cycle (Cyc.all).Add_Entry ("first");
+         Widgets.Cycle.Cycle (Cyc.all).Add_Entry ("second");
+         Widgets.Cycle.Cycle (Cyc.all).Add_Entry ("third");
          Widgets.Group (Choice_Grp.all).Add (Cyc);
       end;
 
        --  M86f: the proportional default font — narrow i/l vs
        --  wide W/M in one string shows the per-glyph advance.
        Widgets.Group (Font_Grp.all).Add
-         (Widgets.New_Label ("iiii llll vs WWW MMM"));
+         (Widgets.Label.New_Label ("iiii llll vs WWW MMM"));
 
        --  Weights now only split the SLACK over each group's
        --  content minimum (M86g): Text (5 labels) and Images
@@ -340,7 +350,7 @@ package body Tdemo_App is
        Widgets.Group (Root.all).Add (Work_Grp, 4);
        Widgets.Group (Root.all).Add (Choice_Grp, 4);
        --  M87d showcase: the etched rule between groups.
-       Widgets.Group (Root.all).Add (Widgets.New_Separator);
+       Widgets.Group (Root.all).Add (Widgets.Separator.New_Separator);
        Widgets.Group (Root.all).Add (Font_Grp, 3);
        --  M87e: the tab strip between the groups and the
        --  button row.
@@ -351,16 +361,16 @@ package body Tdemo_App is
             Widgets.New_Group (Widgets.Vertical);
        begin
           Widgets.Group (Page1.all).Add
-            (Widgets.New_Label ("First tab page"));
+            (Widgets.Label.New_Label ("First tab page"));
           Widgets.Group (Page1.all).Add
-            (Widgets.New_Label ("labels, centered",
-             Widgets.Center));
+            (Widgets.Label.New_Label ("labels, centered",
+             Widgets.Label.Center));
           Widgets.Group (Page2.all).Add
-            (Widgets.New_Label ("Second tab page"));
+            (Widgets.Label.New_Label ("Second tab page"));
           Widgets.Group (Page2.all).Add
-            (Widgets.New_Label ("pages swap on click"));
-          Widgets.Tabs (Tabs_W.all).Add_Tab ("One", Page1);
-          Widgets.Tabs (Tabs_W.all).Add_Tab ("Two", Page2);
+            (Widgets.Label.New_Label ("pages swap on click"));
+          Widgets.Tabs.Tabs (Tabs_W.all).Add_Tab ("One", Page1);
+          Widgets.Tabs.Tabs (Tabs_W.all).Add_Tab ("Two", Page2);
        end;
        Widgets.Group (Root.all).Add (Tabs_W, 3);
        Widgets.Group (Root.all).Add (Btn_Row, 4);

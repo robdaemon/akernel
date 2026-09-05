@@ -3,6 +3,8 @@ with Akernel_User.Syscalls;
 with Akernel_User.CLI;
 with Trinket;
 with Trinket.Widgets;
+with Trinket.Widgets.Label;
+with Trinket.Widgets.Button;
 with Trinket.Text_Edit;
 with Trinket.Window;
 with Trinket.Menus;
@@ -94,15 +96,15 @@ package body Edit_App is
          Path := new String'(Akernel_User.CLI.Argument (1));
       end if;
 
-      Path_L := Widgets.New_Label
+      Path_L := Widgets.Label.New_Label
         ((if Path = null then "(new file)" else Path.all),
          Inset => True);
       Widgets.Group (Root.all).Add (Path_L);
       Widgets.Group (Root.all).Add (Frame);
       Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Save", Save_Clicked'Access));
+        (Widgets.Button.New_Button ("Save", Save_Clicked'Access));
       Widgets.Group (Btn_Row.all).Add
-        (Widgets.New_Button ("Quit", Quit_Clicked'Access));
+        (Widgets.Button.New_Button ("Quit", Quit_Clicked'Access));
       Widgets.Group (Root.all).Add (Btn_Row);
 
       if Path /= null then

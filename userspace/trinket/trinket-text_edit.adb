@@ -1,5 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
+with Trinket.Widgets.Scrollbar;
 
 package body Trinket.Text_Edit is
    use type Trinket.U64;
@@ -597,9 +598,9 @@ package body Trinket.Text_Edit is
    --  editor, its Dir picks the axis.
    procedure Bar_Moved (Bar : Widgets.Any_Widget; Pos : U64) is
       E : constant Any_Text_Edit :=
-        Any_Text_Edit (Widgets.Scrollbar (Bar.all).Ctx);
+        Any_Text_Edit (Widgets.Scrollbar.Scrollbar (Bar.all).Ctx);
    begin
-      if Widgets.Scrollbar (Bar.all).Dir = Widgets.Vertical then
+      if Widgets.Scrollbar.Scrollbar (Bar.all).Dir = Widgets.Vertical then
          Set_Top (E.all, Pos);
       else
          Set_HOff (E.all, Pos);
@@ -612,15 +613,15 @@ package body Trinket.Text_Edit is
       Vis  : constant U64 := Visible_Rows (W.Editor.all);
       MaxT : constant U64 := (if N > Vis then N - Vis else 0);
    begin
-      Widgets.Set_Range
-        (Widgets.Scrollbar (W.VBar.all), 0, MaxT, Vis);
-      Widgets.Set_Pos
-        (Widgets.Scrollbar (W.VBar.all), Top_Line (W.Editor.all));
-      Widgets.Set_Range
-        (Widgets.Scrollbar (W.HBar.all),
+      Widgets.Scrollbar.Set_Range
+        (Widgets.Scrollbar.Scrollbar (W.VBar.all), 0, MaxT, Vis);
+      Widgets.Scrollbar.Set_Pos
+        (Widgets.Scrollbar.Scrollbar (W.VBar.all), Top_Line (W.Editor.all));
+      Widgets.Scrollbar.Set_Range
+        (Widgets.Scrollbar.Scrollbar (W.HBar.all),
          0, Max_HOff (W.Editor.all), Visible_Width (W.Editor.all));
-      Widgets.Set_Pos
-        (Widgets.Scrollbar (W.HBar.all), H_Offset (W.Editor.all));
+      Widgets.Scrollbar.Set_Pos
+        (Widgets.Scrollbar.Scrollbar (W.HBar.all), H_Offset (W.Editor.all));
    end Sync_Bars;
 
    procedure Layout (W : in out Scrolled_Editor) is
@@ -672,14 +673,14 @@ package body Trinket.Text_Edit is
    begin
       Editor := Any_Text_Edit (New_Text_Edit);
       SE.Editor := Editor;
-      SE.VBar := Widgets.New_Scrollbar
+      SE.VBar := Widgets.Scrollbar.New_Scrollbar
         (Bar_Moved'Access, Widgets.Vertical,
          Widgets.Any_Widget (Editor));
-      SE.HBar := Widgets.New_Scrollbar
+      SE.HBar := Widgets.Scrollbar.New_Scrollbar
         (Bar_Moved'Access, Widgets.Horizontal,
          Widgets.Any_Widget (Editor));
       --  H Pos units are pixels; step arrows by a char cell.
-      Widgets.Set_Step (Widgets.Scrollbar (SE.HBar.all), 8);
+      Widgets.Scrollbar.Set_Step (Widgets.Scrollbar.Scrollbar (SE.HBar.all), 8);
       Widgets.Group (SE.all).Add (Widgets.Any_Widget (Editor));
       Widgets.Group (SE.all).Add (SE.VBar);
       Widgets.Group (SE.all).Add (SE.HBar);

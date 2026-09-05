@@ -11,8 +11,32 @@ repository.
 
 ## Recently shipped
 
-- **M87h** (this commit): Tab focus chain with app-overridable
-  ranks — the M87 arc's closer. Base Widget gains Tab_Rank/
+- **Widgets split** (this commit): Trinket.Widgets had grown to
+  573+2760 lines — split into per-widget child packages. Root
+  keeps the framework only: Widget base, damage machinery, M87h
+  focus chain, shared callback profiles (Click/Change), Group,
+  plus a private part with the helpers gadget bodies share
+  (Set_Text cell copy, Add_Rect, Toggle_* geometry, Min/Max,
+  Glyph_Col; Max_Text/Text_Len/Text_Rec/Text_Array stay PUBLIC —
+  a public child spec can't see the parent's private part, and
+  gadget records embed them). New children: Image, Label, Input,
+  Button, Gauge, Separator, Toggles (Checkbox+Radio — shared
+  box/label helpers + Radio_Set), Scrollbar, Slider, Tabs,
+  Cycle, Numeric. Behavior-neutral code motion with two
+  adjustments: Group's scrollbar pinning became dispatching
+  layout hooks Fixed_Main/Narrow_Cross on the base Widget
+  (Scrollbar overrides) so Group never names the Scrollbar
+  child; fileman's Set_Focused/Is_Focused call sites became
+  prefixed dispatching calls (inherited-primitive overload
+  resolution doesn't cross package boundaries). Apps gain one
+  with + qualification per widget (tdemo 10, fileman 3, edit 2,
+  Text_Edit/Listview/terminal_scroll requalify Scrollbar ops).
+  1847/1847 PASS SMP4/SMP1, 0 FAIL; QMP smoke: tdemo tab-focus
+  ring + checkbox toggle identical to pre-split.
+  Next: M88 in-window overlay/popups.
+
+- **M87h** (`5e021df`): Tab focus chain with app-overridable
+  ranks. Base Widget gains Tab_Rank/
   Focused + Wants_Focus (default False), Set_Tab_Rank/
   Set_Focused/Is_Focused primitives, and the Cycle_Focus/
   Clear_Focus tree walks. Window.Run intercepts Tab (never

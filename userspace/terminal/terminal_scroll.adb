@@ -1,6 +1,7 @@
 with Terminal_Buffer;
 with Trinket;
 with Trinket.Widgets;
+with Trinket.Widgets.Scrollbar;
 with Trinket.Paint;
 with Trinket.Fonts;
 
@@ -9,6 +10,7 @@ package body Terminal_Scroll is
    use type Trinket.U64;
    use Trinket;
    use Trinket.Widgets;
+   package SB renames Trinket.Widgets.Scrollbar;
 
    Scroller : Any_Widget;
 
@@ -21,7 +23,7 @@ package body Terminal_Scroll is
    procedure Init (W, H : Natural) is
       S : Any_Widget;
    begin
-      S := New_Scrollbar (Scroll_Moved'Access);
+      S := SB.New_Scrollbar (Scroll_Moved'Access);
       S.X := Trinket.U64 (W - Scrollbar_W);
       S.Y := 0;
       S.W := Trinket.U64 (Scrollbar_W);
@@ -42,9 +44,9 @@ package body Terminal_Scroll is
       else
          Max := 0;
       end if;
-      Set_Range (Scrollbar (Scroller.all), 0, Trinket.U64 (Max), Vis);
-      Set_Pos (Scrollbar (Scroller.all),
-               Trinket.U64 (Terminal_Buffer.View_Top));
+      SB.Set_Range (SB.Scrollbar (Scroller.all), 0, Trinket.U64 (Max), Vis);
+      SB.Set_Pos (SB.Scrollbar (Scroller.all),
+                  Trinket.U64 (Terminal_Buffer.View_Top));
    end Update_Range;
 
    procedure Draw (C : Trinket.Canvas) is

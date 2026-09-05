@@ -13,7 +13,8 @@ Core packages:
 | package | purpose |
 |---|---|
 | `Trinket` | pixel types, palette, navigation-key codes, `Canvas` |
-| `Trinket.Widgets` | abstract `Widget`, concrete gadgets, `Group` layout |
+| `Trinket.Widgets` | abstract `Widget`, damage/focus machinery, `Group` layout |
+| `Trinket.Widgets.*` | one child package per gadget: `Image`, `Label`, `Input`, `Button`, `Gauge`, `Separator`, `Toggles` (Checkbox+Radio), `Scrollbar`, `Slider`, `Tabs`, `Cycle`, `Numeric` |
 | `Trinket.Listview` | scrolling selectable text list with optional icons |
 | `Trinket.Images` | datatype-style image loader (`Bmp`, `Xpm`) |
 | `Trinket.Paint` | span/fill/blit primitives used by widgets |

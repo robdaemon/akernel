@@ -1,4 +1,5 @@
 with Trinket.Paint;
+with Trinket.Widgets.Scrollbar;
 with Trinket.Fonts;
 with Akernel_User.Syscalls;
 with Akernel_User.Theme;
@@ -321,7 +322,7 @@ package body Trinket.Listview is
    --  listview.
    procedure Bar_Moved (Bar : Widgets.Any_Widget; Pos : U64) is
       L : constant Any_Listview :=
-        Any_Listview (Widgets.Scrollbar (Bar.all).Ctx);
+        Any_Listview (Widgets.Scrollbar.Scrollbar (Bar.all).Ctx);
    begin
       Set_Top (L.all, Pos);
    end Bar_Moved;
@@ -354,11 +355,11 @@ package body Trinket.Listview is
 
    procedure Draw (W : Scrolled_List; C : Canvas) is
    begin
-      --  Content -> bar. Set_Range/Set_Pos no-op when unchanged.
-      Set_Range
-        (Scrollbar (W.VBar.all), 0,
+      --  Content -> bar. Scrollbar Set_Range/Set_Pos no-op when unchanged.
+      Widgets.Scrollbar.Set_Range
+        (Widgets.Scrollbar.Scrollbar (W.VBar.all), 0,
          Max_Top (W.LV.all), Visible_Rows (W.LV.all));
-      Set_Pos (Scrollbar (W.VBar.all), Top (W.LV.all));
+      Widgets.Scrollbar.Set_Pos (Widgets.Scrollbar.Scrollbar (W.VBar.all), Top (W.LV.all));
       Group (W).Draw (C);
    end Draw;
 
@@ -371,7 +372,7 @@ package body Trinket.Listview is
    begin
       LV := New_Listview (On_Change);
       SL.LV := LV;
-      SL.VBar := New_Scrollbar
+      SL.VBar := Widgets.Scrollbar.New_Scrollbar
         (Bar_Moved'Access, Vertical, Widgets.Any_Widget (LV));
       Group (SL.all).Add (Widgets.Any_Widget (LV));
       Group (SL.all).Add (SL.VBar);

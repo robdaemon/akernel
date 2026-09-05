@@ -4,6 +4,25 @@ This page lists the widgets available in `userspace/trinket/`.
 Coordinates and sizes are `U64` (unsigned 64-bit), measured in pixels,
 and are **content-absolute** inside the window.
 
+**Package map** (post-split): `Trinket.Widgets` holds only the
+framework — the abstract `Widget`, the damage machinery, the M87h
+focus chain, the shared callback profiles, and the `Group` layout
+container — plus a private part with helpers the gadget packages
+share (`Set_Text` cell copy, `Add_Rect`, toggle geometry, `Min`/`Max`,
+`Glyph_Col`). Every gadget is its own child package
+(`Trinket.Widgets.Button`, `.Input`, `.Toggles`, … as listed per
+section below). `Text_Edit` and `Listview` predate the split and
+remain flat `Trinket` children. Client pattern:
+
+```ada
+with Trinket.Widgets;
+with Trinket.Widgets.Button;
+...
+package Widgets renames Trinket.Widgets;
+B : constant Widgets.Any_Widget :=
+  Widgets.Button.New_Button ("Save", Save_Clicked'Access);
+```
+
 ## Base types
 
 ### `Trinket.Pixel`
