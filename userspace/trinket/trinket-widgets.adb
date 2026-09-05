@@ -938,7 +938,6 @@ package body Trinket.Widgets is
 
    --  Scrollbar
 
-   Arrow : constant U64 := 16;  --  arrow box height
    --  M86d (Xen): BOTH arrow boxes stack at the bottom of the
    --  bar (up over down), the MUI signature layout.
 
@@ -957,13 +956,15 @@ package body Trinket.Widgets is
       else W.X + 2);
 
    function New_Scrollbar
-     (On_Change : Change_Callback := null;
-      Dir       : Direction := Vertical) return Any_Widget
+     (On_Change : Bar_Callback := null;
+      Dir       : Direction := Vertical;
+      Ctx       : Any_Widget := null) return Any_Widget
    is
       S : constant Scrollbar_Access := new Scrollbar;
    begin
       S.On_Change := On_Change;
       S.Dir := Dir;
+      S.Ctx := Ctx;
       return Any_Widget (S);
    end New_Scrollbar;
 
@@ -1016,7 +1017,7 @@ package body Trinket.Widgets is
          Clamp_Pos (W.all);
          W.Dirty := True;
          if W.On_Change /= null then
-            W.On_Change (W.Pos);
+            W.On_Change (Any_Widget (W), W.Pos);
          end if;
       end if;
    end User_Move;

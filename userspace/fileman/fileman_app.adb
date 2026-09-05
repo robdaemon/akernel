@@ -40,7 +40,6 @@ package body Fileman_App is
    type Pane_Rec is record
       Path       : access String := null;
       List       : Trinket.Listview.Any_Listview;
-      Scroll     : Trinket.Widgets.Any_Widget;
       Path_Input : Trinket.Widgets.Any_Widget;
    end record;
    Panes  : array (1 .. 2) of Pane_Rec;
@@ -98,9 +97,6 @@ package body Fileman_App is
 
    procedure Set_Status (S : String);
    procedure Set_Active (P : Positive);
-   procedure Sync_Scrollbar (P : Positive);
-   procedure Scroll_Moved_L (Pos : Trinket.U64);
-   procedure Scroll_Moved_R (Pos : Trinket.U64);
    procedure Selection_Changed_L (Index : Natural);
    procedure Selection_Changed_R (Index : Natural);
    procedure Press_L;
@@ -141,31 +137,6 @@ package body Fileman_App is
       end if;
    end Set_Active;
 
-   procedure Sync_Scrollbar (P : Positive) is
-      Vis : constant Trinket.U64 :=
-        Trinket.Listview.Visible_Rows (Panes (P).List.all);
-      Max : constant Trinket.U64 :=
-        Trinket.Listview.Max_Top (Panes (P).List.all);
-      Top : constant Trinket.U64 :=
-        Trinket.Listview.Top (Panes (P).List.all);
-   begin
-      Trinket.Widgets.Set_Range
-        (Trinket.Widgets.Scrollbar (Panes (P).Scroll.all),
-         0, Max, Vis);
-      Trinket.Widgets.Set_Pos
-        (Trinket.Widgets.Scrollbar (Panes (P).Scroll.all), Top);
-   end Sync_Scrollbar;
-
-   procedure Scroll_Moved_L (Pos : Trinket.U64) is
-   begin
-      Trinket.Listview.Set_Top (Panes (1).List.all, Pos);
-   end Scroll_Moved_L;
-
-   procedure Scroll_Moved_R (Pos : Trinket.U64) is
-   begin
-      Trinket.Listview.Set_Top (Panes (2).List.all, Pos);
-   end Scroll_Moved_R;
-
    --  Selecting an entry activates its pane, pre-fills the name
    --  field (rename edits in place, Workbench style) and drops
    --  input focus so the arrows belong to the list again.
@@ -183,7 +154,6 @@ package body Fileman_App is
            (Trinket.Widgets.Input (Name_Input.all),
             Trinket.Listview.Get_Item (Panes (P).List.all, Index));
       end if;
-      Sync_Scrollbar (P);
    end Selection_Changed;
 
    procedure Selection_Changed_L (Index : Natural) is
@@ -478,7 +448,6 @@ package body Fileman_App is
       if Trinket.Listview.Item_Count (Panes (P).List.all) > 0 then
          Trinket.Listview.Set_Selected (Panes (P).List.all, 1);
       end if;
-      Sync_Scrollbar (P);
    end Load_Directory;
 
    --  Open entry Index of pane P: drawers navigate, files go to
@@ -728,46 +697,39 @@ package body Fileman_App is
       Images.Load ("BD0:System/Icons/DEFFILE.XPM", File_Img, ISt);
       Images.Load ("BD0:System/Icons/DEFTOOL.XPM", Tool_Img, ISt);
 
-      --  Per pane: path gadget on top, list+scrollbar below.
+      --  Per pane: path gadget on top, scrolled list component
+      --  below (M87e: the scrollbar is part of the component).
       for P in 1 .. 2 loop
          declare
             Pane_Grp : constant Trinket.Widgets.Any_Widget :=
               Trinket.Widgets.New_Group (Trinket.Widgets.Vertical);
-            Mid : constant Trinket.Widgets.Any_Widget :=
-              Trinket.Widgets.New_Group (Trinket.Widgets.Horizontal);
+            Frame : Trinket.Widgets.Any_Widget;
          begin
             Panes (P).Path_Input := Trinket.Widgets.New_Input;
             if P = 1 then
                Trinket.Widgets.Input
                  (Panes (P).Path_Input.all).On_Commit :=
                    Path_Commit_L'Access;
-               Panes (P).List := Trinket.Listview.New_Listview
-                 (Selection_Changed_L'Access);
+               Frame := Trinket.Listview.New_Scrolled_List
+                 (Panes (P).List, Selection_Changed_L'Access);
                Trinket.Listview.Set_On_Press
                  (Panes (P).List.all, Press_L'Access);
                Trinket.Listview.Set_On_Double_Click
                  (Panes (P).List.all, Double_L'Access);
-               Panes (P).Scroll :=
-                 Trinket.Widgets.New_Scrollbar (Scroll_Moved_L'Access);
             else
                Trinket.Widgets.Input
                  (Panes (P).Path_Input.all).On_Commit :=
                    Path_Commit_R'Access;
-               Panes (P).List := Trinket.Listview.New_Listview
-                 (Selection_Changed_R'Access);
+               Frame := Trinket.Listview.New_Scrolled_List
+                 (Panes (P).List, Selection_Changed_R'Access);
                Trinket.Listview.Set_On_Press
                  (Panes (P).List.all, Press_R'Access);
                Trinket.Listview.Set_On_Double_Click
                  (Panes (P).List.all, Double_R'Access);
-               Panes (P).Scroll :=
-                 Trinket.Widgets.New_Scrollbar (Scroll_Moved_R'Access);
             end if;
-            Trinket.Widgets.Group (Mid.all).Add
-              (Trinket.Widgets.Any_Widget (Panes (P).List));
-            Trinket.Widgets.Group (Mid.all).Add (Panes (P).Scroll);
             Trinket.Widgets.Group (Pane_Grp.all).Add
               (Panes (P).Path_Input);
-            Trinket.Widgets.Group (Pane_Grp.all).Add (Mid, 6);
+            Trinket.Widgets.Group (Pane_Grp.all).Add (Frame, 6);
             Trinket.Widgets.Group (Panes_Row.all).Add (Pane_Grp);
          end;
       end loop;

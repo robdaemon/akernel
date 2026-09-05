@@ -11,7 +11,35 @@ repository.
 
 ## Recently shipped
 
-- **M87c+M87d** (this commit): horizontal Scrollbar + Separator,
+- **M87e-prep** (this commit): scrollbars are component parts,
+  not app wiring. User feedback on M87c: the bars sat a group
+  spacing away from the edit box and the h-bar spanned the full
+  group width (past the v-bar). Fix is architectural: new
+  scrolled composites — `Text_Edit.New_Scrolled_Editor (Editor
+  : out ...)` and `Listview.New_Scrolled_List (LV : out ...,
+  On_Change)` — each a `Widgets.Group` subtype whose Layout pins
+  the bars FLUSH (v-bar right edge, h-bar exactly under the
+  content, corner square left window-face) and whose Draw
+  re-syncs bar metrics from the content first (free: Set_Range/
+  Set_Pos no-op on unchanged metrics). Bar→content direction:
+  Scrollbar.On_Change now carries the bar (`Bar_Callback =
+  access procedure (Bar : Any_Widget; Pos : U64)`) and bars have
+  a public `Ctx : Any_Widget` — one package-level `Bar_Moved`
+  per content package serves every instance (bar Dir picks the
+  axis; editor h-bar keeps Step=8px). Replaces M87c's
+  Text_Edit.Set_On_Change hook (removed — the Draw-time sync
+  covers it). edit app drops Scroll_Moved/HScroll_Moved/
+  Sync_Scrollbar/Editor_Changed/Mid_Row entirely; fileman drops
+  per-pane Scroll fields + Sync_Scrollbar, one
+  New_Scrolled_List per pane; terminal (custom canvas, no
+  widget tree) just updates its handler signature. Widgets.Arrow
+  (16) moved to the spec so composites can size against it.
+  QMP-verified: edit bars flush + h-bar exactly text width,
+  v/h arrows step correctly after typed growth (12 RETs grew
+  v-range live), fileman panes flush with selection intact.
+  1847/1847 PASS SMP4/SMP1, 0 FAIL.
+
+- **M87c+M87d** (`e19abd7`): horizontal Scrollbar + Separator,
   and Text_Edit h-scroll. Scrollbar takes `Dir : Direction` —
   Horizontal mirrors everything across the diagonal (arrow cluster
   at the RIGHT, < > chevrons, stripes by row, PX-driven pointer

@@ -219,6 +219,8 @@ The programmatic setters mark dirty and never fire `On_Change`;
 ### `Scrollbar`
 
 ```ada
+type Bar_Callback is access procedure (Bar : Any_Widget; Pos : U64);
+
 type Scrollbar is new Widget with record
    Min       : U64 := 0;
    Max       : U64 := 0;
@@ -226,7 +228,8 @@ type Scrollbar is new Widget with record
    Pos       : U64 := 0;
    Step      : U64 := 1;   --  M87c: arrow-click delta
    Dir       : Direction := Vertical;  --  M87c
-   On_Change : Change_Callback := null;
+   Ctx       : Any_Widget := null;     --  owner's context (M87e)
+   On_Change : Bar_Callback := null;
    Dragging  : Boolean := False;
    Grab_DY   : U64 := 0;
    Arrow_Dn  : Integer := 0;  --  M86c: 0, -1 up held, +1 down held
@@ -240,16 +243,18 @@ clustered together** (bottom for vertical, right for
 horizontal) with thin embossed chevron glyphs.
 Pointer capture (Bureau v4) delivers drag and release outside the
 window. `On_Change` fires **only for user moves**, not for
-programmatic `Set_Pos`. M86c press feedback: a held arrow draws
-sunken with its glyph shifted one pixel; the knob draws sunken
-while dragged.
+programmatic `Set_Pos`, and carries the bar itself; `Bar.Ctx`
+holds the owner's context object, so one package-level handler
+can serve every instance (the scrolled composites use this —
+one `Bar_Moved` per content package). M86c press feedback: a
+held arrow draws sunken with its glyph shifted one pixel; the
+knob draws sunken while dragged.
 
 ```ada
-type Change_Callback is access procedure (Pos : U64);
-
 function New_Scrollbar
-  (On_Change : Change_Callback := null;
-   Dir       : Direction := Vertical) return Any_Widget;
+  (On_Change : Bar_Callback := null;
+   Dir       : Direction := Vertical;
+   Ctx       : Any_Widget := null) return Any_Widget;
 
 procedure Set_Range
   (W : in out Scrollbar; Min, Max, Visible : U64);
@@ -258,14 +263,17 @@ procedure Set_Step (W : in out Scrollbar; S : U64);
 ```
 
 `Set_Range` clamps `Pos` and marks dirty without firing `On_Change`
-(and no-ops entirely when the metrics didn't change, so apps can
-re-sync on every content edit). **M87c**: `Dir => Horizontal`
+(and no-ops entirely when the metrics didn't change, so composites
+can re-sync on every draw). **M87c**: `Dir => Horizontal`
 mirrors the bar across the diagonal — arrow cluster at the right,
 `<`/`>` chevrons, stripes by row; `Min_Size` is `3*Arrow x Arrow`
 (vs `Arrow x 3*Arrow`). Groups pin a scrollbar to `Arrow` in its
 cross axis automatically. `Set_Step` sets the arrow-click delta in
-`Pos` units (default 1; pixel-based bars want ~a char cell, edit
-uses 8). The edit app wires one to `Text_Edit`'s h-scroll.
+`Pos` units (default 1; pixel-based bars want ~a char cell).
+**M87e**: apps normally don't construct bars at all —
+`Text_Edit.New_Scrolled_Editor` and `Listview.New_Scrolled_List`
+build the content widget with its bars attached; hand-wiring a bar
+is for custom canvases (the terminal).
 
 ### `Separator` (M87d)
 
@@ -413,12 +421,18 @@ type Listview is new Widgets.Widget with private;
 type Any_Listview is access all Listview;
 ```
 
-Vertical scrolling list of text items with selection. Designed to pair
-with a `Scrollbar` in a horizontal `Group`.
+Vertical scrolling list of text items with selection. Ships with its
+scrollbar attached via `New_Scrolled_List` (M87e).
 
 ```ada
 function New_Listview
   (On_Change : Selected_Callback := null) return Any_Listview;
+
+--  M87e: the list with its v-bar as one component (flush right,
+--  self-wired). Preferred over bare New_Listview + Scrollbar.
+function New_Scrolled_List
+  (LV        : out Any_Listview;
+   On_Change : Selected_Callback := null) return Widgets.Any_Widget;
 
 procedure Clear (W : in out Listview);
 procedure Add_Item (W : in out Listview; S : String);
@@ -450,7 +464,13 @@ function Max_Top (W : Listview) return U64;
 Listview) — the multi-line editor behind the edit app.
 
 ```ada
-function New_Text_Edit return Widgets.Any_Widget;
+--  M87e: the editor with both bars as one component — v-bar
+--  flush right, h-bar flush under the TEXT only (the corner
+--  square stays window face). Self-wired; this is what apps use.
+function New_Scrolled_Editor
+  (Editor : out Any_Text_Edit) return Widgets.Any_Widget;
+
+function New_Text_Edit return Widgets.Any_Widget;  --  bare
 
 procedure Clear (W : in out Text_Edit);
 procedure Append_Line (W : in out Text_Edit; S : String);
@@ -459,21 +479,14 @@ function Get_Line (W : Text_Edit; I : Natural) return String;
 function Modified (W : Text_Edit) return Boolean;
 procedure Clear_Modified (W : in out Text_Edit);
 
---  Scroll coupling for the app's scrollbars
+--  Scroll state (the composite reads/drives these itself)
 procedure Set_Top (W : in out Text_Edit; T : U64);
 function Top_Line (W : Text_Edit) return U64;
 function Visible_Rows (W : Text_Edit) return U64;
-
---  Horizontal scroll (M87c): a PIXEL offset against the
---  proportional font
-procedure Set_HOff (W : in out Text_Edit; O : U64);
+procedure Set_HOff (W : in out Text_Edit; O : U64);  --  pixels
 function H_Offset (W : Text_Edit) return U64;
 function Max_HOff (W : Text_Edit) return U64;
 function Visible_Width (W : Text_Edit) return U64;
-
---  Content/cursor hook (M87c): re-sync scrollbars here
-type Change_Callback is access procedure;
-procedure Set_On_Change (W : in out Text_Edit; CB : Change_Callback);
 ```
 
 - Fixed capacity: `Max_Lines` x `Max_Cols` per line.
@@ -484,13 +497,12 @@ procedure Set_On_Change (W : in out Text_Edit; CB : Change_Callback);
 - M87c h-scroll rendering skips whole dropped characters plus a
   sub-char `Spill`, so text slides smoothly rather than jumping per
   character. `Locate` (click → cursor position) maps through `HOff`.
-- `Set_On_Change` fires after every handled key and after
-  `Clear`/`Append_Line` — the app re-syncs both scrollbars there
-  (typed growth changes `Max_HOff`/max top; auto-scroll changes the
-  positions). `Scrollbar.Set_Range`/`Set_Pos` no-op on unchanged
-  metrics, so this is cheap and feedback-loop-free.
-- The edit app wires it with a vertical `Scrollbar` beside it and a
-  horizontal one under it (`Set_Step 8` — Pos units are pixels).
+- Composite wiring: the bars' `On_Change` points at one
+  package-level `Bar_Moved` with the editor in each bar's `Ctx`
+  (the bar's `Dir` picks the axis); the content→bar direction
+  re-syncs at the head of the composite's `Draw`, which is free
+  because `Scrollbar.Set_Range`/`Set_Pos` no-op on unchanged
+  metrics. The h-bar's `Step` is 8 (Pos units are pixels).
 
 ## Event dispatch notes
 

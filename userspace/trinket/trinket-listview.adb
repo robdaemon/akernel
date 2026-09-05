@@ -315,4 +315,67 @@ package body Trinket.Listview is
       return True;
    end On_Pointer;
 
+   --  Scrolled composite (M87e): list + flush v-bar, self-wired.
+
+   --  One handler serves every instance: the bar's Ctx is the
+   --  listview.
+   procedure Bar_Moved (Bar : Widgets.Any_Widget; Pos : U64) is
+      L : constant Any_Listview :=
+        Any_Listview (Widgets.Scrollbar (Bar.all).Ctx);
+   begin
+      Set_Top (L.all, Pos);
+   end Bar_Moved;
+
+   procedure Layout (W : in out Scrolled_List) is
+      A  : constant U64 := Widgets.Arrow;
+      CW : constant U64 := (if W.W > A then W.W - A else 0);
+   begin
+      W.LV.X := W.X;
+      W.LV.Y := W.Y;
+      W.LV.W := CW;
+      W.LV.H := W.H;
+      W.VBar.X := W.X + CW;
+      W.VBar.Y := W.Y;
+      W.VBar.W := A;
+      W.VBar.H := W.H;
+      for I in 1 .. Group (W).N loop
+         Group (W).Kids (I).Layout;
+      end loop;
+   end Layout;
+
+   procedure Min_Size (W : Scrolled_List; MW, MH : out U64) is
+      A  : constant U64 := Widgets.Arrow;
+      LW, LH2 : U64;
+   begin
+      W.LV.Min_Size (LW, LH2);
+      MW := LW + A;
+      MH := Max (LH2, 3 * A);  --  arrow pair + a knob
+   end Min_Size;
+
+   procedure Draw (W : Scrolled_List; C : Canvas) is
+   begin
+      --  Content -> bar. Set_Range/Set_Pos no-op when unchanged.
+      Set_Range
+        (Scrollbar (W.VBar.all), 0,
+         Max_Top (W.LV.all), Visible_Rows (W.LV.all));
+      Set_Pos (Scrollbar (W.VBar.all), Top (W.LV.all));
+      Group (W).Draw (C);
+   end Draw;
+
+   function New_Scrolled_List
+     (LV        : out Any_Listview;
+      On_Change : Selected_Callback := null) return Widgets.Any_Widget
+   is
+      type SL_Access is access Scrolled_List;
+      SL : constant SL_Access := new Scrolled_List;
+   begin
+      LV := New_Listview (On_Change);
+      SL.LV := LV;
+      SL.VBar := New_Scrollbar
+        (Bar_Moved'Access, Vertical, Widgets.Any_Widget (LV));
+      Group (SL.all).Add (Widgets.Any_Widget (LV));
+      Group (SL.all).Add (SL.VBar);
+      return Widgets.Any_Widget (SL);
+   end New_Scrolled_List;
+
 end Trinket.Listview;

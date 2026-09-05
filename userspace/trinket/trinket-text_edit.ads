@@ -48,13 +48,16 @@ package Trinket.Text_Edit is
     function Visible_Width (W : Text_Edit) return U64;
     --  Inner text width: widget width minus frame and Pad.
 
-    --  Content/cursor hook (M87c): fired after any handled key
-    --  and after Clear/Append_Line, so the app can re-sync its
-    --  scrollbars (content growth changes Max_HOff / Max_Top;
-    --  Ensure_Cursor_Visible changes the positions).
-    type Change_Callback is access procedure;
-    procedure Set_On_Change
-      (W : in out Text_Edit; CB : Change_Callback);
+    --  Scrolled composite (M87e): the editor with its bars as
+    --  part of the component — vertical bar flush against the
+    --  right edge, horizontal bar flush UNDER the text (exactly
+    --  the text width; the corner square stays window face).
+    --  One widget to Add; the bars wire themselves both ways
+    --  (user moves reach the editor via the bars' Ctx; content
+    --  growth / cursor auto-scroll re-sync the bars at draw).
+    --  Editor returns the content handle for the text API above.
+    function New_Scrolled_Editor
+      (Editor : out Any_Text_Edit) return Widgets.Any_Widget;
 
    overriding procedure Draw (W : Text_Edit; C : Canvas);
    overriding procedure Min_Size (W : Text_Edit; MW, MH : out U64);
@@ -88,7 +91,19 @@ private
       Anch_C   : Natural := 0;
       Dragging : Boolean := False;
       Dirty_F  : Boolean := False;   --  content modified
-      On_Change : Change_Callback := null;
    end record;
+
+   --  The composite is a Group whose Layout pins the bars flush
+   --  (no group spacing) and whose Draw re-syncs bar metrics
+   --  from the content first (Set_Range/Set_Pos no-op when
+   --  unchanged, so this is free).
+   type Scrolled_Editor is new Widgets.Group with record
+      Editor : Any_Text_Edit := null;
+      VBar   : Widgets.Any_Widget := null;
+      HBar   : Widgets.Any_Widget := null;
+   end record;
+   overriding procedure Layout (W : in out Scrolled_Editor);
+   overriding procedure Min_Size (W : Scrolled_Editor; MW, MH : out U64);
+   overriding procedure Draw (W : Scrolled_Editor; C : Canvas);
 
 end Trinket.Text_Edit;

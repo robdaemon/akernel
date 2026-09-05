@@ -12,7 +12,8 @@ package body Terminal_Scroll is
 
    Scroller : Any_Widget;
 
-   procedure Scroll_Moved (Pos : Trinket.U64) is
+   procedure Scroll_Moved (Bar : Any_Widget; Pos : Trinket.U64) is
+      pragma Unreferenced (Bar);
    begin
       Terminal_Buffer.Set_Top (Natural (Pos));
    end Scroll_Moved;

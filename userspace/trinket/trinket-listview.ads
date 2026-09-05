@@ -83,6 +83,15 @@ package Trinket.Listview is
      (W : access Listview; K : Widgets.Pointer_Kind; PX, PY : U64)
       return Boolean;
 
+   --  Scrolled composite (M87e): the listview with its vertical
+   --  scrollbar as part of the component — flush against the
+   --  right edge, self-wired both ways (user moves reach the
+   --  list via the bar's Ctx; content changes re-sync the bar
+   --  at draw). LV returns the content handle.
+   function New_Scrolled_List
+     (LV        : out Any_Listview;
+      On_Change : Selected_Callback := null) return Widgets.Any_Widget;
+
 private
 
    Max_Items  : constant := 512;
@@ -111,5 +120,17 @@ private
        Last_Press_Row  : Natural := 0;
        Last_Press_Time : U64 := 0;
    end record;
+
+   --  The composite is a Group whose Layout pins the bar flush
+   --  (no group spacing) and whose Draw re-syncs bar metrics
+   --  from the content first (Set_Range/Set_Pos no-op when
+   --  unchanged, so this is free).
+   type Scrolled_List is new Widgets.Group with record
+      LV   : Any_Listview := null;
+      VBar : Widgets.Any_Widget := null;
+   end record;
+   overriding procedure Layout (W : in out Scrolled_List);
+   overriding procedure Min_Size (W : Scrolled_List; MW, MH : out U64);
+   overriding procedure Draw (W : Scrolled_List; C : Canvas);
 
 end Trinket.Listview;

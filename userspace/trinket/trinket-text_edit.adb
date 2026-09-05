@@ -3,6 +3,7 @@ with Trinket.Fonts;
 
 package body Trinket.Text_Edit is
    use type Trinket.U64;
+   use type Widgets.Direction;
 
    Pad : constant U64 := 6;  --  text inset inside the frame
 
@@ -48,20 +49,6 @@ package body Trinket.Text_Edit is
 
    --  Content API
 
-   --  M87c: content/cursor hook — apps re-sync scrollbars.
-   procedure Changed (W : in out Text_Edit) is
-   begin
-      if W.On_Change /= null then
-         W.On_Change.all;
-      end if;
-   end Changed;
-
-   procedure Set_On_Change
-     (W : in out Text_Edit; CB : Change_Callback) is
-   begin
-      W.On_Change := CB;
-   end Set_On_Change;
-
    procedure Clear (W : in out Text_Edit) is
    begin
       W.N := 0;  --  Ensure_Line recreates line 1 lazily, so a
@@ -74,7 +61,6 @@ package body Trinket.Text_Edit is
       W.Sel := False;
       W.Dirty_F := False;
       W.Dirty := True;
-      Changed (W);
    end Clear;
 
    procedure Append_Line (W : in out Text_Edit; S : String) is
@@ -87,7 +73,6 @@ package body Trinket.Text_Edit is
       W.Lines (W.N).Buf (1 .. W.Lines (W.N).Len) :=
         S (S'First .. S'First + W.Lines (W.N).Len - 1);
       W.Dirty := True;
-      Changed (W);
    end Append_Line;
 
    function Line_Count (W : Text_Edit) return Natural is (W.N);
@@ -425,7 +410,6 @@ package body Trinket.Text_Edit is
       end if;
       Ensure_Cursor_Visible (W.all);
       W.Dirty := True;
-      Changed (W.all);
       return True;
    end On_Key;
 
@@ -606,5 +590,100 @@ package body Trinket.Text_Edit is
       MW := 2 * Pad + 5 * 8;
       MH := 2 * LH + 2 * Pad + 4;
    end Min_Size;
+
+   --  Scrolled composite (M87e): editor + flush bars, self-wired.
+
+   --  One handler serves every instance: the bar's Ctx is the
+   --  editor, its Dir picks the axis.
+   procedure Bar_Moved (Bar : Widgets.Any_Widget; Pos : U64) is
+      E : constant Any_Text_Edit :=
+        Any_Text_Edit (Widgets.Scrollbar (Bar.all).Ctx);
+   begin
+      if Widgets.Scrollbar (Bar.all).Dir = Widgets.Vertical then
+         Set_Top (E.all, Pos);
+      else
+         Set_HOff (E.all, Pos);
+      end if;
+   end Bar_Moved;
+
+   --  Content -> bars. Set_Range/Set_Pos no-op when unchanged.
+   procedure Sync_Bars (W : Scrolled_Editor) is
+      N    : constant U64 := U64 (Line_Count (W.Editor.all));
+      Vis  : constant U64 := Visible_Rows (W.Editor.all);
+      MaxT : constant U64 := (if N > Vis then N - Vis else 0);
+   begin
+      Widgets.Set_Range
+        (Widgets.Scrollbar (W.VBar.all), 0, MaxT, Vis);
+      Widgets.Set_Pos
+        (Widgets.Scrollbar (W.VBar.all), Top_Line (W.Editor.all));
+      Widgets.Set_Range
+        (Widgets.Scrollbar (W.HBar.all),
+         0, Max_HOff (W.Editor.all), Visible_Width (W.Editor.all));
+      Widgets.Set_Pos
+        (Widgets.Scrollbar (W.HBar.all), H_Offset (W.Editor.all));
+   end Sync_Bars;
+
+   procedure Layout (W : in out Scrolled_Editor) is
+      A  : constant U64 := Widgets.Arrow;
+      CW : constant U64 := (if W.W > A then W.W - A else 0);
+      CH : constant U64 := (if W.H > A then W.H - A else 0);
+   begin
+      --  Editor top-left, v-bar flush right, h-bar flush under
+      --  the EDITOR only; the corner square stays window face.
+      W.Editor.X := W.X;
+      W.Editor.Y := W.Y;
+      W.Editor.W := CW;
+      W.Editor.H := CH;
+      W.VBar.X := W.X + CW;
+      W.VBar.Y := W.Y;
+      W.VBar.W := A;
+      W.VBar.H := CH;
+      W.HBar.X := W.X;
+      W.HBar.Y := W.Y + CH;
+      W.HBar.W := CW;
+      W.HBar.H := A;
+      for I in 1 .. Widgets.Group (W).N loop
+         Widgets.Group (W).Kids (I).Layout;
+      end loop;
+   end Layout;
+
+   procedure Min_Size (W : Scrolled_Editor; MW, MH : out U64) is
+      A  : constant U64 := Widgets.Arrow;
+      EW, EH : U64;
+   begin
+      W.Editor.Min_Size (EW, EH);
+      MW := EW + A;
+      --  Room for the h-bar under the text, and tall enough
+      --  that the v-bar fits its arrow pair + a knob.
+      MH := U64'Max (EH + A, 4 * A);
+   end Min_Size;
+
+   procedure Draw (W : Scrolled_Editor; C : Canvas) is
+   begin
+      Sync_Bars (W);
+      Widgets.Group (W).Draw (C);
+   end Draw;
+
+   function New_Scrolled_Editor
+     (Editor : out Any_Text_Edit) return Widgets.Any_Widget
+   is
+      type SE_Access is access Scrolled_Editor;
+      SE : constant SE_Access := new Scrolled_Editor;
+   begin
+      Editor := Any_Text_Edit (New_Text_Edit);
+      SE.Editor := Editor;
+      SE.VBar := Widgets.New_Scrollbar
+        (Bar_Moved'Access, Widgets.Vertical,
+         Widgets.Any_Widget (Editor));
+      SE.HBar := Widgets.New_Scrollbar
+        (Bar_Moved'Access, Widgets.Horizontal,
+         Widgets.Any_Widget (Editor));
+      --  H Pos units are pixels; step arrows by a char cell.
+      Widgets.Set_Step (Widgets.Scrollbar (SE.HBar.all), 8);
+      Widgets.Group (SE.all).Add (Widgets.Any_Widget (Editor));
+      Widgets.Group (SE.all).Add (SE.VBar);
+      Widgets.Group (SE.all).Add (SE.HBar);
+      return Widgets.Any_Widget (SE);
+   end New_Scrolled_Editor;
 
 end Trinket.Text_Edit;
