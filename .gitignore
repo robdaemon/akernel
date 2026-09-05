@@ -13,6 +13,7 @@
 
 .opencode/
 .vscode/
+.reasonix/
 
 # Native/bare-metal binaries and objects
 *.elf
