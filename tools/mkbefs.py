@@ -4,13 +4,24 @@
 #  Writes a small, valid, clean BeFS volume from scratch, following
 #  Haiku's BFS implementation (src/add-ons/kernel/file_systems/bfs,
 #  MIT) and Giampaolo's "Practical File System Design with the Be
-#  File System". Layout for the default 8 MiB size (1024-byte
-#  blocks, one allocation group):
+#  File System". Layout (1024-byte blocks, one bitmap block per
+#  8192-block allocation group, ag_shift 13):
 #
-#    block 0        boot sector (zeroed) + superblock at offset 512
-#    block 1        block bitmap (bit i = block i, LE uint32 words)
-#    blocks 2..513  log area (log_start == log_end: empty journal)
-#    blocks 514..   inodes / btree streams / file data (bump alloc)
+#    block 0         boot sector (zeroed) + superblock at offset 512
+#    blocks 1..num_ags
+#                    block bitmaps: block 1 + g is AG g's bitmap,
+#                    bit i = global block g * 8192 + i (deviation
+#                    from Haiku, which puts each AG's bitmap at its
+#                    own group start — see bfs_engine.ads; the
+#                    engine indexes the bitmap block by block/8192)
+#    blocks 1+num_ags .. num_ags+512
+#                    log area (log_start == log_end: empty journal)
+#    blocks num_ags+513..
+#                    inodes / btree streams / file data (bump alloc)
+#
+#  For the default 8 MiB size num_ags = 1 and this is exactly the
+#  original single-bitmap layout (bitmap block 1, log 2..513,
+#  data from 514).
 #
 #  The fixture tree:
 #
@@ -84,25 +95,32 @@ def brun(ag, start, length):
     return struct.pack("<iHH", ag, start, length)
 
 
+def rblk(block, length=1):
+    #  block_run for a global block number (M93 multi-group): the
+    #  group is block >> ag_shift, the start is block & (group-1).
+    #  Identical to brun(0, block, length) for blocks below 8192.
+    return brun(block >> AG_SHIFT, block & (GROUPSIZE - 1), length)
+
+
 def key_align(n):
     return (n + 7) & ~7
 
 
 AG_SHIFT = 13
-BLOCKS_PER_AG = 1       #  bitmap blocks per AG (Haiku: blocks_per_ag
-                        #  counts BITMAP blocks; data span is
-                        #  1 << ag_shift blocks)
-LOG_LEN = 512           #  numBlocks <= 20480 -> logSize 512
-RESERVED = 2 + LOG_LEN  #  superblock + bitmap + log
+GROUPSIZE = 1 << AG_SHIFT   #  8192 blocks per allocation group
+LOG_LEN = 512               #  numBlocks <= 20480 -> logSize 512
 
 
 class Image:
     def __init__(self, num_blocks):
         self.num_blocks = num_blocks
+        self.num_ags = (num_blocks + GROUPSIZE - 1) // GROUPSIZE
+        #  bitmap blocks 1..num_ags, log right after, data beyond
+        self.reserved = 1 + self.num_ags + LOG_LEN
         self.buf = bytearray(num_blocks * BLK)
-        self.bitmap = bytearray(BLK)  #  one bitmap block covers all
-        self.next_free = RESERVED
-        self.used = RESERVED
+        self.bitmap = bytearray(self.num_ags * BLK)  #  one per AG
+        self.next_free = self.reserved
+        self.used = self.reserved
 
     def alloc(self, count=1):
         start = self.next_free
@@ -120,11 +138,14 @@ class Image:
         self.buf[block * BLK:(block + 1) * BLK] = data
 
     def finish_bitmap(self):
-        self.mark(0, RESERVED)
-        #  everything between RESERVED and next_free except the
+        self.mark(0, self.reserved)
+        #  everything between reserved and next_free except the
         #  deliberate hole(s) was allocated via alloc(); the hole is
-        #  handled by FRAGMENT layout below (mark only real use)
-        self.put(1, bytes(self.bitmap))
+        #  handled by FRAGMENT layout below (mark only real use).
+        #  Split the combined bitmap into per-AG blocks at 1..num_ags.
+        for g in range(self.num_ags):
+            lo = g * BLK
+            self.put(1 + g, bytes(self.bitmap[lo:lo + BLK]))
 
 
 def btree_node(entries):
@@ -162,10 +183,12 @@ def btree_stream(data_type, entries):
 def data_stream(runs, size):
     #  runs: list of (start_block, length); fills direct[] then
     #  max_direct_range; indirect/double-indirect stay zero.
+    #  Start blocks are GLOBAL block numbers (M93): each run is
+    #  split into (ag, group-relative start) by rblk.
     direct = [brun(0, 0, 0)] * 12
     total = 0
     for i, (start, length) in enumerate(runs):
-        direct[i] = brun(0, start, length)
+        direct[i] = rblk(start, length)
         total += length
     return (b"".join(direct) + le64(total << SHIFT)
             + brun(0, 0, 0) + le64(0) + brun(0, 0, 0) + le64(0)
@@ -187,14 +210,14 @@ def small_data(attrs):
 def inode(block, mode, parent_block, attrs, runs, size, type_code=0):
     node = bytearray(BLK)
     node[0:4] = le32(INODE_MAGIC1)
-    node[4:12] = brun(0, block, 1)               #  inode_num
+    node[4:12] = rblk(block, 1)                  #  inode_num
     node[12:16] = le32(0)                        #  uid
     node[16:20] = le32(0)                        #  gid
     node[20:24] = le32(mode)
     node[24:28] = le32(INODE_IN_USE)
     node[28:36] = le64(INODE_TIME)               #  create_time
     node[36:44] = le64(INODE_TIME)               #  last_modified_time
-    node[44:52] = brun(0, parent_block, 1)       #  parent
+    node[44:52] = rblk(parent_block, 1)          #  parent
     node[52:60] = brun(0, 0, 0)                  #  attributes (none)
     node[60:64] = le32(type_code)
     node[64:68] = le32(BLK)                      #  inode_size
@@ -335,7 +358,7 @@ def build(path, mib):
         [(hello_d, 1)], len(hello_body)))
 
     #  --- bitmap + superblock ---
-    for b in range(RESERVED, img.next_free):
+    for b in range(img.reserved, img.next_free):
         if b != fragment_r1 + 2:     #  the deliberate hole
             img.mark(b)
     img.finish_bitmap()
@@ -350,16 +373,16 @@ def build(path, mib):
     sb[56:64] = le64(img.used)
     sb[64:68] = le32(BLK)                    #  inode_size
     sb[68:72] = le32(SB_MAGIC2)
-    sb[72:76] = le32(BLOCKS_PER_AG)
+    sb[72:76] = le32(1)                       #  blocks_per_ag
     sb[76:80] = le32(AG_SHIFT)
-    sb[80:84] = le32(1)                      #  num_ags
-    sb[84:88] = le32(SB_CLEAN)               #  flags
-    sb[88:96] = brun(0, 2, LOG_LEN)          #  log_blocks
-    sb[96:104] = le64(2)                     #  log_start
-    sb[104:112] = le64(2)                    #  log_end
+    sb[80:84] = le32(img.num_ags)             #  num_ags
+    sb[84:88] = le32(SB_CLEAN)                #  flags
+    sb[88:96] = rblk(1 + img.num_ags, LOG_LEN)  #  log_blocks
+    sb[96:104] = le64(2)                      #  log_start
+    sb[104:112] = le64(2)                     #  log_end
     sb[112:116] = le32(SB_MAGIC3)
-    sb[116:124] = brun(0, root_i, 1)         #  root_dir
-    sb[124:132] = brun(0, idx_i, 1)          #  indices
+    sb[116:124] = rblk(root_i, 1)             #  root_dir
+    sb[124:132] = rblk(idx_i, 1)              #  indices
     img.buf[512:1024] = sb
 
     with open(path, "wb") as f:
@@ -383,14 +406,19 @@ def verify(buf, num_blocks, used_blocks, root_i, readme_d,
     assert st.unpack("<I", sb[112:116])[0] == SB_MAGIC3, "sb magic3"
     assert st.unpack("<Q", sb[48:56])[0] == num_blocks, "num_blocks"
     assert st.unpack("<q", sb[56:64])[0] == used_blocks, "used_blocks"
-    bm = buf[BLK:2 * BLK]
-    popcount = sum(bin(b).count("1") for b in bm)
+    num_ags = st.unpack("<I", sb[80:84])[0]
+    #  popcount across every AG bitmap block (1..num_ags)
+    popcount = sum(bin(b).count("1")
+                   for blk in range(num_ags)
+                   for b in buf[(1 + blk) * BLK:(2 + blk) * BLK])
     assert popcount == used_blocks, "bitmap popcount %d != used %d" % (
         popcount, used_blocks)
 
     node = buf[root_i * BLK:(root_i + 1) * BLK]
     assert st.unpack("<I", node[0:4])[0] == INODE_MAGIC1, "inode magic"
-    assert st.unpack("<iHH", node[4:12]) == (0, root_i, 1), "inode_num"
+    ino_ag, ino_start, ino_len = st.unpack("<iHH", node[4:12])
+    assert (ino_ag << AG_SHIFT) + ino_start == root_i \
+        and ino_len == 1, "inode_num"
     size = st.unpack("<q", node[208:216])[0]
     assert size == 2 * BLK, "root stream size"
 

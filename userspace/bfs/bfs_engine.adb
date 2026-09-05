@@ -175,6 +175,25 @@ package body Bfs_Engine is
      (Interfaces.Shift_Left (U64 (R.AG), Natural (AG_Shift))
         + U64 (R.Start));
 
+   --  Allocation-group geometry (M93): one AG = 1 << ag_shift blocks
+   --  (8192 at ag_shift 13). The block bitmap of AG g lives at
+   --  physical block 1 + g — all bitmap blocks sit consecutively
+   --  right after the boot block, NOT at each AG's own start (the
+   --  documented deviation from Haiku's layout; the superblock's
+   --  blocks_per_ag = 1 field stays truthful). A run NEVER crosses
+   --  an AG boundary, so Start (u16) always addresses within one
+   --  bitmap and Length (u16) stays bounded by the AG span.
+   function Group_Size return U64 is
+     (Interfaces.Shift_Left (1, Natural (AG_Shift)));
+
+   --  Encode the global block B as a run: AG = B / group, Start =
+   --  B mod group. The reverse of To_Block for freshly allocated
+   --  (possibly beyond-AG-0) blocks.
+   function Run_At_Block (B : U64; Len : U64) return Block_Run is
+     ((AG     => U32 (B / Group_Size),
+       Start  => U16 (B mod Group_Size),
+       Length => U16 (Len)));
+
    ------------------------------------------------------------------
    --  Block cache
    ------------------------------------------------------------------
@@ -440,6 +459,7 @@ package body Bfs_Engine is
        for I in 0 .. Trans_Count - 1 loop
           if Run_Open
             and then Trans_Num (Order (I)) = Run_Start + Run_Len
+            and then (Run_Start + Run_Len) mod Group_Size /= 0
           then
              Run_Len := Run_Len + 1;
           else
@@ -448,12 +468,16 @@ package body Bfs_Engine is
                    O : constant U64 := 8 + (Run_Count - 1) * 8;
                 begin
                    for B in 0 .. 3 loop
-                      Arr (O + U64 (B)) := 0;  --  ag 0
+                      Arr (O + U64 (B)) :=
+                        U8 (Interfaces.Shift_Right
+                              (Run_Start / Group_Size, 8 * B)
+                              and 16#FF#);  --  ag
                    end loop;
-                   Arr (O + 4) := U8 (Run_Start and 16#FF#);
+                   Arr (O + 4) :=
+                     U8 ((Run_Start mod Group_Size) and 16#FF#);
                    Arr (O + 5) :=
-                     U8 (Interfaces.Shift_Right (Run_Start, 8)
-                           and 16#FF#);
+                     U8 (Interfaces.Shift_Right
+                           (Run_Start mod Group_Size, 8) and 16#FF#);
                    Arr (O + 6) := U8 (Run_Len and 16#FF#);
                    Arr (O + 7) :=
                      U8 (Interfaces.Shift_Right (Run_Len, 8)
@@ -470,11 +494,14 @@ package body Bfs_Engine is
           O : constant U64 := 8 + (Run_Count - 1) * 8;
        begin
           for B in 0 .. 3 loop
-             Arr (O + U64 (B)) := 0;
+             Arr (O + U64 (B)) :=
+               U8 (Interfaces.Shift_Right
+                     (Run_Start / Group_Size, 8 * B) and 16#FF#);
           end loop;
-          Arr (O + 4) := U8 (Run_Start and 16#FF#);
+          Arr (O + 4) := U8 ((Run_Start mod Group_Size) and 16#FF#);
           Arr (O + 5) :=
-            U8 (Interfaces.Shift_Right (Run_Start, 8) and 16#FF#);
+            U8 (Interfaces.Shift_Right
+                  (Run_Start mod Group_Size, 8) and 16#FF#);
           Arr (O + 6) := U8 (Run_Len and 16#FF#);
           Arr (O + 7) :=
             U8 (Interfaces.Shift_Right (Run_Len, 8) and 16#FF#);
@@ -572,8 +599,7 @@ package body Bfs_Engine is
              end if;
              for I in 0 .. Cnt - 1 loop
                 Runs (Natural (I)) := Run_At (Slot, 8 + I * 8);
-                if Runs (Natural (I)).AG /= 0
-                  or else Runs (Natural (I)).Length = 0
+                if Runs (Natural (I)).Length = 0
                   or else To_Block (Runs (Natural (I)))
                             + U64 (Runs (Natural (I)).Length)
                           > Num_Blocks
@@ -616,7 +642,9 @@ package body Bfs_Engine is
     end Replay_Log;
 
     ------------------------------------------------------------------
-    --  Block allocator (bitmap block 1, bit i = block i, lsb first)
+    --  Block allocator (M93: group g's bitmap is block 1 + g; bit
+    --  i of that bitmap = global block g * 8192 + i, lsb first).
+    --  Runs never cross an AG boundary.
     ------------------------------------------------------------------
 
     function Bit_Test (Slot : Natural; B : U64) return Boolean is
@@ -624,37 +652,63 @@ package body Bfs_Engine is
           and Interfaces.Shift_Left (U8 (1), Natural (B mod 8))) /= 0);
 
     --  First-fit contiguous run of Count blocks; the bitmap block
-    --  change joins the open transaction.
+    --  change joins the open transaction. Pass 0 scans from the
+    --  hint upward, pass 1 wraps to cover blocks below the hint.
     function Alloc (Count : U64; Start : out U64) return Boolean is
-       Slot : constant Natural := Get_Block (1);
-       B    : U64;
-       Run  : U64;
-       Lo   : U64;
+       GSize  : constant U64 := Group_Size;
+       Slot   : Natural := Cache_Slots;
+       Cur_G  : U64 := U64'Last;
+       B      : U64;
+       Run    : U64;
+       Lo     : U64;
+       Stop_B : U64;
+       Grp    : U64;
+       Grp_End: U64;
+       Off    : U64;
     begin
        Start := 0;
-       if Slot = Cache_Slots then
-          return False;
-       end if;
        for Pass in 0 .. 1 loop
-          Lo := (if Pass = 0 then Alloc_Hint else 2 + Log_Len);
+          Lo := (if Pass = 0 then Alloc_Hint
+                 else Log_Base + Log_Len);
+          if Lo < Log_Base + Log_Len then
+             Lo := Log_Base + Log_Len;
+          end if;
+          Stop_B := (if Pass = 0 then Num_Blocks else Alloc_Hint);
+          if Stop_B > Num_Blocks then
+             Stop_B := Num_Blocks;
+          end if;
           B := Lo;
-          while B + Count <= Num_Blocks
-            and then (Pass = 0 or else B < Alloc_Hint)
-          loop
-             if not Bit_Test (Slot, B) then
+          while B + Count <= Stop_B loop
+             Grp := B / GSize;
+             if Cur_G /= Grp then
+                if Slot /= Cache_Slots then
+                   Put_Block (Slot);
+                end if;
+                Slot := Get_Block (1 + Grp);
+                if Slot = Cache_Slots then
+                   return False;
+                end if;
+                Cur_G := Grp;
+             end if;
+             Off := B - Grp * GSize;
+             Grp_End := (Grp + 1) * GSize;
+             if Grp_End > Stop_B then
+                Grp_End := Stop_B;
+             end if;
+             if not Bit_Test (Slot, Off) then
                 Run := 0;
                 while Run < Count
-                  and then B + Run < Num_Blocks
-                  and then not Bit_Test (Slot, B + Run)
+                  and then B + Run < Grp_End
+                  and then not Bit_Test (Slot, Off + Run)
                 loop
                    Run := Run + 1;
                 end loop;
                 if Run = Count then
                    for K in 0 .. Count - 1 loop
-                      Cache_Data (Slot, (B + K) / 8) :=
-                        Cache_Data (Slot, (B + K) / 8)
+                      Cache_Data (Slot, (Off + K) / 8) :=
+                        Cache_Data (Slot, (Off + K) / 8)
                           or Interfaces.Shift_Left
-                            (U8 (1), Natural ((B + K) mod 8));
+                            (U8 (1), Natural ((Off + K) mod 8));
                    end loop;
                    Trans_Add (Slot);
                    Put_Block (Slot);
@@ -669,24 +723,62 @@ package body Bfs_Engine is
              end if;
           end loop;
        end loop;
-       Put_Block (Slot);
+       if Slot /= Cache_Slots then
+          Put_Block (Slot);
+       end if;
        return False;
     end Alloc;
 
+    --  Free a run of Count blocks at global Start. Runs never cross
+    --  an AG boundary, but the loop below chunks across groups
+    --  defensively so a stray cross-group call cannot corrupt bits.
     procedure Free (Start : U64; Count : U64) is
-       Slot : constant Natural := Get_Block (1);
+       GSize : constant U64 := Group_Size;
+       Slot  : Natural := Cache_Slots;
+       Grp   : U64 := U64'Last;
+       B     : U64 := Start;
+       Left  : U64 := Count;
     begin
-       if Slot = Cache_Slots then
+       if Count = 0 then
           return;
        end if;
-       for K in 0 .. Count - 1 loop
-          Cache_Data (Slot, (Start + K) / 8) :=
-            Cache_Data (Slot, (Start + K) / 8)
-              and not Interfaces.Shift_Left
-                (U8 (1), Natural ((Start + K) mod 8));
+       while Left > 0 loop
+          declare
+             G    : constant U64 := B / GSize;
+             N    : U64;
+             Off  : U64;
+             Upto : U64;
+          begin
+             if Grp /= G then
+                if Slot /= Cache_Slots then
+                   Put_Block (Slot);
+                end if;
+                Slot := Get_Block (1 + G);
+                if Slot = Cache_Slots then
+                   return;
+                end if;
+                Grp := G;
+             end if;
+             Off := B - G * GSize;
+             Upto := (G + 1) * GSize;
+             N := Upto - B;
+             if N > Left then
+                N := Left;
+             end if;
+             for K in 0 .. N - 1 loop
+                Cache_Data (Slot, (Off + K) / 8) :=
+                  Cache_Data (Slot, (Off + K) / 8)
+                    and not Interfaces.Shift_Left
+                      (U8 (1), Natural ((Off + K) mod 8));
+             end loop;
+             Trans_Add (Slot);
+             B := B + N;
+             Left := Left - N;
+          end;
        end loop;
-       Trans_Add (Slot);
-       Put_Block (Slot);
+       if Slot /= Cache_Slots then
+          Put_Block (Slot);
+       end if;
        Used_Pending := Used_Pending - Count;
        if Start < Alloc_Hint then
           Alloc_Hint := Start;
@@ -1629,8 +1721,10 @@ package body Bfs_Engine is
           if not Alloc (1, St) then
              return False;
           end if;
-          if Capacity > 0 and then St = Last_End then
-             --  Contiguous with the last run: merge.
+          if Capacity > 0 and then St = Last_End
+            and then St mod Group_Size /= 0
+          then
+             --  Contiguous with the last run (same AG): merge.
              for I in reverse Ctx.Dir.Direct'Range loop
                 if Ctx.Dir.Direct (I).Length /= 0 then
                    Ctx.Dir.Direct (I).Length :=
@@ -1639,8 +1733,7 @@ package body Bfs_Engine is
                 end if;
              end loop;
           elsif Have_Free then
-             Ctx.Dir.Direct (Free_Idx) :=
-               (AG => 0, Start => U16 (St), Length => 1);
+             Ctx.Dir.Direct (Free_Idx) := Run_At_Block (St, 1);
           else
              Free (St, 1);
              Akernel_User.Console.Put_Line
@@ -1653,6 +1746,8 @@ package body Bfs_Engine is
           end if;
           for I in Ctx.Dir.Direct'Range loop
              if Ctx.Dir.Direct (I).Length /= 0 then
+                Put_LE32 (Slot, 72 + 8 * U64 (I),
+                          Ctx.Dir.Direct (I).AG);
                 Put_LE16 (Slot, 76 + 8 * U64 (I),
                           Ctx.Dir.Direct (I).Start);
                 Put_LE16 (Slot, 78 + 8 * U64 (I),
@@ -2170,9 +2265,19 @@ package body Bfs_Engine is
             U8 (Interfaces.Shift_Right (Inode_In_Use, 8 * B)
                   and 16#FF#);
        end loop;
-       Buf (4) := 0;  Buf (5) := 0;  Buf (6) := 0;  Buf (7) := 0;
-       Buf (8) := U8 (Block and 16#FF#);
-       Buf (9) := U8 (Interfaces.Shift_Right (Block, 8) and 16#FF#);
+       Buf (4) := U8 ((Block / Group_Size) and 16#FF#);
+       Buf (5) :=
+         U8 (Interfaces.Shift_Right (Block / Group_Size, 8)
+               and 16#FF#);
+       Buf (6) :=
+         U8 (Interfaces.Shift_Right (Block / Group_Size, 16)
+               and 16#FF#);
+       Buf (7) :=
+         U8 (Interfaces.Shift_Right (Block / Group_Size, 24)
+               and 16#FF#);
+       Buf (8) := U8 ((Block mod Group_Size) and 16#FF#);
+       Buf (9) := U8 (Interfaces.Shift_Right
+                        (Block mod Group_Size, 8) and 16#FF#);
        Buf (10) := 1;  Buf (11) := 0;                 --  len 1
        for B in 0 .. 7 loop
           Buf (28 + U64 (B)) :=
@@ -2182,13 +2287,31 @@ package body Bfs_Engine is
           Buf (216 + U64 (B)) :=
             U8 (Interfaces.Shift_Right (T, 8 * B) and 16#FF#);
        end loop;
-       --  parent run (ag 0, Parent, len 1)
-       Buf (48) := U8 (Parent and 16#FF#);
-       Buf (49) := U8 (Interfaces.Shift_Right (Parent, 8) and 16#FF#);
-       Buf (50) := 1;
+       --  parent run (ag Parent / group, Parent mod group, len 1)
+       Buf (44) := U8 ((Parent / Group_Size) and 16#FF#);
+       Buf (45) :=
+         U8 (Interfaces.Shift_Right (Parent / Group_Size, 8)
+               and 16#FF#);
+       Buf (46) :=
+         U8 (Interfaces.Shift_Right (Parent / Group_Size, 16)
+               and 16#FF#);
+       Buf (47) :=
+         U8 (Interfaces.Shift_Right (Parent / Group_Size, 24)
+               and 16#FF#);
+       Buf (48) := U8 ((Parent mod Group_Size) and 16#FF#);
+       Buf (49) := U8 (Interfaces.Shift_Right
+                         (Parent mod Group_Size, 8) and 16#FF#);
+       Buf (50) := 1;  Buf (51) := 0;
        --  inode_size at 64
        Buf (64) := 0;  Buf (65) := 4;  --  1024 LE
-       --  data stream at 72: direct[0]
+       --  data stream at 72: direct[0] (ag from Stream_Run)
+       Buf (72) := U8 (U64 (Stream_Run.AG) and 16#FF#);
+       Buf (73) := U8 (Interfaces.Shift_Right
+                         (U64 (Stream_Run.AG), 8) and 16#FF#);
+       Buf (74) := U8 (Interfaces.Shift_Right
+                         (U64 (Stream_Run.AG), 16) and 16#FF#);
+       Buf (75) := U8 (Interfaces.Shift_Right
+                         (U64 (Stream_Run.AG), 24) and 16#FF#);
        Buf (76) := U8 (U64 (Stream_Run.Start) and 16#FF#);
        Buf (77) := U8 (Interfaces.Shift_Right
                          (U64 (Stream_Run.Start), 8) and 16#FF#);
@@ -2365,9 +2488,8 @@ package body Bfs_Engine is
           (if Is_Dir then S_IFDIR or S_STR_INDEX or 8#755#
            else S_IFREG or 8#644#),
           Parent.Block,
-          (AG => 0,
-           Start => (if Is_Dir then U16 (SBlk) else 0),
-           Length => (if Is_Dir then 2 else 0)),
+          (if Is_Dir then Run_At_Block (SBlk, 2)
+           else (AG => 0, Start => 0, Length => 0)),
           (if Is_Dir then 2 * Block_Size else 0), Name, C_Time);
        if not Store_Block (Ino, Buf) then
           if Is_Dir then
@@ -2415,8 +2537,7 @@ package body Bfs_Engine is
              if not Alloc (1, IBlk) then
                 return False;
              end if;
-             Info.Indirect := (AG => 0, Start => U16 (IBlk),
-                               Length => 1);
+             Info.Indirect := Run_At_Block (IBlk, 1);
              Info.Max_Indir := Info.Max_Direct;
              Slot := Get_Block (IBlk);
              if Slot = Cache_Slots then
@@ -2454,14 +2575,15 @@ package body Bfs_Engine is
              return False;
           end if;
           if Free_Idx > 0
-            and then Last_Run.AG = 0
             and then To_Block (Last_Run) + U64 (Last_Run.Length) = St
+            and then St mod Group_Size /= 0
           then
              Put_LE16 (Slot, (Free_Idx - 1) * 8 + 6,
                        Last_Run.Length + U16 (Need));
           else
-             Put_LE32 (Slot, Free_Idx * 8, 0);
-             Put_LE16 (Slot, Free_Idx * 8 + 4, U16 (St));
+             Put_LE32 (Slot, Free_Idx * 8, U32 (St / Group_Size));
+             Put_LE16 (Slot, Free_Idx * 8 + 4,
+                       U16 (St mod Group_Size));
              Put_LE16 (Slot, Free_Idx * 8 + 6, U16 (Need));
           end if;
           Trans_Add (Slot);
@@ -2611,7 +2733,7 @@ package body Bfs_Engine is
              Log_Pos_End   := LE64 (Slot, 512 + 104);
              Root_Block  := To_Block (Run_At (Slot, 512 + 116));
              Index_Block := To_Block (Run_At (Slot, 512 + 124));
-             Alloc_Hint  := 2 + Log_Len;
+             Alloc_Hint := Log_Base + Log_Len;
           end if;
           Put_Block (Slot);
        end;
@@ -2907,7 +3029,9 @@ package body Bfs_Engine is
              then
                 --  Still in the direct range: merge into the last
                 --  run or take a free slot.
-                if Cov > 0 and then St = Last_End then
+                if Cov > 0 and then St = Last_End
+                  and then St mod Group_Size /= 0
+                then
                    for I in reverse Info.Direct'Range loop
                       if Info.Direct (I).Length /= 0 then
                          Info.Direct (I).Length :=
@@ -2917,7 +3041,7 @@ package body Bfs_Engine is
                    end loop;
                 else
                    Info.Direct (Free_Idx) :=
-                     (AG => 0, Start => U16 (St), Length => U16 (Need));
+                     Run_At_Block (St, Need);
                 end if;
                 Info.Max_Direct :=
                   Cov * Block_Size + Need * Block_Size;

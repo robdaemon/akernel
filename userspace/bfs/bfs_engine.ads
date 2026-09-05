@@ -15,10 +15,26 @@
 --  contents, the superblock goes DIRT with the new log_end, the
 --  blocks land at their real offsets, then the superblock goes
 --  CLEN with log_start = log_end (immediate checkpoint). Block
---  allocation is first-fit over bitmap block 1; btrees split full
---  nodes up to depth 3 (m82h) — removed entries never free nodes
---  (no merge, free-node list stays -1); file data lives in the 12
---  direct runs only (no indirect streams).
+--  allocation is first-fit; btrees split full nodes up to depth 3
+--  (m82h) — removed entries never free nodes (no merge, free-node
+--  list stays -1); file data lives in the 12 direct runs only (no
+--  indirect streams).
+--
+--  Allocation groups (M93): a volume is num_ags allocation groups
+--  of 1 << ag_shift blocks each (the fixture uses ag_shift 13 =
+--  8192 blocks per group). DEVIATION FROM HAIKU, documented:
+--  Haiku stores AG g's block bitmap at the start of AG g's own region;
+--  this engine keeps every AG's single bitmap block consecutively
+--  at blocks 1..num_ags (block 1 + g = AG g's bitmap, bit i =
+--  global block g * 8192 + i) with the log right after, so the
+--  superblock's blocks_per_ag = 1 describes the whole volume and
+--  the allocator indexes the right bitmap block by global
+--  block / 8192. Runs NEVER cross an AG boundary (the allocator
+--  and the journal run-coalescing both enforce it), which keeps
+--  the u16 run start/length fields valid. This lifts the old
+--  8 MiB ceiling (one bitmap block) to arbitrary sizes: a 256 MiB
+--  volume = 32 AGs. Mount reads ag_shift / num_blocks from the
+--  superblock, so the layout stays self-describing.
 --
 --  Status returns mirror the fs wire protocol: 0 ok, 1 not found,
 --  3 bad args, 4 out of range.
