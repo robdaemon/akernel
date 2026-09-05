@@ -547,7 +547,8 @@ package body Trinket.Window is
      (W : in out Window; Panel : Widgets.Any_Widget; X, Y : U64)
    is
       PW, PH : U64;
-      PX, PY : U64 := X;
+      PX      : U64 := X;
+      PY      : U64 := Y;
    begin
       if Panel = null then
          return;
