@@ -11,7 +11,26 @@ repository.
 
 ## Recently shipped
 
-- **M87f** (this commit): Cycle gadget — MUI lineage. Raised
+- **M87g** (this commit): Numeric gadget — Cycle's integer
+  sibling. Sunken Pane field, value right-aligned against a
+  separated 18px glyph column with independent up/down arrow
+  mini-buttons (split at mid-height). Release-over steps by the
+  public Step field (default 1), clamps to Min..Max, fires
+  On_Change (Value : U64) only on real change; Set_Value clamps
+  without firing. Down-steps pre-clamped (M87b wrap hazard).
+  M86c battery: hover Face_Hi on the hovered arrow half, press
+  sinks it + shifts the chevron. Min_Size = Text_Width
+  (Max'Image) + padding + glyph column, LH+8 tall. tdemo: 0..100
+  numeric in the Worker row, steps drive the Gauge alongside the
+  slider. QMP-verified: 3x up = 3, 2x down = 1, gauge tracks,
+  digits render. (QEMU gotcha, same as M87f: title-band clicks
+  hit no child — the dbg round-trip of "dead widget" was again
+  aiming 6px high into the Worker title band; the rect dump
+  settled it.) 1848/1847 PASS SMP4/SMP1, 0 FAIL.
+  Next: M87h Tab focus chain with app-overridable ranks; M88
+  in-window overlay/popups later.
+
+- **M87f** (`dfae8d5`): Cycle gadget — MUI lineage. Raised
   field showing the current entry + up/down chevron pair in a
   separated right glyph column; release-over rotates to the
   next entry (wraps) and fires On_Change; Set_Selected does the

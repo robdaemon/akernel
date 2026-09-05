@@ -396,6 +396,32 @@ Group's ceiling, same justification. `Min_Size`: widest entry +
 padding + glyph column, `LH + 8` tall. tdemo: a first/second/third
 cycle in the Choices row, rotations report on the status line.
 
+### `Numeric` (M87g)
+
+```ada
+type Numeric_Callback is access procedure (Value : U64);
+
+function New_Numeric
+  (Min : U64 := 0; Max : U64 := 100;
+   On_Change : Numeric_Callback := null) return Any_Widget;
+procedure Set_Value (W : in out Numeric; V : U64);
+function Value (W : Numeric) return U64;
+```
+
+MUI numeric gadget: Cycle's integer sibling. Sunken Pane field with
+the current value right-aligned against a separated right glyph
+column holding independent up/down arrow mini-buttons (18px
+`Glyph_Col`, split at mid-height). Release-over an arrow steps the
+value by the public `Step` field (default 1), clamps to
+`Min..Max`, and fires `On_Change` only when the value actually
+changed; `Set_Value` clamps and marks dirty without firing. Down-steps are pre-clamped
+(same wrap hazard as Slider/Scrollbar, M87b). M86c battery: hover
+brightens the hovered arrow half (`Face_Hi`), press sinks it and
+shifts the chevron one pixel; the field itself is static. `Min_Size`:
+`Text_Width (Max'Image)` + padding + glyph column, `LH + 8` tall.
+tdemo: a 0..100 numeric in the Worker row, steps drive the Gauge
+alongside the slider.
+
 ### `Gauge` (progress bar, M87a)
 ```ada
 type Gauge is new Widget with record

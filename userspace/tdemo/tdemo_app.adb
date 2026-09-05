@@ -64,6 +64,13 @@ package body Tdemo_App is
        Widgets.Gauge (Work_Gauge.all).Set_Fraction (Pos, 100);
     end Slider_Moved;
 
+    --  M87g showcase: numeric steps drive the gauge too.
+    procedure Numeric_Moved (Val : U64) is
+    begin
+       Debug_Put_Line ("tdemo: numeric moved" & U64'Image (Val));
+       Widgets.Gauge (Work_Gauge.all).Set_Fraction (Val, 100);
+    end Numeric_Moved;
+
     --  M86e showcase: the three radios in the "Choices" group
     --  share this set, so selecting one clears the others.
     Choice_Set : aliased Widgets.Radio_Set;
@@ -267,6 +274,8 @@ package body Tdemo_App is
        Widgets.Group (Work_Grp.all).Add (Work_Gauge);
        Widgets.Group (Work_Grp.all).Add
          (Widgets.New_Slider (0, 100, Slider_Moved'Access));
+       Widgets.Group (Work_Grp.all).Add
+         (Widgets.New_Numeric (0, 100, Numeric_Moved'Access));
 
        Widgets.Group (Btn_Row.all).Add
          (Widgets.New_Button ("Save", Save_Clicked'Access));
