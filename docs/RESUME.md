@@ -11,7 +11,24 @@ repository.
 
 ## Recently shipped
 
-- **M87e restyle** (this commit): tabs look like tabs, not
+- **M87f** (this commit): Cycle gadget — MUI lineage. Raised
+  field showing the current entry + up/down chevron pair in a
+  separated right glyph column; release-over rotates to the
+  next entry (wraps) and fires On_Change; Set_Selected does the
+  same programmatically. M86c battery: hover Face_Hi, press
+  sinks + shifts text and glyph. Entries cap at Max_Children(12)
+  x Max_Text(48) — Group's ceiling. Tab_Label_Rec generalized
+  to Text_Rec/Text_Array shared with Tabs. tdemo: first/second/
+  third cycle in the Choices row, rotations report "cycle N" on
+  the status line. QMP-verified: press sunken, first -> second
+  -> third -> wrap to first. (QEMU gotcha re-learned: a click
+  into a TITLED group's 16px title band hits no child — aim at
+  the widget body, not the row's visual center.) 1847/1847 PASS
+  SMP4/SMP1, 0 FAIL.
+  Next: M87g Numeric, h Tab focus chain with app-overridable
+  ranks; M88 in-window overlay/popups later.
+
+- **M87e restyle** (`1f07ebf`): tabs look like tabs, not
   buttons. User review of the first cut: inactive tabs drew as
   full Bevel2 button boxes (bottom border included) sitting ON
   the frame line. Now: 2px-chamfered (rounded) top corners, a

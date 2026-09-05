@@ -407,13 +407,14 @@ package Trinket.Widgets is
    --  modeled. Switching pages full-redraws the widget and
    --  re-lays-out.
    type Tab_Callback is access procedure (Index : Natural);
-   type Tab_Label_Rec is record
+   --  Shared short-string cell: Tabs labels, Cycle entries.
+   type Text_Rec is record
       Buf : String (1 .. Max_Text);
       Len : Text_Len := 0;
    end record;
-   type Tab_Label_Array is array (1 .. Max_Children) of Tab_Label_Rec;
+   type Text_Array is array (1 .. Max_Children) of Text_Rec;
    type Tabs is new Group with record
-      Labels    : Tab_Label_Array;
+      Labels    : Text_Array;
       Sel       : Natural := 0;   --  1-based; 0 until first Add_Tab
       Hover_Tab : Natural := 0;   --  0 = pointer not on a tab
       Press_Tab : Natural := 0;   --  tab held down (M86c)
@@ -440,5 +441,31 @@ package Trinket.Widgets is
        Rects    : in out Rect_Array;
        N        : in out Natural;
        Overflow : in out Boolean);
+
+   --  Cycle (M87f): MUI cycle gadget — a raised field showing
+   --  the current entry, up/down chevron pair in a right glyph
+   --  column; each click rotates to the next entry (wraps).
+   --  M86c battery: hover brightens, press sinks + shifts.
+   --  Entries cap at Max_Children (12) of Max_Text (48) chars —
+   --  Group's ceiling, same justification.
+   type Cycle_Callback is access procedure (Index : Natural);
+   type Cycle is new Widget with record
+      Entries   : Text_Array;
+      N         : Natural := 0;
+      Sel       : Natural := 0;   --  1-based
+      Hover     : Boolean := False;
+      Pressed   : Boolean := False;
+      On_Change : Cycle_Callback := null;
+   end record;
+   function New_Cycle
+     (On_Change : Cycle_Callback := null) return Any_Widget;
+   procedure Add_Entry (W : in out Cycle; S : String);
+   procedure Set_Selected (W : in out Cycle; I : Natural);
+   function Selected (W : Cycle) return Natural;
+   overriding procedure Draw (W : Cycle; C : Canvas);
+   overriding procedure Min_Size (W : Cycle; MW, MH : out U64);
+   overriding function On_Pointer
+     (W : access Cycle; K : Pointer_Kind; PX, PY : U64)
+      return Boolean;
 
 end Trinket.Widgets;

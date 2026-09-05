@@ -374,6 +374,28 @@ Down-steps (here and in `Scrollbar`, fixed in M87b) are pre-clamped:
 the wrap as "past Max" — the up arrow at the top used to jump to
 the bottom.
 
+### `Cycle` (M87f)
+
+```ada
+type Cycle_Callback is access procedure (Index : Natural);
+
+function New_Cycle
+  (On_Change : Cycle_Callback := null) return Any_Widget;
+procedure Add_Entry (W : in out Cycle; S : String);
+procedure Set_Selected (W : in out Cycle; I : Natural);
+function Selected (W : Cycle) return Natural;
+```
+
+MUI cycle gadget: a raised field showing the current entry with an
+up/down chevron pair in a separated right glyph column. Each
+release-over rotates to the next entry (wraps at the end) and fires
+`On_Change`; `Set_Selected` does the same programmatically. M86c
+battery: hover brightens, press sinks + shifts text and glyph one
+pixel. Entries cap at `Max_Children` (12) of `Max_Text` (48) chars —
+Group's ceiling, same justification. `Min_Size`: widest entry +
+padding + glyph column, `LH + 8` tall. tdemo: a first/second/third
+cycle in the Choices row, rotations report on the status line.
+
 ### `Gauge` (progress bar, M87a)
 ```ada
 type Gauge is new Widget with record

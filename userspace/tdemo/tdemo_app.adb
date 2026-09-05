@@ -80,6 +80,13 @@ package body Tdemo_App is
        Widgets.Label (Status_Lbl.all).Set_Text (S);
     end Tab_Moved;
 
+    --  M87f showcase: cycle rotations report on the status line.
+    procedure Cycle_Moved (Index : Natural) is
+       S : constant String := "cycle" & Natural'Image (Index);
+    begin
+       Widgets.Label (Status_Lbl.all).Set_Text (S);
+    end Cycle_Moved;
+
     --  Worker gate: the worker task creates its own gate
     --  notification, publishes the handle, then blocks in
     --  Ntfn_Wait — no CPU burned while idle (protected entries are
@@ -292,6 +299,17 @@ package body Tdemo_App is
         (Widgets.New_Radio
            ("Right", Choice_Set'Access,
             On_Change => Choice_Toggled'Access));
+      --  M87f showcase: cycle gadget, rotations report on the
+      --  Worker group's status line.
+      declare
+         Cyc : constant Widgets.Any_Widget :=
+           Widgets.New_Cycle (Cycle_Moved'Access);
+      begin
+         Widgets.Cycle (Cyc.all).Add_Entry ("first");
+         Widgets.Cycle (Cyc.all).Add_Entry ("second");
+         Widgets.Cycle (Cyc.all).Add_Entry ("third");
+         Widgets.Group (Choice_Grp.all).Add (Cyc);
+      end;
 
        --  M86f: the proportional default font — narrow i/l vs
        --  wide W/M in one string shows the per-glyph advance.
