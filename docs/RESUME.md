@@ -13,9 +13,9 @@ repository.
 
 ## Recently shipped
 
-- **M94** (`3accf5a`, `c49cca8`): spawn-ABI unification + Drawer
-  fixes. Startup programs (devmgr Spawn_Program) now receive the
-  full uniform command ABI — handles 1..6 = console, fs, bureau,
+- **M94** (`3accf5a`, `c49cca8`, `02e6c8a`): spawn-ABI unification +
+  Drawer fixes. Startup programs (devmgr Spawn_Program) now receive
+  the full uniform command ABI — handles 1..6 = console, fs, bureau,
   args, elevation, netserv — the same layout shell commands get, so
   any GUI app can Scripting.Spawn_Cmd its children (double-clicking
   an ELF or a file into Edit failed before: the old Startup ABI
@@ -29,9 +29,14 @@ repository.
   per-entry Dirs.Kind routed through libc stat() (~100 ms+ per call
   under boot load); the scan now enumerates via Files.Read_Dir,
   which returns is-directory + size for free — open latency ~4 s →
-  ~1.3 s (rdtime phase prints 'drawer: t=' remain in the Drawer).
-  Gates: make test green 0 FAIL at SMP4 and SMP1 (real elevated
-  shutdown + clean qemu exit) and test-replay ok.
+  ~1.3 s (more drawer-open perf tuning deferred; 'drawer: t='
+  rdtime phase prints remain in the Drawer for it). Drawer tool
+  sniff: files carrying a custom ICON attr (the five GUI apps) used
+  to skip the ELF sniff and opened in Edit on double-click; every
+  file is sniffed now (Max_Sniff-budgeted) — the icon picks the
+  glyph, Is_Tool picks the launch. Gates: make test green 0 FAIL at
+  SMP4 and SMP1 (real elevated shutdown + clean qemu exit) and
+  test-replay ok.
 
 - **M93** (`e2a8205`): BeFS becomes Sys:. disk.img is now 512 MiB
 
