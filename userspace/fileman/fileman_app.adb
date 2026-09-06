@@ -282,6 +282,13 @@ package body Fileman_App is
 
    procedure Spawn_Edit (Path : String) is
       Stage_VA : constant Syscalls.U64 := 16#5E00_0000#;
+      --  Child-args STAGING VA, NOT Syscalls.Args_VA (0x4800_0000):
+      --  since M94 every Startup program holds its own args page at
+      --  handle 4, lazily mapped at 0x4800_0000 by CLI.Init; a second
+      --  map there for the child's args page fails, so spawned Edits
+      --  got no filename. Mirrors Scripting.Exec's Args_Stage_VA
+      --  (0x5440_0000); free in this app's VA map.
+      Args_Stage_VA : constant Syscalls.U64 := 16#5440_0000#;
       Image_Path : constant String := "BD0:System/Edit";
       Size    : Syscalls.U64 := 0;
       Pages   : Syscalls.U64;
@@ -340,19 +347,19 @@ package body Fileman_App is
       end if;
 
       if Syscalls.Mem_Map (Syscalls.Address_Space_Cap, Args_Cap,
-                           Syscalls.Args_VA, 0, 4096, 3) = 0
+                           Args_Stage_VA, 0, 4096, 3) = 0
       then
          declare
             Page : String (1 .. 4096)
               with Address => System.Storage_Elements.To_Address
                 (System.Storage_Elements.Integer_Address
-                   (Syscalls.Args_VA));
+                   (Args_Stage_VA));
          begin
             Page := (others => Character'Val (0));
             Page (1 .. Path'Length) := Path;
          end;
          Result := Syscalls.Mem_Unmap
-           (Syscalls.Address_Space_Cap, Syscalls.Args_VA, 4096);
+           (Syscalls.Address_Space_Cap, Args_Stage_VA, 4096);
       end if;
 
       Syscalls.Set_Grant (0, Console_EP, Syscalls.Right_Send, 0);
