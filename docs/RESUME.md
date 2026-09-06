@@ -13,6 +13,23 @@ repository.
 
 ## Recently shipped
 
+- **Drawer top-row height fix** (`d7b42ab`): the "really large
+  Parent button" was a VERTICAL over-allocation, not the width the
+  M94 fix addressed. The drawer's Root group gave the top row and
+  the scrolled-icons view equal weight (0->1 and 1); Group weights
+  split only the EXTRA above each child's Min_Size, and the scrolled
+  icons' Min_Size is one cell, so in a tall window the slack split
+  1:1 and the top row stretched to ~half the window — and a
+  horizontal group fills its kids to the row's full height, so the
+  Parent button rendered as a half-window slab (~380 px button in a
+  zoomed drawer). The icons view now takes weight 20 against the top
+  row's 1 (the same ratio the path label uses inside the row): top
+  row ~63 px in a 772 px near-zoomed window (~39 px at the default
+  480x320), icons view absorbs the rest. Verified with a runtime
+  layout probe on the tall geometry the screenshot showed.
+
+
+
 - **Phase B — fileman incremental directory fill** (`7c06519`):
   fileman's black window at launch is gone. The startup listing used
   to enumerate each pane's directory fully and synchronously before
