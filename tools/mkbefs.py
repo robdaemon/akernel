@@ -40,8 +40,15 @@ import os
 import struct
 import sys
 
-BLK = 1024
-SHIFT = 10
+#  Block size (bytes) and shift for the whole layout. Kept at
+#  1024 by default (the fixture geometry every image/tool used
+#  before the 4 KiB milestone); MK_BEFS_BLK overrides it so the
+#  tool can be validated at any power of two before the engine and
+#  the other host tools switch over. Everything below derives from
+#  BLK: btree nodes and inodes occupy one block, streams span
+#  whole blocks, and block_run lengths are block counts.
+BLK = int(os.environ.get("MK_BEFS_BLK", "1024"))
+SHIFT = BLK.bit_length() - 1
 
 #  Multichar constants are big-endian-ordered uint32s on disk via
 #  the endian-neutral int32 fields (packed little-endian here, the
@@ -156,7 +163,7 @@ def btree_node(entries):
     #  key_align(header + all_key_length), values after the lengths.
     n = len(entries)
     keys = b"".join(k for k, _ in entries)
-    node = bytearray(1024)
+    node = bytearray(BLK)
     node[0:28] = (le64(BTREE_NULL) + le64(BTREE_NULL) + le64(BTREE_NULL)
                   + le16(n) + le16(len(keys)))
     node[28:28 + len(keys)] = keys
@@ -167,7 +174,7 @@ def btree_node(entries):
     for _, v in entries:
         node[pos:pos + 8] = le64(v)
         pos += 8
-    if pos > 1024:
+    if pos > BLK:
         raise SystemExit("btree node overflow")
     return bytes(node)
 
@@ -175,9 +182,9 @@ def btree_node(entries):
 def btree_stream(data_type, entries):
     #  bplustree_header at stream offset 0 (one node_size block),
     #  root node at offset node_size.
-    hdr = (le32(BTREE_MAGIC) + le32(1024) + le32(1) + le32(data_type)
-           + le64(1024) + le64(BTREE_NULL) + le64(2048))
-    hdr = hdr + bytes(1024 - len(hdr))
+    hdr = (le32(BTREE_MAGIC) + le32(BLK) + le32(1) + le32(data_type)
+           + le64(BLK) + le64(BTREE_NULL) + le64(2 * BLK))
+    hdr = hdr + bytes(BLK - len(hdr))
     return hdr + btree_node(entries)
 
 
@@ -269,7 +276,10 @@ def build(path, mib):
 
     readme_body = b"Hello from the akernel BeFS volume.\n"
     hello_body = b"Subdir hello from BeFS!\n"
-    fragment_body = bytes((i * 5 + 1) & 0xFF for i in range(2560))
+    #  Two non-adjacent direct runs with a free hole between them:
+    #  body spans 2 blocks + a half-block tail (2560 B at BLK 1024).
+    fragment_len = 2 * BLK + BLK // 2
+    fragment_body = bytes((i * 5 + 1) & 0xFF for i in range(fragment_len))
 
     #  --- btree streams ---
     root_entries = [(b".", root_i), (b"..", root_i),
@@ -308,7 +318,7 @@ def build(path, mib):
     img.put(hello_d, hello_body + bytes(BLK - len(hello_body)))
     img.put(fragment_r1, fragment_body[:BLK])
     img.put(fragment_r1 + 1, fragment_body[BLK:2 * BLK])
-    img.put(fragment_r2, fragment_body[2 * BLK:] + bytes(BLK - 512))
+    img.put(fragment_r2, fragment_body[2 * BLK:] + bytes(BLK // 2))
 
     #  --- inodes ---
     dmode = S_IFDIR | S_STR_INDEX | 0o755
@@ -403,8 +413,11 @@ def superblock(img, num_blocks, root_i, idx_i):
 def verify(buf, num_blocks, used_blocks, root_i, readme_d,
            fragment_r1, fragment_r2, fragment_body, readme_body):
     #  Read-back self-check: superblock magics, bitmap vs used_blocks,
-    #  root inode + btree walk, fixture file bytes.
+    #  root inode + btree walk, fixture file bytes. The block size is
+    #  read from the image's own superblock so the check works at any
+    #  geometry.
     import struct as st
+    bs = st.unpack("<I", buf[512 + 40:512 + 44])[0]
     sb = buf[512:1024]
     assert st.unpack("<I", sb[32:36])[0] == SB_MAGIC1, "sb magic1"
     assert st.unpack("<I", sb[36:40])[0] == SB_FS_LENDIAN, "sb endian"
@@ -413,27 +426,28 @@ def verify(buf, num_blocks, used_blocks, root_i, readme_d,
     assert st.unpack("<Q", sb[48:56])[0] == num_blocks, "num_blocks"
     assert st.unpack("<q", sb[56:64])[0] == used_blocks, "used_blocks"
     num_ags = st.unpack("<I", sb[80:84])[0]
+    ag_shift = st.unpack("<I", sb[76:80])[0]
     #  popcount across every AG bitmap block (1..num_ags)
     popcount = sum(bin(b).count("1")
                    for blk in range(num_ags)
-                   for b in buf[(1 + blk) * BLK:(2 + blk) * BLK])
+                   for b in buf[(1 + blk) * bs:(2 + blk) * bs])
     assert popcount == used_blocks, "bitmap popcount %d != used %d" % (
         popcount, used_blocks)
 
-    node = buf[root_i * BLK:(root_i + 1) * BLK]
+    node = buf[root_i * bs:(root_i + 1) * bs]
     assert st.unpack("<I", node[0:4])[0] == INODE_MAGIC1, "inode magic"
     ino_ag, ino_start, ino_len = st.unpack("<iHH", node[4:12])
-    assert (ino_ag << AG_SHIFT) + ino_start == root_i \
+    assert (ino_ag << ag_shift) + ino_start == root_i \
         and ino_len == 1, "inode_num"
     size = st.unpack("<q", node[208:216])[0]
-    assert size == 2 * BLK, "root stream size"
+    assert size == 2 * bs, "root stream size"
 
     #  root dir btree: header block then leaf node
     run0 = st.unpack("<iHH", node[72:80])
-    hdr = buf[run0[1] * BLK:(run0[1] + 1) * BLK]
+    hdr = buf[run0[1] * bs:(run0[1] + 1) * bs]
     assert st.unpack("<I", hdr[0:4])[0] == BTREE_MAGIC, "btree magic"
-    assert st.unpack("<q", hdr[16:24])[0] == 1024, "root node ptr"
-    leaf = buf[(run0[1] + 1) * BLK:(run0[1] + 2) * BLK]
+    assert st.unpack("<q", hdr[16:24])[0] == bs, "root node ptr"
+    leaf = buf[(run0[1] + 1) * bs:(run0[1] + 2) * bs]
     count = st.unpack("<H", leaf[24:26])[0]
     klen = st.unpack("<H", leaf[26:28])[0]
     keys = leaf[28:28 + klen]
@@ -442,10 +456,10 @@ def verify(buf, num_blocks, used_blocks, root_i, readme_d,
         assert want in keys, "root dir missing %s" % want
     assert count == 6, "root entry count"
 
-    assert buf[readme_d * BLK:readme_d * BLK + len(readme_body)] \
+    assert buf[readme_d * bs:readme_d * bs + len(readme_body)] \
         == readme_body, "README body"
-    frag = (buf[fragment_r1 * BLK:(fragment_r1 + 2) * BLK]
-            + buf[fragment_r2 * BLK:fragment_r2 * BLK + 512])
+    frag = (buf[fragment_r1 * bs:(fragment_r1 + 2) * bs]
+            + buf[fragment_r2 * bs:fragment_r2 * bs + bs // 2])
     assert frag == fragment_body, "FRAGMENT body"
 
 
