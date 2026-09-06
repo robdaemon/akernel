@@ -1,7 +1,6 @@
 with Akernel_User.CLI;
 with Akernel_User.Files;
 with Akernel_User.Syscalls;
-with Ada.Directories;
 with Scripting.Exec;
 with Trinket.Fonts;
 with Trinket.Iconview;
@@ -18,11 +17,8 @@ package body Drawer_App is
    package Widgets renames Trinket.Widgets;
    package IV renames Trinket.Iconview;
    package CLI renames Akernel_User.CLI;
-   package Dirs renames Ada.Directories;
    package Files renames Akernel_User.Files;
    package Images renames Trinket.Images;
-
-   use type Dirs.File_Kind;
 
    Bureau_EP : constant U64 := 3;  --  uniform ABI handle
 
@@ -145,71 +141,73 @@ package body Drawer_App is
    --  fault isolation: one odd path must never truncate the
    --  listing (fileman's a-directories burn).
    procedure Scan_Pass (Dirs_Only : Boolean; Sniffed : in out Natural) is
-      Search : Dirs.Search_Type;
-      Ent    : Dirs.Directory_Entry_Type;
+      Idx  : U64 := 0;
+      E_Nm : String (1 .. 256);
+      E_L  : Natural;
+      E_D  : Boolean;
+      E_S  : U64;
+      St   : U64;
    begin
-      Dirs.Start_Search (Search, Cur, "*");
-      while Dirs.More_Entries (Search) loop
+      --  Enumerate via Files.Read_Dir (M94): it returns each
+      --  entry's is-directory flag and size for free, so no
+      --  per-entry Stat is needed. (Ada.Directories.Kind routes
+      --  through libc stat(), ~100 ms+ per call under boot load —
+      --  the pre-open scan of Sys: root took ~3.7 s.) Per-entry
+      --  fault isolation stays (fileman's a-directories burn).
+      loop
+         St := Files.Read_Dir (Cur, Idx, E_Nm, E_L, E_D, E_S);
+         exit when St /= Files.Status_Ok;
+         Idx := Idx + 1;
          begin
-            Dirs.Get_Next_Entry (Search, Ent);
-            declare
-               Leaf : constant String := Dirs.Simple_Name (Ent);
-               Full : constant String := CLI.Join_Path (Cur, Leaf);
-               Is_D : constant Boolean :=
-                 Dirs.Kind (Full) = Dirs.Directory;
-            begin
-               if Is_D = Dirs_Only and then N_Entries < Max_Entries
-               then
-                  N_Entries := N_Entries + 1;
-                  declare
-                     E : Entry_Rec renames Entries (N_Entries);
-                     N : constant Natural :=
-                       Natural'Min (Leaf'Length, E.Name'Length);
-                     Icon_Path : constant String :=
-                       (if Sniffed <= Max_Sniff then Icon_Attr (Full)
-                        else "");
-                     St : Images.Status;
-                  begin
-                     E.Len := N;
-                     if N > 0 then
-                        E.Name (1 .. N) :=
-                          Leaf (Leaf'First .. Leaf'First + N - 1);
+            if E_D = Dirs_Only and then N_Entries < Max_Entries then
+               N_Entries := N_Entries + 1;
+               declare
+                  E         : Entry_Rec renames Entries (N_Entries);
+                  Leaf      : constant String := E_Nm (1 .. E_L);
+                  Full      : constant String :=
+                    CLI.Join_Path (Cur, Leaf);
+                  N         : constant Natural :=
+                    Natural'Min (Leaf'Length, E.Name'Length);
+                  Icon_Path : constant String :=
+                    (if Sniffed <= Max_Sniff then Icon_Attr (Full)
+                     else "");
+                  ISt       : Images.Status;
+               begin
+                  E.Len := N;
+                  if N > 0 then
+                     E.Name (1 .. N) :=
+                       Leaf (Leaf'First .. Leaf'First + N - 1);
+                  end if;
+                  E.Is_Dir := E_D;
+                  E.Is_Tool := False;
+                  if Icon_Path'Length > 0 then
+                     Images.Load
+                       (Icon_Path, Customs (N_Entries), ISt);
+                  end if;
+                  if Images.Loaded (Customs (N_Entries)) then
+                     IV.Add_Item
+                       (Icons.all, Leaf,
+                        Customs (N_Entries)'Access);
+                  elsif E_D then
+                     IV.Add_Item
+                       (Icons.all, Leaf, Def_Drawer'Access);
+                  else
+                     if Sniffed < Max_Sniff then
+                        Sniffed := Sniffed + 1;
+                        E.Is_Tool := Is_Elf (Full);
                      end if;
-                     E.Is_Dir := Is_D;
-                     E.Is_Tool := False;
-                     if Icon_Path'Length > 0 then
-                        Images.Load
-                          (Icon_Path, Customs (N_Entries), St);
-                     end if;
-                     if Images.Loaded (Customs (N_Entries)) then
-                        IV.Add_Item
-                          (Icons.all, Leaf,
-                           Customs (N_Entries)'Access);
-                     elsif Is_D then
-                        IV.Add_Item
-                          (Icons.all, Leaf, Def_Drawer'Access);
-                     else
-                        if Sniffed < Max_Sniff then
-                           Sniffed := Sniffed + 1;
-                           E.Is_Tool := Is_Elf (Full);
-                        end if;
-                        IV.Add_Item
-                          (Icons.all, Leaf,
-                           (if E.Is_Tool then Def_Tool'Access
-                            else Def_File'Access));
-                     end if;
-                  end;
-               end if;
-            end;
+                     IV.Add_Item
+                       (Icons.all, Leaf,
+                        (if E.Is_Tool then Def_Tool'Access
+                         else Def_File'Access));
+                  end if;
+               end;
+            end if;
          exception
             when others =>
                null;   --  one odd entry, no icon cell
          end;
       end loop;
-      Dirs.End_Search (Search);
-   exception
-      when Dirs.Name_Error | Dirs.Use_Error =>
-         null;
    end Scan_Pass;
 
    --  Geometry persistence: DRAWER:GEOM = "WxH" (content size)
