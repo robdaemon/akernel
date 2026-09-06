@@ -13,6 +13,19 @@ repository.
 
 ## Recently shipped
 
+- **Fileman sorted listings** (commit above): rows are buffered
+  during the pumped read and committed folders-first, then by
+  name with a comparator matching the volume's case behavior —
+  BeFS byte order, FAT/initrd dictionary (ASCII-fold) order. New
+  append-only op Op_Volume_Case = 27 exposes each mount's
+  case-insensitive flag (answered by the fileserver from its mount
+  table; previously client-invisible). A pane fills once its
+  directory is fully enumerated (the pump keeps the UI live;
+  'Reading...' status while a large dir is pending — the accepted
+  fill-after-read tradeoff); lister cap Max_Rows = 512. Verified
+  on the BeFS Sys: root (folders C..Tests then EMPTY/FRAGMENT/
+  README, ci=FALSE correct). Gates: make test 1874 PASS / 0 FAIL.
+
 - **Fileman row-icon off-by-one** (commit above `2af66d8` line):
   Phase B's Add_Row computed the target row index (Item_Count)
   before Add_Item ran, so every icon attached to the row above its
