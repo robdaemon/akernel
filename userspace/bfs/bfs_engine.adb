@@ -201,6 +201,11 @@ package body Bfs_Engine is
    function Get_Block (Num : U64) return Natural is
       Free : Natural := Cache_Slots;
    begin
+      --  Bounds guard: a bogus run/link (corrupt tree) must not
+      --  turn into an arbitrary-sector read at the block endpoint.
+      if Num_Blocks > 0 and then Num >= Num_Blocks then
+         return Cache_Slots;
+      end if;
       for S in 0 .. Cache_Slots - 1 loop
          if Cache_Num (S) = Num and then Cache_Refs (S) > 0 then
             Cache_Refs (S) := Cache_Refs (S) + 1;
@@ -1072,6 +1077,8 @@ package body Bfs_Engine is
       Key_Pos  : U64;   --  byte offset of current key in keys area
       Lens_Off : U64;   --  key_lengths area offset
       Vals_Off : U64;   --  values area offset
+      Hops     : U64 := 0;  --  right-link hops this scan (loop guard)
+      Entries  : U64 := 0;  --  entries yielded this scan (loop guard)
       Valid    : Boolean;
    end record;
 
@@ -1145,13 +1152,26 @@ package body Bfs_Engine is
            (U64 (Hdr (16 + U64 (I))), 8 * I);
       end loop;
       --  Descend to the leftmost leaf (overflow link -1 = leaf).
-      loop
-         if not Load_Node (It, Off) then
-            return;
-         end if;
-         exit when It_LE64 (It, 16) = Btree_Null;
-         Off := It_LE64 (It, It.Vals_Off);  --  first child
-      end loop;
+      declare
+         Depth : Natural := 0;
+      begin
+         loop
+            --  Loop guard: a cyclic internal-node pointer would
+            --  otherwise spin here forever (trees here are at
+            --  most depth 4; 8 is a generous bound).
+            Depth := Depth + 1;
+            if Depth > 8 then
+               Akernel_User.Console.Put_Line
+                 ("bfs: btree descent corrupt (child cycle)");
+               return;
+            end if;
+            if not Load_Node (It, Off) then
+               return;
+            end if;
+            exit when It_LE64 (It, 16) = Btree_Null;
+            Off := It_LE64 (It, It.Vals_Off);  --  first child
+         end loop;
+      end;
       It.Valid := True;
       Ok := True;
    end Tree_Rewind;
@@ -1168,20 +1188,49 @@ package body Bfs_Engine is
       if not It.Valid then
          return False;
       end if;
-      if It.Key_Idx >= It.Count then
+      --  Skip to the next real entry: an exhausted node follows
+      --  its right link; emptied nodes (deletes never merge) are
+      --  hopped over, so a scan never yields garbage from an empty
+      --  leaf's stale key/value area.
+      loop
+         exit when It.Key_Idx < It.Count;
          --  Follow the right link.
          declare
             Right : constant U64 := It_LE64 (It, 8);
          begin
             if Right = Btree_Null then
+               It.Valid := False;
+               return False;
+            end if;
+            --  Loop guard: the leaf chain must be acyclic (a stale
+            --  right link after heavy split/delete churn once sent
+            --  full-chain scans spinning forever). 10000 hops is
+            --  far past any depth-3 tree here (~3k leaves max).
+            It.Hops := It.Hops + 1;
+            if It.Hops > 10_000 then
+               Akernel_User.Console.Put_Line
+                 ("bfs: btree leaf chain corrupt (right-link loop)");
+               It.Valid := False;
                return False;
             end if;
             if not Load_Node (It, Right) then
+               It.Valid := False;
                return False;
             end if;
          end;
-      end if;
+      end loop;
       KLen := It_LE16 (It, It.Lens_Off + 2 * It.Key_Idx);
+      It.Entries := It.Entries + 1;
+      if It.Entries > 100_000 then
+         --  Loop guard: a node with a corrupt key-count makes a
+         --  scan grind through garbage entries (per-entry block
+         --  reads) instead of terminating. Far past any legitimate
+         --  tree here (depth-3, ~3k leaves x 64 entries max).
+         Akernel_User.Console.Put_Line
+           ("bfs: btree scan excessive (corrupt node?)");
+         It.Valid := False;
+         return False;
+      end if;
       Inode_Block := It_LE64 (It, It.Vals_Off + 8 * It.Key_Idx);
       for I in 0 .. KLen - 1 loop
          if I < U64 (Name'Length) then

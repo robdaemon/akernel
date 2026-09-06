@@ -330,7 +330,7 @@ procedure Fuzz is
       --  and the next loop trip immediately retries the reap.
       declare
          use Ada.Real_Time;
-         Deadline : constant Time := Clock + Seconds (10);
+         Deadline : constant Time := Clock + Seconds (20);
       begin
          while not Done and then Clock <= Deadline loop
             Status :=
@@ -607,7 +607,8 @@ begin
       Tries         : Natural := 0;
       Match         : Boolean;
 
-      --  m82c/m82e: BD1 BeFS volume tests.  These live in their own
+      --  m82c/m82e (M93 swap): the BeFS volume tests now run on
+      --  BD0/Sys: (BeFS is the system volume). These live in their own
       --  procedure so their locals do NOT inflate this block's
       --  static frame — sibling declare-block locals accumulate
       --  in the parent frame, and the old 12-page user stack (hard
@@ -627,19 +628,19 @@ begin
          --  Stat/read through file server -> Bfs_Engine ->
          --  block driver.  The mount is pushed asynchronously
          --  by init; wait for it.
-         Check (Await_Volume ("Befs:README.TXT"),
+         Check (Await_Volume ("Sys:README.TXT"),
                 "bfs volume appears");
-         Status := Akernel_User.Files.Stat ("BD1:README.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD0:README.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 36,
                 "bfs stat readme size");
 
-         Status := Akernel_User.Files.Stat ("Befs:README.TXT", Size);
+         Status := Akernel_User.Files.Stat ("Sys:README.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs volume label resolves");
 
          Status := Akernel_User.Files.Read
-           ("BD1:README.TXT", 0, Buf'Address, 64, Count);
+           ("BD0:README.TXT", 0, Buf'Address, 64, Count);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Count = 36;
          declare
@@ -658,13 +659,13 @@ begin
          --  FRAGMENT.BIN: byte i = (i*5+1) mod 256, 2560 bytes —
          --  two direct runs separated by a deliberate free hole,
          --  so reads must cross the run boundary (mkbefs fixture).
-         Status := Akernel_User.Files.Stat ("BD1:FRAGMENT.BIN", Size);
+         Status := Akernel_User.Files.Stat ("BD0:FRAGMENT.BIN", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 2560,
                 "bfs stat fragment size");
 
          Status := Akernel_User.Files.Read
-           ("BD1:FRAGMENT.BIN", 0, Big_Buf'Address, 512, Count);
+           ("BD0:FRAGMENT.BIN", 0, Big_Buf'Address, 512, Count);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Count = 512;
          for J in 0 .. 511 loop
@@ -677,7 +678,7 @@ begin
          --  Read spanning the hole: offset 2048 lands in the
          --  second run, 1000 straddles run1 -> run2.
          Status := Akernel_User.Files.Read
-           ("BD1:FRAGMENT.BIN", 1000, Big_Buf'Address, 256, Count);
+           ("BD0:FRAGMENT.BIN", 1000, Big_Buf'Address, 256, Count);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Count = 256;
          for J in 0 .. 255 loop
@@ -688,7 +689,7 @@ begin
          Check (Match, "bfs fragment hole-crossing read ok");
 
          Status := Akernel_User.Files.Read
-           ("BD1:FRAGMENT.BIN", 2048, Big_Buf'Address, 512, Count);
+           ("BD0:FRAGMENT.BIN", 2048, Big_Buf'Address, 512, Count);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Count = 512;
          for J in 0 .. 511 loop
@@ -700,35 +701,35 @@ begin
 
          --  Read at EOF must come back empty, past EOF rejected.
          Status := Akernel_User.Files.Read
-           ("BD1:FRAGMENT.BIN", 2560, Buf'Address, 64, Count);
+           ("BD0:FRAGMENT.BIN", 2560, Buf'Address, 64, Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = 0,
                 "bfs read at eof empty");
 
-         Status := Akernel_User.Files.Stat ("BD1:EMPTY.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD0:EMPTY.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 0,
                 "bfs empty file size");
 
          --  Case sensitivity: BeFS is case-sensitive, so a
          --  lowercase probe must NOT resolve (contrast with FAT32).
-         Status := Akernel_User.Files.Stat ("BD1:readme.txt", Size);
+         Status := Akernel_User.Files.Stat ("BD0:readme.txt", Size);
          Check (Status = Akernel_User.Files.Status_Not_Found,
                 "bfs names case-sensitive");
 
-         Status := Akernel_User.Files.Stat ("BD1:NOSUCH.BIN", Size);
+         Status := Akernel_User.Files.Stat ("BD0:NOSUCH.BIN", Size);
          Check (Status = Akernel_User.Files.Status_Not_Found,
                 "bfs unknown file rejected");
 
          --  Nested path through the SUBDIR btree.
          Status := Akernel_User.Files.Stat
-           ("BD1:SUBDIR/HELLO.TXT", Size);
+           ("BD0:SUBDIR/HELLO.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 24,
                 "bfs subdir stat ok");
 
          Status := Akernel_User.Files.Read
-           ("BD1:SUBDIR/HELLO.TXT", 0, Buf'Address, 64, Count);
+           ("BD0:SUBDIR/HELLO.TXT", 0, Buf'Address, 64, Count);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Count = 24;
          declare
@@ -755,7 +756,7 @@ begin
          begin
             for Index in 0 .. 40 loop
                Status := Akernel_User.Files.Read_Dir
-                 ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+                 ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
                exit when Status /= Akernel_User.Files.Status_Ok;
                if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT" then
                   Check (not Ent_Dir and then Ent_Sz = 36,
@@ -777,7 +778,7 @@ begin
 
          --  Directory open is rejected, directory stat answers
          --  is-dir (wire contract: stat succeeds on dirs).
-         Status := Akernel_User.Files.Open ("BD1:SUBDIR", Size);
+         Status := Akernel_User.Files.Open ("BD0:SUBDIR", Size);
          Check (Status = Akernel_User.Files.Status_Bad_Args,
                 "bfs open dir rejected");
 
@@ -786,7 +787,7 @@ begin
             Dir_D  : Boolean;
          begin
             Status := Akernel_User.Files.Stat_Ex
-              ("BD1:SUBDIR", Size, WD, WT, Dir_D);
+              ("BD0:SUBDIR", Size, WD, WT, Dir_D);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Dir_D,
                    "bfs dir stat reports is-dir");
@@ -804,34 +805,34 @@ begin
             Block_T     : U64;
          begin
             Status := Akernel_User.Files.Volume_Info
-              ("BD1:", Total_T, Free_Before, Block_T);
+              ("BD0:", Total_T, Free_Before, Block_T);
 
             --  Cleanup of possible leftovers (statuses ignored).
-            Status := Akernel_User.Files.Delete ("BD1:AKFILE.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:AKFILE.TXT");
             Status := Akernel_User.Files.Delete
-              ("BD1:MKTEST/INNER.TXT");
-            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+              ("BD0:MKTEST/INNER.TXT");
+            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
             Status := Akernel_User.Files.Delete
-              ("BD1:RENDIR/MOVED.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:REN.B");
-            Status := Akernel_User.Files.Rmdir ("BD1:RENDIR");
+              ("BD0:RENDIR/MOVED.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:REN.B");
+            Status := Akernel_User.Files.Rmdir ("BD0:RENDIR");
             Status := Akernel_User.Files.Delete
-              ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT");
-            Status := Akernel_User.Files.Rmdir ("BD1:QLONGD/QDEEPD");
-            Status := Akernel_User.Files.Rmdir ("BD1:QLONGD");
-            Status := Akernel_User.Files.Delete ("BD1:LIVE1.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVE2.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:NOTLIVE.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO0.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO1.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO2.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO3.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO4.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO5.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO6.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO7.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO8.TXT");
-            Status := Akernel_User.Files.Delete ("BD1:LIVEO9.TXT");
+              ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT");
+            Status := Akernel_User.Files.Rmdir ("BD0:QLONGD/QDEEPD");
+            Status := Akernel_User.Files.Rmdir ("BD0:QLONGD");
+            Status := Akernel_User.Files.Delete ("BD0:LIVE1.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVE2.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:NOTLIVE.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO0.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO1.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO2.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO3.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO4.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO5.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO6.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO7.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO8.TXT");
+            Status := Akernel_User.Files.Delete ("BD0:LIVEO9.TXT");
 
             --  Create-by-write, then read back.
             declare
@@ -843,18 +844,18 @@ begin
                end loop;
             end;
             Status := Akernel_User.Files.Write
-              ("BD1:AKFILE.TXT", 0, Buf'Address, 7, Count);
+              ("BD0:AKFILE.TXT", 0, Buf'Address, 7, Count);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Count = 7,
                    "bfs write creates file");
 
-            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Size = 7,
                    "bfs created file stats");
 
             Status := Akernel_User.Files.Read
-              ("BD1:AKFILE.TXT", 0, Buf'Address, 16, Count);
+              ("BD0:AKFILE.TXT", 0, Buf'Address, 16, Count);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = 7;
             declare
@@ -870,37 +871,37 @@ begin
 
             --  Extend at EOF (append into the same block).
             Status := Akernel_User.Files.Write
-              ("BD1:AKFILE.TXT", 7, Buf'Address, 7, Count);
+              ("BD0:AKFILE.TXT", 7, Buf'Address, 7, Count);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Count = 7,
                    "bfs append ok");
-            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Size = 14,
                    "bfs appended size");
 
             --  Sparse write rejected (offset past EOF).
             Status := Akernel_User.Files.Write
-              ("BD1:AKFILE.TXT", 100, Buf'Address, 4, Count);
+              ("BD0:AKFILE.TXT", 100, Buf'Address, 4, Count);
             Check (Status = Akernel_User.Files.Status_Out_Of_Range,
                    "bfs sparse write rejected");
 
             --  Write into a missing directory rejected.
             Status := Akernel_User.Files.Write
-              ("BD1:NOSUCH/F.TXT", 0, Buf'Address, 4, Count);
+              ("BD0:NOSUCH/F.TXT", 0, Buf'Address, 4, Count);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs write with bad parent rejected");
 
             --  Mkdir, nested file, readdir, rmdir lifecycle.
-            Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
+            Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs mkdir ok");
-            Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
+            Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "bfs mkdir existing rejected");
 
             Status := Akernel_User.Files.Write
-              ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 7, Count);
+              ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 7, Count);
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs nested write ok");
 
@@ -911,7 +912,7 @@ begin
                Ent_Sz  : U64;
             begin
                Status := Akernel_User.Files.Read_Dir
-                 ("BD1:MKTEST", 0, Ent, Ent_L, Ent_Dir, Ent_Sz);
+                 ("BD0:MKTEST", 0, Ent, Ent_L, Ent_Dir, Ent_Sz);
                Check (Status = Akernel_User.Files.Status_Ok
                       and then Ent_L = 9
                       and then Ent (1 .. 9) = "INNER.TXT"
@@ -919,46 +920,46 @@ begin
                       "bfs mkdir entry visible in readdir");
             end;
 
-            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "bfs rmdir non-empty rejected");
 
             Status := Akernel_User.Files.Delete
-              ("BD1:MKTEST/INNER.TXT");
+              ("BD0:MKTEST/INNER.TXT");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs delete ok");
             Status := Akernel_User.Files.Stat
-              ("BD1:MKTEST/INNER.TXT", Size);
+              ("BD0:MKTEST/INNER.TXT", Size);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs deleted file gone");
 
-            Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs rmdir empty ok");
 
             --  Rename in place, then move across directories.
             Status := Akernel_User.Files.Rename
-              ("BD1:AKFILE.TXT", "BD1:REN.B");
+              ("BD0:AKFILE.TXT", "BD0:REN.B");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs rename ok");
-            Status := Akernel_User.Files.Stat ("BD1:AKFILE.TXT", Size);
+            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs rename source gone");
-            Status := Akernel_User.Files.Stat ("BD1:REN.B", Size);
+            Status := Akernel_User.Files.Stat ("BD0:REN.B", Size);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Size = 14,
                    "bfs rename target keeps data");
 
-            Status := Akernel_User.Files.Mkdir ("BD1:RENDIR");
+            Status := Akernel_User.Files.Mkdir ("BD0:RENDIR");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs mkdir for move ok");
             Status := Akernel_User.Files.Rename
-              ("BD1:REN.B", "BD1:RENDIR/MOVED.TXT");
+              ("BD0:REN.B", "BD0:RENDIR/MOVED.TXT");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs move across dirs ok");
 
             Status := Akernel_User.Files.Read
-              ("BD1:RENDIR/MOVED.TXT", 0, Buf'Address, 16, Count);
+              ("BD0:RENDIR/MOVED.TXT", 0, Buf'Address, 16, Count);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = 14;
             declare
@@ -974,27 +975,27 @@ begin
 
             --  A directory cannot move into its own subtree.
             Status := Akernel_User.Files.Rename
-              ("BD1:RENDIR", "BD1:RENDIR/SUB");
+              ("BD0:RENDIR", "BD0:RENDIR/SUB");
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "bfs rename into own subtree rejected");
 
             --  Truncate to zero.
             Status := Akernel_User.Files.Truncate
-              ("BD1:RENDIR/MOVED.TXT");
+              ("BD0:RENDIR/MOVED.TXT");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs truncate ok");
             Status := Akernel_User.Files.Stat
-              ("BD1:RENDIR/MOVED.TXT", Size);
+              ("BD0:RENDIR/MOVED.TXT", Size);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Size = 0,
                    "bfs truncated size zero");
 
             --  Final cleanup: the volume returns to fixture state.
             Status := Akernel_User.Files.Delete
-              ("BD1:RENDIR/MOVED.TXT");
+              ("BD0:RENDIR/MOVED.TXT");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs moved file deleted");
-            Status := Akernel_User.Files.Rmdir ("BD1:RENDIR");
+            Status := Akernel_User.Files.Rmdir ("BD0:RENDIR");
             Check (Status = Akernel_User.Files.Status_Ok,
                    "bfs rendir removed");
 
@@ -1005,7 +1006,7 @@ begin
                Block2 : U64;
             begin
                Status := Akernel_User.Files.Volume_Info
-                 ("BD1:", Total2, Free2, Block2);
+                 ("BD0:", Total2, Free2, Block2);
                Check (Status = Akernel_User.Files.Status_Ok
                       and then Free_Before /= 0
                       and then Free2 = Free_Before,
@@ -1022,7 +1023,7 @@ begin
             begin
                for Index in 0 .. 40 loop
                   Status := Akernel_User.Files.Read_Dir
-                    ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+                    ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
                   exit when Status /= Akernel_User.Files.Status_Ok;
                   if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT"
                   then
@@ -1044,18 +1045,36 @@ begin
 
          --  One-shot queries (m82f): stateless Op_Query over the
          --  name index leaf chain with per-inode predicate eval.
+         --  M93: Sys:'s staged tree is NOT pre-indexed (mkbefs
+         --  staging leaves the name index empty), so the checks
+         --  run against a small RUNTIME population created here —
+         --  same sorted shape as the old fixture, so the ordering
+         --  expectations carry over verbatim. Cleaned up below.
          declare
             QP   : String (1 .. 24);
             QL   : Natural;
             QSz  : U64;
             QDir : Boolean;
 
+            procedure Put_Text (Path : String; Text : String) is
+            begin
+               for I in 0 .. Text'Length - 1 loop
+                  Buf (I) := Interfaces.Unsigned_8
+                    (Character'Pos (Text (Text'First + I)));
+               end loop;
+               Status := Akernel_User.Files.Write
+                 (Path, 0, Buf'Address, U64 (Text'Length), Count);
+               Check (Status = Akernel_User.Files.Status_Ok
+                      and then Count = U64 (Text'Length),
+                      "bfs query scratch write " & Path);
+            end Put_Text;
+
             procedure Q_Check (Pred : String; Idx : U64;
                                Want_Path : String; Want_Size : U64;
                                Msg : String) is
             begin
                Status := Akernel_User.Files.Query
-                 ("BD1:", Pred, Idx, QP, QL, QSz, QDir);
+                 ("BD0:", Pred, Idx, QP, QL, QSz, QDir);
                Check (Status = Akernel_User.Files.Status_Ok
                       and then QL = Want_Path'Length
                       and then QP (1 .. QL) = Want_Path
@@ -1067,56 +1086,84 @@ begin
                               Msg : String) is
             begin
                Status := Akernel_User.Files.Query
-                 ("BD1:", Pred, Idx, QP, QL, QSz, QDir);
+                 ("BD0:", Pred, Idx, QP, QL, QSz, QDir);
                Check (Status = Akernel_User.Files.Status_Not_Found,
                       Msg);
             end Q_None;
          begin
+            --  Scratch population (sorted keys: QEMPTY.TXT <
+            --  QFRAG.BIN < QHELLO.TXT (in QZDIR/) < QREADME.TXT
+            --  < QZDIR).
+            Put_Text ("BD0:QREADME.TXT",
+                      "Hello from the akernel BeFS volume." & ASCII.LF);
+            Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
+            Status := Akernel_User.Files.Write
+              ("BD0:QEMPTY.TXT", 0, Buf'Address, 1, Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Count = 1,
+                   "bfs query scratch created");
+            Status := Akernel_User.Files.Truncate ("BD0:QEMPTY.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch emptied");
+            for I in 0 .. 9 loop
+               Buf (I) := Interfaces.Unsigned_8 (I * 5 + 1);
+            end loop;
+            Status := Akernel_User.Files.Write
+              ("BD0:QFRAG.BIN", 0, Buf'Address, 10, Count);
+            Check (Status = Akernel_User.Files.Status_Ok
+                   and then Count = 10,
+                   "bfs query scratch frag created");
+            Status := Akernel_User.Files.Mkdir ("BD0:QZDIR");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch dir created");
+            Put_Text ("BD0:QZDIR/QHELLO.TXT",
+                      "Subdir hello from BeFS!" & ASCII.LF);
+
             --  Exact name.
-            Q_Check ("name==""README.TXT""", 0, "README.TXT", 36,
+            Q_Check ("name==""QREADME.TXT""", 0, "QREADME.TXT", 36,
                      "bfs query exact name");
-            Q_None ("name==""README.TXT""", 1,
+            Q_None ("name==""QREADME.TXT""", 1,
                     "bfs query exact name single match");
 
             --  Glob across directories: the name index leaf chain
-            --  is sorted, so matches come EMPTY.TXT, HELLO.TXT
-            --  (in SUBDIR), README.TXT.
-            Q_Check ("name==""*.TXT""", 0, "EMPTY.TXT", 0,
+            --  is sorted, so matches come QEMPTY.TXT, QZDIR/
+            --  QHELLO.TXT (in QZDIR), QREADME.TXT.
+            Q_Check ("name==""*.TXT""", 0, "QEMPTY.TXT", 0,
                      "bfs query glob first");
-            Q_Check ("name==""*.TXT""", 1, "SUBDIR/HELLO.TXT", 24,
+            Q_Check ("name==""*.TXT""", 1, "QZDIR/QHELLO.TXT", 24,
                      "bfs query glob crosses dirs");
-            Q_Check ("name==""*.TXT""", 2, "README.TXT", 36,
+            Q_Check ("name==""*.TXT""", 2, "QREADME.TXT", 36,
                      "bfs query glob third");
             Q_None ("name==""*.TXT""", 3,
                     "bfs query glob exhausted");
 
             --  Conjunction with a numeric size term.
             Q_Check ("size>0 && name==""*.TXT""", 0,
-                     "SUBDIR/HELLO.TXT", 24,
+                     "QZDIR/QHELLO.TXT", 24,
                      "bfs query size+glob first");
-            Q_Check ("size>0 && name==""*.TXT""", 1, "README.TXT", 36,
+            Q_Check ("size>0 && name==""*.TXT""", 1, "QREADME.TXT", 36,
                      "bfs query size+glob second");
             Q_None ("size>0 && name==""*.TXT""", 2,
                     "bfs query size+glob exhausted");
 
-            --  Size range / negation / parens.
-            Q_Check ("size>=2560", 0, "FRAGMENT.BIN", 2560,
-                     "bfs query size range");
-            Q_Check ("!(name==""*.TXT"")", 0, "FRAGMENT.BIN", 2560,
+            --  Size equality / negation / parens (a dedicated
+            --  multi-block size file needs nothing here: >0 and
+            --  == exercise the numeric term).
+            Q_Check ("size==10", 0, "QFRAG.BIN", 10,
+                     "bfs query size equality");
+            Q_Check ("!(name==""*.TXT"")", 0, "QFRAG.BIN", 10,
                      "bfs query negation");
-            Q_Check ("name==""EMPTY.TXT"" || name==""SUBDIR""", 0,
-                     "EMPTY.TXT", 0, "bfs query or");
+            Q_Check ("name==""QEMPTY.TXT"" || name==""QZDIR""", 0,
+                     "QEMPTY.TXT", 0, "bfs query or");
 
-            --  Arbitrary attribute terms (m82d small_data).
-            Q_Check ("BEOS:TYPE==""text/plain""", 0, "README.TXT", 36,
-                     "bfs query attr term");
-            Q_Check ("META:comment==""fixture*""", 0, "README.TXT", 36,
-                     "bfs query attr glob");
+            --  Attribute terms on freshly written attrs are
+            --  covered in Attr_Write_Tests (query over the
+            --  runtime FZATTR.TXT).
 
-            --  last_modified in seconds since epoch (fixture
-            --  times are the 2025 epoch): all five indexed
-            --  entries match, then exhaustion.
-            Q_Check ("last_modified>0", 0, "EMPTY.TXT", 0,
+            --  last_modified in seconds since epoch (the runtime
+            --  files carry now-times): all five indexed entries
+            --  match, then exhaustion.
+            Q_Check ("last_modified>0", 0, "QEMPTY.TXT", 0,
                      "bfs query mtime first");
             Q_None ("last_modified>0", 5,
                     "bfs query mtime exhausted");
@@ -1125,22 +1172,39 @@ begin
             Q_None ("name==""NOSUCH*""", 0,
                     "bfs query no match");
             Status := Akernel_User.Files.Query
-              ("BD1:", "==", 0, QP, QL, QSz, QDir);
+              ("BD0:", "==", 0, QP, QL, QSz, QDir);
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "bfs query parse error rejected");
             Status := Akernel_User.Files.Query
-              ("BD0:", "name==""*""", 0, QP, QL, QSz, QDir);
+              ("BD1:", "name==""*""", 0, QP, QL, QSz, QDir);
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "fat query rejected");
 
             --  The C: command end-to-end (exit codes only; the
             --  listing itself is covered by the checks above).
-            Run_Command ("Sys:C/Query", "BD1 name==""*.TXT""", 0,
+            Run_Command ("Sys:C/Query", "BD0 name==""*.TXT""", 0,
                          "query command lists matches");
-             Run_Command ("Sys:C/Query", "BD1 ==", 10,
+             Run_Command ("Sys:C/Query", "BD0 ==", 10,
                           "query command rejects bad predicate");
 
-             --  Long paths (m82g): the result path rides back in
+            --  Cleanup: the volume returns to its staged state.
+            Status := Akernel_User.Files.Delete
+              ("BD0:QZDIR/QHELLO.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch hello deleted");
+            Status := Akernel_User.Files.Rmdir ("BD0:QZDIR");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch dir removed");
+            Status := Akernel_User.Files.Delete ("BD0:QREADME.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch readme deleted");
+            Status := Akernel_User.Files.Delete ("BD0:QFRAG.BIN");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch frag deleted");
+            Status := Akernel_User.Files.Delete ("BD0:QEMPTY.TXT");
+            Check (Status = Akernel_User.Files.Status_Ok,
+                   "bfs query scratch empty deleted");
+            --  Long paths (m82g): the result path rides back in
              --  the client buffer, so paths beyond 24 chars
              --  round-trip (26 chars here — the 30-char qualified
              --  form still fits the 32-char request wire limit).
@@ -1148,11 +1212,11 @@ begin
                 QP2 : String (1 .. 64);
                 QL2 : Natural;
              begin
-                Status := Akernel_User.Files.Mkdir ("BD1:QLONGD");
+                Status := Akernel_User.Files.Mkdir ("BD0:QLONGD");
                 Check (Status = Akernel_User.Files.Status_Ok,
                        "bfs long path dir created");
                 Status := Akernel_User.Files.Mkdir
-                  ("BD1:QLONGD/QDEEPD");
+                  ("BD0:QLONGD/QDEEPD");
                 Check (Status = Akernel_User.Files.Status_Ok,
                        "bfs long path nested dir created");
                 declare
@@ -1164,13 +1228,13 @@ begin
                    end loop;
                 end;
                 Status := Akernel_User.Files.Write
-                  ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT", 0,
+                  ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT", 0,
                    Buf'Address, 7, Count);
                 Check (Status = Akernel_User.Files.Status_Ok
                        and then Count = 7,
                        "bfs long path file written");
                 Status := Akernel_User.Files.Query
-                  ("BD1:", "name==""DEEPFILE.TXT""", 0, QP2, QL2,
+                  ("BD0:", "name==""DEEPFILE.TXT""", 0, QP2, QL2,
                    QSz, QDir);
                 Check (Status = Akernel_User.Files.Status_Ok
                        and then QL2 = 26
@@ -1179,14 +1243,14 @@ begin
                        and then QSz = 7,
                        "bfs query long path via buffer");
                 Status := Akernel_User.Files.Delete
-                  ("BD1:QLONGD/QDEEPD/DEEPFILE.TXT");
+                  ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT");
                 Check (Status = Akernel_User.Files.Status_Ok,
                        "bfs long path file deleted");
                 Status := Akernel_User.Files.Rmdir
-                  ("BD1:QLONGD/QDEEPD");
+                  ("BD0:QLONGD/QDEEPD");
                 Check (Status = Akernel_User.Files.Status_Ok,
                        "bfs long path nested dir removed");
-                Status := Akernel_User.Files.Rmdir ("BD1:QLONGD");
+                Status := Akernel_User.Files.Rmdir ("BD0:QLONGD");
                 Check (Status = Akernel_User.Files.Status_Ok,
                        "bfs long path dir removed");
              end;
@@ -1202,9 +1266,9 @@ begin
             Block : U64;
          begin
             Status := Akernel_User.Files.Volume_Info
-              ("BD1:", Total, Free, Block);
+              ("BD0:", Total, Free, Block);
             Check (Status = Akernel_User.Files.Status_Ok
-                   and then Total = 8192 * 1024
+                   and then Total = 262144 * 1024
                    and then Block = 1024
                    and then Free < Total,
                    "bfs volume info ok");
@@ -1220,14 +1284,14 @@ begin
             ASize  : U64;
          begin
             Status := Akernel_User.Files.Attr_List
-              ("BD1:README.TXT", 0, AN, AN_L, AType, ASize);
+              ("BD0:README.TXT", 0, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then AN_L = 9 and then AN (1 .. 9) = "BEOS:TYPE"
                    and then AType = 16#4D49_4D53# and then ASize = 10,
                    "bfs attr list first entry");
 
             Status := Akernel_User.Files.Attr_List
-              ("BD1:README.TXT", 1, AN, AN_L, AType, ASize);
+              ("BD0:README.TXT", 1, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then AN_L = 12
                    and then AN (1 .. 12) = "META:comment"
@@ -1235,13 +1299,13 @@ begin
                    "bfs attr list second entry");
 
             Status := Akernel_User.Files.Attr_List
-              ("BD1:README.TXT", 2, AN, AN_L, AType, ASize);
+              ("BD0:README.TXT", 2, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs attr list ends");
 
             --  The root inode carries be:volume_id ('ULLG').
             Status := Akernel_User.Files.Attr_List
-              ("BD1:", 0, AN, AN_L, AType, ASize);
+              ("BD0:", 0, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then AN_L = 12
                    and then AN (1 .. 12) = "be:volume_id"
@@ -1252,19 +1316,19 @@ begin
             --  name pseudo-attribute is skipped, like Haiku's
             --  attribute iterator and tools/befs_dump.py).
             Status := Akernel_User.Files.Attr_List
-              ("BD1:SUBDIR/HELLO.TXT", 0, AN, AN_L, AType, ASize);
+              ("BD0:SUBDIR/HELLO.TXT", 0, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs attr list empty file");
 
             Status := Akernel_User.Files.Attr_List
-              ("BD1:NOSUCH.BIN", 0, AN, AN_L, AType, ASize);
+              ("BD0:NOSUCH.BIN", 0, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs attr list unknown file");
 
             --  FAT32 has no attributes: the op forwards verbatim
             --  and the fat32 server rejects unknown labels.
             Status := Akernel_User.Files.Attr_List
-              ("BD0:README.TXT", 0, AN, AN_L, AType, ASize);
+              ("BD1:README.TXT", 0, AN, AN_L, AType, ASize);
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "fat attr list rejected");
          end;
@@ -1275,7 +1339,7 @@ begin
             ASize  : U64;
          begin
             Status := Akernel_User.Files.Attr_Read
-              ("BD1:README.TXT", "BEOS:TYPE", Buf'Address, 64,
+              ("BD0:README.TXT", "BEOS:TYPE", Buf'Address, 64,
                Count, ASize, AType);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = 10 and then ASize = 10
@@ -1292,7 +1356,7 @@ begin
             Check (Match, "bfs attr read mime ok");
 
             Status := Akernel_User.Files.Attr_Read
-              ("BD1:README.TXT", "META:comment", Buf'Address, 64,
+              ("BD0:README.TXT", "META:comment", Buf'Address, 64,
                Count, ASize, AType);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = 15 and then ASize = 15
@@ -1311,7 +1375,7 @@ begin
             --  be:volume_id rides the root inode as a little-
             --  endian u64: 0x004D3832_42454653 on disk.
             Status := Akernel_User.Files.Attr_Read
-              ("BD1:", "be:volume_id", Buf'Address, 64,
+              ("BD0:", "be:volume_id", Buf'Address, 64,
                Count, ASize, AType);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = 8 and then ASize = 8
@@ -1320,7 +1384,7 @@ begin
                Expect : constant array (0 .. 7) of
                  Interfaces.Unsigned_8 :=
                    (16#53#, 16#46#, 16#45#, 16#42#,
-                    16#32#, 16#38#, 16#4D#, 16#00#);
+                    16#33#, 16#39#, 16#4D#, 16#00#);
             begin
                for I in 0 .. 7 loop
                   Match := Match and then Buf (I) = Expect (I);
@@ -1329,13 +1393,13 @@ begin
             Check (Match, "bfs attr read volume id ok");
 
             Status := Akernel_User.Files.Attr_Read
-              ("BD1:README.TXT", "NOSUCH", Buf'Address, 64,
+              ("BD0:README.TXT", "NOSUCH", Buf'Address, 64,
                Count, ASize, AType);
             Check (Status = Akernel_User.Files.Status_Not_Found,
                    "bfs attr read unknown rejected");
 
             Status := Akernel_User.Files.Attr_Read
-              ("BD0:README.TXT", "BEOS:TYPE", Buf'Address, 64,
+              ("BD1:README.TXT", "BEOS:TYPE", Buf'Address, 64,
                Count, ASize, AType);
             Check (Status = Akernel_User.Files.Status_Bad_Args,
                    "fat attr read rejected");
@@ -1366,7 +1430,7 @@ begin
              Check (Ntf /= Syscall_Failed,
                     "live query ntfn created");
              Status := Akernel_User.Files.Query_Open
-               ("BD1:", "name==""LIVE*.TXT""", Ntf, LQH);
+               ("BD0:", "name==""LIVE*.TXT""", Ntf, LQH);
              Check (Status = Akernel_User.Files.Status_Ok
                     and then LQH /= 0,
                     "live query opened");
@@ -1382,7 +1446,7 @@ begin
                 end loop;
              end;
              Status := Akernel_User.Files.Write
-               ("BD1:LIVE1.TXT", 0, Buf'Address, 7, Count);
+               ("BD0:LIVE1.TXT", 0, Buf'Address, 7, Count);
              Check (Status = Akernel_User.Files.Status_Ok
                     and then Count = 7,
                     "live query matching file created");
@@ -1391,31 +1455,31 @@ begin
                     and then (Bits and 1) /= 0,
                     "live query doorbell rang");
              Status := Akernel_User.Files.Query_Poll
-               ("BD1:", LQH, LK, LP, LPL);
+               ("BD0:", LQH, LK, LP, LPL);
              Check (Status = Akernel_User.Files.Status_Ok
                     and then LK = 1
                     and then LPL = 9
                     and then LP (1 .. 9) = "LIVE1.TXT",
                     "live query added event");
              Status := Akernel_User.Files.Query_Poll
-               ("BD1:", LQH, LK, LP, LPL);
+               ("BD0:", LQH, LK, LP, LPL);
              Check (Status = Akernel_User.Files.Status_Not_Found,
                     "live query queue drained");
 
              --  A non-matching create queues nothing (no wait:
              --  the doorbell must not have rung).
              Status := Akernel_User.Files.Write
-               ("BD1:NOTLIVE.TXT", 0, Buf'Address, 7, Count);
+               ("BD0:NOTLIVE.TXT", 0, Buf'Address, 7, Count);
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query non-matching file created");
              Status := Akernel_User.Files.Query_Poll
-               ("BD1:", LQH, LK, LP, LPL);
+               ("BD0:", LQH, LK, LP, LPL);
              Check (Status = Akernel_User.Files.Status_Not_Found,
                     "live query non-match silent");
 
              --  Deleting a matching entry queues "removed".
              Status := Akernel_User.Files.Delete
-               ("BD1:LIVE1.TXT");
+               ("BD0:LIVE1.TXT");
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query matching file deleted");
              Bits := Ntfn_Wait (Ntf);
@@ -1423,7 +1487,7 @@ begin
                     and then (Bits and 1) /= 0,
                     "live query doorbell on remove");
              Status := Akernel_User.Files.Query_Poll
-               ("BD1:", LQH, LK, LP, LPL);
+               ("BD0:", LQH, LK, LP, LPL);
              Check (Status = Akernel_User.Files.Status_Ok
                     and then LK = 2
                     and then LPL = 9
@@ -1433,26 +1497,26 @@ begin
              --  Close: the handle dies, later mutations are
              --  silent.
              Status := Akernel_User.Files.Query_Close
-               ("BD1:", LQH);
+               ("BD0:", LQH);
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query closed");
              Status := Akernel_User.Files.Write
-               ("BD1:LIVE2.TXT", 0, Buf'Address, 7, Count);
+               ("BD0:LIVE2.TXT", 0, Buf'Address, 7, Count);
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query post-close file created");
              Status := Akernel_User.Files.Query_Poll
-               ("BD1:", LQH, LK, LP, LPL);
+               ("BD0:", LQH, LK, LP, LPL);
              Check (Status = Akernel_User.Files.Status_Bad_Args,
                     "live query closed handle rejected");
 
              --  Queue overflow: 10 matching creates > 8-deep
              --  queue, then a resync event.
              Status := Akernel_User.Files.Query_Open
-               ("BD1:", "name==""LIVEO*.TXT""", Ntf, LQH);
+               ("BD0:", "name==""LIVEO*.TXT""", Ntf, LQH);
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query reopened for overflow");
              declare
-                LN : String (1 .. 14) := "BD1:LIVEO0.TXT";
+                LN : String (1 .. 14) := "BD0:LIVEO0.TXT";
              begin
                 for I in 0 .. 9 loop
                    LN (10) := Character'Val
@@ -1471,7 +1535,7 @@ begin
              begin
                 for I in 1 .. 10 loop
                    Status := Akernel_User.Files.Query_Poll
-                     ("BD1:", LQH, LK, LP, LPL);
+                     ("BD0:", LQH, LK, LP, LPL);
                    exit when Status /= Akernel_User.Files.Status_Ok;
                    if LK = 1 then
                       Got_Add := Got_Add + 1;
@@ -1482,23 +1546,23 @@ begin
                 Check (Got_Add = 8 and then Got_Resync,
                        "live query overflow resync");
                 Status := Akernel_User.Files.Query_Poll
-                  ("BD1:", LQH, LK, LP, LPL);
+                  ("BD0:", LQH, LK, LP, LPL);
                 Check
                   (Status = Akernel_User.Files.Status_Not_Found,
                    "live query overflow drained");
              end;
              Status := Akernel_User.Files.Query_Close
-               ("BD1:", LQH);
+               ("BD0:", LQH);
              Check (Status = Akernel_User.Files.Status_Ok,
                     "live query overflow closed");
 
              --  Cleanup.
              Status := Akernel_User.Files.Delete
-               ("BD1:NOTLIVE.TXT");
+               ("BD0:NOTLIVE.TXT");
              Status := Akernel_User.Files.Delete
-               ("BD1:LIVE2.TXT");
+               ("BD0:LIVE2.TXT");
              declare
-                LN : String (1 .. 14) := "BD1:LIVEO0.TXT";
+                LN : String (1 .. 14) := "BD0:LIVEO0.TXT";
              begin
                 for I in 0 .. 9 loop
                    LN (10) := Character'Val
@@ -1535,7 +1599,7 @@ begin
 
          procedure SP_Name (I : Natural) is
          begin
-            Name (1 .. 6) := "BD1:SP";
+            Name (1 .. 6) := "BD0:SP";
             Name (7) := Character'Val (Character'Pos ('0') + I / 10);
             Name (8) := Character'Val
               (Character'Pos ('0') + I mod 10);
@@ -1545,7 +1609,7 @@ begin
 
          procedure Dup_Name (I : Natural) is
          begin
-            Name (1 .. 5) := "BD1:D";
+            Name (1 .. 5) := "BD0:D";
             Name (6) := Character'Val (Character'Pos ('0') + I / 10);
             Name (7) := Character'Val
               (Character'Pos ('0') + I mod 10);
@@ -1553,7 +1617,7 @@ begin
          end Dup_Name;
       begin
          Status := Akernel_User.Files.Volume_Info
-           ("BD1:", Tot, Free_0, Blk_T);
+           ("BD0:", Tot, Free_0, Blk_T);
          Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
 
          --  56 root files: ~90 dir entries of ~46 bytes and 60+
@@ -1573,11 +1637,11 @@ begin
          end loop;
          Check (Fails = 0, "bfs split: 56 creates ok");
 
-         Status := Akernel_User.Files.Stat ("BD1:SP00.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD0:SP00.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 1,
                 "bfs split: first file stats");
-         Status := Akernel_User.Files.Stat ("BD1:SP55.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD0:SP55.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 1,
                 "bfs split: last file stats");
@@ -1586,7 +1650,7 @@ begin
          Seen := 0;
          for Index in 0 .. 90 loop
             Status := Akernel_User.Files.Read_Dir
-              ("BD1:", U64 (Index), Ent, Ent_L, Ent_D, Ent_S);
+              ("BD0:", U64 (Index), Ent, Ent_L, Ent_D, Ent_S);
             exit when Status /= Akernel_User.Files.Status_Ok;
             if Ent_L = 8 and then Ent (1 .. 2) = "SP" then
                Seen := Seen + 1;
@@ -1604,7 +1668,7 @@ begin
             Seen := 0;
             loop
                Status := Akernel_User.Files.Query
-                 ("BD1:", "name==""SP4*.TXT""", U64 (Seen),
+                 ("BD0:", "name==""SP4*.TXT""", U64 (Seen),
                   QP, QL, QSz, QD);
                exit when Status /= Akernel_User.Files.Status_Ok;
                exit when QL /= 8 or else QP (1 .. 3) /= "SP4";
@@ -1659,7 +1723,18 @@ begin
          end loop;
          Check (Fails = 0, "bfs split: 56 deletes ok");
 
-         --  The fixture entries survived the splits.
+         --  The name index still works after the delete-all stress:
+         --  a fresh file is created and queried back. (Sys:'s staged
+         --  tree is deliberately unindexed — M93 — so there is no
+         --  staged entry to query here; the probe file is deleted
+         --  again so the index returns to empty for the host-side
+         --  post-test check.)
+         Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
+         Status := Akernel_User.Files.Write
+           ("BD0:SPFINAL.TXT", 0, Buf'Address, 1, Count);
+         Check (Status = Akernel_User.Files.Status_Ok
+                and then Count = 1,
+                "bfs split: index insert after stress");
          declare
             QP  : String (1 .. 24);
             QL  : Natural;
@@ -1667,19 +1742,22 @@ begin
             QD  : Boolean;
          begin
             Status := Akernel_User.Files.Query
-              ("BD1:", "name==""README.TXT""", 0, QP, QL, QSz, QD);
+              ("BD0:", "name==""SPFINAL.TXT""", 0, QP, QL, QSz, QD);
             Check (Status = Akernel_User.Files.Status_Ok
-                   and then QL = 10
-                   and then QP (1 .. 10) = "README.TXT",
-                   "bfs split: fixture entry survives");
+                   and then QL = 11
+                   and then QP (1 .. 11) = "SPFINAL.TXT",
+                   "bfs split: index survives stress");
          end;
+         Status := Akernel_User.Files.Delete ("BD0:SPFINAL.TXT");
+         Check (Status = Akernel_User.Files.Status_Ok,
+                "bfs split: index probe cleaned");
 
          --  Removed entries never free their tree nodes (no
          --  merge-on-remove): the leak is bounded by the grown
          --  root/index trees (~11 blocks observed; Free is in
          --  BYTES, so the bound is 24 blocks in bytes).
          Status := Akernel_User.Files.Volume_Info
-           ("BD1:", Tot, Free_1, Blk_T);
+           ("BD0:", Tot, Free_1, Blk_T);
          Akernel_User.Console.Put_Line
            ("bfs split: free before/after" & U64'Image (Free_0)
             & U64'Image (Free_1));
@@ -1723,14 +1801,14 @@ begin
          end Check_Block;
       begin
          Status := Akernel_User.Files.Volume_Info
-           ("BD1:", Tot, Free_0, Blk_T);
+           ("BD0:", Tot, Free_0, Blk_T);
          Fails := 0;
          for K in 0 .. 27 loop
             for I in 0 .. 1023 loop
                WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('A'));
             end loop;
             Status := Akernel_User.Files.Write
-              ("BD1:FZA.BIN", U64 (K) * 1024, WBuf'Address, 1024,
+              ("BD0:FZA.BIN", U64 (K) * 1024, WBuf'Address, 1024,
                Count);
             if Status /= Akernel_User.Files.Status_Ok
               or else Count /= 1024
@@ -1744,7 +1822,7 @@ begin
                WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('B'));
             end loop;
             Status := Akernel_User.Files.Write
-              ("BD1:FZB.BIN", U64 (K) * 1024, WBuf'Address, 1024,
+              ("BD0:FZB.BIN", U64 (K) * 1024, WBuf'Address, 1024,
                Count);
             if Status /= Akernel_User.Files.Status_Ok
               or else Count /= 1024
@@ -1757,28 +1835,28 @@ begin
          end loop;
          Check (Fails = 0, "bfs indirect: interleaved grows ok");
 
-         Status := Akernel_User.Files.Stat ("BD1:FZA.BIN", Size);
+         Status := Akernel_User.Files.Stat ("BD0:FZA.BIN", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = 28 * 1024,
                 "bfs indirect: size crosses into indirect");
 
          --  Read back: direct run, first indirect run, last
          --  indirect run.
-         Check_Block ("BD1:FZA.BIN", 0, 'A',
+         Check_Block ("BD0:FZA.BIN", 0, 'A',
                       "bfs indirect: direct block reads back");
-         Check_Block ("BD1:FZA.BIN", 12 * 1024, 'A',
+         Check_Block ("BD0:FZA.BIN", 12 * 1024, 'A',
                       "bfs indirect: first indirect run reads back");
-         Check_Block ("BD1:FZB.BIN", 27 * 1024, 'B',
+         Check_Block ("BD0:FZB.BIN", 27 * 1024, 'B',
                       "bfs indirect: last indirect run reads back");
 
-         Status := Akernel_User.Files.Delete ("BD1:FZA.BIN");
+         Status := Akernel_User.Files.Delete ("BD0:FZA.BIN");
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs indirect: file A deleted");
-         Status := Akernel_User.Files.Delete ("BD1:FZB.BIN");
+         Status := Akernel_User.Files.Delete ("BD0:FZB.BIN");
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs indirect: file B deleted");
          Status := Akernel_User.Files.Volume_Info
-           ("BD1:", Tot, Free_1, Blk_T);
+           ("BD0:", Tot, Free_1, Blk_T);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Free_0 /= 0
                 and then Free_1 = Free_0,
@@ -1795,7 +1873,7 @@ begin
          AN    : String (1 .. 24);
          AN_L  : Natural;
 
-         --  Write V as attribute Attr of BD1:FZATTR.TXT
+         --  Write V as attribute Attr of BD0:FZATTR.TXT
          --  (type 'CSTR'); Status left for the caller's Check.
          procedure Put_Attr (Attr : String; V : String) is
          begin
@@ -1804,7 +1882,7 @@ begin
                  (Character'Pos (V (V'First + I)));
             end loop;
             Status := Akernel_User.Files.Attr_Write
-              ("BD1:FZATTR.TXT", Attr, 16#4353_5452#,
+              ("BD0:FZATTR.TXT", Attr, 16#4353_5452#,
                Buf'Address, U64 (V'Length));
          end Put_Attr;
 
@@ -1813,7 +1891,7 @@ begin
                                Msg : String) is
          begin
             Status := Akernel_User.Files.Attr_Read
-              ("BD1:FZATTR.TXT", Attr, Buf'Address, 64,
+              ("BD0:FZATTR.TXT", Attr, Buf'Address, 64,
                Count, ASize, AType);
             Match := Status = Akernel_User.Files.Status_Ok
               and then Count = U64 (V'Length)
@@ -1828,7 +1906,7 @@ begin
          end Check_Attr;
       begin
          Status := Akernel_User.Files.Write
-           ("BD1:FZATTR.TXT", 0, Buf'Address, 4, Count);
+           ("BD0:FZATTR.TXT", 0, Buf'Address, 4, Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = 4,
                 "bfs attrw: target created");
@@ -1859,13 +1937,13 @@ begin
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs attrw: second insert ok");
          Status := Akernel_User.Files.Attr_List
-           ("BD1:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
+           ("BD0:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then AN_L = 9 and then AN (1 .. 9) = "META:test"
                 and then ASize = 2,
                 "bfs attrw: list first attr");
          Status := Akernel_User.Files.Attr_List
-           ("BD1:FZATTR.TXT", 1, AN, AN_L, AType, ASize);
+           ("BD0:FZATTR.TXT", 1, AN, AN_L, AType, ASize);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then AN_L = 8 and then AN (1 .. 8) = "META:two"
                 and then ASize = 2,
@@ -1879,7 +1957,7 @@ begin
             QD  : Boolean;
          begin
             Status := Akernel_User.Files.Query
-              ("BD1:", "META:test==""hi""", 0, QP, QL, QSz, QD);
+              ("BD0:", "META:test==""hi""", 0, QP, QL, QSz, QD);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then QL = 10
                    and then QP (1 .. 10) = "FZATTR.TXT",
@@ -1889,18 +1967,18 @@ begin
          --  Remove: the remaining attribute's bytes survive the
          --  tail shift.
          Status := Akernel_User.Files.Attr_Write
-           ("BD1:FZATTR.TXT", "META:test", 0, Buf'Address, 0);
+           ("BD0:FZATTR.TXT", "META:test", 0, Buf'Address, 0);
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs attrw: remove ok");
          Status := Akernel_User.Files.Attr_Read
-           ("BD1:FZATTR.TXT", "META:test", Buf'Address, 64,
+           ("BD0:FZATTR.TXT", "META:test", Buf'Address, 64,
             Count, ASize, AType);
          Check (Status = Akernel_User.Files.Status_Not_Found,
                 "bfs attrw: removed attr gone");
          Check_Attr ("META:two", "22",
                      "bfs attrw: survivor intact after remove");
          Status := Akernel_User.Files.Attr_List
-           ("BD1:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
+           ("BD0:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then AN_L = 8 and then AN (1 .. 8) = "META:two",
                 "bfs attrw: list after remove");
@@ -1908,15 +1986,15 @@ begin
          --  Removing an absent attribute and writing on fat32
          --  both fail cleanly.
          Status := Akernel_User.Files.Attr_Write
-           ("BD1:FZATTR.TXT", "META:nosuch", 0, Buf'Address, 0);
+           ("BD0:FZATTR.TXT", "META:nosuch", 0, Buf'Address, 0);
          Check (Status = Akernel_User.Files.Status_Not_Found,
                 "bfs attrw: remove absent rejected");
          Status := Akernel_User.Files.Attr_Write
-           ("BD0:README.TXT", "META:x", 0, Buf'Address, 0);
+           ("BD1:README.TXT", "META:x", 0, Buf'Address, 0);
          Check (Status = Akernel_User.Files.Status_Bad_Args,
                 "bfs attrw: fat attr write rejected");
 
-         Status := Akernel_User.Files.Delete ("BD1:FZATTR.TXT");
+         Status := Akernel_User.Files.Delete ("BD0:FZATTR.TXT");
          Check (Status = Akernel_User.Files.Status_Ok,
                 "bfs attrw: cleanup ok");
       end Attr_Write_Tests;
@@ -1928,7 +2006,7 @@ begin
       --  cap slot). Idempotent: fixed names, pre-deleted.
       procedure Long_Path_Tests is
          D1 : constant String :=
-           "BD1:FZLONGDIR_m82i_long_request_path_wire_capacity_test_0001";
+           "BD0:FZLONGDIR_m82i_long_request_path_wire_capacity_test_0001";
          F  : constant String :=
            D1 & "/FZFILE_deep_component_for_reads_and_attrs_0002.TXT";
          G  : constant String :=
@@ -2052,7 +2130,7 @@ begin
          --  fat32 answers the marker path too: a 67-char probe
          --  misses cleanly (no crash, no garbage match).
          Status := Akernel_User.Files.Stat
-           ("BD0:FZNOFILE_m82i_long_request_path_wire_capacity_probe_0009.TXT",
+           ("BD1:FZNOFILE_m82i_long_request_path_wire_capacity_probe_0009.TXT",
             Size);
          Check (Status = Akernel_User.Files.Status_Not_Found,
                 "bfs longpath: fat long path misses cleanly");
@@ -2136,13 +2214,13 @@ begin
       --  Block volume (WD0, virtio-blk behind Op_Add_Block): the
       --  raw device resolves as "disk" and reads come through the
       --  file server -> block driver RPC chain. The image is a
-      --  72 MiB GPT-partitioned disk (partition 1 = FAT32,
-      --  partition 2 = m82b BeFS fixture).
+      --  512 MiB GPT-partitioned disk (M93: partition 1 = BeFS
+      --  Sys:, partition 2 = FAT32 Data).
       --  The mount is pushed asynchronously by init; wait for it.
       Check (Await_Volume ("WD0:disk"), "blk volume appears");
       Status := Akernel_User.Files.Stat ("WD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
-             and then Size = 147456 * 512,
+             and then Size = 1048576 * 512,
              "blk volume stat ok");
 
       Status := Akernel_User.Files.Stat ("Disk:disk", Size);
@@ -2188,9 +2266,10 @@ begin
 
       --  Partition query op (part0 token = handle 7, badge
       --  16#1000#): slot 0 is the FAT32 partition at LBA 2048,
-      --  122880 sectors; slot 1 is the m82b BeFS fixture partition
-      --  (8 MiB at the next 2048-sector-aligned boundary). The image
-      --  has exactly two partitions.
+      --  524288 sectors (256 MiB BeFS Sys:); slot 1 starts at the
+      --  next 2048-sector-aligned boundary with 522207 sectors
+      --  (255 MiB FAT32 Data, filling to the last usable sector).
+      --  The image has exactly two partitions.
       declare
          Part_EP : constant U64 := 7;  --  manifest grant order (part0)
       begin
@@ -2202,7 +2281,7 @@ begin
          Check (Status = Akernel_User.Syscalls.IPC_Ok
                 and then Akernel_User.Syscalls.Message.Words (0) = 0
                 and then Akernel_User.Syscalls.Message.Words (1) = 2048
-                and then Akernel_User.Syscalls.Message.Words (2) = 122880
+                and then Akernel_User.Syscalls.Message.Words (2) = 524288
                 and then Akernel_User.Syscalls.Message.Words (3) = 2,
                 "part query slot 0 ok");
 
@@ -2213,10 +2292,10 @@ begin
          Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
          Check (Status = Akernel_User.Syscalls.IPC_Ok
                 and then Akernel_User.Syscalls.Message.Words (0) = 0
-                and then Akernel_User.Syscalls.Message.Words (1) = 124928
-                and then Akernel_User.Syscalls.Message.Words (2) = 16384
+                and then Akernel_User.Syscalls.Message.Words (1) = 526336
+                and then Akernel_User.Syscalls.Message.Words (2) = 522207
                 and then Akernel_User.Syscalls.Message.Words (3) = 2,
-                "part query slot 1 befs ok");
+                "part query slot 1 fat ok");
 
          Akernel_User.Syscalls.Message.Label := 3;
          Akernel_User.Syscalls.Message.Words := (others => 0);
@@ -2234,17 +2313,18 @@ begin
       --  the file server -> partmgr -> blk chain.
       Status := Akernel_User.Files.Stat ("PD0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok
-             and then Size = 122880 * 512,
+             and then Size = 524288 * 512,
              "part volume stat ok");
 
       Status := Akernel_User.Files.Stat ("Part0:disk", Size);
       Check (Status = Akernel_User.Files.Status_Ok,
              "part volume label resolves");
 
-      --  FAT32 BPB at the partition start: 0xEB jump, OEM
-      --  "mkfs.fat" (8 chars at offset 3).
+      --  FAT32 BPB at the DATA partition (slot 1) start: 0xEB
+      --  jump, OEM "mkfs.fat" (8 chars at offset 3). Slot 0 is
+      --  BeFS since M93.
       Status := Akernel_User.Files.Read
-        ("PD0:disk", 0, Buf'Address, 12, Count);
+        ("PD1:disk", 0, Buf'Address, 12, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 12
         and then Buf (0) = 16#EB#;
@@ -2264,21 +2344,22 @@ begin
       Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
              "fs sync accepted");
 
-      --  FAT32 volume (BD0, System/Fat32 behind the VFS): real
-      --  files resolve and read through the file server -> fs
-      --  driver -> block driver RPC chain.
-      Check (Await_Volume ("BD0:README.TXT"), "fat32 volume appears");
-      Status := Akernel_User.Files.Stat ("BD0:README.TXT", Size);
+      --  FAT32 volume (BD1/Data, System/Fat32 behind the VFS;
+      --  M93: FAT is the data partition): real files resolve and
+      --  read through the file server -> fs driver -> block
+      --  driver RPC chain.
+      Check (Await_Volume ("BD1:README.TXT"), "fat32 volume appears");
+      Status := Akernel_User.Files.Stat ("BD1:README.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 37,
              "fat stat readme size");
 
-      Status := Akernel_User.Files.Stat ("Sys:README.TXT", Size);
+      Status := Akernel_User.Files.Stat ("Data:README.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat volume label resolves");
 
       Status := Akernel_User.Files.Read
-        ("BD0:README.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:README.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 37;
       declare
@@ -2296,13 +2377,13 @@ begin
       --  BIG.BIN: byte i = (i*7+3) mod 256, 64 KiB — spans 128
       --  clusters on a 1-sector/cluster image, exercising FAT
       --  chain walks in the fs driver.
-      Status := Akernel_User.Files.Stat ("BD0:BIG.BIN", Size);
+      Status := Akernel_User.Files.Stat ("BD1:BIG.BIN", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 65536,
              "fat stat big.bin size");
 
       Status := Akernel_User.Files.Read
-        ("BD0:BIG.BIN", 0, Big_Buf'Address, 512, Count);
+        ("BD1:BIG.BIN", 0, Big_Buf'Address, 512, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
@@ -2313,7 +2394,7 @@ begin
       Check (Match, "fat big.bin head ok");
 
       Status := Akernel_User.Files.Read
-        ("BD0:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
+        ("BD1:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
@@ -2325,7 +2406,7 @@ begin
 
       --  Cluster-crossing unaligned read (clusters are 1 sector).
       Status := Akernel_User.Files.Read
-        ("BD0:BIG.BIN", 4091, Buf'Address, 8, Count);
+        ("BD1:BIG.BIN", 4091, Buf'Address, 8, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       for J in 0 .. 7 loop
@@ -2335,24 +2416,24 @@ begin
       end loop;
       Check (Match, "fat unaligned read ok");
 
-      Status := Akernel_User.Files.Stat ("bd0:big.bin", Size);
+      Status := Akernel_User.Files.Stat ("bd1:big.bin", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 65536,
              "fat names case-insensitive");
 
-      Status := Akernel_User.Files.Stat ("BD0:NOSUCH.BIN", Size);
+      Status := Akernel_User.Files.Stat ("BD1:NOSUCH.BIN", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat unknown file rejected");
 
       --  Subdirectory traversal and LFN entries (host-created in
       --  the image: mmd SUBDIR, mcopy with a long name).
-      Status := Akernel_User.Files.Stat ("BD0:SUBDIR/HELLO.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:SUBDIR/HELLO.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 14,
              "fat subdir stat ok");
 
       Status := Akernel_User.Files.Read
-        ("BD0:subdir/hello.txt", 0, Buf'Address, 64, Count);
+        ("BD1:subdir/hello.txt", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 14;
       declare
@@ -2367,13 +2448,13 @@ begin
       end;
       Check (Match, "fat subdir read ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:LongFileName.txt", Size);
+      Status := Akernel_User.Files.Stat ("BD1:LongFileName.txt", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 23,
              "fat lfn stat ok");
 
       Status := Akernel_User.Files.Read
-        ("bd0:longfilename.txt", 0, Buf'Address, 64, Count);
+        ("bd1:longfilename.txt", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 23;
       declare
@@ -2400,12 +2481,12 @@ begin
       end;
 
       Status := Akernel_User.Files.Write
-        ("BD0:NEWFILE.TXT", 0, Buf'Address, 14, Count);
+        ("BD1:NEWFILE.TXT", 0, Buf'Address, 14, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 14,
              "fat write create ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:NEWFILE.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:NEWFILE.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 14,
              "fat write stat ok");
@@ -2414,7 +2495,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:NEWFILE.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:NEWFILE.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 14;
       declare
@@ -2430,7 +2511,7 @@ begin
 
       --  Create inside a subdirectory.
       Status := Akernel_User.Files.Write
-        ("BD0:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
+        ("BD1:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat write zero-length rejected");
 
@@ -2443,7 +2524,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat write subdir ok");
@@ -2454,14 +2535,14 @@ begin
          Big_Buf (J) := Interfaces.Unsigned_8 ((J * 5 + 1) mod 256);
       end loop;
       Status := Akernel_User.Files.Write
-        ("BD0:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
+        ("BD1:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 512,
              "fat write big ok");
 
       --  Extending write at the current end (size grows 8 bytes
       --  per boot; checks stay relative so reruns pass).
-      Status := Akernel_User.Files.Stat ("BD0:EXT.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:EXT.TXT", Size);
       declare
          Prior : U64 := 0;
       begin
@@ -2477,11 +2558,11 @@ begin
             end loop;
          end;
          Status := Akernel_User.Files.Write
-           ("BD0:EXT.TXT", Prior, Buf'Address, 8, Count);
+           ("BD1:EXT.TXT", Prior, Buf'Address, 8, Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = 8,
                 "fat write extend ok");
-         Status := Akernel_User.Files.Stat ("BD0:EXT.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD1:EXT.TXT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = Prior + 8,
                 "fat write extend stat ok");
@@ -2489,12 +2570,12 @@ begin
 
       --  Sparse writes rejected; bad parent rejected.
       Status := Akernel_User.Files.Write
-        ("BD0:NEWFILE.TXT", 100, Buf'Address, 4, Count);
+        ("BD1:NEWFILE.TXT", 100, Buf'Address, 4, Count);
       Check (Status = Akernel_User.Files.Status_Out_Of_Range,
              "fat write sparse rejected");
 
       Status := Akernel_User.Files.Write
-        ("BD0:NODIR/F.TXT", 0, Buf'Address, 4, Count);
+        ("BD1:NODIR/F.TXT", 0, Buf'Address, 4, Count);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat write bad parent rejected");
 
@@ -2536,18 +2617,18 @@ begin
       --  20c: delete / truncate / mkdir / rmdir / LFN creation.
       --  Idempotent across reused images: the prelude drops any
       --  leftover MKTEST state from a prior boot.
-      Status := Akernel_User.Files.Delete ("BD0:MKTEST/INNER.TXT");
-      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
+      Status := Akernel_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
+      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
 
-      Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
+      Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat mkdir ok");
 
-      Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
+      Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat mkdir exists rejected");
 
-      Status := Akernel_User.Files.Stat ("BD0:MKTEST", Size);
+      Status := Akernel_User.Files.Stat ("BD1:MKTEST", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 0,
              "fat dir stat ok");
@@ -2557,13 +2638,13 @@ begin
          Dir_D  : Boolean;
       begin
          Status := Akernel_User.Files.Stat_Ex
-           ("BD0:MKTEST", Size, WD, WT, Dir_D);
+           ("BD1:MKTEST", Size, WD, WT, Dir_D);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Dir_D,
                 "fat dir stat reports is-dir");
       end;
 
-      Status := Akernel_User.Files.Mkdir ("BD0:NODIR/SUB");
+      Status := Akernel_User.Files.Mkdir ("BD1:NODIR/SUB");
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat mkdir bad parent rejected");
 
@@ -2579,7 +2660,7 @@ begin
       begin
          for Index in 0 .. 40 loop
             Status := Akernel_User.Files.Read_Dir
-              ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
+              ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
             exit when Status /= Akernel_User.Files.Status_Ok;
             if Ent_L = 6 and then Ent (1 .. 6) = "MKTEST" then
                Seen := True;
@@ -2600,7 +2681,7 @@ begin
          Ent  : Dirs.Directory_Entry_Type;
          Seen : Boolean := False;
       begin
-         Dirs.Start_Search (S, "BD0:", "*");
+         Dirs.Start_Search (S, "BD1:", "*");
          while Dirs.More_Entries (S) loop
             Dirs.Get_Next_Entry (S, Ent);
             if Dirs.Simple_Name (Ent) = "MKTEST" then
@@ -2620,7 +2701,7 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat mkdir file write ok");
@@ -2629,7 +2710,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -2643,19 +2724,19 @@ begin
       end;
       Check (Match, "fat mkdir file read ok");
 
-      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
+      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat rmdir non-empty rejected");
 
-      Status := Akernel_User.Files.Delete ("BD0:MKTEST/INNER.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat delete inner ok");
 
-      Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
+      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rmdir ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:MKTEST", Size);
+      Status := Akernel_User.Files.Stat ("BD1:MKTEST", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat rmdir gone");
 
@@ -2669,24 +2750,24 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:DELME.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:DELME.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("BD0:DELME.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:DELME.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat file delete ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:DELME.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:DELME.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat deleted stat rejected");
 
-      Status := Akernel_User.Files.Delete ("BD0:DELME.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:DELME.TXT");
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat delete twice rejected");
 
-      Status := Akernel_User.Files.Delete ("BD0:SUBDIR");
+      Status := Akernel_User.Files.Delete ("BD1:SUBDIR");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat delete dir rejected");
 
@@ -2700,22 +2781,22 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:TRUNC.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate setup write ok");
 
-      Status := Akernel_User.Files.Truncate ("BD0:TRUNC.TXT");
+      Status := Akernel_User.Files.Truncate ("BD1:TRUNC.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat truncate ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:TRUNC.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:TRUNC.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 0,
              "fat truncate zeroes size");
 
       Status := Akernel_User.Files.Write
-        ("BD0:TRUNC.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:TRUNC.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate rewrite ok");
@@ -2724,7 +2805,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:TRUNC.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:TRUNC.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -2750,13 +2831,13 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:CreatedLongName.dat", 0, Buf'Address, 16, Count);
+        ("BD1:CreatedLongName.dat", 0, Buf'Address, 16, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 16,
              "fat lfn create write ok");
 
       Status := Akernel_User.Files.Stat
-        ("bd0:createdlongname.dat", Size);
+        ("bd1:createdlongname.dat", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 16,
              "fat lfn create stat ok");
@@ -2765,7 +2846,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:CreatedLongName.dat", 0, Buf'Address, 64, Count);
+        ("BD1:CreatedLongName.dat", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 16;
       declare
@@ -2789,16 +2870,16 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:DeleteLongName.dat", 0, Buf'Address, 8, Count);
+        ("BD1:DeleteLongName.dat", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat lfn delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("BD0:DeleteLongName.dat");
+      Status := Akernel_User.Files.Delete ("BD1:DeleteLongName.dat");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat lfn delete ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:DeleteLongName.dat", Size);
+      Status := Akernel_User.Files.Stat ("BD1:DeleteLongName.dat", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat lfn delete gone");
 
@@ -2806,15 +2887,15 @@ begin
       --  reused images: the prelude drops leftover RENTEST
       --  state from a prior boot (end state below leaves
       --  RENTEST/MOVED/C.TXT behind on purpose).
-      Status := Akernel_User.Files.Delete ("BD0:RENTEST/MOVED/C.TXT");
-      Status := Akernel_User.Files.Delete ("BD0:RENTEST/SUB/C.TXT");
-      Status := Akernel_User.Files.Delete ("BD0:RENTEST/B.TXT");
-      Status := Akernel_User.Files.Delete ("BD0:RENTEST/A.TXT");
-      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST/MOVED");
-      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST/SUB");
-      Status := Akernel_User.Files.Rmdir ("BD0:RENTEST");
+      Status := Akernel_User.Files.Delete ("BD1:RENTEST/MOVED/C.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:RENTEST/SUB/C.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:RENTEST/B.TXT");
+      Status := Akernel_User.Files.Delete ("BD1:RENTEST/A.TXT");
+      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST/MOVED");
+      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST/SUB");
+      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST");
 
-      Status := Akernel_User.Files.Mkdir ("BD0:RENTEST");
+      Status := Akernel_User.Files.Mkdir ("BD1:RENTEST");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename mkdir ok");
 
@@ -2827,17 +2908,17 @@ begin
          end loop;
       end;
       Status := Akernel_User.Files.Write
-        ("BD0:RENTEST/A.TXT", 0, Buf'Address, 8, Count);
+        ("BD1:RENTEST/A.TXT", 0, Buf'Address, 8, Count);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Count = 8,
              "fat rename setup write ok");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST/A.TXT", "BD0:RENTEST/B.TXT");
+        ("BD1:RENTEST/A.TXT", "BD1:RENTEST/B.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:RENTEST/A.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:RENTEST/A.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat rename old gone");
 
@@ -2845,7 +2926,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:RENTEST/B.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:RENTEST/B.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -2860,16 +2941,16 @@ begin
       Check (Match, "fat rename readback ok");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST/B.TXT", "BD0:RENTEST/B.TXT");
+        ("BD1:RENTEST/B.TXT", "BD1:RENTEST/B.TXT");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat rename exists rejected");
 
-      Status := Akernel_User.Files.Mkdir ("BD0:RENTEST/SUB");
+      Status := Akernel_User.Files.Mkdir ("BD1:RENTEST/SUB");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename subdir ok");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST/B.TXT", "BD0:RENTEST/SUB/C.TXT");
+        ("BD1:RENTEST/B.TXT", "BD1:RENTEST/SUB/C.TXT");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename move ok");
 
@@ -2882,17 +2963,17 @@ begin
       declare
          package Dirs renames Ada.Directories;
       begin
-         Dirs.Rename ("BD0:RENTEST/SUB/C.TXT", "BD0:RENTEST/SUB/D.TXT");
-         Check (Dirs.Exists ("BD0:RENTEST/SUB/D.TXT")
-                and then not Dirs.Exists ("BD0:RENTEST/SUB/C.TXT"),
+         Dirs.Rename ("BD1:RENTEST/SUB/C.TXT", "BD1:RENTEST/SUB/D.TXT");
+         Check (Dirs.Exists ("BD1:RENTEST/SUB/D.TXT")
+                and then not Dirs.Exists ("BD1:RENTEST/SUB/C.TXT"),
                 "fat rename via Ada.Directories ok");
-         Dirs.Rename ("BD0:RENTEST/SUB/D.TXT", "BD0:RENTEST/SUB/C.TXT");
+         Dirs.Rename ("BD1:RENTEST/SUB/D.TXT", "BD1:RENTEST/SUB/C.TXT");
       exception
          when others =>
             Check (False, "fat rename via Ada.Directories ok");
       end;
 
-      Status := Akernel_User.Files.Stat ("BD0:RENTEST/B.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:RENTEST/B.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Not_Found,
              "fat rename move old gone");
 
@@ -2900,7 +2981,7 @@ begin
          Buf (I) := 0;
       end loop;
       Status := Akernel_User.Files.Read
-        ("BD0:RENTEST/SUB/C.TXT", 0, Buf'Address, 64, Count);
+        ("BD1:RENTEST/SUB/C.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Akernel_User.Files.Status_Ok
         and then Count = 8;
       declare
@@ -2915,22 +2996,22 @@ begin
       Check (Match, "fat rename move readback ok");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST/SUB", "BD0:RENTEST/MOVED");
+        ("BD1:RENTEST/SUB", "BD1:RENTEST/MOVED");
       Check (Status = Akernel_User.Files.Status_Ok,
              "fat rename dir ok");
 
-      Status := Akernel_User.Files.Stat ("BD0:RENTEST/MOVED/C.TXT", Size);
+      Status := Akernel_User.Files.Stat ("BD1:RENTEST/MOVED/C.TXT", Size);
       Check (Status = Akernel_User.Files.Status_Ok
              and then Size = 8,
              "fat rename dir keeps contents");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST", "BD0:RENTEST/MOVED/X");
+        ("BD1:RENTEST", "BD1:RENTEST/MOVED/X");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat rename subtree rejected");
 
       Status := Akernel_User.Files.Rename
-        ("BD0:RENTEST/MOVED/C.TXT", "Initrd:RENTEST-X.TXT");
+        ("BD1:RENTEST/MOVED/C.TXT", "Initrd:RENTEST-X.TXT");
       Check (Status = Akernel_User.Files.Status_Bad_Args,
              "fat rename cross-volume rejected");
 
@@ -2940,7 +3021,7 @@ begin
          Cluster : U64;
       begin
          Status := Akernel_User.Files.Volume_Info
-           ("BD0:", Total, Free, Cluster);
+           ("BD1:", Total, Free, Cluster);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Total > 0
                 and then Cluster > 0
@@ -2964,7 +3045,7 @@ begin
       --  lands). Cleanup walks and deletes only leftovers, so
       --  a clean run pays nothing.
       declare
-         WName     : String (1 .. 14) := "BD0:STRESS/F00";
+         WName     : String (1 .. 14) := "BD1:STRESS/F00";
          DName     : String (1 .. 24);
          DLen      : Natural;
          DDir      : Boolean;
@@ -2975,7 +3056,7 @@ begin
          St2       : U64;
          C2        : U64;
       begin
-         St2 := Akernel_User.Files.Mkdir ("BD0:STRESS");
+         St2 := Akernel_User.Files.Mkdir ("BD1:STRESS");
 
          --  Leftover sweep (interrupted earlier run): delete any
          --  F* file the walk turns up, by its ACTUAL name
@@ -2988,13 +3069,13 @@ begin
          begin
             for Index in 0 .. 400 loop
                St2 := Akernel_User.Files.Read_Dir
-                 ("BD0:STRESS", 0, DName, DLen, DDir, DSize);
+                 ("BD1:STRESS", 0, DName, DLen, DDir, DSize);
                exit when St2 /= Akernel_User.Files.Status_Ok;
                if DLen > 0 and then DName (1) = 'F'
                  and then not DDir
                then
                   Full := (others => Character'Val (0));
-                  Full (1 .. 11) := "BD0:STRESS/";
+                  Full (1 .. 11) := "BD1:STRESS/";
                   Full (12 .. 11 + DLen) := DName (1 .. DLen);
                   FLen := 11 + DLen;
                   St2 := Akernel_User.Files.Delete (Full (1 .. FLen));
@@ -3016,7 +3097,7 @@ begin
          Seen := 0;
          for Index in 0 .. 100 loop
             St2 := Akernel_User.Files.Read_Dir
-              ("BD0:STRESS", U64 (Index), DName, DLen, DDir, DSize);
+              ("BD1:STRESS", U64 (Index), DName, DLen, DDir, DSize);
             exit when St2 /= Akernel_User.Files.Status_Ok;
             Seen := Seen + 1;
          end loop;
@@ -3035,7 +3116,7 @@ begin
          Seen := 0;
          for Index in 0 .. 10 loop
             St2 := Akernel_User.Files.Read_Dir
-              ("BD0:STRESS", U64 (Index), DName, DLen, DDir, DSize);
+              ("BD1:STRESS", U64 (Index), DName, DLen, DDir, DSize);
             exit when St2 /= Akernel_User.Files.Status_Ok;
             Seen := Seen + 1;
          end loop;
@@ -3860,7 +3941,7 @@ begin
                     return Interfaces.Unsigned_32
       is (Img.Data (Y * Img.W + X));
    begin
-      Trinket.Images.Load ("BD0:Tests/Img/bars.bmp", Bars, ISt);
+      Trinket.Images.Load ("BD0:Tests/Img/BARS.BMP", Bars, ISt);
       Check (ISt = Trinket.Images.Ok
              and then Bars.W = 64 and then Bars.H = 48,
              "images bars decodes 64x48");
@@ -3869,7 +3950,7 @@ begin
       Check (Pix (Bars, 63, 47) = 16#FFF0_0F80#,
              "images bars last-bar pixel");
 
-      Trinket.Images.Load ("BD0:Tests/Img/keyed.bmp", Keyed, ISt);
+      Trinket.Images.Load ("BD0:Tests/Img/KEYED.BMP", Keyed, ISt);
       Check (ISt = Trinket.Images.Ok
              and then Keyed.W = 32 and then Keyed.H = 32
              and then Pix (Keyed, 15, 15) = 16#FFFF_8800#
@@ -3877,20 +3958,20 @@ begin
              "images keyed disc over magenta field");
 
       --  32-bit top-down: alpha byte carried, never blended.
-      Trinket.Images.Load ("BD0:Tests/Img/grad32.bmp", Grad, ISt);
+      Trinket.Images.Load ("BD0:Tests/Img/GRAD32.BMP", Grad, ISt);
       Check (ISt = Trinket.Images.Ok
              and then Grad.W = 40 and then Grad.H = 30
              and then Pix (Grad, 5, 7) = 16#0C1E_38C8#,
              "images grad32 top-down with alpha byte");
 
-      Trinket.Images.Load ("BD0:Tests/Img/trunc.bmp", Junk, ISt);
+      Trinket.Images.Load ("BD0:Tests/Img/TRUNC.BMP", Junk, ISt);
       Check (ISt = Trinket.Images.Malformed
              and then not Trinket.Images.Loaded (Junk),
              "images truncated bmp rejected malformed");
       Trinket.Images.Load ("BD0:Tests/Img/nope.bmp", Junk, ISt);
       Check (ISt = Trinket.Images.IO_Error,
              "images missing file is io error");
-      Trinket.Images.Load ("BD0:README.TXT", Junk, ISt);
+      Trinket.Images.Load ("BD1:README.TXT", Junk, ISt);
       Check (ISt = Trinket.Images.Unsupported,
              "images text file unsupported");
 
@@ -3961,7 +4042,7 @@ begin
                     return Interfaces.Unsigned_32
       is (Img.Data (Y * Img.W + X));
    begin
-      Trinket.Images.Load ("BD0:Tests/Img/checker.xpm", Chk, XSt);
+      Trinket.Images.Load ("BD0:Tests/Img/CHECKER.XPM", Chk, XSt);
       Check (XSt = Trinket.Images.Ok
              and then Chk.W = 8 and then Chk.H = 8,
              "xpm checker decodes 8x8");
@@ -3975,7 +4056,7 @@ begin
              and then Pix (Chk, 4, 7) = 16#FFFF_0000#,
              "xpm checker exact pixels incl none");
 
-      Trinket.Images.Load ("BD0:Tests/Img/cpp2.xpm", Two, XSt);
+      Trinket.Images.Load ("BD0:Tests/Img/CPP2.XPM", Two, XSt);
       Check (XSt = Trinket.Images.Ok
              and then Two.W = 4 and then Two.H = 2
              and then Pix (Two, 0, 0) = 16#FF11_2233#
@@ -3984,7 +4065,7 @@ begin
              and then Pix (Two, 3, 1) = 16#FF44_5566#,
              "xpm two-char keys decode");
 
-      Trinket.Images.Load ("BD0:Tests/Img/bad.xpm", Junk, XSt);
+      Trinket.Images.Load ("BD0:Tests/Img/BAD.XPM", Junk, XSt);
       Check (XSt = Trinket.Images.Malformed
              and then not Trinket.Images.Loaded (Junk),
              "xpm truncated rows rejected malformed");
@@ -3993,7 +4074,7 @@ begin
              "xpm missing file is io error");
       --  Dispatch order: BMP magic must not reach the XPM
       --  decoder (its Claims requires the /* XPM */ marker).
-      Trinket.Images.Load ("BD0:Tests/Img/bars.bmp", Junk, XSt);
+      Trinket.Images.Load ("BD0:Tests/Img/BARS.BMP", Junk, XSt);
       Check (XSt = Trinket.Images.Ok
              and then Junk.W = 64 and then Junk.H = 48,
              "xpm leaves bmp claims alone");
@@ -4983,16 +5064,16 @@ begin
             --  (Write_File is a sibling block's helper; Op_Write
             --  creates the file.)
             St := Akernel_User.Files.Write
-              ("BD0:FZCLK.TXT", 0, Txt'Address, 11, Cnt);
+              ("BD1:FZCLK.TXT", 0, Txt'Address, 11, Cnt);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Cnt = 11,
                    "clock stamp source written");
             St := Akernel_User.Files.Stat_Ex
-              ("BD0:FZCLK.TXT", Size, D, T, Is_D);
+              ("BD1:FZCLK.TXT", Size, D, T, Is_D);
             OkF := St = Akernel_User.Files.Status_Ok
               and then D /= 16#5A21#
               and then (D / 512) + 1_980 >= 2_026;
-            Run_Command ("Sys:C/Delete", "BD0:FZCLK.TXT", 0,
+            Run_Command ("Sys:C/Delete", "BD1:FZCLK.TXT", 0,
                          "clock stamp file deleted");
             Check (OkF, "fat dirent stamps the RTC date");
          end;
@@ -5075,12 +5156,12 @@ begin
             F : Ada.Text_IO.File_Type;
          begin
             Ada.Text_IO.Create (F, Ada.Text_IO.Out_File,
-                                "BD0:FZTIO.TXT");
+                                "BD1:FZTIO.TXT");
             Ada.Text_IO.Put_Line (F, Marker);
             Ada.Text_IO.Put_Line (F, "second line");
             Ada.Text_IO.Close (F);
             Ada.Text_IO.Open (F, Ada.Text_IO.In_File,
-                              "BD0:FZTIO.TXT");
+                              "BD1:FZTIO.TXT");
             Ada.Text_IO.Get_Line (F, TIO_Line, TIO_Last);
             TIO_Ok := TIO_Last = Marker'Length
               and then TIO_Line (1 .. TIO_Last) = Marker;
@@ -5089,7 +5170,7 @@ begin
               ("fuzz: text_io stdout rides the console");
          end;
          Check (TIO_Ok, "Text_IO create/write/read round trip");
-         Status := Akernel_User.Files.Delete ("BD0:FZTIO.TXT");
+         Status := Akernel_User.Files.Delete ("BD1:FZTIO.TXT");
          Check (Status = Akernel_User.Files.Status_Ok,
                 "Text_IO test file deleted");
       end;
@@ -5116,7 +5197,7 @@ begin
 
       declare
          Script   : constant String :=
-           "Echo one two three > BD0:FZ53C1.OUT" & ASCII.LF;
+           "Echo one two three > BD1:FZ53C1.OUT" & ASCII.LF;
          Expected : constant String := "one two three" & ASCII.LF;
          Got      : String (1 .. Expected'Length) := (others => ' ');
          WBuf     : array (0 .. Script'Length - 1) of
@@ -5129,27 +5210,27 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Script (I)));
          end loop;
          Status := Akernel_User.Files.Write
-           ("BD0:FZ53C1.TXT", 0, WBuf'Address, U64 (Script'Length),
+           ("BD1:FZ53C1.TXT", 0, WBuf'Address, U64 (Script'Length),
             Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = U64 (Script'Length),
                 "53c echo script written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZ53C1.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZ53C1.TXT",
                       0, "53c echo script");
-         Status := Akernel_User.Files.Open ("BD0:FZ53C1.OUT", Size);
+         Status := Akernel_User.Files.Open ("BD1:FZ53C1.OUT", Size);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Size = U64 (Expected'Length),
                 "53c echo output file");
          if Status = Akernel_User.Files.Status_Ok then
             Status := Akernel_User.Files.Read
-              ("BD0:FZ53C1.OUT", 0, Got'Address,
+              ("BD1:FZ53C1.OUT", 0, Got'Address,
                U64 (Got'Length), Count);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Got = Expected,
                    "Command_Line args through shell + migrated Echo");
          end if;
-         Status := Akernel_User.Files.Delete ("BD0:FZ53C1.TXT");
-         Status := Akernel_User.Files.Delete ("BD0:FZ53C1.OUT");
+         Status := Akernel_User.Files.Delete ("BD1:FZ53C1.TXT");
+         Status := Akernel_User.Files.Delete ("BD1:FZ53C1.OUT");
       end;
 
       declare
@@ -5187,10 +5268,10 @@ begin
                 and then Dirs.Kind ("BD0:System") = Dirs.Directory,
                 "Directories.Exists/Kind on a directory");
          Check (Akernel_User.Files.Read_Dir
-                  ("BD0:", 0, Ent_Name, Ent_Len, Ent_Dir, Ent_Sz)
+                  ("BD1:", 0, Ent_Name, Ent_Len, Ent_Dir, Ent_Sz)
                 = Akernel_User.Files.Status_Ok,
-                "Read_Dir probe on BD0: root");
-         Dirs.Start_Search (Search, "BD0:", "*");
+                "Read_Dir probe on BD1: root");
+         Dirs.Start_Search (Search, "BD1:", "*");
          while Dirs.More_Entries (Search) loop
             Dirs.Get_Next_Entry (Search, Ent);
             N := N + 1;
@@ -5199,14 +5280,14 @@ begin
          Check (N >= 3,
                 "Directories Start_Search walks Op_ReadDir (N ="
                 & N'Image & ")");
-         Dirs.Set_Directory ("BD0:");
+         Dirs.Set_Directory ("BD1:");
          declare
             Now : constant String := Dirs.Current_Directory;
          begin
             --  a-direct's Current_Directory is Normalize_Pathname'd
             --  (trailing directory separator), so both spellings
             --  prove the ENV:CWD round trip.
-            Check (Now = "BD0:" or else Now = "BD0:/",
+            Check (Now = "BD1:" or else Now = "BD1:/",
                    "Directories Set/Current ride ENV:CWD (" & Now
                    & ")");
          end;
@@ -5360,7 +5441,7 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (J1 (I)));
          end loop;
          Status := Akernel_User.Files.Write
-           ("BD0:J1.TXT", 0, Buf'Address, U64 (J1'Length), Count);
+           ("BD1:J1.TXT", 0, Buf'Address, U64 (J1'Length), Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = U64 (J1'Length),
                 "join input 1 written");
@@ -5369,7 +5450,7 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (J2 (I)));
          end loop;
          Status := Akernel_User.Files.Write
-           ("BD0:J2.TXT", 0, Buf'Address, U64 (J2'Length), Count);
+           ("BD1:J2.TXT", 0, Buf'Address, U64 (J2'Length), Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = U64 (J2'Length),
                 "join input 2 written");
@@ -5378,25 +5459,25 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (S1 (I)));
          end loop;
          Status := Akernel_User.Files.Write
-           ("BD0:SORTIN.TXT", 0, Buf'Address, U64 (S1'Length),
+           ("BD1:SORTIN.TXT", 0, Buf'Address, U64 (S1'Length),
             Count);
          Check (Status = Akernel_User.Files.Status_Ok
                 and then Count = U64 (S1'Length),
                 "sort input written");
 
-      Run_Command ("Sys:C/Join", "BD0:J1.TXT BD0:J2.TXT TO BD0:JOUT.TXT",
+      Run_Command ("Sys:C/Join", "BD1:J1.TXT BD1:J2.TXT TO BD1:JOUT.TXT",
                    0, "join command");
       declare
          Want : constant String := "Hello, joined!" & ASCII.LF;
       begin
-         Status := Akernel_User.Files.Stat ("BD0:JOUT.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD1:JOUT.TXT", Size);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Size = U64 (Want'Length);
          for I in 0 .. 63 loop
             Buf (I) := 0;
          end loop;
          Status := Akernel_User.Files.Read
-           ("BD0:JOUT.TXT", 0, Buf'Address, 64, Count);
+           ("BD1:JOUT.TXT", 0, Buf'Address, 64, Count);
          Match := Match
            and then Status = Akernel_User.Files.Status_Ok
            and then Count = U64 (Want'Length);
@@ -5407,23 +5488,23 @@ begin
          end loop;
          Check (Match, "join output is the concatenation");
       end;
-      Run_Command ("Sys:C/Join", "BD0:NOPE1.TXT TO BD0:JX.TXT",
+      Run_Command ("Sys:C/Join", "BD1:NOPE1.TXT TO BD1:JX.TXT",
                    10, "join missing input fails");
 
-      Run_Command ("Sys:C/Sort", "BD0:SORTIN.TXT BD0:SORTOUT.TXT",
+      Run_Command ("Sys:C/Sort", "BD1:SORTIN.TXT BD1:SORTOUT.TXT",
                    0, "sort command");
       declare
          Want : constant String := "apple" & ASCII.LF & "cherry"
            & ASCII.LF & "pear" & ASCII.LF;
       begin
-         Status := Akernel_User.Files.Stat ("BD0:SORTOUT.TXT", Size);
+         Status := Akernel_User.Files.Stat ("BD1:SORTOUT.TXT", Size);
          Match := Status = Akernel_User.Files.Status_Ok
            and then Size = U64 (Want'Length);
          for I in 0 .. 63 loop
             Buf (I) := 0;
          end loop;
          Status := Akernel_User.Files.Read
-           ("BD0:SORTOUT.TXT", 0, Buf'Address, 64, Count);
+           ("BD1:SORTOUT.TXT", 0, Buf'Address, 64, Count);
          Match := Match
            and then Status = Akernel_User.Files.Status_Ok
            and then Count = U64 (Want'Length);
@@ -5434,19 +5515,19 @@ begin
          end loop;
          Check (Match, "sort output ordered");
       end;
-      Run_Command ("Sys:C/Sort", "BD0:NOPE2.TXT BD0:SX.TXT",
+      Run_Command ("Sys:C/Sort", "BD1:NOPE2.TXT BD1:SX.TXT",
                    10, "sort missing input fails");
 
-      Run_Command ("Sys:C/Search", "BD0:SORTIN.TXT apple",
+      Run_Command ("Sys:C/Search", "BD1:SORTIN.TXT apple",
                    0, "search command");
-      Run_Command ("Sys:C/Search", "BD0:NOPE3.TXT x",
+      Run_Command ("Sys:C/Search", "BD1:NOPE3.TXT x",
                    10, "search missing file fails");
       --  List output is line-bound by the target: SUBDIR holds
-      --  a fixed two files (BD0:C grew with every shipped
+      --  a fixed two files (BD1:C grew with every shipped
       --  command until a ~24-line listing outran the SMP4 reap
       --  poll — the console-outrun burn class again).
-      Run_Command ("Sys:C/List", "BD0:SUBDIR", 0, "list command");
-      Run_Command ("Sys:C/List", "BD0:NOSUCHDIR",
+      Run_Command ("Sys:C/List", "BD1:SUBDIR", 0, "list command");
+      Run_Command ("Sys:C/List", "BD1:NOSUCHDIR",
                    10, "list missing dir fails");
       end;
 
@@ -5455,7 +5536,7 @@ begin
       --  Amiga parent idiom, and the shell's batch mode
       --  ("Shell execute <script>") runs scripts end to end.
       --  ENV reads happen through the same 64-byte buffer; the
-      --  cwd always ends back at BD0: (idempotent).
+      --  cwd always ends back at BD1: (idempotent).
       declare
          --  Buf doubles as Write_File's staging buffer; the
          --  milestone-70 control-flow scripts run past 128
@@ -5542,7 +5623,7 @@ begin
            & "set FZSCR=alive" & ASCII.LF
            & "info Sys:" & ASCII.LF;
          Script2 : constant String :=
-           "cd BD0:NOSUCHDIR" & ASCII.LF
+           "cd BD1:NOSUCHDIR" & ASCII.LF
            & "set FZSCR2=unreached" & ASCII.LF;
          --  Job control scripts (milestone 52). Job 1 in a
          --  fresh shell is slot 1 deterministically; a script
@@ -5579,26 +5660,26 @@ begin
           Script8 : constant String :=
             ".key a,b" & ASCII.LF
             & ".def b=DEF" & ASCII.LF
-            & "echo <a> <b> > BD0:FZSUBO.TXT" & ASCII.LF;
+            & "echo <a> <b> > BD1:FZSUBO.TXT" & ASCII.LF;
           Script9 : constant String :=
             ".key FZENV" & ASCII.LF
             & "set FZENV=world" & ASCII.LF
-            & "echo <FZENV> <$FZENV> > BD0:FZENVO.TXT" & ASCII.LF;
+            & "echo <FZENV> <$FZENV> > BD1:FZENVO.TXT" & ASCII.LF;
           Script10 : constant String :=
             ".set x one" & ASCII.LF
             & ".set y <x> two" & ASCII.LF
             & ".set x" & ASCII.LF
-            & "echo <y>!<x>! > BD0:FZSETO.TXT" & ASCII.LF;
+            & "echo <y>!<x>! > BD1:FZSETO.TXT" & ASCII.LF;
           Script11 : constant String :=
             "echo <NOSUCHFZ>" & ASCII.LF
             & "set FZBAD=unreached" & ASCII.LF;
           Script12 : constant String :=
-            "echo a<b > BD0:FZLITO.TXT" & ASCII.LF;
+            "echo a<b > BD1:FZLITO.TXT" & ASCII.LF;
           Script13 : constant String :=
             ".key x" & ASCII.LF
             & "set FZNEST=<x>" & ASCII.LF;
           Script14 : constant String :=
-            "execute BD0:FZINNER.TXT inner-arg" & ASCII.LF;
+            "execute BD1:FZINNER.TXT inner-arg" & ASCII.LF;
           --  Control flow (milestone 70 chunk 3): if/else/endif
           --  (exists, eq case-insensitive, val numeric, command
           --  form with the condition RC consumed), lab/skip
@@ -5607,12 +5688,12 @@ begin
           --  redirection (falls through to C:Echo), and the
           --  malformed-script errors.
           Script15 : constant String :=
-            "if exists BD0:README.TXT" & ASCII.LF
+            "if exists BD1:README.TXT" & ASCII.LF
             & "set FZIF1=yes" & ASCII.LF
             & "else" & ASCII.LF
             & "set FZIF1=no" & ASCII.LF
             & "endif" & ASCII.LF
-            & "if not exists BD0:NOSUCH.TXT" & ASCII.LF
+            & "if not exists BD1:NOSUCH.TXT" & ASCII.LF
             & "set FZIF2=yes" & ASCII.LF
             & "endif" & ASCII.LF
             & "if alpha eq ALPHA" & ASCII.LF
@@ -5630,7 +5711,7 @@ begin
             & "else" & ASCII.LF
             & "set FZIF6=yes" & ASCII.LF
             & "endif" & ASCII.LF
-            & "if list BD0:NOSUCHDIR" & ASCII.LF
+            & "if list BD1:NOSUCHDIR" & ASCII.LF
             & "set FZIF7=no" & ASCII.LF
             & "else" & ASCII.LF
             & "set FZIF7=yes" & ASCII.LF
@@ -5647,19 +5728,19 @@ begin
           --  the open if frame it jumps out of.
           Script18 : constant String :=
             "lab top" & ASCII.LF
-            & "if exists BD0:FZL1" & ASCII.LF
+            & "if exists BD1:FZL1" & ASCII.LF
             & "else" & ASCII.LF
-            & "echo one > BD0:FZL1" & ASCII.LF
+            & "echo one > BD1:FZL1" & ASCII.LF
             & "skip top back" & ASCII.LF
             & "endif" & ASCII.LF
-            & "if exists BD0:FZL2" & ASCII.LF
+            & "if exists BD1:FZL2" & ASCII.LF
             & "else" & ASCII.LF
-            & "echo two > BD0:FZL2" & ASCII.LF
+            & "echo two > BD1:FZL2" & ASCII.LF
             & "skip top back" & ASCII.LF
             & "endif" & ASCII.LF
-            & "if exists BD0:FZL3" & ASCII.LF
+            & "if exists BD1:FZL3" & ASCII.LF
             & "else" & ASCII.LF
-            & "echo three > BD0:FZL3" & ASCII.LF
+            & "echo three > BD1:FZL3" & ASCII.LF
             & "skip top back" & ASCII.LF
             & "endif" & ASCII.LF
             & "set FZLOOP=done" & ASCII.LF;
@@ -5669,7 +5750,7 @@ begin
           Script20I : constant String :=
             "quit 20" & ASCII.LF;
           Script20 : constant String :=
-            "execute BD0:FZIN2.TXT" & ASCII.LF
+            "execute BD1:FZIN2.TXT" & ASCII.LF
             & "set FZQT2=unreached" & ASCII.LF;
           Script21 : constant String :=
             "failat 21" & ASCII.LF
@@ -5683,14 +5764,14 @@ begin
             "endcli" & ASCII.LF
             & "set FZENDCLI=alive" & ASCII.LF;
           Script22 : constant String :=
-            "echo hello there > BD0:FZECHO.TXT" & ASCII.LF
+            "echo hello there > BD1:FZECHO.TXT" & ASCII.LF
             & "echo plain line" & ASCII.LF
             & "echo no newline noline" & ASCII.LF;
           --  A skipped block is never expanded: the <NOSUCHFZ2>
           --  in the not-taken branch must not abort the script.
           Script23 : constant String :=
-            "if exists BD0:README.TXT" & ASCII.LF
-            & "if not exists BD0:NOSUCH.TXT" & ASCII.LF
+            "if exists BD1:README.TXT" & ASCII.LF
+            & "if not exists BD1:NOSUCH.TXT" & ASCII.LF
             & "set FZNST=inner" & ASCII.LF
             & "else" & ASCII.LF
             & "set FZNST=bad1" & ASCII.LF
@@ -5698,7 +5779,7 @@ begin
             & "else" & ASCII.LF
             & "set FZNST=bad2" & ASCII.LF
             & "endif" & ASCII.LF
-            & "if exists BD0:NOSUCH.TXT" & ASCII.LF
+            & "if exists BD1:NOSUCH.TXT" & ASCII.LF
             & "echo <NOSUCHFZ2>" & ASCII.LF
             & "endif" & ASCII.LF
             & "set FZSKIPOK=alive" & ASCII.LF;
@@ -5707,7 +5788,7 @@ begin
           Script25 : constant String :=
             "endif" & ASCII.LF;
           Script26 : constant String :=
-            "if exists BD0:README.TXT" & ASCII.LF
+            "if exists BD1:README.TXT" & ASCII.LF
             & "set FZME=x" & ASCII.LF;
           Script27 : constant String :=
             "skip nowhere" & ASCII.LF
@@ -5719,7 +5800,7 @@ begin
           --  backgrounds a script as a reapable job, and a
           --  self-executing script hits the nesting cap.
           Script28 : constant String :=
-            "Type BD0:FZCXIN.TXT | Sort > BD0:FZCXOUT.TXT"
+            "Type BD1:FZCXIN.TXT | Sort > BD1:FZCXOUT.TXT"
             & ASCII.LF
             & "set FZCX1=done" & ASCII.LF;
           Script29 : constant String :=
@@ -5732,11 +5813,11 @@ begin
           Script30I : constant String :=
             "set FZBGS=ran" & ASCII.LF;
           Script30 : constant String :=
-            "run Sys:C/Execute BD0:FZBGI.TXT" & ASCII.LF
+            "run Sys:C/Execute BD1:FZBGI.TXT" & ASCII.LF
             & "wait 1" & ASCII.LF
             & "set FZCX2=alive" & ASCII.LF;
           Script31 : constant String :=
-            "execute BD0:FZSELF.TXT" & ASCII.LF;
+            "execute BD1:FZSELF.TXT" & ASCII.LF;
       begin
          --  A tiny source file first: a mutating FAT op costs
          --  ~0.4 s write-through, so the copy under test must be
@@ -5745,11 +5826,11 @@ begin
          Write_File ("BD0:FZSM.TXT", "small but valid!",
                      "tiny copy source written");
 
-         Run_Command ("Sys:C/CD", "BD0:C", 0, "cd command");
+         Run_Command ("Sys:C/Cd", "BD0:C", 0, "cd command");
          Check_Env ("CWD", "BD0:C", "cd sets ENV:CWD");
 
          --  The Amiga parent idiom: "/" from BD0:C is BD0:.
-         Run_Command ("Sys:C/CD", "/", 0, "cd slash is the parent");
+         Run_Command ("Sys:C/Cd", "/", 0, "cd slash is the parent");
          Check_Env ("CWD", "BD0:", "cd slash lands at the root");
 
          --  Relative args resolve against the cwd: copy by bare
@@ -5770,6 +5851,8 @@ begin
          end;
          Run_Command ("Sys:C/Delete", "FZSM2.TXT", 0,
                       "delete with cwd-relative arg");
+         Run_Command ("Sys:C/Delete", "FZSM.TXT", 0,
+                      "copy source cleaned");
 
          --  m71c: the network stack end to end — Sys:C/Ping
          --  over an ICMP ping socket to the slirp gateway (ARP
@@ -6054,22 +6137,22 @@ begin
                          else ", Host: absent"));
          end;
 
-         Run_Command ("Sys:C/CD", "BD0:NOSUCHDIR", 10,
+         Run_Command ("Sys:C/Cd", "BD1:NOSUCHDIR", 10,
                       "cd missing dir fails");
-         Run_Command ("Sys:C/CD", "BD0:README.TXT", 10,
+         Run_Command ("Sys:C/Cd", "BD1:README.TXT", 10,
                       "cd onto a file fails");
 
          --  Scripts end to end through the shell's batch mode.
-         Write_File ("BD0:FZSCRIPT.TXT", Script1,
+         Write_File ("BD1:FZSCRIPT.TXT", Script1,
                      "script 1 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZSCRIPT.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZSCRIPT.TXT",
                       0, "shell runs a script");
          Check_Env ("FZSCR", "alive",
                     "script command side effects landed");
 
-         Write_File ("BD0:FZSCRIPT2.TXT", Script2,
+         Write_File ("BD1:FZSCRIPT2.TXT", Script2,
                      "script 2 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZSCRIPT2.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZSCRIPT2.TXT",
                       10, "script stops at the first RC 10");
          declare
             St   : U64;
@@ -6087,9 +6170,9 @@ begin
          --  silent pre-harvest), an unknown job is RC 10, and a
          --  shell exiting with a live job abandons it (orphan
          --  semantics — the kernel collects the child on exit).
-         Write_File ("BD0:FZJOBS1.TXT", Script3,
+         Write_File ("BD1:FZJOBS1.TXT", Script3,
                      "jobs script 1 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS1.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZJOBS1.TXT",
                       20, "wait returns the job exit code");
          declare
             St   : U64;
@@ -6100,21 +6183,21 @@ begin
                    "job RC 20 stops the script at failat");
          end;
 
-         Write_File ("BD0:FZJOBS2.TXT", Script4,
+         Write_File ("BD1:FZJOBS2.TXT", Script4,
                      "jobs script 2 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS2.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZJOBS2.TXT",
                       0, "background job completes under wait");
          Check_Env ("FZJOBS2", "alive",
                     "script continues after a warned job");
 
-         Write_File ("BD0:FZJOBS3.TXT", Script5,
+         Write_File ("BD1:FZJOBS3.TXT", Script5,
                      "jobs script 3 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS3.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZJOBS3.TXT",
                       4, "bare wait reaps all, RC is the last job");
 
-         Write_File ("BD0:FZJOBS4.TXT", Script6,
+         Write_File ("BD1:FZJOBS4.TXT", Script6,
                      "jobs script 4 written");
-         Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS4.TXT",
+         Run_Command ("Sys:System/Shell", "execute BD1:FZJOBS4.TXT",
                       0, "wait with no matching job runs C:Wait");
          declare
             St   : U64;
@@ -6125,9 +6208,9 @@ begin
                    "C:Wait fallthrough lets the script continue");
          end;
 
-          Write_File ("BD0:FZJOBS5.TXT", Script7,
+          Write_File ("BD1:FZJOBS5.TXT", Script7,
                       "jobs script 5 written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZJOBS5.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZJOBS5.TXT",
                        0, "shell exits with a live job (orphan)");
 
           --  Script locals + substitution end to end (milestone
@@ -6135,34 +6218,34 @@ begin
           --  script line of the form `echo ... > file`, so the
           --  expanded text must survive BOTH substitution and
           --  the pipeline/redirection parser.
-          Write_File ("BD0:FZSUB.TXT", Script8,
+          Write_File ("BD1:FZSUB.TXT", Script8,
                       "substitution script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZSUB.TXT hello",
+                       "execute BD1:FZSUB.TXT hello",
                        0, "script runs with a .key arg");
-          Check_File ("BD0:FZSUBO.TXT", "hello DEF" & ASCII.LF,
+          Check_File ("BD1:FZSUBO.TXT", "hello DEF" & ASCII.LF,
                       ".key arg and .def default substituted");
 
-          Write_File ("BD0:FZENV.TXT", Script9,
+          Write_File ("BD1:FZENV.TXT", Script9,
                       "env fallback script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZENV.TXT local",
+                       "execute BD1:FZENV.TXT local",
                        0, "script with a local shadowing ENV:");
-          Check_File ("BD0:FZENVO.TXT", "local world" & ASCII.LF,
+          Check_File ("BD1:FZENVO.TXT", "local world" & ASCII.LF,
                       "local shadows ENV:, <$> forces ENV:");
 
-          Write_File ("BD0:FZSET.TXT", Script10,
+          Write_File ("BD1:FZSET.TXT", Script10,
                       ".set script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZSET.TXT",
+                       "execute BD1:FZSET.TXT",
                        0, "script runs .set directives");
-          Check_File ("BD0:FZSETO.TXT", "one two!!" & ASCII.LF,
+          Check_File ("BD1:FZSETO.TXT", "one two!!" & ASCII.LF,
                       ".set set/copy/clear all substituted");
 
-          Write_File ("BD0:FZBADS.TXT", Script11,
+          Write_File ("BD1:FZBADS.TXT", Script11,
                       "bad-substitution script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZBADS.TXT",
+                       "execute BD1:FZBADS.TXT",
                        10, "undefined <name> aborts the script");
           declare
              St   : U64;
@@ -6176,40 +6259,40 @@ begin
           --  `a<b` has no closing '>' right after the name, so
           --  the '<' stays literal even though the line has a
           --  '>' redirection later.
-          Write_File ("BD0:FZLIT.TXT", Script12,
+          Write_File ("BD1:FZLIT.TXT", Script12,
                       "literal-'<' script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZLIT.TXT",
+                       "execute BD1:FZLIT.TXT",
                        0, "script with a literal '<' runs");
-          Check_File ("BD0:FZLITO.TXT", "a<b" & ASCII.LF,
+          Check_File ("BD1:FZLITO.TXT", "a<b" & ASCII.LF,
                       "'<' without a closing '>' stays literal");
 
           --  Nested execute: the outer script's line re-enters
           --  the interpreter through the shell's dispatcher and
           --  binds the inner template arg.
-          Write_File ("BD0:FZINNER.TXT", Script13,
+          Write_File ("BD1:FZINNER.TXT", Script13,
                       "inner script written");
-          Write_File ("BD0:FZOUTER.TXT", Script14,
+          Write_File ("BD1:FZOUTER.TXT", Script14,
                       "outer script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZOUTER.TXT",
+                       "execute BD1:FZOUTER.TXT",
                        0, "nested execute passes args");
           Check_Env ("FZNEST", "inner-arg",
                      "nested script's <x> bound from outer args");
 
           --  Control flow end to end (milestone 70 chunk 3).
-          Write_File ("BD0:FZIF1.TXT", Script15,
+          Write_File ("BD1:FZIF1.TXT", Script15,
                       "if/else script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZIF1.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZIF1.TXT",
                        0, "if exists/eq/else script runs");
           Check_Env ("FZIF1", "yes", "if exists took the true arm");
           Check_Env ("FZIF2", "yes", "if not exists took its arm");
           Check_Env ("FZIF3", "yes", "if eq is case-insensitive");
           Check_Env ("FZIF4", "yes", "if not eq took its arm");
 
-          Write_File ("BD0:FZIF2.TXT", Script16,
+          Write_File ("BD1:FZIF2.TXT", Script16,
                       "if val/command script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZIF2.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZIF2.TXT",
                        0, "if val/command script runs");
           Check_Env ("FZIF5", "yes", "if val gt compared numerically");
           Check_Env ("FZIF6", "yes", "if val lt fell to else");
@@ -6218,10 +6301,10 @@ begin
           Check_Env ("FZIFD", "done",
                      "if <command> consumed the RC (no failat)");
 
-          Write_File ("BD0:FZSKIP.TXT", Script17,
+          Write_File ("BD1:FZSKIP.TXT", Script17,
                       "skip script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZSKIP.TXT",
+                       "execute BD1:FZSKIP.TXT",
                        0, "skip script runs");
           Check_Env ("FZSK1", "alive",
                      "skip jumped forward over the marker");
@@ -6231,25 +6314,25 @@ begin
           declare
              St : U64;
           begin
-             St := Akernel_User.Files.Delete ("BD0:FZL1");
-             St := Akernel_User.Files.Delete ("BD0:FZL2");
-             St := Akernel_User.Files.Delete ("BD0:FZL3");
+             St := Akernel_User.Files.Delete ("BD1:FZL1");
+             St := Akernel_User.Files.Delete ("BD1:FZL2");
+             St := Akernel_User.Files.Delete ("BD1:FZL3");
           end;
-          Write_File ("BD0:FZLOOP.TXT", Script18,
+          Write_File ("BD1:FZLOOP.TXT", Script18,
                       "skip-back loop script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZLOOP.TXT",
+                       "execute BD1:FZLOOP.TXT",
                        0, "skip-back loop terminates");
           Check_Env ("FZLOOP", "done", "loop fell through at FZL3");
-          Check_File ("BD0:FZL1", "one" & ASCII.LF,
+          Check_File ("BD1:FZL1", "one" & ASCII.LF,
                       "loop pass 1 created FZL1");
-          Check_File ("BD0:FZL2", "two" & ASCII.LF,
+          Check_File ("BD1:FZL2", "two" & ASCII.LF,
                       "loop pass 2 created FZL2");
-          Check_File ("BD0:FZL3", "three" & ASCII.LF,
+          Check_File ("BD1:FZL3", "three" & ASCII.LF,
                       "loop pass 3 created FZL3");
 
-          Write_File ("BD0:FZQT.TXT", Script19, "quit script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZQT.TXT",
+          Write_File ("BD1:FZQT.TXT", Script19, "quit script written");
+          Run_Command ("Sys:System/Shell", "execute BD1:FZQT.TXT",
                        7, "quit 7 sets the script RC");
           declare
              St   : U64;
@@ -6260,11 +6343,11 @@ begin
                     "quit stops the script");
           end;
 
-          Write_File ("BD0:FZIN2.TXT", Script20I,
+          Write_File ("BD1:FZIN2.TXT", Script20I,
                       "inner quit-20 script written");
-          Write_File ("BD0:FZQT2.TXT", Script20,
+          Write_File ("BD1:FZQT2.TXT", Script20,
                       "outer script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZQT2.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZQT2.TXT",
                        20, "inner quit 20 propagates");
           declare
              St   : U64;
@@ -6275,19 +6358,19 @@ begin
                     "inner RC 20 tripped the outer failat");
           end;
 
-          Write_File ("BD0:FZFT.TXT", Script21,
+          Write_File ("BD1:FZFT.TXT", Script21,
                       "failat script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZFT.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZFT.TXT",
                        0, "failat 21 lets RC 20 pass");
           Check_Env ("FZFT", "alive", "script continued past RC 20");
 
           --  EndCLI (M85a): the fuzz console is serial, so the
           --  serial server replies "not a window" and the shell
           --  keeps serving — the marker after endcli must run.
-          Write_File ("BD0:FZENDCLI.TXT", Script_Endcli,
+          Write_File ("BD1:FZENDCLI.TXT", Script_Endcli,
                       "endcli script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZENDCLI.TXT",
+                       "execute BD1:FZENDCLI.TXT",
                        0, "endcli on serial does not kill the shell");
           Check_Env ("FZENDCLI", "alive",
                      "shell kept running after endcli (no window)");
@@ -6389,124 +6472,124 @@ begin
              end File_Has;
 
              ScriptD1 : constant String :=
-               "dir BD0:FZDIR/#? > BD0:FZDPA.TXT" & ASCII.LF;
+               "dir BD1:FZDIR/#? > BD1:FZDPA.TXT" & ASCII.LF;
              ScriptD2 : constant String :=
-               "dir BD0:FZDIR/#?.TXT > BD0:FZDPB.TXT" & ASCII.LF;
+               "dir BD1:FZDIR/#?.TXT > BD1:FZDPB.TXT" & ASCII.LF;
              ScriptD3 : constant String :=
-               "dir BD0:FZDIR/B.T?T > BD0:FZDPC.TXT" & ASCII.LF;
+               "dir BD1:FZDIR/B.T?T > BD1:FZDPC.TXT" & ASCII.LF;
              --  Alternation + redirection: '|' inside parens must
              --  not route as a pipe, '>' outside still must.
              ScriptD4 : constant String :=
-               "dir BD0:FZDIR/(a|c).dat > BD0:FZPD.TXT" & ASCII.LF;
+               "dir BD1:FZDIR/(a|c).dat > BD1:FZPD.TXT" & ASCII.LF;
              ScriptD5 : constant String :=
-               "list BD0:FZDIR/#?.DAT > BD0:FZPL.TXT" & ASCII.LF;
+               "list BD1:FZDIR/#?.DAT > BD1:FZPL.TXT" & ASCII.LF;
              --  Pattern without a separator lists from the cwd.
              ScriptD6 : constant String :=
-               "cd BD0:FZDIR" & ASCII.LF
-               & "dir #?.TXT > BD0:FZPD2.TXT" & ASCII.LF
-               & "cd BD0:" & ASCII.LF;
+               "cd BD1:FZDIR" & ASCII.LF
+               & "dir #?.TXT > BD1:FZPD2.TXT" & ASCII.LF
+               & "cd BD1:" & ASCII.LF;
           begin
-             St := Akernel_User.Files.Mkdir ("BD0:FZDIR");
-             Write_File ("BD0:FZDIR/A.TXT", "alpha",
+             St := Akernel_User.Files.Mkdir ("BD1:FZDIR");
+             Write_File ("BD1:FZDIR/A.TXT", "alpha",
                          "glob fixture A.TXT written");
-             Write_File ("BD0:FZDIR/B.TXT", "beta",
+             Write_File ("BD1:FZDIR/B.TXT", "beta",
                          "glob fixture B.TXT written");
-             Write_File ("BD0:FZDIR/C.DAT", "delta-one",
+             Write_File ("BD1:FZDIR/C.DAT", "delta-one",
                          "glob fixture C.DAT written");
 
-             Write_File ("BD0:FZSD1.TXT", ScriptD1,
+             Write_File ("BD1:FZSD1.TXT", ScriptD1,
                          "dir #? script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD1.TXT",
+                          "execute BD1:FZSD1.TXT",
                           0, "dir #? runs");
-             Check (File_Has ("BD0:FZDPA.TXT", "A.TXT"),
+             Check (File_Has ("BD1:FZDPA.TXT", "A.TXT"),
                     "dir #? lists A.TXT");
-             Check (File_Has ("BD0:FZDPA.TXT", "C.DAT"),
+             Check (File_Has ("BD1:FZDPA.TXT", "C.DAT"),
                     "dir #? lists C.DAT");
 
-             Write_File ("BD0:FZSD2.TXT", ScriptD2,
+             Write_File ("BD1:FZSD2.TXT", ScriptD2,
                          "dir #?.TXT script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD2.TXT",
+                          "execute BD1:FZSD2.TXT",
                           0, "dir #?.TXT runs");
-             Check (File_Has ("BD0:FZDPB.TXT", "A.TXT"),
+             Check (File_Has ("BD1:FZDPB.TXT", "A.TXT"),
                     "dir #?.TXT lists A.TXT");
-             Check (File_Has ("BD0:FZDPB.TXT", "B.TXT"),
+             Check (File_Has ("BD1:FZDPB.TXT", "B.TXT"),
                     "dir #?.TXT lists B.TXT");
-             Check (not File_Has ("BD0:FZDPB.TXT", "C.DAT"),
+             Check (not File_Has ("BD1:FZDPB.TXT", "C.DAT"),
                     "dir #?.TXT filters out C.DAT");
 
-             Write_File ("BD0:FZSD3.TXT", ScriptD3,
+             Write_File ("BD1:FZSD3.TXT", ScriptD3,
                          "dir B.T?T script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD3.TXT",
+                          "execute BD1:FZSD3.TXT",
                           0, "dir B.T?T runs");
-             Check_File ("BD0:FZDPC.TXT", "  B.TXT 4" & ASCII.LF,
+             Check_File ("BD1:FZDPC.TXT", "  B.TXT 4" & ASCII.LF,
                          "dir B.T?T matches only B.TXT");
 
-             Write_File ("BD0:FZSD4.TXT", ScriptD4,
+             Write_File ("BD1:FZSD4.TXT", ScriptD4,
                          "dir alternation script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD4.TXT",
+                          "execute BD1:FZSD4.TXT",
                           0, "dir (a|c).dat runs");
-             Check_File ("BD0:FZPD.TXT", "  C.DAT 9" & ASCII.LF,
+             Check_File ("BD1:FZPD.TXT", "  C.DAT 9" & ASCII.LF,
                          "dir (a|c).dat matches only C.DAT");
 
-             Write_File ("BD0:FZSD5.TXT", ScriptD5,
+             Write_File ("BD1:FZSD5.TXT", ScriptD5,
                          "list #?.DAT script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD5.TXT",
+                          "execute BD1:FZSD5.TXT",
                           0, "list #?.DAT runs");
-             Check (File_Has ("BD0:FZPL.TXT", "C.DAT"),
+             Check (File_Has ("BD1:FZPL.TXT", "C.DAT"),
                     "list #?.DAT lists C.DAT");
-             Check (not File_Has ("BD0:FZPL.TXT", "A.TXT"),
+             Check (not File_Has ("BD1:FZPL.TXT", "A.TXT"),
                     "list #?.DAT filters out A.TXT");
 
-             Write_File ("BD0:FZSD6.TXT", ScriptD6,
+             Write_File ("BD1:FZSD6.TXT", ScriptD6,
                          "dir cwd-pattern script written");
              Run_Command ("Sys:System/Shell",
-                          "execute BD0:FZSD6.TXT",
+                          "execute BD1:FZSD6.TXT",
                           0, "dir #?.TXT from cwd runs");
-             Check (File_Has ("BD0:FZPD2.TXT", "A.TXT"),
+             Check (File_Has ("BD1:FZPD2.TXT", "A.TXT"),
                     "cwd pattern lists A.TXT");
-             Check (not File_Has ("BD0:FZPD2.TXT", "C.DAT"),
+             Check (not File_Has ("BD1:FZPD2.TXT", "C.DAT"),
                     "cwd pattern filters out C.DAT");
           end;
 
-          Write_File ("BD0:FZECHOS.TXT", Script22,
+          Write_File ("BD1:FZECHOS.TXT", Script22,
                       "echo script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZECHOS.TXT",
+                       "execute BD1:FZECHOS.TXT",
                        0, "echo script runs");
-          Check_File ("BD0:FZECHO.TXT", "hello there" & ASCII.LF,
+          Check_File ("BD1:FZECHO.TXT", "hello there" & ASCII.LF,
                       "echo with > fell through to C:Echo");
 
-          Write_File ("BD0:FZNST.TXT", Script23,
+          Write_File ("BD1:FZNST.TXT", Script23,
                       "nested if script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZNST.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZNST.TXT",
                        0, "nested if/else script runs");
           Check_Env ("FZNST", "inner", "nested ifs took inner arm");
           Check_Env ("FZSKIPOK", "alive",
                      "skipped block never expanded <NOSUCHFZ2>");
 
-          Write_File ("BD0:FZE1.TXT", Script24,
+          Write_File ("BD1:FZE1.TXT", Script24,
                       "else-without-if script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZE1.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZE1.TXT",
                        10, "else without if fails");
-          Write_File ("BD0:FZE2.TXT", Script25,
+          Write_File ("BD1:FZE2.TXT", Script25,
                       "endif-without-if script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZE2.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZE2.TXT",
                        10, "endif without if fails");
-          Write_File ("BD0:FZE3.TXT", Script26,
+          Write_File ("BD1:FZE3.TXT", Script26,
                       "missing-endif script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZE3.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZE3.TXT",
                        10, "missing endif fails");
           Check_Env ("FZME", "x",
                      "missing endif still ran the body");
 
-          Write_File ("BD0:FZE4.TXT", Script27,
+          Write_File ("BD1:FZE4.TXT", Script27,
                       "unknown-label script written");
-          Run_Command ("Sys:System/Shell", "execute BD0:FZE4.TXT",
+          Run_Command ("Sys:System/Shell", "execute BD1:FZE4.TXT",
                        10, "skip to an unknown label fails");
           declare
              St   : U64;
@@ -6518,52 +6601,52 @@ begin
           end;
 
           --  C:Execute + ask end to end (milestone 70 chunk 4).
-          Write_File ("BD0:FZCXIN.TXT", "delta" & ASCII.LF
+          Write_File ("BD1:FZCXIN.TXT", "delta" & ASCII.LF
                       & "alpha" & ASCII.LF,
                       "C:Execute pipeline input written");
-          Write_File ("BD0:FZCX.TXT", Script28,
+          Write_File ("BD1:FZCX.TXT", Script28,
                       "C:Execute script written");
-          Run_Command ("Sys:C/Execute", "BD0:FZCX.TXT",
+          Run_Command ("Sys:C/Execute", "BD1:FZCX.TXT",
                        0, "C:Execute runs a script");
-          Check_File ("BD0:FZCXOUT.TXT",
+          Check_File ("BD1:FZCXOUT.TXT",
                       "alpha" & ASCII.LF & "delta" & ASCII.LF,
                       "pipeline inside C:Execute sorted");
           Check_Env ("FZCX1", "done", "C:Execute script completed");
 
-          Write_File ("BD0:FZASK.TXT", Script29,
+          Write_File ("BD1:FZASK.TXT", Script29,
                       "ask script written");
-          Write_File ("BD0:FZASKY.TXT",
-                      "echo y | Sys:C/Execute BD0:FZASK.TXT"
+          Write_File ("BD1:FZASKY.TXT",
+                      "echo y | Sys:C/Execute BD1:FZASK.TXT"
                       & ASCII.LF,
                       "ask-yes pipeline script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZASKY.TXT",
+                       "execute BD1:FZASKY.TXT",
                        0, "ask piped a 'y'");
           Check_Env ("FZASK", "yes", "ask read 'y' from the pipe");
-          Write_File ("BD0:FZASKN.TXT",
-                      "echo n | Sys:C/Execute BD0:FZASK.TXT"
+          Write_File ("BD1:FZASKN.TXT",
+                      "echo n | Sys:C/Execute BD1:FZASK.TXT"
                       & ASCII.LF,
                       "ask-no pipeline script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZASKN.TXT",
+                       "execute BD1:FZASKN.TXT",
                        0, "ask piped an 'n'");
           Check_Env ("FZASK", "no", "ask read 'n' from the pipe");
 
-          Write_File ("BD0:FZBGI.TXT", Script30I,
+          Write_File ("BD1:FZBGI.TXT", Script30I,
                       "backgrounded script written");
-          Write_File ("BD0:FZBGS.TXT", Script30,
+          Write_File ("BD1:FZBGS.TXT", Script30,
                       "run-Execute script written");
           Run_Command ("Sys:System/Shell",
-                       "execute BD0:FZBGS.TXT",
+                       "execute BD1:FZBGS.TXT",
                        0, "run Sys:C/Execute backgrounds a script");
           Check_Env ("FZBGS", "ran",
                      "backgrounded script ran to completion");
           Check_Env ("FZCX2", "alive",
                      "wait reaped the script job, RC composed");
 
-          Write_File ("BD0:FZSELF.TXT", Script31,
+          Write_File ("BD1:FZSELF.TXT", Script31,
                       "self-executing script written");
-          Run_Command ("Sys:C/Execute", "BD0:FZSELF.TXT",
+          Run_Command ("Sys:C/Execute", "BD1:FZSELF.TXT",
                        10, "self-execute hits the depth cap");
 
          --  Pipelines + redirection end to end (milestone 46b):
@@ -6586,36 +6669,36 @@ begin
             Size     : U64;
             Cnt      : U64;
          begin
-            Write_File ("BD0:FZPIN.TXT", In_File,
+            Write_File ("BD1:FZPIN.TXT", In_File,
                         "pipeline test input written");
-            Write_File ("BD0:FZPIPE1.TXT",
-                        "Type BD0:FZPIN.TXT | Sort > BD0:FZPOUT.TXT"
+            Write_File ("BD1:FZPIPE1.TXT",
+                        "Type BD1:FZPIN.TXT | Sort > BD1:FZPOUT.TXT"
                         & ASCII.LF,
                         "pipeline script written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZPIPE1.TXT",
+                         "execute BD1:FZPIPE1.TXT",
                          0, "shell runs a pipeline");
-            St := Akernel_User.Files.Open ("BD0:FZPOUT.TXT", Size);
+            St := Akernel_User.Files.Open ("BD1:FZPOUT.TXT", Size);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Size = U64 (Expected'Length),
                    "pipeline redirect target has the sorted size");
             St := Akernel_User.Files.Read
-              ("BD0:FZPOUT.TXT", 0, Out_Buf'Address,
+              ("BD1:FZPOUT.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
                    and then Out_Buf (1 .. Expected'Length) = Expected,
                    "piped sort output landed sorted via > file");
 
-            Write_File ("BD0:FZPIPE2.TXT",
-                        "Sort < BD0:FZPIN.TXT > BD0:FZS2.TXT"
+            Write_File ("BD1:FZPIPE2.TXT",
+                        "Sort < BD1:FZPIN.TXT > BD1:FZS2.TXT"
                         & ASCII.LF,
                         "file-redirect script written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZPIPE2.TXT",
+                         "execute BD1:FZPIPE2.TXT",
                          0, "shell runs < and > redirects");
             St := Akernel_User.Files.Read
-              ("BD0:FZS2.TXT", 0, Out_Buf'Address,
+              ("BD1:FZS2.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
@@ -6628,19 +6711,19 @@ begin
             --  PIPE:BG<j><s> pipes are deleted when the job is
             --  reaped (Stat on a pipe never creates it, so the
             --  absence checks below are real).
-            Write_File ("BD0:FZBG1.TXT",
-                        "run Type BD0:FZPIN.TXT | Sort > BD0:FZBG1O.TXT"
+            Write_File ("BD1:FZBG1.TXT",
+                        "run Type BD1:FZPIN.TXT | Sort > BD1:FZBG1O.TXT"
                         & ASCII.LF
                         & "wait 1" & ASCII.LF
                         & "set FZBG1=alive" & ASCII.LF,
                         "bg pipeline script 1 written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZBG1.TXT",
+                         "execute BD1:FZBG1.TXT",
                          0, "shell backgrounds a pipeline");
             Check_Env ("FZBG1", "alive",
                        "script continues after the bg pipeline");
             St := Akernel_User.Files.Read
-              ("BD0:FZBG1O.TXT", 0, Out_Buf'Address,
+              ("BD1:FZBG1O.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
@@ -6650,14 +6733,14 @@ begin
             Check (St /= Akernel_User.Files.Status_Ok,
                    "wait deleted the job's BG pipe");
 
-            Write_File ("BD0:FZBG2.TXT",
+            Write_File ("BD1:FZBG2.TXT",
                         "run Tests/Teardown X 3 | Tests/Teardown X 20"
                         & ASCII.LF
                         & "wait 1" & ASCII.LF
                         & "set FZBG2=unreached" & ASCII.LF,
                         "bg pipeline script 2 written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZBG2.TXT",
+                         "execute BD1:FZBG2.TXT",
                          20, "bg pipeline RC is the last stage's");
             declare
                S2  : U64;
@@ -6668,7 +6751,7 @@ begin
                       "bg pipeline RC 20 stops the script at failat");
             end;
 
-            Write_File ("BD0:FZBG3.TXT",
+            Write_File ("BD1:FZBG3.TXT",
                         "run Tests/Teardown X 3 | Tests/Teardown X 5"
                         & ASCII.LF
                         & "run Tests/Teardown X 4 | Tests/Teardown X 6"
@@ -6678,7 +6761,7 @@ begin
                         & "set FZBG3=alive" & ASCII.LF,
                         "bg pipeline script 3 written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZBG3.TXT",
+                         "execute BD1:FZBG3.TXT",
                          0, "two bg pipelines, jobs, bare wait");
             Check_Env ("FZBG3", "alive",
                        "bare wait reaped both bg pipelines");
@@ -6686,12 +6769,12 @@ begin
             Check (St /= Akernel_User.Files.Status_Ok,
                    "both jobs' BG pipes deleted");
 
-            Write_File ("BD0:FZBG4.TXT",
+            Write_File ("BD1:FZBG4.TXT",
                         "run | Sort" & ASCII.LF
                         & "set FZBG4=unreached" & ASCII.LF,
                         "bg pipeline script 4 written");
             Run_Command ("Sys:System/Shell",
-                         "execute BD0:FZBG4.TXT",
+                         "execute BD1:FZBG4.TXT",
                          10, "bad bg pipeline rejected, RC 10");
             declare
                S3  : U64;
@@ -6702,7 +6785,7 @@ begin
                       "bad bg pipeline stops the script at failat");
             end;
 
-            Run_Command ("Sys:C/Copy", "BD0:FZPIN.TXT NIL:", 0,
+            Run_Command ("Sys:C/Copy", "BD1:FZPIN.TXT NIL:", 0,
                          "copy to NIL: discards");
 
             --  Write-back block cache (milestone 48): freshly
@@ -6712,10 +6795,10 @@ begin
             --  slots over the miss-run DMA). Sync then pushes
             --  the flush chain fat32 -> partmgr -> virtio-blk
             --  -> device (Op_Flush + VIRTIO_BLK_T_FLUSH).
-            Write_File ("BD0:FZWB.TXT", In_File,
+            Write_File ("BD1:FZWB.TXT", In_File,
                         "write-back test input written");
             St := Akernel_User.Files.Read
-              ("BD0:FZWB.TXT", 0, Out_Buf'Address,
+              ("BD1:FZWB.TXT", 0, Out_Buf'Address,
                U64 (In_File'Length), Cnt);
             Check (St = Akernel_User.Files.Status_Ok
                    and then Cnt = U64 (In_File'Length)
@@ -6767,7 +6850,7 @@ begin
       begin
          Run_Command ("Sys:C/Path", "SUBDIR ADD", 0,
                       "path add (cwd-relative, canonicalized)");
-         Check_Env ("Path", "BD0:SUBDIR/", "path add wrote the list");
+         Check_Env ("Path", "BD1:SUBDIR/", "path add wrote the list");
 
          --  Additive semantics: C: stays searchable while the
          --  list is set, and list entries are searched too
@@ -6777,14 +6860,14 @@ begin
          Run_Command ("Sys:C/Which", "HELLO.TXT", 0,
                       "which finds a path-list entry");
          Run_Command ("Sys:C/Path", "BD0:C ADD", 0, "path add C:");
-         Check_Env ("Path", "BD0:SUBDIR/;BD0:C/",
+         Check_Env ("Path", "BD1:SUBDIR/;BD0:C/",
                     "path appended the second entry");
          Run_Command ("Sys:C/Which", "Copy", 0,
                       "which finds C: once added");
 
          Run_Command ("Sys:C/Path", "bd0:c add", 5,
                       "path dedup is case-insensitive");
-         Check_Env ("Path", "BD0:SUBDIR/;BD0:C/",
+         Check_Env ("Path", "BD1:SUBDIR/;BD0:C/",
                     "dedup left the list unchanged");
 
          Run_Command ("Sys:C/Path", "SUBDIR REMOVE", 0,

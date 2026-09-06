@@ -44,17 +44,18 @@ procedure Init is
 
    --  FAT32 driver endpoint minted at boot: Receive side granted
    --  (fat32_server token) to System/Fat32, Send side pushed to
-   --  the file server as Op_Add_FS (device BD0) after the driver
-   --  spawns, so the VFS forwards BD0: paths to it. The driver's
-   --  blk token grants it the virtio-blk service endpoint (Send)
-   --  kept by the device manager.
+   --  the file server as Op_Add_FS (device BD1, label Data) after
+   --  the driver spawns (M93: FAT32 is the data volume; Sys: is
+   --  BeFS). The driver's blk token grants it the virtio-blk
+   --  service endpoint (Send) kept by the device manager.
    FAT32_EP : Akernel_User.Syscalls.U64 := 0;
 
-   --  BeFS driver endpoint (milestone 82c): Receive side granted
-   --  (bfs_server token) to System/Bfs, Send side pushed to the
-   --  file server as Op_Add_FS (device BD1, label Befs) after the
-   --  driver spawns. The driver's part1 token grants it the
-   --  badged Send cap for GPT partition 2.
+   --  BeFS driver endpoint (milestone 82c, M93 swap): Receive side
+   --  granted (bfs_server token) to System/Bfs, Send side pushed
+   --  to the file server as Op_Add_FS (device BD0, label Sys)
+   --  after the driver spawns — the BeFS partition is the system
+   --  volume, so hardcoded Sys: paths survive. The driver's part0
+   --  token grants it the badged Send cap for GPT partition 1.
    BFS_EP : Akernel_User.Syscalls.U64 := 0;
 
    --  Partition service endpoint minted at boot: Receive side
@@ -343,13 +344,14 @@ procedure Init is
       end if;
    end Push_Part_Mounts;
 
-   --  Send Op_Add_FS (device "BD0", label "Sys") with the
+   --  Send Op_Add_FS (device "BD1", label "Data") with the
    --  FAT32 driver's service endpoint (Send side, transferred in
-   --  cap slot 0) so the VFS mounts the forwarded volume.
+   --  cap slot 0) so the VFS mounts the forwarded volume. The
+   --  FAT32 partition is the DATA volume since M93 (Sys: is BeFS).
    procedure Push_Fat32_Mount is
       use Akernel_User.Syscalls;
-      Dev   : constant String := "BD0";
-      Lab   : constant String := "Sys";
+      Dev   : constant String := "BD1";
+      Lab   : constant String := "Data";
       Chars : constant String := Dev & Lab;
    begin
       Message.Label := 6;  --  Files.Op_Add_FS
@@ -374,13 +376,14 @@ procedure Init is
       end if;
    end Push_Fat32_Mount;
 
-   --  Send Op_Add_FS (device "BD1", label "Befs") with the BeFS
-   --  driver's service endpoint (milestone 82c). Case-sensitive:
+   --  Send Op_Add_FS (device "BD0", label "Sys") with the BeFS
+   --  driver's service endpoint (M93: the BeFS partition IS Sys:,
+   --  so hardcoded Sys: paths survive the swap). Case-sensitive:
    --  BeFS names are. Read-only mount for now.
    procedure Push_Bfs_Mount is
       use Akernel_User.Syscalls;
-      Dev   : constant String := "BD1";
-      Lab   : constant String := "Befs";
+      Dev   : constant String := "BD0";
+      Lab   : constant String := "Sys";
       Chars : constant String := Dev & Lab;
    begin
       Message.Label := 6;  --  Files.Op_Add_FS

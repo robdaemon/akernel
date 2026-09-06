@@ -225,6 +225,88 @@ package body Akernel_User.CLI is
       begin
          return Files.Stat (S, Size) = Files.Status_Ok;
       end Try;
+
+      --  ASCII case-insensitive entry comparison (command lookup
+      --  is case-insensitive Amiga-style; the BeFS Sys: volume is
+      --  case-SENSITIVE, so the staged "Copy" must still answer a
+      --  typed "copy" — M93).
+      function Eq_CI (A : String; B : String) return Boolean is
+      begin
+         if A'Length /= B'Length then
+            return False;
+         end if;
+         for I in 0 .. A'Length - 1 loop
+            declare
+               X : Character := A (A'First + I);
+               Y : Character := B (B'First + I);
+            begin
+               if X in 'a' .. 'z' then
+                  X := Character'Val (Character'Pos (X) - 32);
+               end if;
+               if Y in 'a' .. 'z' then
+                  Y := Character'Val (Character'Pos (Y) - 32);
+               end if;
+               if X /= Y then
+                  return False;
+               end if;
+            end;
+         end loop;
+         return True;
+      end Eq_CI;
+
+      --  Parent directory of a fully qualified path (volume root
+      --  itself when there is no '/'), for the CI fallback scan.
+      function Parent_Of (Full : String) return String is
+      begin
+         for I in reverse Full'Range loop
+            if Full (I) = '/' then
+               return Full (Full'First .. I - 1);
+            end if;
+         end loop;
+         for I in Full'Range loop
+            if Full (I) = ':' then
+               return Full (Full'First .. I);
+            end if;
+         end loop;
+         return "";
+      end Parent_Of;
+
+      --  Case-insensitive directory lookup: scan Parent's entries
+      --  for Leaf and return the qualified on-disk name ("" none).
+      function Find_CI (Parent : String; Leaf : String) return String
+      is
+         Ent : String (1 .. 255);
+         E_L : Natural;
+         E_D : Boolean;
+         E_S : U64;
+         Idx : U64 := 0;
+      begin
+         loop
+            if Files.Read_Dir (Parent, Idx, Ent, E_L, E_D, E_S) /=
+                 Files.Status_Ok
+            then
+               return "";
+            end if;
+            if Eq_CI (Ent (1 .. E_L), Leaf) then
+               if Parent (Parent'Last) = ':' then
+                  return Parent & Ent (1 .. E_L);
+               end if;
+               return Parent & "/" & Ent (1 .. E_L);
+            end if;
+            Idx := Idx + 1;
+         end loop;
+      end Find_CI;
+
+      --  Try the exact qualified candidate, then a CI scan of its
+      --  parent directory (the FAT-era volumes masked case; BeFS
+      --  does not).
+      function Try_CI (Full : String) return String is
+      begin
+         if Try (Full) then
+            return Full;
+         end if;
+         return Find_CI (Parent_Of (Full), Name);
+      end Try_CI;
    begin
       for C of Name loop
          if C = ':' or else C = '/' then
@@ -241,8 +323,14 @@ package body Akernel_User.CLI is
       declare
          Rel : constant String := Resolve_Path (Name);
       begin
-         if Rel'Length > Name'Length and then Try (Rel) then
-            return Rel;
+         if Rel'Length > Name'Length then
+            declare
+               Found : constant String := Try_CI (Rel);
+            begin
+               if Found'Length > 0 then
+                  return Found;
+               end if;
+            end;
          end if;
       end;
 
@@ -255,9 +343,14 @@ package body Akernel_User.CLI is
                   Candidate (1 .. CLen) := Path (P0 .. I - 1);
                   Candidate (CLen + 1 .. CLen + Name'Length) := Name;
                   CLen := CLen + Name'Length;
-                  if Try (Candidate (1 .. CLen)) then
-                     return Candidate (1 .. CLen);
-                  end if;
+                  declare
+                     Found : constant String :=
+                       Try_CI (Candidate (1 .. CLen));
+                  begin
+                     if Found'Length > 0 then
+                        return Found;
+                     end if;
+                  end;
                end if;
                P0 := I + 1;
             elsif I = Path'Last then
@@ -265,9 +358,14 @@ package body Akernel_User.CLI is
                Candidate (1 .. CLen) := Path (P0 .. I);
                Candidate (CLen + 1 .. CLen + Name'Length) := Name;
                CLen := CLen + Name'Length;
-               if Try (Candidate (1 .. CLen)) then
-                  return Candidate (1 .. CLen);
-               end if;
+               declare
+                  Found : constant String :=
+                    Try_CI (Candidate (1 .. CLen));
+               begin
+                  if Found'Length > 0 then
+                     return Found;
+                  end if;
+               end;
             end if;
          end loop;
       end if;
@@ -279,12 +377,20 @@ package body Akernel_User.CLI is
          Root_Try : constant String := Boot_Volume & Name;
          C_Try    : constant String := "C:" & Name;
       begin
-         if Try (Root_Try) then
-            return Root_Try;
-         end if;
-         if Try (C_Try) then
-            return C_Try;
-         end if;
+         declare
+            Found : constant String := Try_CI (Root_Try);
+         begin
+            if Found'Length > 0 then
+               return Found;
+            end if;
+         end;
+         declare
+            Found : constant String := Try_CI (C_Try);
+         begin
+            if Found'Length > 0 then
+               return Found;
+            end if;
+         end;
       end;
 
       return "";

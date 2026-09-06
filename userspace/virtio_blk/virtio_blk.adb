@@ -730,7 +730,7 @@ begin
       --  write.
       Akernel_User.Console.Put_Line ("PASS virtio-blk read sector ok");
 
-      if Capacity = 147456 then  --  72 MiB image (FAT32 + m82b BeFS)
+      if Capacity = 1048576 then  --  512 MiB image (M93: BeFS Sys: + FAT32 data)
          Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
       else
          Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");

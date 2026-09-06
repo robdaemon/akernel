@@ -65,14 +65,16 @@ procedure Bfs is
    Blk_Buf_VA  : constant U64 := 16#5380_0000#;
    Blk_Buf_Cap : U64 := 0;
 
-   --  Mapping window for the client's read buffer mem object.
-   Buf_Pages  : constant U64 := 4;
+   --  Mapping window for the client's read buffer mem object
+   --  (8 pages = the client's 32 KiB Files.Read buffer; a smaller
+   --  window silently truncated every client read to 16 KiB).
+   Buf_Pages  : constant U64 := 8;
    Buf_Win_VA : constant U64 := 16#5400_0000#;
    Buf_Bytes  : constant U64 := Buf_Pages * Syscalls.Page_Size;
 
    --  M82i: window for a buffer-carried request path (one page,
-   --  directly above the buffer window).
-   Path_Win_VA : constant U64 := 16#5400_4000#;
+   --  directly above the 8-page buffer window).
+   Path_Win_VA : constant U64 := 16#5400_8000#;
 
    Reply_H : U64 := 0;
 
