@@ -414,12 +414,18 @@ package body Fileman_App is
    --  otherwise sniff the ELF magic (budgeted, Max_Sniff) for the
    --  tool glyph. One odd entry must never truncate the listing.
    procedure Add_Row (P : Positive; Leaf : String; Is_Dir : Boolean) is
-      N    : constant Natural :=
-        Trinket.Listview.Item_Count (Panes (P).List.all);
       Full : constant String :=
         CLI.Join_Path (Panes (P).Path.all, Leaf);
    begin
       Trinket.Listview.Add_Item (Panes (P).List.all, Leaf);
+      declare
+         --  Row index AFTER the add: Add_Item appends, so the new
+         --  row is Item_Count. (An off-by-one here — counting
+         --  before the add — put every icon on the row above its
+         --  file: folders showed file icons and vice versa.)
+         N : constant Natural :=
+           Trinket.Listview.Item_Count (Panes (P).List.all);
+      begin
       if Is_Dir then
          if Images.Loaded (Drawer_Img) then
             Trinket.Listview.Set_Item_Icon
@@ -453,6 +459,7 @@ package body Fileman_App is
             end;
          end if;
       end if;
+      end;
    exception
       when others =>
          null;   --  one odd entry, no icon
