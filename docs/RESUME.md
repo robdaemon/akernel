@@ -13,7 +13,27 @@ repository.
 
 ## Recently shipped
 
+- **M94** (`3accf5a`): spawn-ABI unification + Drawer button fix.
+  Startup programs (devmgr Spawn_Program) now receive the full
+  uniform command ABI — handles 1..6 = console, fs, bureau, args,
+  elevation, netserv — the same layout shell commands get, so any
+  GUI app can Scripting.Spawn_Cmd its children (double-clicking an
+  ELF or a file into Edit failed before: the old Startup ABI left
+  netserv at handle 5 with no 6, and an invalid grant source fails
+  the whole spawn). Terminal/Desktop/Fileman constants moved
+  elevation 4→5 and netserv 5→6; Desktop's Drawer spawn and
+  Fileman's Spawn_Edit grant the full 6-handle layout (M92's
+  4-handle workaround retired). Drawer Top_Row: path label weight
+  20 vs the Parent button weight 1 so the button no longer
+  balloons. Drawer open carries three 'drawer: t=' rdtime phase
+  prints (deficons/scan/open) to chase the still-open slow-open
+  report — BeFS serves reads one 1 KiB block per block-endpoint
+  IPC, latency-bound for big-ELF staging and scans. Gates: make
+  test 1874 PASS / 0 FAIL SMP4 and SMP1 (real elevated shutdown +
+  clean qemu exit) and test-replay ok.
+
 - **M93** (`e2a8205`): BeFS becomes Sys:. disk.img is now 512 MiB
+
   split 50/50 — partition 1 (BD0) a 256 MiB BeFS "Sys" volume
   (mkbefs --stage host tree + attrs manifest incl. README fixture
   attrs), partition 2 (BD1) 256 MiB FAT32 "Data" with the FAT
