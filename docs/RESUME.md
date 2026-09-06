@@ -13,6 +13,29 @@ repository.
 
 ## Recently shipped
 
+- **M94b — large-block BeFS read batching** (`62fc414`): BeFS
+  streaming reads now fetch up to 32 consecutive blocks (64
+  sectors, 32 KiB) in ONE block-endpoint request instead of one
+  1 KiB block per IPC. The engine's stream copy (file data + btree
+  streams) batches a whole 32 KiB span into the block bounce via
+  `Span_Copy`, substituting journal-overlay blocks per-block after
+  the fetch; tree-node/scattered reads keep the 1-block
+  `Get_Block` path. The block endpoint caps moved 8→64 sectors for
+  reads (partmgr enforces reads ≤64, writes stay ≤8) and the
+  virtio-blk driver gained `Do_Request_Chain`: memory objects are
+  NOT physically contiguous, so a large read is one descriptor
+  chain with a data descriptor per physical client page (queue
+  raised 8→16: header + 8 data + status = 10 descriptors), DMA'd
+  straight into the 32 KiB client bounce; write-back-cache hits are
+  overlaid after the DMA. A cold 600 KB ELF staging drops from
+  ~600 block IPCs to ~19 (boot-to-shell wall time ~54.2 s → 53.9 s
+  with 5 large ELF stagings at SMP4). Debugged via two boot
+  regressions: descriptor shortage at queue Num=8 wedged the device
+  (raised to 16) and a double `Done` increment in `Span_Copy`
+  skipped half of every multi-chunk stream (fixed — the increment
+  lives at the call sites only). Gates: make test 1874 PASS / 0
+  FAIL at SMP4 + SMP1, test-replay ok.
+
 - **M94** (`3accf5a`, `c49cca8`, `02e6c8a`): spawn-ABI unification +
   Drawer fixes. Startup programs (devmgr Spawn_Program) now receive
   the full uniform command ABI — handles 1..6 = console, fs, bureau,
@@ -37,6 +60,7 @@ repository.
   glyph, Is_Tool picks the launch. Gates: make test green 0 FAIL at
   SMP4 and SMP1 (real elevated shutdown + clean qemu exit) and
   test-replay ok.
+
 
 - **M93** (`e2a8205`): BeFS becomes Sys:. disk.img is now 512 MiB
 
