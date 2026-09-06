@@ -13,6 +13,34 @@ repository.
 
 ## Recently shipped
 
+- **Phase B — fileman incremental directory fill** (`7c06519`):
+  fileman's black window at launch is gone. The startup listing used
+  to enumerate each pane's directory fully and synchronously before
+  the event loop — Ada.Directories with a per-entry libc stat()
+  (~100 ms+ per call under boot load) plus an ELF-magic sniff per
+  file — so the window sat empty until the whole scan finished.
+  Now only the FIRST chunk (32 entries) of each pane loads
+  synchronously, the window opens and paints those rows, and the
+  rest is pumped one chunk per event-loop turn over the m68 app
+  port: the enumeration is index-based Files.Read_Dir (the M94
+  drawer idiom — is-dir + size come back for free, and the cursor
+  is resumable, so no OS search handle needs parking), a
+  self-posted App_Code_Fill wakes the loop between chunks, and the
+  fill ends by selecting row 1 (the old code selected after the
+  full load; row 1 is the same entry). The pump is deliberately
+  NOT a worker thread: Files.Bind's single client buffer cap is
+  process-wide, so a second task doing FS reads would race the
+  click handlers' own reads — this is the single-threaded
+  interleave. Any navigation (path commit, drawer double-click,
+  reload after copy/move/delete) restarts the same chunked fill.
+  Boot telemetry ('fileman: first rows N t=… / filled N rows t=…',
+  drawer t= convention, startup fills only) verified the pump
+  end-to-end: at a probe chunk size of 4 the panes painted 8 rows
+  immediately and the remaining 12 arrived through the event loop
+  (~0.8 s under boot load), with no freeze — at the real 32-row
+  chunks both default dirs complete in one chunk (~sub-ms).
+  Gates: make test 1874 PASS / 0 FAIL at SMP4, 1873 at SMP1, test-replay ok.
+
 - **M94b — large-block BeFS read batching** (`62fc414`): BeFS
   streaming reads now fetch up to 32 consecutive blocks (64
   sectors, 32 KiB) in ONE block-endpoint request instead of one
