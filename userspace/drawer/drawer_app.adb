@@ -180,6 +180,18 @@ package body Drawer_App is
                   end if;
                   E.Is_Dir := E_D;
                   E.Is_Tool := False;
+                  if not E_D then
+                     --  M94: sniff every file (budgeted). A file
+                     --  with a custom ICON attr (the M93 GUI-app
+                     --  attrs: Fileman/Terminal/Edit/Font/
+                     --  Screenmode) must still be recognized as a
+                     --  tool — the icon only picks the glyph, the
+                     --  launch path follows Is_Tool.
+                     if Sniffed < Max_Sniff then
+                        Sniffed := Sniffed + 1;
+                        E.Is_Tool := Is_Elf (Full);
+                     end if;
+                  end if;
                   if Icon_Path'Length > 0 then
                      Images.Load
                        (Icon_Path, Customs (N_Entries), ISt);
@@ -192,10 +204,6 @@ package body Drawer_App is
                      IV.Add_Item
                        (Icons.all, Leaf, Def_Drawer'Access);
                   else
-                     if Sniffed < Max_Sniff then
-                        Sniffed := Sniffed + 1;
-                        E.Is_Tool := Is_Elf (Full);
-                     end if;
                      IV.Add_Item
                        (Icons.all, Leaf,
                         (if E.Is_Tool then Def_Tool'Access
