@@ -9,35 +9,33 @@ per-milestone detail too.
 Project rules are stored in the AGENTS.md file in the root of the
 repository.
 
-## Planned: Desktop icons + launcher (M93)
-
-Desktop icons + drawer icon views, Amiga Workbench lineage but
-native (NEXT.md's "skipped forever" covers the CLI ports
-LoadWB/WBRun/IconX, not this). User rulings: icons BEFORE the
-BeFS primary swap (FAT32 runs everything with generic icons +
-no-op geometry saves); drawers navigate in the SAME window;
-32x32 icons drawn fresh; desktop shows mounted volumes only;
-NO Snapshot concept — drawer window dimensions save
-automatically on every resize (BeFS attribute, silent no-op on
-FAT32); per-file icons come from an ICON attribute (CSTR path
-to an XPM) with defdraw/deffile/deftool-style fallback.
-M91 shipped the protocol + Iconview + Drawer, M92 the Desktop
-launcher (both below).
-
-**M93**: BeFS becomes Sys: (partition 1, device BD0 so
-hardcoded paths survive). Engine: bitmap allocator indexes the
-right bitmap block (bit / 8192) — lifts the 8 MiB ceiling,
-single AG, deviation documented. mkbefs.py populates a host
-staging tree + attrs manifest (ICON attrs on the five GUI apps
-land here); tools/befs_get.py extracts files host-side (the
-run recipe's ScreenMode env read currently mtypes FAT).
-Makefile: repartition, all @@1048576 literals computed,
-ENV carry-over via befs_get + manifest overlay, CS mount audit,
-fuzz BD0/BD1 literal audit, test-replay offsets. Payoff:
-per-app icons + drawer geometry persistence light up with zero
-icon-code changes.
+## Planned: (none — M93 shipped)
 
 ## Recently shipped
+
+- **M93** (`e2a8205`): BeFS becomes Sys:. disk.img is now 512 MiB
+  split 50/50 — partition 1 (BD0) a 256 MiB BeFS "Sys" volume
+  (mkbefs --stage host tree + attrs manifest incl. README fixture
+  attrs), partition 2 (BD1) 256 MiB FAT32 "Data" with the FAT
+  fixtures; offsets computed from sgdisk, run-recipe ENV reads via
+  befs_get. Built on M93p1 (multi-AG allocator, `028b4c7`) and
+  M93p2 (staging/attrs + befs_get, `833b30f`). The swap surfaced
+  real bugs, all fixed here: the Bfs server's 16 KiB read window
+  silently truncated every 32 KiB client read (staged ELFs ran half
+  garbage — the trap/wedge that started this); fuzz's BD0/BD1
+  re-target stragglers (lowercase bd0:, Tests/Img + System/C: on
+  the wrong volume, case-exact BeFS names); command lookup relied
+  on FAT case-insensitivity (Resolve_Command now does a CI dir
+  scan; BeFS is case-sensitive); engine Tree_Next yielded garbage
+  from emptied leaves (delete-heavy scans stalled) plus loop guards
+  on all unbounded btree walks and a Get_Block bounds check; and
+  the host post-test index greps now bound 1..64 (Sys: legitimately
+  carries ~27 indexed ENV config files at rest). befs_mkdirty
+  rewritten on befs_dump's AG/depth-aware walker for test-replay.
+  Gates: 1873 PASS / 0 FAIL SMP4 and SMP1; test-replay ok. Payoff
+  per the M93 plan: per-app ICON attrs + drawer geometry persistence
+  work with zero icon-code changes (drawer/dir QMP smoke still to
+  re-run by hand).
 
 - **M92** (`6239675`): Desktop backdrop launcher (userspace/desktop,
   DEST=system; Startup line right after Bureau). One
