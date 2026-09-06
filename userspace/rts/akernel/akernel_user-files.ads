@@ -107,6 +107,7 @@ package Akernel_User.Files is
     Op_Query_Close : constant U64 := 24;
      Op_Attr_Write  : constant U64 := 25;
      Op_List_Volumes : constant U64 := 26;
+     Op_Volume_Case  : constant U64 := 27;
    --    Op_List_Volumes = 26  word 0 = volume index -> (status,
    --                      kind, name[24] in words 2..5, NUL-padded).
    --                      Stateless like Op_ReadDir: index N
@@ -116,6 +117,14 @@ package Akernel_User.Files is
    --                      one, else the device name (no colon).
    --                      M91: the desktop's volume icons poll
    --                      this.
+   --    Op_Volume_Case = 27  words 0..5 = any volume-qualified
+   --                      path (only the volume matters) ->
+   --                      (status, word 1 = 1 when the volume
+   --                      folds case (FAT, initrd), 0 when names
+   --                      are case-sensitive (BeFS)). Answered by
+   --                      the fileserver from its mount table —
+   --                      no driver round-trip. Sorters (fileman)
+   --                      match their comparator to the volume.
    --    Volume kinds (word 1 of Op_List_Volumes):
    Vol_Kind_Boot    : constant U64 := 0;  --  boot-file set
    Vol_Kind_Block   : constant U64 := 1;  --  raw block device
@@ -456,6 +465,14 @@ package Akernel_User.Files is
       Total   : out U64;
       Free    : out U64;
       Cluster : out U64) return U64;
+
+   --  Volume case behavior (Op_Volume_Case): True when the volume
+   --  matches names case-insensitively (FAT, initrd), False for
+   --  case-sensitive volumes (BeFS). Name is any volume-qualified
+   --  path.
+   function Volume_Case
+     (Name             : String;
+      Case_Insensitive : out Boolean) return U64;
 
    --  Assigns (milestone 36): set (Target nonempty) or remove
    --  (Target empty); Name without its colon. List enumerates

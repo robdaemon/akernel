@@ -2711,6 +2711,34 @@ procedure Fileserver is
       Reply2 (Files.Status_Bad_Args, 0);
    end Handle_Volume_Info;
 
+   --  Op_Volume_Case: answer the mount table's case behavior for
+   --  the volume a path names — no driver round-trip, works for
+   --  every volume kind. Word 1 = 1 when the volume folds case.
+   procedure Handle_Volume_Case is
+      Name : String (1 .. Files.Max_Path);
+      Len  : Natural;
+      Pos  : Natural;
+      V    : Natural;
+      Exp  : String (1 .. Max_Expanded);
+      E_Len : Natural;
+   begin
+      if not Names_Done then
+         Reply2 (Files.Status_Not_Ready, 0);
+         return;
+      end if;
+      if not Fetch_Path (0, 5, 0, Name, Len) then
+         Reply2 (Files.Status_Bad_Args, 0);
+         return;
+      end if;
+      Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+      if V = 0 then
+         Reply2 (Files.Status_Not_Found, 0);
+         return;
+      end if;
+      Reply2 (Files.Status_Ok,
+              (if Volumes (V).Case_Insensitive then 1 else 0));
+   end Handle_Volume_Case;
+
    --  Seed the server-internal virtual volumes (milestone
    --  46a): PIPE: (named FIFO rings, Fileserver_Pipes) and
    --  NIL: (sink). They are never mounted by init; the file
@@ -2837,6 +2865,8 @@ begin
          Handle_Rename;
       elsif Syscalls.Message.Label = Files.Op_Volume_Info then
          Handle_Volume_Info;
+      elsif Syscalls.Message.Label = Files.Op_Volume_Case then
+         Handle_Volume_Case;
       elsif Syscalls.Message.Label = Files.Op_Close then
          Handle_Close;
       elsif Syscalls.Message.Label = Files.Op_Stat

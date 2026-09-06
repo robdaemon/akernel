@@ -912,6 +912,32 @@ package body Akernel_User.Files is
       return Syscalls.Message.Words (0);
    end Volume_Info;
 
+   function Volume_Case
+     (Name             : String;
+      Case_Insensitive : out Boolean) return U64
+   is
+      Q   : String (1 .. Max_Path);
+      Len : Natural;
+   begin
+      Case_Insensitive := False;
+      Qualified (Name, Q, Len);
+      if FS_Cap = 0 or else Len = 0 then
+         return Status_Bad_Args;
+      end if;
+      Syscalls.Message.Label := Op_Volume_Case;
+      Syscalls.Message.Caps := (others => 0);
+      if not Stage_Path (Q, Len, 0, 5, 0) then
+         return Status_Not_Found;
+      end if;
+      if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
+         return Status_Not_Found;
+      end if;
+      if Syscalls.Message.Words (0) = Status_Ok then
+         Case_Insensitive := Syscalls.Message.Words (1) /= 0;
+      end if;
+      return Syscalls.Message.Words (0);
+   end Volume_Case;
+
    function Truncate (Name : String) return U64 is
      (Path_Op (Op_Truncate, Name));
 
