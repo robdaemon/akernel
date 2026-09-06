@@ -412,9 +412,18 @@ package body Drawer_App is
       --  Parent button stays at its content width (weight 1 thin,
       --  MUI-style weights — a 1:1 split would balloon the button).
       Widgets.Group (Top_Row.all).Add (Path_Lab, 20);
-      Widgets.Group (Root.all).Add (Top_Row, 0);
+      --  The icons view takes the window's vertical slack; the
+      --  top row stays at content height. Group weights split
+      --  only the EXTRA above the children's minimums, and the
+      --  scrolled icons' Min_Size is one cell — at 1:1 the row
+      --  was stretched to ~half the window, so the Parent button
+      --  (the row fills its kids to full height) rendered as a
+      --  half-window slab. Weight 20 (same ratio as the label
+      --  inside the row) keeps the top row near its ~28 px
+      --  content minimum even when the drawer is zoomed.
+      Widgets.Group (Root.all).Add (Top_Row, 1);
       Widgets.Group (Root.all).Add
-        (IV.New_Scrolled_Icons (Icons), 1);
+        (IV.New_Scrolled_Icons (Icons), 20);
 
       --  Scan BEFORE opening: the scan costs ~1-2 s of FAT path
       --  resolutions, and a black window that fills in late
