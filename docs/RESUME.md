@@ -13,6 +13,22 @@ repository.
 
 ## Recently shipped
 
+- **Drawer incremental scan** (`b198def`): closes the remaining
+  drawer slow-open item from M94. The Drawer scanned its whole
+  directory synchronously before Window.Open, so a slow or huge
+  directory held the open hostage. It now gets the same Phase B
+  treatment fileman has: the first chunk (24 Read_Dir calls) runs
+  synchronously so the window opens populated, then the rest is
+  pumped one chunk per event-loop turn over the app port
+  (self-posted App_Code_Fill). Index-based Files.Read_Dir makes
+  the cursor resumable; Workbench order (drawers, then files) is
+  kept by scanning in two passes; per-entry fault isolation and
+  the custom-ICON/ELF sniff are unchanged. Startup telemetry
+  (drawer t=): open done ~0.86M ticks after deficons — the open no
+  longer waits for the scan — and scan done streams in behind the
+  live window (~6.6M ticks later on Sys: root under boot load).
+  Gates: make test 1874 PASS / 0 FAIL at SMP4.
+
 - **Drawer top-row height fix** (`d7b42ab`): the "really large
   Parent button" was a VERTICAL over-allocation, not the width the
   M94 fix addressed. The drawer's Root group gave the top row and
