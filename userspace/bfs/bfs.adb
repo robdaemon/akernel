@@ -887,14 +887,16 @@ begin
    Akernel_User.Console.Set_Endpoint (Console_Cap);
    Akernel_User.Console.Put_Line ("bfs starting");
 
-   Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
+   --  32 KiB block-read bounce (M94: batched reads up to 64
+   --  sectors per request instead of one 1 KiB block per IPC).
+   Blk_Buf_Cap := Syscalls.Mem_Alloc (8);
    if Blk_Buf_Cap = Syscalls.Syscall_Failed
      or else Syscalls.Mem_Map
        (Address_Space => Syscalls.Address_Space_Cap,
         Cap           => Blk_Buf_Cap,
         VA            => Blk_Buf_VA,
         Offset        => 0,
-        Length        => Syscalls.Page_Size,
+        Length        => 8 * Syscalls.Page_Size,
         Flags         => 3) /= 0
    then
       Fail ("bfs bounce alloc failed");

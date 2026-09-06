@@ -305,6 +305,81 @@ procedure Virtio_Blk is
       return Status_Byte;
    end Do_Request;
 
+   --  Large streaming read (Count > 8 sectors, up to 64 = 8 client
+   --  pages): one descriptor chain with a data descriptor PER
+   --  PHYSICAL PAGE (memory objects are not guaranteed physically
+   --  contiguous, so a single descriptor cannot span them). The
+   --  queue holds 16 descriptors; header + up to 8 data + status
+   --  fits. Returns the device status byte (0 = OK).
+   function Do_Request_Chain
+     (Sector : U64; Count : U64; Buf_Cap : U64) return U8
+   is
+      H     : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
+      S     : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
+      Prev  : Virtio.U16 := H;
+      Remain : U64 := Count * 512;
+      Pg    : U64 := 0;
+      Spins : Natural;
+   begin
+      Req_Words (0) := Req_Read;
+      Req_Words (1) := 0;
+      Req_Words (2) := Virtio.U32 (Sector and 16#FFFF_FFFF#);
+      Req_Words (3) := Virtio.U32 (Sector / 16#1_0000_0000#);
+      Status_Byte := 16#FF#;
+
+      Virtio.Queues.Set_Buffer (Q, H, Req_PA, 16, Device_Writes => False);
+      while Remain > 0 loop
+         declare
+            D  : constant Virtio.U16 := Virtio.Queues.Alloc (Q);
+            PA : constant U64 := Mem_Object_PA (Buf_Cap, Pg);
+            L  : constant Virtio.U32 := Virtio.U32 (U64'Min (Remain, 4096));
+         begin
+            if D = Virtio.No_Desc then
+               --  Cannot happen at Num = 16 (max chain is 10);
+               --  free what was built and report the failure.
+               Virtio.Queues.Free (Q, H);
+               Virtio.Queues.Free (Q, S);
+               return 3;
+            end if;
+            Virtio.Queues.Set_Buffer
+              (Q, D, PA, L, Device_Writes => True);
+            Virtio.Queues.Chain_Next (Q, Prev, D);
+            Prev := D;
+            Remain := Remain - U64 (L);
+            Pg := Pg + 1;
+         end;
+      end loop;
+      Virtio.Queues.Set_Buffer
+        (Q, S, Req_PA + 16, 1, Device_Writes => True);
+      Virtio.Queues.Chain_Next (Q, Prev, S);
+      Virtio.Queues.Submit (Q, H);
+      Dev.Notify (0);
+
+      Spins := 0;
+      loop
+         ISR := Dev.Interrupt_Status;
+         if ISR /= 0 then
+            Dev.ACK_Interrupt (ISR);
+         end if;
+
+         Result := IRQ_Ack (IRQ_Cap);
+
+         exit when Virtio.Queues.Has_Completed (Q);
+
+         Spins := Spins + 1;
+         if Spins > 1_000 then
+            Debug_Put_Line ("virtio-blk completion timeout");
+            Process_Exit;
+         end if;
+
+         Bits := Ntfn_Wait (Ntfn_Cap);
+      end loop;
+
+      Virtio.Queues.Pop (Q, Head, Written);
+      Virtio.Queues.Free (Q, Head);
+      return Status_Byte;
+   end Do_Request_Chain;
+
    --  VIRTIO_BLK_T_FLUSH: header + status only, no data
    --  descriptor. Asks the device to push its own volatile
    --  buffers to stable storage.
@@ -617,16 +692,18 @@ begin
       Process_Exit;
    end if;
 
+   --  Queue of 16 descriptors: the batched 32 KiB read chain is
+   --  header + up to 8 data (one per physical page) + status = 10.
    Virtio.Queues.Initialize
      (Q     => Q,
       Desc  => To_Addr (DMA_VA),
       Avail => To_Addr (DMA_VA + 4096),
       Used  => To_Addr (DMA_VA + 2 * 4096),
-      Num   => 8);
+      Num   => 16);
 
    Dev.Queue_Select (0);
    Dev.Queue_Setup
-     (Num      => 8,
+     (Num      => 16,
       Desc_PA  => Desc_PA,
       Avail_PA => Avail_PA,
       Used_PA  => Used_PA);
@@ -802,7 +879,7 @@ begin
             --  buffer cap from the buffer so no reply bounces it.
             Message.Caps := (others => 0);
 
-            if Buf_Cap = 0 or else Count = 0 or else Count > 8
+            if Buf_Cap = 0 or else Count = 0 or else Count > 64
               or else Sector + Count > Capacity
             then
                Message.Words (0) := 3;  --  bad arguments
@@ -818,7 +895,7 @@ begin
                   if IPC_Reply (Reply_H) /= IPC_Ok then
                      Debug_Put_Line ("virtio-blk reply failed");
                   end if;
-               else
+               elsif Count <= 8 then
                   --  Miss runs DMA straight into the client
                   --  buffer (streaming stays uncached); hit
                   --  sectors are CPU-copied from their slots
@@ -900,6 +977,62 @@ begin
                      end if;
 
                      Message.Words (0) := (if Rd_St = 0 then 0 else 1);
+                     Message.Words (1) := 0;
+                     if IPC_Reply (Reply_H) /= IPC_Ok then
+                        Debug_Put_Line ("virtio-blk reply failed");
+                     end if;
+                  end;
+               else
+                  --  Large streaming read (9..64 sectors, up to 8
+                  --  client pages): one descriptor chain (header,
+                  --  one data descriptor per physical page, status),
+                  --  then overlay any write-back-cache hits (a
+                  --  dirty slot is newer than the device).
+                  declare
+                     Lg_St : U8 := 0;
+                  begin
+                     Lg_St := Do_Request_Chain (Sector, Count, Buf_Cap);
+                     if Lg_St = 0 then
+                        for I in 0 .. Natural (Count) - 1 loop
+                           declare
+                              Hs : constant Integer :=
+                                Find_Slot (Sector + U64 (I));
+                              PG : constant U64 :=
+                                (U64 (I) * 512) / 4096;
+                              Off : constant U64 :=
+                                (U64 (I) * 512) mod 4096;
+                           begin
+                              if Hs >= 0 then
+                                 Result := Mem_Map
+                                   (Address_Space => Address_Space_Cap,
+                                    Cap           => Buf_Cap,
+                                    VA            => Buf_Win_VA,
+                                    Offset        => PG * 4096,
+                                    Length        => 4096,
+                                    Flags         => 3);
+                                 if Result /= 0 then
+                                    Lg_St := 1;
+                                 else
+                                    for J in 0 .. 511 loop
+                                       Buf_Win (Natural (Off) + J) :=
+                                         Cache_Mem (U64 (Hs) * 512
+                                                    + U64 (J));
+                                    end loop;
+                                    Touch (Hs);
+                                    Result := Mem_Unmap
+                                      (Address_Space => Address_Space_Cap,
+                                       VA            => Buf_Win_VA,
+                                       Length        => 4096);
+                                    if Result /= 0 then
+                                       Debug_Put_Line
+                                         ("virtio-blk window unmap failed");
+                                    end if;
+                                 end if;
+                              end if;
+                           end;
+                        end loop;
+                     end if;
+                     Message.Words (0) := (if Lg_St = 0 then 0 else 1);
                      Message.Words (1) := 0;
                      if IPC_Reply (Reply_H) /= IPC_Ok then
                         Debug_Put_Line ("virtio-blk reply failed");

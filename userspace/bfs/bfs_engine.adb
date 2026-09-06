@@ -857,26 +857,67 @@ package body Bfs_Engine is
    --  Data stream read (file contents AND btree streams)
    ------------------------------------------------------------------
 
-   --  Copy one partial block: Skip bytes into block Block, up to
-   --  Chunk bytes, to Buf + Done.
-   function Copy_Part (Block : U64; Skip : U64; Chunk : U64;
-                       Buf : System.Address; Done : U64) return Boolean
+   --  Batched fetch bound (M94): up to 32 blocks / 64 sectors /
+   --  32 KiB per block-endpoint request (the protocol ceiling).
+   Batch_Max : constant := 32;
+
+   --  M94 batched copy: fetch the SpanB blocks covering [Skip into
+   --  Block, Sub bytes onward) in ONE block-endpoint request (up to
+   --  Batch_Max blocks = 64 sectors = 32 KiB — the protocol ceiling,
+   --  matching the 32 KiB client read chunk), then copy Sub bytes,
+   --  substituting any transaction-overlay blocks (uncommitted
+   --  journal writes are newer than disk). Advances Done by Sub.
+   function Span_Copy (Block : U64; Skip : U64; Sub : U64;
+                       Buf : System.Address; Done : in out U64)
+                       return Boolean
    is
-      Slot : constant Natural := Get_Block (Block);
+      SpanB : constant Natural :=
+        Natural ((Skip + Sub + Block_Size - 1) / Block_Size);
+      Src   : Byte_Array (0 .. Batch_Max * Block_Size - 1)
+        with Address => To_Address (Integer_Address (Buf_VA));
+      Dst   : Byte_Array (0 .. Sub - 1)
+        with Address => Buf + Storage_Offset (Done);
    begin
-      if Slot = Cache_Slots then
+      Syscalls.Message.Label := Blk_Read;
+      Syscalls.Message.Words (0) := Block * 2;
+      Syscalls.Message.Words (1) := U64 (SpanB) * 2;
+      Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
+      if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
+        or else Syscalls.Message.Words (0) /= 0
+      then
          return False;
       end if;
+      --  Which span blocks are transaction-overlay blocks?
       declare
-         Dst : Byte_Array (0 .. Chunk - 1) with Address => Buf + Storage_Offset (Done);
+         Ov  : array (0 .. Batch_Max - 1) of Boolean :=
+           (others => False);
+         OvT : array (0 .. Batch_Max - 1) of Natural :=
+           (others => 0);
       begin
-         for I in 0 .. Chunk - 1 loop
-            Dst (I) := Cache_Data (Slot, Skip + I);
+         for K in 0 .. SpanB - 1 loop
+            for T in 0 .. Trans_Count - 1 loop
+               if Trans_Num (T) = Block + U64 (K) then
+                  Ov (K) := True;
+                  OvT (K) := T;
+                  exit;
+               end if;
+            end loop;
+         end loop;
+         for I in 0 .. Sub - 1 loop
+            declare
+               K : constant U64 := (Skip + I) / Block_Size;
+               O : constant U64 := (Skip + I) mod Block_Size;
+            begin
+               if Ov (Natural (K)) then
+                  Dst (I) := Trans_Data (OvT (Natural (K)), O);
+               else
+                  Dst (I) := Src (K * Block_Size + O);
+               end if;
+            end;
          end loop;
       end;
-      Put_Block (Slot);
       return True;
-   end Copy_Part;
+   end Span_Copy;
 
    --  Read Len stream bytes at Pos into Buf; returns bytes done.
    function Stream_Read (Info : Inode_Info; Pos : U64;
@@ -906,17 +947,20 @@ package body Bfs_Engine is
                while Chunk > 0 loop
                   declare
                      Skip : constant U64 := In_Run mod Block_Size;
-                     Part : constant U64 :=
-                       U64'Min (Chunk, Block_Size - Skip);
+                     Sub  : constant U64 :=
+                       U64'Min (Chunk,
+                                U64 (Batch_Max) * Block_Size - Skip);
+                     Blocks : constant U64 :=
+                       (Skip + Sub + Block_Size - 1) / Block_Size;
                   begin
-                     if not Copy_Part (Block, Skip, Part, Buf, Done)
+                     if not Span_Copy (Block, Skip, Sub, Buf, Done)
                      then
                         return Done;
                      end if;
-                     Done := Done + Part;
-                     Chunk := Chunk - Part;
-                     In_Run := In_Run + Part;
-                     Block := Block + 1;
+                     Done := Done + Sub;
+                     Chunk := Chunk - Sub;
+                     In_Run := In_Run + Sub;
+                     Block := Block + Blocks;
                   end;
                end loop;
                Found := True;
@@ -981,17 +1025,21 @@ package body Bfs_Engine is
                   while Chunk > 0 loop
                      declare
                         Skip : constant U64 := In_Run mod Block_Size;
-                        Part : constant U64 :=
-                          U64'Min (Chunk, Block_Size - Skip);
+                        Sub  : constant U64 :=
+                          U64'Min (Chunk,
+                                   U64 (Batch_Max) * Block_Size
+                                     - Skip);
+                        Blocks : constant U64 :=
+                          (Skip + Sub + Block_Size - 1) / Block_Size;
                      begin
-                        if not Copy_Part (Block, Skip, Part, Buf, Done)
+                        if not Span_Copy (Block, Skip, Sub, Buf, Done)
                         then
                            return Done;
                         end if;
-                        Done := Done + Part;
-                        Chunk := Chunk - Part;
-                        In_Run := In_Run + Part;
-                        Block := Block + 1;
+                        Done := Done + Sub;
+                        Chunk := Chunk - Sub;
+                        In_Run := In_Run + Sub;
+                        Block := Block + Blocks;
                      end;
                   end loop;
                   Found := True;

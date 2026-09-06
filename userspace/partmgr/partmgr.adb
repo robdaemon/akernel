@@ -287,7 +287,8 @@ begin
          elsif Op = Blk_Read or else Op = Blk_Write then
             if Buf = 0
               or else Count = 0
-              or else Count > 8
+              or else (Op = Blk_Read and then Count > 64)
+              or else (Op = Blk_Write and then Count > 8)
               or else Sector >= Part_Size (Natural (P))
               or else Count > Part_Size (Natural (P)) - Sector
             then
