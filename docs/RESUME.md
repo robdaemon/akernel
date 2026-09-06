@@ -13,6 +13,15 @@ repository.
 
 ## Recently shipped
 
+- **Fileman row-icon off-by-one** (commit above `2af66d8` line):
+  Phase B's Add_Row computed the target row index (Item_Count)
+  before Add_Item ran, so every icon attached to the row above its
+  file — folders showed file icons, ELF tools folder icons. Index
+  is now read after the add; folder rows get the drawer glyph, ELF
+  files the tool glyph, everything else the file glyph. Verified
+  with a boot probe (dirs at their true rows). Gates: make test
+  1873 PASS / 0 FAIL at SMP4.
+
 - **Child-args staging VA fix** (`2af66d8`): desktop volume icons
   opened the wrong volume (both Data and Sys opened Sys:) and
   fileman's Edit spawn lost its filename — both since the M94 ABI
