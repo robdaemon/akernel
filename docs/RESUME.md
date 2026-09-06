@@ -13,6 +13,22 @@ repository.
 
 ## Recently shipped
 
+- **Child-args staging VA fix** (`2af66d8`): desktop volume icons
+  opened the wrong volume (both Data and Sys opened Sys:) and
+  fileman's Edit spawn lost its filename — both since the M94 ABI
+  unification granted every Startup program its own args page at
+  handle 4. CLI.Init (Map_Args) lazily maps that page at
+  Syscalls.Args_VA (0x4800_0000); Spawn_Drawer and Spawn_Edit then
+  staged the CHILD's args page at the same 0x4800_0000, the map
+  collided and failed, and the child's args arrived empty — so
+  every drawer fell back to the default volume (Sys:) and every
+  Edit opened with no file. Shell commands were unaffected because
+  Scripting.Exec already stages child args at a dedicated
+  Args_Stage_VA (0x5440_0000). Both spawners now use that same
+  0x5440_0000 staging window. Verified in a boot (desktop
+  auto-spawning every volume's drawer): 'drawer online: Data:' and
+  'drawer online: Sys:' — both opened Sys: before. Gates: make test 1874 PASS / 0 FAIL at SMP4.
+
 - **Drawer incremental scan** (`b198def`): closes the remaining
   drawer slow-open item from M94. The Drawer scanned its whole
   directory synchronously before Window.Open, so a slow or huge
