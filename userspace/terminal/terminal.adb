@@ -45,8 +45,8 @@ procedure Terminal is
    --  service Send.
    FS_EP      : constant U64 := 2;
    Win_EP     : constant U64 := 3;
-   Elevated_Svc : constant U64 := 4;  --  elevation svc (from devmgr)
-   Net_Svc      : constant U64 := 5;  --  netserv client (from devmgr, m71c)
+   Elevated_Svc : constant U64 := 5;  --  elevation svc (from devmgr)
+   Net_Svc      : constant U64 := 6;  --  netserv client (from devmgr, m71c)
    --  Runtime-created stream sink endpoint (full rights: mints
    --  the console-server sink attach AND the shell's console
    --  cap). Filled in before the service loop starts.

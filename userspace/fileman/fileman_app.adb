@@ -30,7 +30,11 @@ package body Fileman_App is
    Console_EP : constant Syscalls.U64 := 1;
    FS_EP      : constant Syscalls.U64 := 2;
    Bureau_EP  : constant Syscalls.U64 := 3;
-   --  Elevation handle 4 is granted but not used here.
+   --  M94: Startup programs receive the full command ABI — args at
+   --  4, elevation at 5, netserv at 6 — so children (Edit etc.)
+   --  are spawned with that same uniform layout.
+   Elevated_EP : constant Syscalls.U64 := 5;
+   Net_EP      : constant Syscalls.U64 := 6;
 
    Win : Trinket.Window.Window;
 
@@ -352,7 +356,9 @@ package body Fileman_App is
       Syscalls.Set_Grant (2, Bureau_EP, Syscalls.Right_Send, 0);
       Syscalls.Set_Grant (3, Args_Cap,
                           Syscalls.Right_Map + Syscalls.Right_Read, 0);
-      Result := Syscalls.Spawn (Mem_Cap, 4, Proc_Cap);
+      Syscalls.Set_Grant (4, Elevated_EP, Syscalls.Right_Send, 0);
+      Syscalls.Set_Grant (5, Net_EP, Syscalls.Right_Send, 0);
+      Result := Syscalls.Spawn (Mem_Cap, 6, Proc_Cap);
       Result := Syscalls.Cap_Delete (Args_Cap);
       Result := Syscalls.Cap_Delete (Mem_Cap);
       pragma Unreferenced (Result);

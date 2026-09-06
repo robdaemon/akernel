@@ -23,6 +23,11 @@ package body Desktop_App is
    Console_EP : constant U64 := 1;  --  uniform ABI handles
    FS_EP      : constant U64 := 2;
    Bureau_EP  : constant U64 := 3;
+   --  M94: Startup programs now receive the full command ABI —
+   --  elevation at own handle 5, netserv at 6 (args at 4) — so
+   --  Desktop can hand its children the same uniform layout.
+   Elevated_EP : constant U64 := 5;
+   Net_EP      : constant U64 := 6;
 
    Win_H : Trinket.Window.Window;
 
@@ -82,10 +87,11 @@ package body Desktop_App is
       end loop;
    end Reload;
 
-   --  Double-click: open the volume in a Drawer window. The
-   --  Startup-spawn ABI (4 = elevation, 5 = netserv, no 6) is
-   --  NOT the command ABI Scripting.Exec expects, so spawn with
-   --  the Fileman 4-handle GUI-tool pattern instead.
+   --  Double-click: open the volume in a Drawer window. Startup
+   --  programs now hold the full command ABI (elevation at 5,
+   --  netserv at 6), so spawn the Drawer with that same uniform
+   --  6-handle layout — the Drawer can then Scripting.Spawn_Cmd
+   --  its own children (M92's 4-handle workaround retired).
    procedure Spawn_Drawer (Path : String) is
       Stage_VA : constant U64 := 16#5E00_0000#;
       Image_Path : constant String := "Sys:System/Drawer";
@@ -163,7 +169,9 @@ package body Desktop_App is
       Set_Grant (1, FS_EP, Right_Send, 0);
       Set_Grant (2, Bureau_EP, Right_Send, 0);
       Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
-      if Spawn (Mem_Cap, 4, Proc_Cap) /= Spawn_Ok
+      Set_Grant (4, Elevated_EP, Right_Send, 0);
+      Set_Grant (5, Net_EP, Right_Send, 0);
+      if Spawn (Mem_Cap, 6, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Debug_Put_Line ("desktop: drawer spawn failed");

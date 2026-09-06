@@ -1022,28 +1022,65 @@ package body Device_Manager is
    procedure Spawn_Program (Path : String; Image_Cap : U64) is
       Grant_Count : U64 := 0;
       Process_Cap : U64;
+      Args_Cap    : U64;
+      Result      : U64;
+      --  Scratch VA for zeroing the fresh args page (clear of
+      --  DTB/Probe/ECAM 0x56xx and the 0x5C00 staging window).
+      Args_Zero_VA : constant U64 := 16#5D00_0000#;
+      type Byte_Array is array (U64 range <>) of Interfaces.Unsigned_8;
    begin
       if Bureau_Svc = 0 then
          Log ("devmgr: program needs bureau first");
          return;
       end if;
+      --  Uniform command ABI (M94): grant slots 0..5 so the child
+      --  holds handles 1..6 = console, fs, bureau/window, args,
+      --  elevation, netserv — the same layout shell-spawned
+      --  commands get, so any Startup program can call
+      --  Scripting.Exec.Spawn_Cmd in turn (previously the Startup
+      --  ABI stopped at handles 1..5, and the spawn failed on the
+      --  missing handle-6 source).
       Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
-      Grant_Count := Grant_Count + 1;
+      Grant_Count := Grant_Count + 1;             --  child handle 1
       Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
                  Right_Send, 0);
-      Grant_Count := Grant_Count + 1;
+      Grant_Count := Grant_Count + 1;             --  child handle 2
       Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
-      Grant_Count := Grant_Count + 1;
-      --  Handle 4: the elevation service (Send) — the uniform
-      --  ABI for Sys: programs; terminals re-grant it to their
-      --  shells, shells to commands at handle 5.
+      Grant_Count := Grant_Count + 1;             --  child handle 3
+      --  Handle 4: the args page (empty). Grant slot 3 must be a
+      --  valid cap — the kernel rejects any invalid source — and
+      --  the uniform position of the args cap is handle 4.
+      Args_Cap := Mem_Alloc (1);
+      if Args_Cap = Syscall_Failed
+        or else Mem_Map (Address_Space_Cap, Args_Cap, Args_Zero_VA,
+                         0, 4096, 3) /= 0
+      then
+         Log ("devmgr: program args page failed: " & Path);
+         if Args_Cap /= Syscall_Failed then
+            Result := Cap_Delete (Args_Cap);
+         end if;
+         return;
+      end if;
+      declare
+         Zero : Byte_Array (0 .. 4095)
+           with Address => System.Storage_Elements.To_Address
+             (System.Storage_Elements.Integer_Address (Args_Zero_VA));
+      begin
+         for I in Zero'Range loop
+            Zero (I) := 0;
+         end loop;
+      end;
+      Result := Mem_Unmap (Address_Space_Cap, Args_Zero_VA, 4096);
+      Set_Grant (Grant_Count, Args_Cap,
+                 Right_Map + Right_Read, 0);
+      Grant_Count := Grant_Count + 1;             --  child handle 4
+      --  Handle 5: the elevation service (Send).
       Set_Grant (Grant_Count, Elevated_EP, Right_Send, 0);
-      Grant_Count := Grant_Count + 1;
-      --  Handle 5: the netserv client endpoint (Send; m71c) —
-      --  terminals re-grant it to their shells at handle 6.
+      Grant_Count := Grant_Count + 1;             --  child handle 5
+      --  Handle 6: the netserv client endpoint (Send; m71c).
       if Net_Client_EP /= 0 then
          Set_Grant (Grant_Count, Net_Client_EP, Right_Send, 0);
-         Grant_Count := Grant_Count + 1;
+         Grant_Count := Grant_Count + 1;          --  child handle 6
       end if;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
         and then Process_Cap /= 0
@@ -1053,6 +1090,7 @@ package body Device_Manager is
       else
          Log ("devmgr: spawn failed: " & Path);
       end if;
+      Result := Cap_Delete (Args_Cap);
    end Spawn_Program;
 
    --  The elevation service (milestone 45): System/Elevated

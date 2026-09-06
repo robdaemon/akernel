@@ -372,9 +372,13 @@ package body Drawer_App is
       Open_W : U64 := 480;
       Open_H : U64 := 320;
       GW, GH : U64;
+      Time0  : constant U64 := Akernel_User.Syscalls.Read_Time;
    begin
       Trinket.Fonts.Init;
       Load_Deficons;
+      Debug_Put_Line ("drawer: deficons done t="
+                      & Akernel_User.Syscalls.U64'Image
+                        (Akernel_User.Syscalls.Read_Time - Time0));
 
       declare
          A : constant String :=
@@ -397,8 +401,11 @@ package body Drawer_App is
 
       Path_Lab := Widgets.Label.New_Label (Cur);
       Widgets.Group (Top_Row.all).Add
-        (Widgets.Button.New_Button ("Parent", Parent_Clicked'Access), 0);
-      Widgets.Group (Top_Row.all).Add (Path_Lab, 1);
+        (Widgets.Button.New_Button ("Parent", Parent_Clicked'Access), 1);
+      --  The path label takes the row's slack (big weight); the
+      --  Parent button stays at its content width (weight 1 thin,
+      --  MUI-style weights — a 1:1 split would balloon the button).
+      Widgets.Group (Top_Row.all).Add (Path_Lab, 20);
       Widgets.Group (Root.all).Add (Top_Row, 0);
       Widgets.Group (Root.all).Add
         (IV.New_Scrolled_Icons (Icons), 1);
@@ -407,10 +414,16 @@ package body Drawer_App is
       --  resolutions, and a black window that fills in late
       --  reads as broken. The window appears populated.
       Reload;
+      Debug_Put_Line ("drawer: scan done t="
+                      & Akernel_User.Syscalls.U64'Image
+                        (Akernel_User.Syscalls.Read_Time - Time0));
 
       if Trinket.Window.Open
         (Win_H, Bureau_EP, Open_W, Open_H, "Drawer", Root)
       then
+         Debug_Put_Line ("drawer: open done t="
+                         & Akernel_User.Syscalls.U64'Image
+                           (Akernel_User.Syscalls.Read_Time - Time0));
          Trinket.Window.Set_Menus
            (Win_H,
             (1 => Trinket.Menus.M
