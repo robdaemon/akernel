@@ -27,8 +27,7 @@ repository.
   row ~63 px in a 772 px near-zoomed window (~39 px at the default
   480x320), icons view absorbs the rest. Verified with a runtime
   layout probe on the tall geometry the screenshot showed.
-
-
+  Gates: make test 1873 PASS / 0 FAIL at SMP4.
 
 - **Phase B — fileman incremental directory fill** (`7c06519`):
   fileman's black window at launch is gone. The startup listing used
