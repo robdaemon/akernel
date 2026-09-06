@@ -55,6 +55,10 @@ class Vol:
         sb = data[512:1024]
         if le32(sb, 32) != 0x42465331:   #  'BFS1'
             raise SystemExit("not a BeFS superblock")
+        #  Geometry comes from the image itself (4 KiB milestone).
+        global BLK, AG_SHIFT
+        BLK = le32(sb, 40)
+        AG_SHIFT = le32(sb, 76)
         root_run = run(sb, 116)
         self.root = root_run[0]
 

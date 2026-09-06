@@ -27,9 +27,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import befs_dump  # noqa: E402  (run(), le64(), Befs, ...)
 
-BLK = 1024
-
-
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: befs_mkdirty.py IMAGE OFFSET_BYTES")
@@ -38,6 +35,7 @@ def main():
         buf = f.read()  #  whole partition (256 MiB; direct-run streams)
 
     b = befs_dump.Befs(buf)
+    blk = b.block_size
     if b.num_blocks == 0 or b.log_start != b.log_end:
         raise SystemExit("log already dirty or unreadable — replay it first")
 
@@ -57,15 +55,16 @@ def main():
     #  Transaction at log position log_start: run_array + content.
     log_start, log_len = b.log_blocks
     pos = b.log_end % log_len
-    arr = bytearray(BLK)
+    arr = bytearray(blk)
     struct.pack_into("<ii", arr, 0, 1, 127)      #  count, max_runs
-    #  Run record: (ag = block/8192, start = block mod 8192, len).
+    #  Run record: (ag = block >> ag_shift, start = block mod group).
+    gsz = 1 << b.ag_shift
     struct.pack_into("<iHH", arr, 8,
-                     data_blk >> 13, data_blk & 8191, 1)
-    base = (log_start + pos) * BLK
+                     data_blk >> b.ag_shift, data_blk % gsz, 1)
+    base = (log_start + pos) * blk
     buf = bytearray(buf)
-    buf[base:base + BLK] = arr
-    buf[base + BLK:base + 2 * BLK] = content
+    buf[base:base + blk] = arr
+    buf[base + blk:base + 2 * blk] = content
 
     #  Superblock: DIRT, log_end past the transaction.
     struct.pack_into("<I", buf, 512 + 84, 0x44495254)   #  'DIRT'

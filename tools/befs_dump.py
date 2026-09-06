@@ -9,7 +9,6 @@
 import struct
 import sys
 
-BLK = 1024
 BTREE_MAGIC = 0x69F6C2E8
 BTREE_NULL = 0xFFFFFFFFFFFFFFFF
 INODE_MAGIC1 = 0x3BBE0AD9
@@ -54,6 +53,7 @@ class Befs:
         self.used_blocks = le64(sb, 56)
         self.inode_size = le32(sb, 64)
         self.num_ags = le32(sb, 80)
+        self.ag_shift = ule32(sb, 76)
         self.log_blocks = run(sb, 88)
         self.log_start = le64(sb, 96)
         self.log_end = le64(sb, 104)
