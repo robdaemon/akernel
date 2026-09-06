@@ -46,3 +46,6 @@ disk.img
 # Only tracked patches survive the ignore.
 third_party/*
 !third_party/patches/
+
+# Python bytecode (host tools import each other)
+__pycache__/
