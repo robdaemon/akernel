@@ -137,86 +137,146 @@ package body Drawer_App is
       end loop;
    end Free_Customs;
 
-   --  One scan pass; Dirs_Only picks which half. Per-entry
-   --  fault isolation: one odd path must never truncate the
-   --  listing (fileman's a-directories burn).
-   procedure Scan_Pass (Dirs_Only : Boolean; Sniffed : in out Natural) is
-      Idx  : U64 := 0;
+   --  Incremental scan (Phase B, mirroring fileman): only the
+   --  FIRST chunk of a listing is read before the first paint,
+   --  so the window opens populated; the rest is pumped one
+   --  chunk per event-loop turn over the app port (self-posted
+   --  App_Code_Fill), so a huge drawer never blocks the open.
+   --  The enumeration is index-based Files.Read_Dir (M94), so
+   --  the cursor resumes trivially across chunks; Workbench
+   --  order (drawers first, then files) is preserved by scanning
+   --  in two passes over the same index range. ALL file-server
+   --  and widget work stays on the event-loop thread: the shared
+   --  Files client buffer cap forbids a worker task.
+   Fill_Chunk_Size : constant := 24;
+   App_Code_Fill   : constant U64 := 1;
+   procedure Fill_More (Code, A0, A1, A2 : U64);
+
+   type Pass_Kind is (Pass_Dirs, Pass_Files);
+   Filling    : Boolean := False;
+   Fill_Pass  : Pass_Kind := Pass_Dirs;
+   Fill_Idx   : U64 := 0;      --  Read_Dir cursor in the current pass
+   Fill_Sniff : Natural := 0;  --  ELF sniffs in this listing
+
+   --  Startup scan telemetry (drawer t= convention): 'scan done'
+   --  prints once when the initial listing completes — in Main if
+   --  it fit in the first chunk, else from Fill_More.
+   Scan_Base  : U64 := 0;
+   Track_Scan : Boolean := False;
+
+   --  Add one row: entry metadata + the icon cell (deficon or the
+   --  entry's custom ICON XPM). Per-entry fault isolation: one odd
+   --  path must never truncate the listing (fileman's a-directories
+   --  burn).
+   procedure Add_Scan_Entry (Leaf : String; Is_Dir : Boolean) is
+      Full      : constant String := CLI.Join_Path (Cur, Leaf);
+      N         : constant Natural :=
+        Natural'Min (Leaf'Length, Entries (N_Entries + 1).Name'Length);
+      Icon_Path : constant String :=
+        (if Fill_Sniff <= Max_Sniff then Icon_Attr (Full) else "");
+      ISt       : Images.Status;
+   begin
+      if N_Entries >= Max_Entries then
+         return;
+      end if;
+      N_Entries := N_Entries + 1;
+      declare
+         E : Entry_Rec renames Entries (N_Entries);
+      begin
+         E.Len := N;
+         if N > 0 then
+            E.Name (1 .. N) :=
+              Leaf (Leaf'First .. Leaf'First + N - 1);
+         end if;
+         E.Is_Dir := Is_Dir;
+         E.Is_Tool := False;
+         if not Is_Dir then
+            --  M94: sniff every file (budgeted). A file with a
+            --  custom ICON attr (the M93 GUI-app attrs: Fileman/
+            --  Terminal/Edit/Font/Screenmode) must still be
+            --  recognized as a tool — the icon only picks the
+            --  glyph, the launch path follows Is_Tool.
+            if Fill_Sniff < Max_Sniff then
+               Fill_Sniff := Fill_Sniff + 1;
+               E.Is_Tool := Is_Elf (Full);
+            end if;
+         end if;
+         if Icon_Path'Length > 0 then
+            Images.Load (Icon_Path, Customs (N_Entries), ISt);
+         end if;
+         if Images.Loaded (Customs (N_Entries)) then
+            IV.Add_Item
+              (Icons.all, Leaf, Customs (N_Entries)'Access);
+         elsif Is_Dir then
+            IV.Add_Item (Icons.all, Leaf, Def_Drawer'Access);
+         else
+            IV.Add_Item
+              (Icons.all, Leaf,
+               (if E.Is_Tool then Def_Tool'Access
+                else Def_File'Access));
+         end if;
+      end;
+   end Add_Scan_Entry;
+
+   --  Process up to Fill_Chunk_Size Read_Dir calls of the current
+   --  pass; rolls to the files pass when the dirs pass ends and
+   --  clears Filling when both are done.
+   procedure Fill_Chunk is
+      Done : Natural := 0;
       E_Nm : String (1 .. 256);
       E_L  : Natural;
       E_D  : Boolean;
       E_S  : U64;
       St   : U64;
    begin
-      --  Enumerate via Files.Read_Dir (M94): it returns each
-      --  entry's is-directory flag and size for free, so no
-      --  per-entry Stat is needed. (Ada.Directories.Kind routes
-      --  through libc stat(), ~100 ms+ per call under boot load —
-      --  the pre-open scan of Sys: root took ~3.7 s.) Per-entry
-      --  fault isolation stays (fileman's a-directories burn).
-      loop
-         St := Files.Read_Dir (Cur, Idx, E_Nm, E_L, E_D, E_S);
-         exit when St /= Files.Status_Ok;
-         Idx := Idx + 1;
-         begin
-            if E_D = Dirs_Only and then N_Entries < Max_Entries then
-               N_Entries := N_Entries + 1;
-               declare
-                  E         : Entry_Rec renames Entries (N_Entries);
-                  Leaf      : constant String := E_Nm (1 .. E_L);
-                  Full      : constant String :=
-                    CLI.Join_Path (Cur, Leaf);
-                  N         : constant Natural :=
-                    Natural'Min (Leaf'Length, E.Name'Length);
-                  Icon_Path : constant String :=
-                    (if Sniffed <= Max_Sniff then Icon_Attr (Full)
-                     else "");
-                  ISt       : Images.Status;
+      while Filling and then Done < Fill_Chunk_Size loop
+         St := Files.Read_Dir (Cur, Fill_Idx, E_Nm, E_L, E_D, E_S);
+         if St /= Files.Status_Ok then
+            --  Pass complete; move to files, or finish.
+            case Fill_Pass is
+               when Pass_Dirs =>
+                  Fill_Pass := Pass_Files;
+                  Fill_Idx := 0;
+               when Pass_Files =>
+                  Filling := False;
+            end case;
+         else
+            Fill_Idx := Fill_Idx + 1;
+            Done := Done + 1;
+            if (E_D and then Fill_Pass = Pass_Dirs)
+              or else ((not E_D) and then Fill_Pass = Pass_Files)
+            then
                begin
-                  E.Len := N;
-                  if N > 0 then
-                     E.Name (1 .. N) :=
-                       Leaf (Leaf'First .. Leaf'First + N - 1);
-                  end if;
-                  E.Is_Dir := E_D;
-                  E.Is_Tool := False;
-                  if not E_D then
-                     --  M94: sniff every file (budgeted). A file
-                     --  with a custom ICON attr (the M93 GUI-app
-                     --  attrs: Fileman/Terminal/Edit/Font/
-                     --  Screenmode) must still be recognized as a
-                     --  tool — the icon only picks the glyph, the
-                     --  launch path follows Is_Tool.
-                     if Sniffed < Max_Sniff then
-                        Sniffed := Sniffed + 1;
-                        E.Is_Tool := Is_Elf (Full);
-                     end if;
-                  end if;
-                  if Icon_Path'Length > 0 then
-                     Images.Load
-                       (Icon_Path, Customs (N_Entries), ISt);
-                  end if;
-                  if Images.Loaded (Customs (N_Entries)) then
-                     IV.Add_Item
-                       (Icons.all, Leaf,
-                        Customs (N_Entries)'Access);
-                  elsif E_D then
-                     IV.Add_Item
-                       (Icons.all, Leaf, Def_Drawer'Access);
-                  else
-                     IV.Add_Item
-                       (Icons.all, Leaf,
-                        (if E.Is_Tool then Def_Tool'Access
-                         else Def_File'Access));
-                  end if;
+                  Add_Scan_Entry (E_Nm (1 .. E_L), E_D);
+               exception
+                  when others =>
+                     null;   --  one odd entry, no icon cell
                end;
             end if;
-         exception
-            when others =>
-               null;   --  one odd entry, no icon cell
-         end;
+         end if;
       end loop;
-   end Scan_Pass;
+   end Fill_Chunk;
+
+   --  Event-loop pump: one chunk per turn. Runs on the window
+   --  thread only (widget- and FS-safe); posts itself until the
+   --  listing is complete.
+   procedure Fill_More (Code, A0, A1, A2 : U64) is
+   begin
+      if Code /= App_Code_Fill then
+         return;
+      end if;
+      Fill_Chunk;
+      if Filling then
+         if not Trinket.Window.Post (Win_H, App_Code_Fill, 0, 0, 0) then
+            null;   --  ring full: a self-post is already pending
+         end if;
+      elsif Track_Scan then
+         Track_Scan := False;
+         Debug_Put_Line ("drawer: scan done t="
+                         & Akernel_User.Syscalls.U64'Image
+                           (Akernel_User.Syscalls.Read_Time - Scan_Base));
+      end if;
+   end Fill_More;
 
    --  Geometry persistence: DRAWER:GEOM = "WxH" (content size)
    --  on the CURRENT drawer. Silent no-op where attributes do
@@ -279,16 +339,24 @@ package body Drawer_App is
    end Load_Geom;
 
    procedure Reload is
-      Sniffed : Natural := 0;
    begin
       Free_Customs;
       N_Entries := 0;
       IV.Clear (Icons.all);
-      --  Drawers first, then files: the Workbench order.
-      Scan_Pass (Dirs_Only => True, Sniffed => Sniffed);
-      Scan_Pass (Dirs_Only => False, Sniffed => Sniffed);
       Widgets.Label.Set_Text
         (Widgets.Label.Label (Path_Lab.all), Cur);
+      --  Drawers first, then files (the Workbench order), one
+      --  chunk synchronously; the pump finishes the rest.
+      Filling := True;
+      Fill_Pass := Pass_Dirs;
+      Fill_Idx := 0;
+      Fill_Sniff := 0;
+      Fill_Chunk;
+      if Filling then
+         if not Trinket.Window.Post (Win_H, App_Code_Fill, 0, 0, 0) then
+            null;   --  ring full: a self-post is already pending
+         end if;
+      end if;
    end Reload;
 
    procedure Navigate (Path : String) is
@@ -425,14 +493,6 @@ package body Drawer_App is
       Widgets.Group (Root.all).Add
         (IV.New_Scrolled_Icons (Icons), 20);
 
-      --  Scan BEFORE opening: the scan costs ~1-2 s of FAT path
-      --  resolutions, and a black window that fills in late
-      --  reads as broken. The window appears populated.
-      Reload;
-      Debug_Put_Line ("drawer: scan done t="
-                      & Akernel_User.Syscalls.U64'Image
-                        (Akernel_User.Syscalls.Read_Time - Time0));
-
       if Trinket.Window.Open
         (Win_H, Bureau_EP, Open_W, Open_H, "Drawer", Root)
       then
@@ -447,6 +507,19 @@ package body Drawer_App is
          Trinket.Window.Set_Menu_Handler (Win_H, Menu_Picked'Access);
          Trinket.Window.Set_Resize_Handler (Win_H, On_Resize'Access);
          IV.Set_On_Double_Click (Icons.all, Entry_Opened'Access);
+         --  The first chunk loads synchronously so the first
+         --  paint shows rows; the rest pumps through the app port
+         --  (the scan no longer blocks the open).
+         Trinket.Window.Set_App_Handler (Win_H, Fill_More'Access);
+         Scan_Base := Time0;
+         Reload;
+         if Filling then
+            Track_Scan := True;   --  Fill_More prints completion
+         else
+            Debug_Put_Line ("drawer: scan done t="
+                            & Akernel_User.Syscalls.U64'Image
+                              (Akernel_User.Syscalls.Read_Time - Time0));
+         end if;
          Debug_Put_Line ("drawer online: " & Cur);
          Trinket.Window.Run (Win_H);
          Trinket.Window.Close (Win_H);
