@@ -125,6 +125,10 @@ package body Fileman_App is
    procedure Reload (P : Positive);
    procedure Spawn_Edit (Path : String);
 
+   --  Phase B incremental fill (see the bodies).
+   App_Code_Fill : constant Syscalls.U64 := 1;
+   procedure Fill_More (Code, A0, A1, A2 : Syscalls.U64);
+
    procedure Set_Status (S : String) is
    begin
       Trinket.Widgets.Label.Set_Text
@@ -364,93 +368,179 @@ package body Fileman_App is
       pragma Unreferenced (Result);
    end Spawn_Edit;
 
-   --  Directory rows with deficons: drawers get the drawer,
-   --  ELF images the tool, everything else the plain file.
-   procedure Load_Directory (P : Positive; Path : String) is
-      Search : Dirs.Search_Type;
-      Ent    : Dirs.Directory_Entry_Type;
-      Sniffed : Natural := 0;
+   --  Phase B incremental directory fill (launch responsiveness).
+   --  Only the first chunk of a listing is loaded synchronously,
+   --  so the panes paint their first rows before the event loop
+   --  starts; the rest is pumped one chunk per loop turn via the
+   --  app port (self-posted App_Code_Fill), so opening a huge
+   --  drawer never leaves a black window or freezes the UI. The
+   --  enumeration is index-based Files.Read_Dir (the M94 drawer
+   --  idiom): each entry's is-directory flag and size come back
+   --  for free — no per-entry libc stat() — and the cursor is
+   --  resumable across calls, so no OS search handle needs
+   --  parking. ALL file-server and widget work stays on the
+   --  event-loop thread: Files.Bind's single client buffer cap is
+   --  process-wide, so a background task would race the click
+   --  handlers' own reads (the reason this is a pump, not a
+   --  worker thread).
+   Fill_Chunk_Size : constant := 32;
+
+   type Fill_State is record
+      Active  : Boolean := False;
+      Idx     : Syscalls.U64 := 0;      --  next Read_Dir index
+      Sniffed : Natural := 0;           --  ELF sniffs in this listing
+   end record;
+   Fill : array (1 .. 2) of Fill_State;
+
+   --  Startup-fill telemetry (the drawer's t= convention): the
+   --  first-rows instant vs the fully-filled instant, so a slow
+   --  initial listing is visible in the boot log. Only the
+   --  STARTUP fills are tracked; later navigations stay quiet.
+   Load_T0   : Syscalls.U64 := 0;
+   Track_Startup : Boolean := False;
+
+   function Pane_Rows return Natural is
+     (Trinket.Listview.Item_Count (Panes (1).List.all)
+        + Trinket.Listview.Item_Count (Panes (2).List.all));
+
+   --  Add one live row to pane P: drawer glyph for directories,
+   --  otherwise sniff the ELF magic (budgeted, Max_Sniff) for the
+   --  tool glyph. One odd entry must never truncate the listing.
+   procedure Add_Row (P : Positive; Leaf : String; Is_Dir : Boolean) is
+      N    : constant Natural :=
+        Trinket.Listview.Item_Count (Panes (P).List.all);
+      Full : constant String :=
+        CLI.Join_Path (Panes (P).Path.all, Leaf);
+   begin
+      Trinket.Listview.Add_Item (Panes (P).List.all, Leaf);
+      if Is_Dir then
+         if Images.Loaded (Drawer_Img) then
+            Trinket.Listview.Set_Item_Icon
+              (Panes (P).List.all, N, Drawer_Img'Access);
+         end if;
+      elsif Images.Loaded (File_Img) then
+         if Fill (P).Sniffed < Max_Sniff then
+            Fill (P).Sniffed := Fill (P).Sniffed + 1;
+            declare
+               Size  : Syscalls.U64 := 0;
+               Count : Syscalls.U64 := 0;
+               B4    : String (1 .. 4) := "    ";
+               St    : Syscalls.U64;
+            begin
+               St := Files.Open (Full, Size);
+               if St = Files.Status_Ok and then Size >= 4 then
+                  St := Files.Read (Full, 0, B4'Address, 4, Count);
+               end if;
+               if Count = 4
+                 and then B4 (1) = Character'Val (16#7F#)
+                 and then B4 (2 .. 4) = "ELF"
+               then
+                  if Images.Loaded (Tool_Img) then
+                     Trinket.Listview.Set_Item_Icon
+                       (Panes (P).List.all, N, Tool_Img'Access);
+                  end if;
+               else
+                  Trinket.Listview.Set_Item_Icon
+                    (Panes (P).List.all, N, File_Img'Access);
+               end if;
+            end;
+         end if;
+      end if;
+   exception
+      when others =>
+         null;   --  one odd entry, no icon
+   end Add_Row;
+
+   --  Add up to Fill_Chunk_Size pending entries of pane P's
+   --  listing; deactivates the fill at the end of the directory.
+   --  Selecting row 1 when the first rows land keeps the pane
+   --  immediately navigable (the old code selected after the full
+   --  load; row 1 is the same entry either way).
+   procedure Fill_Chunk (P : Positive) is
+      Idx       : Syscalls.U64 := Fill (P).Idx;
+      E_Nm      : String (1 .. 256);
+      E_L       : Natural;
+      E_D       : Boolean;
+      E_S       : Syscalls.U64;
+      St        : Syscalls.U64;
+      Done      : Natural := 0;
+      Was_Empty : constant Boolean :=
+        Trinket.Listview.Item_Count (Panes (P).List.all) = 0;
+   begin
+      while Fill (P).Active and then Done < Fill_Chunk_Size loop
+         St := Files.Read_Dir
+           (Panes (P).Path.all, Idx, E_Nm, E_L, E_D, E_S);
+         if St /= Files.Status_Ok then
+            --  Not_Found = end of the directory.
+            Fill (P).Active := False;
+         else
+            Idx := Idx + 1;
+            Done := Done + 1;
+            begin
+               Add_Row (P, E_Nm (1 .. E_L), E_D);
+            exception
+               when others =>
+                  null;   --  one odd entry, no row
+            end;
+         end if;
+      end loop;
+      Fill (P).Idx := Idx;
+      if Was_Empty
+        and then Trinket.Listview.Item_Count (Panes (P).List.all) > 0
+      then
+         Trinket.Listview.Set_Selected (Panes (P).List.all, 1);
+      end if;
+   end Fill_Chunk;
+
+   --  Begin a (possibly chunked) listing of Path in pane P. The
+   --  first chunk loads synchronously so the pane paints right
+   --  away; if more entries remain, the event loop is woken to
+   --  pump them.
+   procedure Start_Fill (P : Positive; Path : String) is
    begin
       Panes (P).Path := new String'(Path);
       Trinket.Widgets.Input.Set_Text
         (Trinket.Widgets.Input.Input (Panes (P).Path_Input.all), Path);
       Trinket.Listview.Clear (Panes (P).List.all);
-
-      begin
-         Dirs.Start_Search (Search, Path, "*");
-         while Dirs.More_Entries (Search) loop
-            --  Per-entry isolation covers Get_Next_Entry too: an
-            --  entry whose attributes cannot be read must skip,
-            --  never truncate (a-direct's cursor advances before
-            --  it raises, so continuing is safe).
-            begin
-               Dirs.Get_Next_Entry (Search, Ent);
-               Trinket.Listview.Add_Item
-                 (Panes (P).List.all, Dirs.Simple_Name (Ent));
-            --  Icon pick is PER-ENTRY fault-isolated: a path
-            --  that upsets Ada.Directories must never truncate
-            --  the listing (Full_Name did exactly that once —
-            --  join Simple_Name ourselves, the Open_Clicked
-            --  idiom).
-            declare
-               N    : constant Natural :=
-                 Trinket.Listview.Item_Count (Panes (P).List.all);
-               Full : constant String :=
-                 CLI.Join_Path (Path, Dirs.Simple_Name (Ent));
-            begin
-               if Dirs.Kind (Full) = Dirs.Directory then
-                  if Images.Loaded (Drawer_Img) then
-                     Trinket.Listview.Set_Item_Icon
-                       (Panes (P).List.all, N, Drawer_Img'Access);
-                  end if;
-               elsif Sniffed < Max_Sniff
-                 and then Images.Loaded (File_Img)
-               then
-                  --  Tool vs project: the ELF magic decides.
-                  Sniffed := Sniffed + 1;
-                  declare
-                     Size  : Syscalls.U64 := 0;
-                     Count : Syscalls.U64 := 0;
-                     B4    : String (1 .. 4) := "    ";
-                     St    : Syscalls.U64;
-                  begin
-                     St := Files.Open (Full, Size);
-                     if St = Files.Status_Ok and then Size >= 4 then
-                        St := Files.Read
-                          (Full, 0, B4'Address, 4, Count);
-                     end if;
-                     if Count = 4
-                       and then B4 (1) = Character'Val (16#7F#)
-                       and then B4 (2 .. 4) = "ELF"
-                     then
-                        if Images.Loaded (Tool_Img) then
-                           Trinket.Listview.Set_Item_Icon
-                             (Panes (P).List.all, N, Tool_Img'Access);
-                        end if;
-                     else
-                        Trinket.Listview.Set_Item_Icon
-                          (Panes (P).List.all, N, File_Img'Access);
-                     end if;
-                  end;
-               end if;
-            exception
-               when others =>
-                  null;   --  one odd entry, no icon
-            end;
-            exception
-               when others =>
-                  null;   --  one odd entry, no row
-            end;
-         end loop;
-         Dirs.End_Search (Search);
-      exception
-         when Dirs.Name_Error | Dirs.Use_Error =>
-            null;
-      end;
-
-      if Trinket.Listview.Item_Count (Panes (P).List.all) > 0 then
-         Trinket.Listview.Set_Selected (Panes (P).List.all, 1);
+      Fill (P) := (Active => True, Idx => 0, Sniffed => 0);
+      Fill_Chunk (P);
+      if Fill (P).Active then
+         --  Wake the event loop to pump the remaining chunks.
+         if not Trinket.Window.Post (Win, App_Code_Fill, 0, 0, 0) then
+            null;   --  ring full: a self-post is already pending
+         end if;
       end if;
+   end Start_Fill;
+
+   --  Event-loop pump: one chunk per active pane per turn. Runs
+   --  on the window thread only (widget- and FS-safe); posts
+   --  itself until both listings are complete.
+   procedure Fill_More (Code, A0, A1, A2 : Syscalls.U64) is
+   begin
+      if Code /= App_Code_Fill then
+         return;
+      end if;
+      for P in 1 .. 2 loop
+         if Fill (P).Active then
+            Fill_Chunk (P);
+         end if;
+      end loop;
+      if Fill (1).Active or else Fill (2).Active then
+         if not Trinket.Window.Post (Win, App_Code_Fill, 0, 0, 0) then
+            null;   --  ring full: a self-post is already pending
+         end if;
+      elsif Track_Startup then
+         Track_Startup := False;
+         Syscalls.Debug_Put_Line ("fileman: filled " & Natural'Image (Pane_Rows)
+                         & " rows t="
+                         & Syscalls.U64'Image
+                           (Syscalls.Read_Time - Load_T0));
+      end if;
+   end Fill_More;
+
+   procedure Load_Directory (P : Positive; Path : String) is
+   begin
+      Start_Fill (P, Path);
    end Load_Directory;
 
    --  Open entry Index of pane P: drawers navigate, files go to
@@ -785,12 +875,30 @@ package body Fileman_App is
                          Trinket.Menus.It (8, "Delete"),
                          Trinket.Menus.It (9, "Quit")))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
+         --  Phase B: the pumped directory fill arrives as app
+         --  messages; without the handler the post would sit in
+         --  the ring until the next real input event.
+         Trinket.Window.Set_App_Handler (Win, Fill_More'Access);
+         Load_T0 := Syscalls.Read_Time;
          Load_Directory (1, Panes (1).Path.all);
          Load_Directory (2, Panes (2).Path.all);
-         --  The initial loads' auto-selections fire the pane-
+         --  The initial loads' first chunks fire the pane-
          --  activation callbacks; the left pane starts active.
+         --  Remaining entries pump in behind the event loop.
          Active := 1;
          Set_Status ("Left pane active");
+         Syscalls.Debug_Put_Line ("fileman: first rows " & Natural'Image (Pane_Rows)
+                         & " t="
+                         & Syscalls.U64'Image
+                           (Syscalls.Read_Time - Load_T0));
+         if not Fill (1).Active and then not Fill (2).Active then
+            Syscalls.Debug_Put_Line ("fileman: filled " & Natural'Image (Pane_Rows)
+                            & " rows t="
+                            & Syscalls.U64'Image
+                              (Syscalls.Read_Time - Load_T0));
+         else
+            Track_Startup := True;   --  Fill_More prints completion
+         end if;
          Trinket.Window.Run (Win);
          Trinket.Window.Close (Win);
       end if;
