@@ -135,45 +135,54 @@ package body Edit_App is
       Add_Doc (null);
    end New_Doc_Action;
 
-   procedure Open_Action is
-      PBuf : String (1 .. 255);
-      PLen : Natural;
+   --  Requester results (fired from the event loop after the
+   --  modal panel closes or cancels).
+   SaveAs_Doc : Natural := 0;
+
+   procedure On_Open_Pick (Picked : Boolean; Path : String) is
    begin
-      if Trinket.File_Requester.Run
+      if Picked and then Path'Length > 0 then
+         Add_Doc (new String'(Path));
+      end if;
+   end On_Open_Pick;
+
+   procedure On_Save_As_Pick (Picked : Boolean; Path : String) is
+      Idx : constant Natural := SaveAs_Doc;
+   begin
+      if not (Picked and then Path'Length > 0)
+        or else Idx = 0 or else Idx > Doc_Count
+      then
+         return;
+      end if;
+      Write_Doc_To (Path);
+      Docs (Idx).Path := new String'(Path);
+      Set_Tab_Label (Idx, Tab_Name (Docs (Idx).Path));
+   end On_Save_As_Pick;
+
+   procedure Open_Action is
+   begin
+      Trinket.File_Requester.Request
         (Win,
          Trinket.File_Requester.Pick_Open,
          (if Docs (Current).Path = null
           then "Sys:"
           else Dir_Of (Docs (Current).Path.all)),
-         PBuf, PLen)
-      then
-         if PLen > 0 then
-            Add_Doc (new String'(PBuf (1 .. PLen)));
-         end if;
-      end if;
+         On_Open_Pick'Access);
    end Open_Action;
 
    procedure Save_As_Action is
-      PBuf : String (1 .. 255);
-      PLen : Natural;
    begin
       if Doc_Count = 0 then
          return;
       end if;
-      if Trinket.File_Requester.Run
+      SaveAs_Doc := Current;
+      Trinket.File_Requester.Request
         (Win,
          Trinket.File_Requester.Pick_Save_As,
          (if Docs (Current).Path = null
           then "Sys:"
           else Dir_Of (Docs (Current).Path.all)),
-         PBuf, PLen)
-      then
-         if PLen > 0 then
-            Write_Doc_To (PBuf (1 .. PLen));
-            Docs (Current).Path := new String'(PBuf (1 .. PLen));
-            Set_Tab_Label (Current, Tab_Name (Docs (Current).Path));
-         end if;
-      end if;
+         On_Save_As_Pick'Access);
    end Save_As_Action;
 
    --  File menu (Amiga screen bar — right-click).

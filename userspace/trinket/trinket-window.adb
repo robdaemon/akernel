@@ -385,7 +385,7 @@ package body Trinket.Window is
        Reset_Clip (W.Cnv);
     end Flush_Dirty;
 
-   procedure Event_Loop (W : in out Window; Modal : Boolean) is
+   procedure Event_Loop (W : in out Window) is
       Queue : Word_Array
         with Address => SSE.To_Address
           (SSE.Integer_Address (Queue_Of (W)));
@@ -393,10 +393,32 @@ package body Trinket.Window is
       Done    : Boolean := False;
     begin
        loop
-          --  Run: exit on close/quit. Run_Modal: exit on
-          --  Request_Modal_Exit (or a quit).
-          exit when W.Quit_Wanted
-            or else (if Modal then W.Modal_Wanted else Done);
+          exit when W.Quit_Wanted or Done;
+          --  M9x modal state machine: swap roots on loop
+          --  iterations only (no nested event loop).
+          if W.Modal_Wanted then
+             W.Modal_Wanted := False;
+             if W.In_Modal and then W.Saved_Root /= null then
+                W.In_Modal := False;
+                W.Root := W.Saved_Root;
+                W.Saved_Root := null;
+                W.Root.Dirty := True;
+                W.Root.Layout;
+             end if;
+          elsif W.Pending_Modal /= null and then not W.In_Modal then
+             W.In_Modal := True;
+             W.Saved_Root := W.Root;
+             W.Root := W.Pending_Modal;
+             W.Pending_Modal := null;
+             W.Prev_Buttons := 0;
+             W.Root.X := 0;
+             W.Root.Y := 0;
+             W.Root.W := W.Cnv.W;
+             W.Root.H := W.Cnv.H;
+             Widgets.Clear_Focus (W.Root);
+             W.Root.Dirty := True;
+             W.Root.Layout;
+          end if;
          Flush_Dirty (W);
          if IPC_Recv (W.Sink_EP, Reply_H) /= IPC_Ok then
             Debug_Put_Line ("trinket: recv failed");
@@ -485,13 +507,13 @@ package body Trinket.Window is
                      end if;
                      W.Prev_Buttons := Btn;
                    elsif Queue (Slot) = Win.Input_Event_Close then
-                      if Modal then
+                      if W.In_Modal then
                          W.Modal_Wanted := True;   --  cancel the dialog
                       else
                          Done := True;
                       end if;
                    elsif Queue (Slot) = Win.Input_Event_Menu then
-                      if W.On_Menu /= null then
+                      if W.On_Menu /= null and then not W.In_Modal then
                          W.On_Menu (Val and 16#FFFF_FFFF#);
                       end if;
                     elsif Queue (Slot) = Win.Input_Event_Resize
@@ -515,9 +537,7 @@ package body Trinket.Window is
                 Quit_Seen : Boolean;
              begin
                 App_Port.Drain (W.App_Port, W.On_App, Quit_Seen);
-                if not Modal then
-                   Done := Done or Quit_Seen;
-                end if;
+                Done := Done or Quit_Seen;
              end;
           end if;
       end loop;
@@ -526,7 +546,7 @@ package body Trinket.Window is
 
    procedure Run (W : in out Window) is
    begin
-      Event_Loop (W, False);
+      Event_Loop (W);
    end Run;
 
    procedure Request_Modal_Exit (W : in out Window) is
@@ -534,30 +554,17 @@ package body Trinket.Window is
       W.Modal_Wanted := True;
    end Request_Modal_Exit;
 
-   --  M9x content-swap modal (see the spec). Panel replaces the
-   --  window root for the duration; the close gadget cancels.
-   procedure Run_Modal
+   procedure Start_Modal
      (W : in out Window; Panel : Widgets.Any_Widget) is
-      Prev : constant Widgets.Any_Widget := W.Root;
    begin
-      if Panel = null or else Prev = null then
-         return;
+      if W.In_Modal or else Panel = null or else not W.Opened then
+         return;   --  one modal at a time
       end if;
       W.Modal_Wanted := False;
-      W.Prev_Buttons := 0;   --  stale press state would eat the first click
-      W.Root := Panel;
-      W.Root.X := 0;
-      W.Root.Y := 0;
-      W.Root.W := W.Cnv.W;
-      W.Root.H := W.Cnv.H;
-      Widgets.Clear_Focus (W.Root);
-      W.Root.Dirty := True;
-      W.Root.Layout;
-      Event_Loop (W, True);
-      W.Root := Prev;
-      W.Root.Dirty := True;
-      W.Root.Layout;
-   end Run_Modal;
+      W.Pending_Modal := Panel;
+   end Start_Modal;
+
+   function In_Modal (W : Window) return Boolean is (W.In_Modal);
 
    procedure Request_Quit (W : in out Window) is
       Posted : constant Boolean :=

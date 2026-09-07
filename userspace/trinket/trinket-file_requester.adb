@@ -30,12 +30,14 @@ package body Trinket.File_Requester is
    Leaf_Dir  : array (1 .. Max_Rows) of Boolean := (others => False);
    Row_Count : Natural := 0;
 
-   --  Host window for the modal (assigned per Run).
+   --  Host window for the modal (assigned per Request).
    type Win_Acc is access all Trinket.Window.Window;
-   Host      : Win_Acc := null;
+   Modal_Host : Win_Acc := null;
 
-   Result    : access String := null;
-   Result_Len : Natural := 0;
+   --  Result delivery (assigned per Request).
+   Cb        : Result_Callback := null;
+   Path_Buf  : String (1 .. 255);
+   Path_Len  : Natural := 0;
    Picked    : Boolean := False;
 
    function Min (A, B : Natural) return Natural is
@@ -92,26 +94,31 @@ package body Trinket.File_Requester is
               & "-" & Two_Digits (M) & "-" & Two_Digits (D));
    end Date_Text;
 
+   procedure Deliver is
+   begin
+      if Cb /= null then
+         Cb (Picked, Path_Buf (1 .. Path_Len));
+      end if;
+   end Deliver;
+
    procedure Finish (Path : String) is
    begin
       Picked := True;
-      Result_Len := Min (Path'Length, Result'Length);
-      if Result_Len > 0 then
-         Result (Result'First .. Result'First + Result_Len - 1) :=
-           Path (Path'First .. Path'First + Result_Len - 1);
+      Path_Len := Min (Path'Length, Path_Buf'Length);
+      if Path_Len > 0 then
+         Path_Buf (1 .. Path_Len) :=
+           Path (Path'First .. Path'First + Path_Len - 1);
       end if;
-      if Host /= null then
-         Trinket.Window.Request_Modal_Exit (Host.all);
-      end if;
+      Deliver;
+      Trinket.Window.Request_Modal_Exit (Modal_Host.all);
    end Finish;
 
    procedure Canceled is
    begin
       Picked := False;
-      Result_Len := 0;
-      if Host /= null then
-         Trinket.Window.Request_Modal_Exit (Host.all);
-      end if;
+      Path_Len := 0;
+      Deliver;
+      Trinket.Window.Request_Modal_Exit (Modal_Host.all);
    end Canceled;
 
    function Parent_Of return String is
@@ -236,12 +243,11 @@ package body Trinket.File_Requester is
       end if;
    end Name_Committed;
 
-   function Run
+   procedure Request
      (Win         : in out Trinket.Window.Window;
       Mode        : Mode_Kind;
       Initial_Dir : String;
-      Chosen      : out String;
-      Chosen_Len  : out Natural) return Boolean
+      On_Result   : Result_Callback)
    is
       Root : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Vertical);
@@ -252,11 +258,14 @@ package body Trinket.File_Requester is
       Lbl  : Widgets.Any_Widget;
       Cols_Frame : Widgets.Any_Widget;
    begin
+      if On_Result = null then
+         return;
+      end if;
       Req_Mode := Mode;
+      Cb := On_Result;
       Picked := False;
-      Result_Len := 0;
-      Result := Chosen'Unrestricted_Access;
-      Host := Win'Unrestricted_Access;
+      Path_Len := 0;
+      Modal_Host := Win'Unrestricted_Access;
       Cur_Len := Min (Initial_Dir'Length, Cur'Length);
       if Cur_Len > 0 then
          Cur (1 .. Cur_Len) :=
@@ -298,11 +307,8 @@ package body Trinket.File_Requester is
       Widgets.Group (Root.all).Add (Row3);
 
       Go_To (Cur (1 .. Cur_Len));
-      Trinket.Window.Run_Modal (Win, Root);
-
-      Chosen_Len := Result_Len;
-      Host := null;
-      return Picked;
-   end Run;
+      Trinket.Window.Start_Modal (Win, Root);
+      Modal_Host := null;   --  window lives on; callbacks use Cb
+   end Request;
 
 end Trinket.File_Requester;
