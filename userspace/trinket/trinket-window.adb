@@ -398,12 +398,18 @@ package body Trinket.Window is
           --  iterations only (no nested event loop).
           if W.Modal_Wanted then
              W.Modal_Wanted := False;
-             if W.In_Modal and then W.Saved_Root /= null then
+             if W.In_Modal then
                 W.In_Modal := False;
-                W.Root := W.Saved_Root;
-                W.Saved_Root := null;
-                W.Root.Dirty := True;
-                W.Root.Layout;
+                if W.Modal_Overlay then
+                   W.Modal_Overlay := False;
+                   W.Overlay := null;
+                   W.Root.Dirty := True;   --  repaint behind
+                elsif W.Saved_Root /= null then
+                   W.Root := W.Saved_Root;
+                   W.Saved_Root := null;
+                   W.Root.Dirty := True;
+                   W.Root.Layout;
+                end if;
              end if;
           elsif W.Pending_Modal /= null and then not W.In_Modal then
              W.In_Modal := True;
@@ -440,8 +446,20 @@ package body Trinket.Window is
                     + (Tail mod Win.Input_Queue_Events) * 2;
                   Val := Queue (Slot + 1);
                   if Queue (Slot) = Win.Input_Event_Key then
-                     if W.Overlay /= null then
-                        --  M88: modal-ish — Escape closes, other
+                     if W.In_Modal and then W.Overlay /= null then
+                        --  M9x dialog: Escape cancels like the
+                        --  close gadget, Tab cycles INSIDE the
+                        --  dialog, other keys reach it only.
+                        if (Val and 16#FF#) = 27 then
+                           Request_Modal_Exit (W);
+                        elsif (Val and 16#FF#) = Key_Tab then
+                           Widgets.Cycle_Focus (W.Overlay);
+                        else
+                           Consumed := W.Overlay.On_Key
+                             (Val and 16#FF#);
+                        end if;
+                     elsif W.Overlay /= null then
+                        --  M88: menu popup — Escape closes, other
                         --  keys go to the overlay only; Tab never
                         --  cycles the tree behind it.
                         if (Val and 16#FF#) = 27 then
@@ -464,7 +482,13 @@ package body Trinket.Window is
                      if (Btn and 1) /= 0
                        and then (W.Prev_Buttons and 1) = 0
                      then
-                        if W.Overlay /= null then
+                        if W.In_Modal and then W.Overlay /= null then
+                           --  M9x dialog: all presses are trapped
+                           --  by the modal (an outside press does
+                           --  not dismiss it).
+                           Consumed := W.Overlay.On_Pointer
+                             (Widgets.Press, X, Y);
+                        elsif W.Overlay /= null then
                            --  M88: press-in goes to the overlay;
                            --  press-outside dismisses (swallowed,
                            --  tree focus untouched).
@@ -486,7 +510,10 @@ package body Trinket.Window is
                      elsif (Btn and 1) = 0
                        and then (W.Prev_Buttons and 1) /= 0
                      then
-                        if W.Overlay /= null then
+                        if W.In_Modal and then W.Overlay /= null then
+                           Consumed := W.Overlay.On_Pointer
+                             (Widgets.Release, X, Y);
+                        elsif W.Overlay /= null then
                            --  M88: a completed click ends the
                            --  popup (the release picks first).
                            Consumed := W.Overlay.On_Pointer
@@ -497,7 +524,10 @@ package body Trinket.Window is
                              (Widgets.Release, X, Y);
                         end if;
                      else
-                        if W.Overlay /= null then
+                        if W.In_Modal and then W.Overlay /= null then
+                           Consumed := W.Overlay.On_Pointer
+                             (Widgets.Move, X, Y);
+                        elsif W.Overlay /= null then
                            Consumed := W.Overlay.On_Pointer
                              (Widgets.Move, X, Y);
                         else
@@ -563,6 +593,32 @@ package body Trinket.Window is
       W.Modal_Wanted := False;
       W.Pending_Modal := Panel;
    end Start_Modal;
+
+   procedure Start_Modal_Overlay
+     (W : in out Window; Panel : Widgets.Any_Widget;
+      Width, Height : U64) is
+      DW : U64;
+      DH : U64;
+   begin
+      if W.In_Modal or else Panel = null
+        or else W.Overlay /= null or else not W.Opened
+      then
+         return;   --  never clobber a menu popup or a modal
+      end if;
+      DW := U64'Min (Width, (if W.Cnv.W >= 16 then W.Cnv.W - 8 else 8));
+      DH := U64'Min (Height, (if W.Cnv.H >= 16 then W.Cnv.H - 8 else 8));
+      W.In_Modal := True;
+      W.Modal_Overlay := True;
+      W.Modal_Wanted := False;
+      W.Overlay := Panel;
+      W.Overlay.X := (W.Cnv.W - DW) / 2;
+      W.Overlay.Y := (W.Cnv.H - DH) / 2;
+      W.Overlay.W := DW;
+      W.Overlay.H := DH;
+      Widgets.Clear_Focus (W.Root);
+      W.Overlay.Dirty := True;
+      W.Overlay.Layout;
+   end Start_Modal_Overlay;
 
    function In_Modal (W : Window) return Boolean is (W.In_Modal);
 

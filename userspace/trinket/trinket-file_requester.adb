@@ -335,14 +335,17 @@ package body Trinket.File_Requester is
       Initial_Dir : String;
       On_Result   : Result_Callback)
    is
+      --  Dialog: a raised titled frame (the title names the mode)
+      --  around an opaque sunken body, floated OVER the window
+      --  content by Start_Modal_Overlay.
       Root : constant Widgets.Any_Widget :=
-        Widgets.New_Group (Widgets.Vertical);
-      Row1 : constant Widgets.Any_Widget :=
-        Widgets.New_Group (Widgets.Horizontal);
+        Widgets.New_Group (Widgets.Vertical,
+          Title => (if Mode = Pick_Open then "Open" else "Save As"));
+      Face : constant Widgets.Any_Widget :=
+        Widgets.New_Group (Widgets.Vertical, Inset => True);
       RowB : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Horizontal);
       Name_Row : Widgets.Any_Widget := null;
-      Lbl  : Widgets.Any_Widget;
       Cols_Frame : Widgets.Any_Widget;
    begin
       if On_Result = null then
@@ -363,22 +366,16 @@ package body Trinket.File_Requester is
       Path_Inp := null;
       Name_Inp := null;
 
-      --  Title only across the top; every button lives on the
-      --  bottom bar.
-      Lbl := Widgets.Label.New_Label
-        ((if Mode = Pick_Open then "Open" else "Save As"),
-         Align => Widgets.Label.Center, Inset => True);
-      Widgets.Group (Row1.all).Add (Lbl);
-      Widgets.Group (Root.all).Add (Row1);
+      Widgets.Group (Root.all).Add (Face);
 
       Path_Inp := Widgets.Input.New_Input;
       Widgets.Input.Input (Path_Inp.all).On_Commit :=
         Path_Committed'Access;
-      Widgets.Group (Root.all).Add (Path_Inp);
+      Widgets.Group (Face.all).Add (Path_Inp);
 
       Cols_Frame := Trinket.Columns.New_Scrolled_Columns
         (Cols_W, Row_Changed'Access, Row_Activated'Access);
-      Widgets.Group (Root.all).Add (Cols_Frame, Weight => 5);
+      Widgets.Group (Face.all).Add (Cols_Frame, Weight => 5);
 
       if Mode = Pick_Save_As then
          --  Target-name row between the listing and the buttons.
@@ -389,7 +386,7 @@ package body Trinket.File_Requester is
          Widgets.Input.Input (Name_Inp.all).On_Commit :=
            Name_Committed'Access;
          Widgets.Group (Name_Row.all).Add (Name_Inp, Weight => 2);
-         Widgets.Group (Root.all).Add (Name_Row);
+         Widgets.Group (Face.all).Add (Name_Row);
       end if;
       Widgets.Group (RowB.all).Add
         (Widgets.Button.New_Button
@@ -401,10 +398,10 @@ package body Trinket.File_Requester is
         (Widgets.Button.New_Button ("Parent", Parent_Clicked'Access));
       Widgets.Group (RowB.all).Add
         (Widgets.Button.New_Button ("Cancel", Canceled'Access));
-      Widgets.Group (Root.all).Add (RowB);
+      Widgets.Group (Face.all).Add (RowB);
 
       Go_To (Cur (1 .. Cur_Len));
-      Trinket.Window.Start_Modal (Win, Root);
+      Trinket.Window.Start_Modal_Overlay (Win, Root, 480, 340);
    end Request;
 
 end Trinket.File_Requester;

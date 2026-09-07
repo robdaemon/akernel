@@ -69,6 +69,20 @@ package Trinket.Window is
    --  cancels a modal (no exit callback fires).
    procedure Start_Modal
      (W : in out Window; Panel : Widgets.Any_Widget);
+   --  M9x dialog overlay: float Panel as a centered modal dialog
+   --  ABOVE the window content (which stays visible underneath)
+   --  instead of replacing the root. The requester reads as a
+   --  separate popup without needing a second live window (the
+   --  kernel binds one notification per thread). Width/Height
+   --  are the dialog's preferred size; it is clamped to the
+   --  surface with an 8px margin and centered. Input is trapped
+   --  by the dialog (press/release/move and keys, Tab cycles the
+   --  dialog's own focus chain); Escape or the close gadget ends
+   --  it like a cancel. Same rules as Start_Modal: event-loop
+   --  call, one at a time, ends via Request_Modal_Exit.
+   procedure Start_Modal_Overlay
+     (W : in out Window; Panel : Widgets.Any_Widget;
+      Width, Height : U64);
    procedure Request_Modal_Exit (W : in out Window);
    --  Ends the active modal at the top of the next loop
    --  iteration; safe from the modal's callbacks.
@@ -157,7 +171,8 @@ private
        Opened       : Boolean := False;
        Quit_Wanted  : Boolean := False;
        Modal_Wanted : Boolean := False;  --  M9x: end the modal
-       In_Modal     : Boolean := False;  --  a modal panel is the root
+       Modal_Overlay : Boolean := False; --  modal is an overlay dialog
+       In_Modal     : Boolean := False;  --  a modal owns input
        Saved_Root   : Widgets.Any_Widget := null;  --  pre-modal root
        Pending_Modal : Widgets.Any_Widget := null; --  queued swap-in
        Prev_Buttons : U64 := 0;
