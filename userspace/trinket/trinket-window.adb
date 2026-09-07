@@ -16,10 +16,54 @@ package body Trinket.Window is
    --  followup burn). Clear of text 0x4600_0000, args
    --  0x4800_0000, the newlib sbrk arena 0x5200_0000 (2 MiB),
    --  and IPC at 0x6FFF_0000 / main stack at 0x7FF0_0000+.
-   Queue_VA : constant U64 := 16#5F00_0000#;
-   Surf_VA  : constant U64 := 16#5F80_0000#;  --  8 MiB window
-   Menu_VA  : constant U64 := 16#5F10_0000#;  --  m61 menu page
-   AppQ_VA  : constant U64 := 16#5F20_0000#;  --  m68 app port page
+   --  VA layout (was one fixed set; M9x made it per-window so a
+   --  process can host several Trinket windows — e.g. the file
+   --  requester's nested modal). Each window gets a 16 MiB slot
+   --  from a small pool; everything lives at fixed offsets:
+   --     Queue = B
+   --     Menu  = B + 0x0010_0000
+   --     AppQ  = B + 0x0020_0000
+   --     Surf  = B + 0x0080_0000   (8 MiB chunk window)
+   --  Slot 0's base reproduces the ORIGINAL addresses exactly.
+   Win_Slots   : constant := 4;
+   Win_Stride  : constant U64 := 16#0100_0000#;
+   Win_Base0   : constant U64 := 16#5F00_0000#;
+   Menu_Off    : constant U64 := 16#0010_0000#;
+   AppQ_Off    : constant U64 := 16#0020_0000#;
+   Surf_Off    : constant U64 := 16#0080_0000#;
+
+   Win_Used    : array (0 .. Win_Slots - 1) of Boolean :=
+     (others => False);
+
+   function Queue_Of (W : Window) return U64 is (W.B);
+   function Menu_Of  (W : Window) return U64 is (W.B + Menu_Off);
+   function AppQ_Of  (W : Window) return U64 is (W.B + AppQ_Off);
+   function Surf_Of  (W : Window) return U64 is (W.B + Surf_Off);
+
+   procedure Allocate_Base (W : in out Window) is
+   begin
+      for S in 0 .. Win_Slots - 1 loop
+         if not Win_Used (S) then
+            Win_Used (S) := True;
+            W.B := Win_Base0 + U64 (S) * Win_Stride;
+            return;
+         end if;
+      end loop;
+      W.B := 0;   --  no slot: Open will fail on the first map
+   end Allocate_Base;
+
+   procedure Release_Base (W : in out Window) is
+   begin
+      if W.B /= 0 then
+         for S in 0 .. Win_Slots - 1 loop
+            if Win_Base0 + U64 (S) * Win_Stride = W.B then
+               Win_Used (S) := False;
+               exit;
+            end if;
+         end loop;
+         W.B := 0;
+      end if;
+   end Release_Base;
 
     Chunk_Pages : constant U64 := 64;  --  per Mem_Alloc chunk
     Max_Chunks  : constant U64 := 16;
@@ -52,7 +96,7 @@ package body Trinket.Window is
           Result := Mem_Map
             (Address_Space => Address_Space_Cap,
              Cap           => W.Chunk_Caps (Natural (I)),
-             VA            => Surf_VA + I * Chunk_Pages * 4096,
+             VA            => Surf_Of (W) + I * Chunk_Pages * 4096,
              Offset        => 0,
              Length        => This * 4096,
              Flags         => 3);
@@ -95,7 +139,7 @@ package body Trinket.Window is
        for I in 0 .. W.N_Chunks - 1 loop
           Result := Mem_Unmap
             (Address_Space_Cap,
-             Surf_VA + U64 (I) * Chunk_Pages * 4096,
+             Surf_Of (W) + U64 (I) * Chunk_Pages * 4096,
              U64'Min (Chunk_Pages, W.Surf_Pages - U64 (I) * Chunk_Pages)
                * 4096);
           Result := Cap_Delete (W.Chunk_Caps (I));
@@ -152,6 +196,7 @@ package body Trinket.Window is
        Fonts.Init;
        W.EP := Bureau_EP;
        W.Root := Root;
+       Allocate_Base (W);   --  per-window VA slot (0 = pool full)
 
        --  M86g: content-size negotiation — grow the request up
        --  to the root's Min_Size so a font change can never
@@ -178,7 +223,7 @@ package body Trinket.Window is
       Result := Mem_Map
         (Address_Space => Address_Space_Cap,
          Cap           => W.Queue_Cap,
-         VA            => Queue_VA,
+         VA            => Queue_Of (W),
          Offset        => 0,
          Length        => 4096,
          Flags         => 3);
@@ -188,7 +233,7 @@ package body Trinket.Window is
       declare
          Queue : Word_Array
            with Address => SSE.To_Address
-             (SSE.Integer_Address (Queue_VA));
+             (SSE.Integer_Address (Queue_Of (W)));
       begin
          Queue (Win.Input_Queue_Head) := 0;
          Queue (Win.Input_Queue_Tail) := 0;
@@ -210,7 +255,7 @@ package body Trinket.Window is
       Result := Mem_Map
         (Address_Space => Address_Space_Cap,
          Cap           => W.AppQ_Cap,
-         VA            => AppQ_VA,
+         VA            => AppQ_Of (W),
          Offset        => 0,
          Length        => 4096,
          Flags         => 3);
@@ -219,7 +264,7 @@ package body Trinket.Window is
       end if;
       App_Port.Setup
         (W.App_Port,
-         SSE.To_Address (SSE.Integer_Address (AppQ_VA)),
+         SSE.To_Address (SSE.Integer_Address (AppQ_Of (W))),
          W.Ntfn_Cap);
 
       Q_Mint := Cap_Mint
@@ -258,7 +303,7 @@ package body Trinket.Window is
           return False;
        end if;
 
-      W.Cnv.Base := SSE.To_Address (SSE.Integer_Address (Surf_VA));
+      W.Cnv.Base := SSE.To_Address (SSE.Integer_Address (Surf_Of (W)));
       Reset_Clip (W.Cnv);
       W.Root.X := 0;
       W.Root.Y := 0;
@@ -343,7 +388,7 @@ package body Trinket.Window is
    procedure Run (W : in out Window) is
       Queue : Word_Array
         with Address => SSE.To_Address
-          (SSE.Integer_Address (Queue_VA));
+          (SSE.Integer_Address (Queue_Of (W)));
       Reply_H : U64;
       Done    : Boolean := False;
     begin
@@ -516,7 +561,7 @@ package body Trinket.Window is
       Result := Mem_Map
         (Address_Space => Address_Space_Cap,
          Cap           => Cap,
-         VA            => Menu_VA,
+         VA            => Menu_Of (W),
          Offset        => 0,
          Length        => 4096,
          Flags         => 3);
@@ -525,14 +570,14 @@ package body Trinket.Window is
          return;
       end if;
       Trinket.Menus.Serialize
-        (Menus, SSE.To_Address (SSE.Integer_Address (Menu_VA)));
+        (Menus, SSE.To_Address (SSE.Integer_Address (Menu_Of (W))));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);
       if Minted /= Syscall_Failed then
          Result := Win.Surface_Set_Menus (W.EP, W.Id, Minted);
          Result := Cap_Delete (Minted);
       end if;
-      Result := Mem_Unmap (Address_Space_Cap, Menu_VA, 4096);
+      Result := Mem_Unmap (Address_Space_Cap, Menu_Of (W), 4096);
       Result := Cap_Delete (Cap);
    end Set_Menus;
 
@@ -555,6 +600,7 @@ package body Trinket.Window is
          Result := Win.Surface_Destroy (W.EP, W.Id);
          W.Opened := False;
       end if;
+      Release_Base (W);
    end Close;
 
    --  M88: overlay lifecycle. Open sizes the panel to its

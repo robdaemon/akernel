@@ -123,6 +123,12 @@ private
     type Window is limited record
        EP           : U64 := 0;
        Id           : U64 := 0;
+       --  Per-window VA base: the input queue, app port, menu
+       --  page and surface chunks live at fixed offsets from this
+       --  base, so MORE THAN ONE Trinket window can be open in a
+       --  process (the file requester's nested modal window).
+       --  0 = no base allocated.
+       B            : U64 := 0;
        Sink_EP      : U64 := 0;
        Ntfn_Cap     : U64 := 0;
        Queue_Cap    : U64 := 0;
