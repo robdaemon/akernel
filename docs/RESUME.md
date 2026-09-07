@@ -13,6 +13,24 @@ repository.
 
 ## Recently shipped
 
+- **FreeType TrueType/OpenType rendering** (M9A, `1a96ef2` +
+  `6b1b400`): FreeType 2.13.3 and DejaVu 2.37 (Sans + Sans Mono)
+  are fetched as sha256-pinned third_party trees (fetch/stamp rules,
+  SBOM updated: freetype FTL-1.1 OR GPL-2.0-or-later, dejavu-fonts
+  Bitstream-Vera). A static C library (`userspace/freetype`) builds
+  the truetype/sfnt/cff/psaux/psnames/pshinter drivers, smooth + mono
+  rasterizers and gzip (trimmed `ftmodule_aegir.h` table; the vendored
+  tree compiles `-Wno-error`, the `ftaegir.c` shim `-Werror`).
+  `Trinket.Fonts` routes `.TTF`/`.OTF` loads (Init/Load/Probe sniff
+  the suffix) to a FreeType memory face at a fixed 16 px: metrics and
+  advances drive Line_Height/Text_Width, and glyphs rasterize
+  grayscale and alpha-blend over the background — the BDF path and the
+  terminal's mono grid are untouched. disk.img stages DejaVu Sans,
+  DejaVu Sans Mono and the license into Sys:Fonts, and the Prefs/Font
+  picker lists `.ttf`/`.otf` families (PostScript name, size 16);
+  selecting one sets ENV:Font to the .TTF for newly launched apps.
+  Gates: make test 1889 PASS / 0 FAIL at SMP4.
+
 - **Edit unsaved-buffer quit prompts + generic Message_Box** (M9z,
   `73ce7de`): Text_Edit exposes a modified-change callback, and
   Edit tracks per-doc dirty state live — dirty tabs carry a '*'
