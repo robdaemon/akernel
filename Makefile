@@ -81,7 +81,7 @@ INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
 INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer desktop
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
-DISK_CRATES_LIBS := testlib
+DISK_CRATES_LIBS := testlib clipboard
 #  Prefs drawer apps (M89): nested crates userspace/prefs/<name>;
 #  binaries install in Sys:Prefs/<Capitalized>. Path entries ride
 #  the generic $(CRATES) rule (make -C userspace/prefs/<name>).

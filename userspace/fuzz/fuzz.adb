@@ -15,6 +15,7 @@ with Akernel_User.Files;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
 with Akernel_User.Glob;
+with Akernel_User.Clipboard;
 with Akernel_User.Libs;
 with Trinket;
 with Trinket.Images;
@@ -7685,6 +7686,65 @@ begin
       Check (Count1 /= U64'Last and then Count2 /= U64'Last
              and then Count1 = Count2,
              "libs open call close no cap leak");
+
+      --  Clipboard (M9x): a resident shared library. Round-trip
+      --  Put/Get over the shared buffer memobj, the 32 KiB ceiling
+      --  leaves old contents intact, and the buffer survives a
+      --  Close/Open cycle because libman never expunges the
+      --  resident instance (the contents are shared by every
+      --  client of the one server).
+      declare
+         Clip : U64;
+         St   : U64;
+         Buf  : String (1 .. 64) := (others => ' ');
+         BLen : Natural;
+      begin
+         Clip := Akernel_User.Libs.Open_Library
+           ("Sys:Libs/Clipboard", Console_Cap, FS_Cap, Bureau_Cap,
+            Min_Version => 1);
+         Check (Clip /= Akernel_User.Libs.Invalid_Handle,
+                "clip open ok");
+
+         St := Akernel_User.Clipboard.Put (Clip, "clip fuzz text");
+         Check (St = Akernel_User.Clipboard.Status_Ok, "clip put ok");
+
+         Buf := (others => ' ');
+         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Akernel_User.Clipboard.Status_Ok
+                and then BLen = 14
+                and then Buf (1 .. 14) = "clip fuzz text",
+                "clip round-trip ok");
+
+         declare
+            Big : String (1 .. 40_000) := (others => 'x');
+         begin
+            St := Akernel_User.Clipboard.Put (Clip, Big);
+            Check (St = Akernel_User.Clipboard.Status_Too_Big,
+                   "clip too-big rejected");
+         end;
+
+         Buf := (others => ' ');
+         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Akernel_User.Clipboard.Status_Ok
+                and then BLen = 14
+                and then Buf (1 .. 14) = "clip fuzz text",
+                "clip too-big leaves old contents");
+
+         Akernel_User.Libs.Close_Library (Clip);
+
+         --  Reopen: resident instance, contents still there.
+         Clip := Akernel_User.Libs.Open_Library
+           ("Sys:Libs/Clipboard", Console_Cap, FS_Cap, Bureau_Cap);
+         Check (Clip /= Akernel_User.Libs.Invalid_Handle,
+                "clip reopen ok");
+         Buf := (others => ' ');
+         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Akernel_User.Clipboard.Status_Ok
+                and then BLen = 14
+                and then Buf (1 .. 14) = "clip fuzz text",
+                "clip resident across close");
+         Akernel_User.Libs.Close_Library (Clip);
+      end;
 
       --  Multiple clients can open the same library concurrently.
       --  With the shared manager each open mints a distinct cap but

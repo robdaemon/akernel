@@ -34,6 +34,7 @@ procedure Libman is
       Open_Count  : Natural := 0;
       Service_Cap : U64 := 0;  --  cap received from library server
       Process_Cap : U64 := 0;  --  to reap after expunge
+      Resident    : Boolean := False;  --  never expunge at Open_Count=0
    end record;
 
    --  m80f: chunk-appended (Akernel_User.Tables); Name_Len = 0 is
@@ -41,6 +42,26 @@ procedure Libman is
    package Ent_Tab is new Akernel_User.Tables (Library_Entry);
    function Entries (I : Natural) return Ent_Tab.Element_Access
      renames Ent_Tab.Ref;
+
+   --  Resident libraries survive Open_Count reaching zero: the
+   --  manager never expunges them (no shutdown message, no reap),
+   --  so their state lives for the whole session. Measured client
+   --  facts (no per-client limit): Entries is a chunk-appended
+   --  Tables so the number of DISTINCT resident/library names is
+   --  unbounded; every Open mints a fresh endpoint cap from the
+   --  single loaded instance and Open_Count is a Natural refcount,
+   --  so simultaneous clients are unbounded (each caller's own cap
+   --  table is the only constraint). The single instance serves
+   --  requests serially, which is fine for clipboard-sized ops.
+   --  The clipboard is resident because a clipboard must outlive
+   --  the apps that copy/paste (Amiga clipboard.device semantics);
+   --  expunging it on the last Close would throw the buffer away.
+   --  Consumers: Edit's Edit menu and the Terminal paste (M9x).
+   Clipboard_Resident_Name : constant String := "Sys:Libs/Clipboard";
+
+   function Resident_Name (Name : String) return Boolean is
+     (Name'Length = Clipboard_Resident_Name'Length
+      and then Name = Clipboard_Resident_Name);
 
    --  Request labels on the manager's service endpoint.
    Label_Req_Open  : constant U64 := 1;
@@ -123,6 +144,7 @@ procedure Libman is
       E.Open_Count := 0;
       E.Service_Cap := 0;
       E.Process_Cap := 0;
+      E.Resident := False;
    end Expunge;
 
    function Make_Args_Cap return U64 is
@@ -310,6 +332,7 @@ procedure Libman is
          Entries (Idx).Open_Count := 1;
          Entries (Idx).Service_Cap := Message.Caps (0);
          Entries (Idx).Process_Cap := Proc;
+         Entries (Idx).Resident := Resident_Name (Name);
 
          Message.Label := Label_Reply_Ok;
          Message.Words := (others => 0);
@@ -345,6 +368,8 @@ procedure Libman is
             return;
          end if;
          Entries (Idx).Open_Count := Entries (Idx).Open_Count + 1;
+         Entries (Idx).Resident := Entries (Idx).Resident
+           or else Resident_Name (Name);
          Message.Label := Label_Reply_Ok;
          Message.Words := (others => 0);
          Message.Words (0) := Entries (Idx).Version;
@@ -376,7 +401,9 @@ procedure Libman is
          Entries (Idx).Open_Count := Entries (Idx).Open_Count - 1;
       end if;
 
-      if Entries (Idx).Open_Count = 0 then
+      if Entries (Idx).Open_Count = 0
+        and then not Entries (Idx).Resident
+      then
          Expunge (Idx);
       end if;
 

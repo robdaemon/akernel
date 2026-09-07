@@ -1,0 +1,14 @@
+with "../libserv/libserv.gpr";
+
+--  Clipboard (milestone 9x): the system clipboard, a resident
+--  shared library (libman never expunges Sys:Libs/Clipboard).
+project Clipboard extends "../rts/akernel_program.gpr" is
+   for Source_Dirs use (".");
+   for Exec_Dir use "../../bin/userspace";
+   for Object_Dir use "../../obj/userspace/clipboard";
+   for Main use ("clipboard.adb");
+
+   package Builder is
+      for Executable ("clipboard.adb") use "clipboard.elf";
+   end Builder;
+end Clipboard;
