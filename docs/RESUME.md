@@ -13,6 +13,27 @@ repository.
 
 ## Recently shipped
 
+- **Edit/terminal cursor + navigation keys** (M9y, `d887832` +
+  `e302d6d` + `f0c98bf`): key events now carry the Ctrl/Alt
+  qualifier to focused apps — Bureau packs the seat modifiers above
+  the code (`aegir_user-window` `Key_Mod_Ctrl`/`Key_Mod_Alt` +
+  `Key_Code/Key_Ctrl/Key_Alt`; masked `&0xFF` clients unchanged) and
+  Trinket.Window maps Ctrl+Home / Ctrl+End onto the append-only
+  `Key_Ctrl_Home` (0x89) / `Key_Ctrl_End` (0x8A) codes. Text_Edit's
+  1px insertion bar became a Terminal-style block cursor (Sel_Blue
+  cell over the glyph at the caret with the glyph in Pane; inverted
+  on a selection-band cell; space-wide block at end of line;
+  right-edge clipped), and Ctrl+Home / Ctrl+End jump cursor+view to
+  the buffer's top / end. The Terminal now owns a line-edit caret:
+  Home/End/Left/Right move it, Key_Delete deletes forward,
+  Backspace and typing act at the caret — any edit left of the end
+  retypes the whole line (BS x length + text, the history-recall
+  byte stream) so the shell's append-only buffer stays in sync, and
+  the block cursor renders at the caret. The old Home/End
+  scroll-to-top/bottom moved to Ctrl+Home / Ctrl+End; PgUp/PgDn
+  still page the view and Up/Down still recall history. Gates: make
+  test 1894 PASS / 0 FAIL at SMP4.
+
 - **Terminal mouse copy + Alt clipboard shortcuts** (this line +
   `cf388ad`): clipboard cut/copy/paste moved Ctrl → Alt across
   apps — Edit's Edit menu (items 11-14) and Terminal Paste are now
