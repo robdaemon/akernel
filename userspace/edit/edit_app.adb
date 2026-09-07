@@ -9,6 +9,7 @@ with Trinket.Text_Edit;
 with Trinket.Window;
 with Trinket.Menus;
 with Trinket.File_Requester;
+with Trinket.Message_Box;
 
 --  Edit (multi-file, milestone 9x): Text Edit is a tabbed editor —
 --  one tab per document, the filename on the tab. 'edit a.txt
@@ -24,6 +25,8 @@ package body Edit_App is
    use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
    package TE renames Trinket.Text_Edit;
+   use type Widgets.Any_Widget;
+   use type TE.Any_Text_Edit;
 
    Win    : Trinket.Window.Window;
    Tabs_W : Widgets.Any_Widget;
@@ -82,6 +85,52 @@ package body Edit_App is
       return "Sys:";
    end Dir_Of;
 
+   --  Retitle tab Index with S (bounded by the tab text cell).
+   procedure Set_Tab_Label (Index : Natural; S : String) is
+      L : Widgets.Text_Rec renames
+        Widgets.Tabs.Tabs (Tabs_W.all).Labels (Index);
+   begin
+      L.Len := Natural'Min (S'Length, L.Buf'Length);
+      if L.Len > 0 then
+         L.Buf (1 .. L.Len) := S (S'First .. S'First + L.Len - 1);
+      end if;
+      Widgets.Tabs.Tabs (Tabs_W.all).Dirty := True;
+   end Set_Tab_Label;
+
+   --  M9z unsaved-buffer plumbing: per-doc dirty state is the
+   --  Text_Edit Modified flag; the tab label carries a '*' prefix
+   --  while the doc is dirty, kept live via the modified callback.
+
+   function Is_Dirty (Idx : Natural) return Boolean is
+     (Idx in 1 .. Doc_Count
+      and then TE.Modified (Docs (Idx).Box.all));
+
+   function Doc_Name (Idx : Natural) return String is
+     (if Docs (Idx).Path = null then "(new file)"
+      else Docs (Idx).Path.all);
+
+   --  Refresh tab Idx's label from its dirty state.
+   procedure Update_Tab (Idx : Natural) is
+   begin
+      if Idx in 1 .. Doc_Count and then Tabs_W /= null then
+         Set_Tab_Label (Idx,
+                        (if Is_Dirty (Idx) then "*" else "")
+                        & Tab_Name (Docs (Idx).Path));
+      end if;
+   end Update_Tab;
+
+   --  Modified callback (one per editor): find the doc and refresh
+   --  its tab star.
+   procedure Doc_Modified (Ed : access TE.Text_Edit) is
+   begin
+      for J in 1 .. Doc_Count loop
+         if Docs (J).Box = TE.Any_Text_Edit (Ed) then
+            Update_Tab (J);
+            return;
+         end if;
+      end loop;
+   end Doc_Modified;
+
    --  Write every line of the ACTIVE document to Path.
    procedure Write_Doc_To (Path : String) is
       use Ada.Text_IO;
@@ -113,24 +162,142 @@ package body Edit_App is
          return;
       end if;
       Write_Doc_To (Docs (Current).Path.all);
+      Update_Tab (Current);
    end Save_Clicked;
+
+   --  M9z quit-dialog plumbing (Message_Box): Save / Save All /
+   --  Cancel per dirty doc. Message_Box exits the dialog BEFORE
+   --  On_Quit_Choice runs, so chaining the next prompt queues it
+   --  onto the exiting modal.
+   Prompt_Doc : Natural := 0;   --  the doc the open dialog names
+   procedure Prompt_Quit_Doc (Idx : Natural);  --  body after On_Quit_Choice
+
+   procedure Save_Doc (Idx : Natural) is
+      Save_Cur : constant Natural := Current;
+   begin
+      if Docs (Idx).Path = null then
+         Debug_Put_Line
+           ("edit: cannot save untitled doc (use Save As)");
+         return;
+      end if;
+      Current := Idx;
+      Write_Doc_To (Docs (Idx).Path.all);
+      Current := Save_Cur;
+      Update_Tab (Idx);
+   end Save_Doc;
+
+   procedure Focus_Doc (Idx : Natural) is
+   begin
+      if Idx in 1 .. Doc_Count then
+         Current := Idx;
+         Widgets.Tabs.Set_Selected
+           (Widgets.Tabs.Tabs (Tabs_W.all), Idx);
+      end if;
+   end Focus_Doc;
+
+   procedure On_Quit_Choice (Choice : Natural) is
+      Idx : constant Natural := Prompt_Doc;
+      Nxt : Natural;
+   begin
+      Prompt_Doc := 0;
+      if Idx not in 1 .. Doc_Count then
+         return;
+      end if;
+      Nxt := 0;
+      for J in 1 .. Doc_Count loop
+         if Is_Dirty (J) then
+            Nxt := J;
+            exit;
+         end if;
+      end loop;
+      if Choice = 1 then
+         --  Save this doc; finish quitting only when everything
+         --  is saved — otherwise chain the next dirty doc (or
+         --  park on this one if it could not be written).
+         Save_Doc (Idx);
+         if Is_Dirty (Idx) then
+            Nxt := Idx;
+         else
+            Nxt := 0;
+            for J in 1 .. Doc_Count loop
+               if Is_Dirty (J) then
+                  Nxt := J;
+                  exit;
+               end if;
+            end loop;
+         end if;
+         if Nxt = 0 then
+            Trinket.Window.Request_Quit (Win);
+         elsif Is_Dirty (Idx) then
+            Focus_Doc (Idx);      --  untitled/failed write: stay
+         else
+            Prompt_Quit_Doc (Nxt);
+         end if;
+      elsif Choice = 2 then
+         --  Save All.
+         for J in 1 .. Doc_Count loop
+            if Is_Dirty (J) then
+               Save_Doc (J);
+            end if;
+         end loop;
+         Nxt := 0;
+         for J in 1 .. Doc_Count loop
+            if Is_Dirty (J) then
+               Nxt := J;
+               exit;
+            end if;
+         end loop;
+         if Nxt = 0 then
+            Trinket.Window.Request_Quit (Win);
+         else
+            Focus_Doc (Nxt);      --  untitled/failed: don't lose it
+         end if;
+      end if;
+      --  Choice 0 (dismissed) / 3 (Cancel): stay open.
+   end On_Quit_Choice;
+
+   procedure Prompt_Quit_Doc (Idx : Natural) is
+   begin
+      Prompt_Doc := Idx;
+      Trinket.Message_Box.Request
+        (Win,
+         "Save changes?",
+         "Would you like to save changes to " & Doc_Name (Idx) & "?",
+         "Save|Save All|Cancel",
+         On_Quit_Choice'Access);
+   end Prompt_Quit_Doc;
+
+   --  M9z: Quit goes through the dirty-buffer check (Save / Save
+   --  All / Cancel per dirty doc) instead of quitting blindly.
+   procedure Try_Quit is
+      Idx : Natural;
+   begin
+      if Doc_Count = 0 then
+         Trinket.Window.Request_Quit (Win);
+         return;
+      end if;
+      Idx := 0;
+      if Is_Dirty (Current) then
+         Idx := Current;
+      else
+         for J in 1 .. Doc_Count loop
+            if Is_Dirty (J) then
+               Idx := J;
+               exit;
+            end if;
+         end loop;
+      end if;
+      if Idx = 0 then
+         Trinket.Window.Request_Quit (Win);
+      else
+         Prompt_Quit_Doc (Idx);
+      end if;
+   end Try_Quit;
 
    procedure Quit_Clicked is
    begin
-      Trinket.Window.Request_Quit (Win);
+      Try_Quit;
    end Quit_Clicked;
-
-   --  Retitle tab Index with S (bounded by the tab text cell).
-   procedure Set_Tab_Label (Index : Natural; S : String) is
-      L : Widgets.Text_Rec renames
-        Widgets.Tabs.Tabs (Tabs_W.all).Labels (Index);
-   begin
-      L.Len := Natural'Min (S'Length, L.Buf'Length);
-      if L.Len > 0 then
-         L.Buf (1 .. L.Len) := S (S'First .. S'First + L.Len - 1);
-      end if;
-      Widgets.Tabs.Tabs (Tabs_W.all).Dirty := True;
-   end Set_Tab_Label;
 
    procedure New_Doc_Action is
    begin
@@ -158,7 +325,7 @@ package body Edit_App is
       end if;
       Write_Doc_To (Path);
       Docs (Idx).Path := new String'(Path);
-      Set_Tab_Label (Idx, Tab_Name (Docs (Idx).Path));
+      Update_Tab (Idx);
    end On_Save_As_Pick;
 
    procedure Open_Action is
@@ -333,6 +500,9 @@ package body Edit_App is
       if P /= null then
          Load (Docs (Doc_Count));
       end if;
+      --  M9z: keep the tab's dirty star live.
+      TE.Set_Modified_Callback
+        (Docs (Doc_Count).Box.all, Doc_Modified'Access);
       --  The new document becomes the active tab.
       Current := Doc_Count;
       Widgets.Tabs.Set_Selected
@@ -376,6 +546,7 @@ package body Edit_App is
                          Trinket.Menus.It (14, "Select All", 'a',
                                             Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
+         Trinket.Window.Set_Quit_Handler (Win, Try_Quit'Access);
          Debug_Put_Line ("edit online");
          Trinket.Window.Run (Win);
          Trinket.Window.Close (Win);

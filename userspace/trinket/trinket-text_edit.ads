@@ -44,6 +44,13 @@ package Trinket.Text_Edit is
    --  pairs make one break), leaving the cursor after the text.
    procedure Insert_Text (W : in out Text_Edit; S : String);
 
+   --  M9z: modified-change callback. Fires on every content edit
+   --  (after the internal dirty flag is set) so the APP can track
+   --  unsaved buffers live — Edit stars dirty tabs with it.
+   type Modified_Callback is access procedure (Ed : access Text_Edit);
+   procedure Set_Modified_Callback
+     (W : in out Text_Edit; Cb : Modified_Callback);
+
     --  Scroll coupling for the app's scrollbar.
     procedure Set_Top (W : in out Text_Edit; T : U64);
     function Top_Line (W : Text_Edit) return U64;
@@ -104,6 +111,7 @@ private
       Anch_C   : Natural := 0;
       Dragging : Boolean := False;
       Dirty_F  : Boolean := False;   --  content modified
+      On_Mod   : Modified_Callback := null;  --  M9z dirty hook
    end record;
 
    --  The composite is a Group whose Layout pins the bars flush

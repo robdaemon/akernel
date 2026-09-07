@@ -153,7 +153,16 @@ package body Trinket.Text_Edit is
    begin
       W.Dirty_F := True;
       W.Dirty := True;
+      if W.On_Mod /= null then
+         W.On_Mod (W'Unrestricted_Access);
+      end if;
    end Mark_Modified;
+
+   procedure Set_Modified_Callback
+     (W : in out Text_Edit; Cb : Modified_Callback) is
+   begin
+      W.On_Mod := Cb;
+   end Set_Modified_Callback;
 
    --  Selection ordering: (L1,C1) <= (L2,C2).
    procedure Sel_Bounds

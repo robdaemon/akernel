@@ -385,6 +385,33 @@ package body Trinket.Window is
        Reset_Clip (W.Cnv);
     end Flush_Dirty;
 
+   --  M9z: overlay modal state transitions run at the loop top so
+   --  a button handler can end one dialog and queue its successor
+   --  (Message_Box Save chains); a queued overlay starts the
+   --  moment the exiting modal is gone.
+   procedure Apply_Overlay
+     (W : in out Window; Panel : Widgets.Any_Widget;
+      Width, Height : U64)
+   is
+      DW : U64;
+      DH : U64;
+   begin
+      DW := U64'Min (Width, (if W.Cnv.W >= 16 then W.Cnv.W - 8 else 8));
+      DH := U64'Min (Height, (if W.Cnv.H >= 16 then W.Cnv.H - 8 else 8));
+      W.In_Modal := True;
+      W.Modal_Overlay := True;
+      W.Modal_Wanted := False;
+      W.Prev_Buttons := 0;   --  stale press state eats the first click
+      W.Overlay := Panel;
+      W.Overlay.X := (W.Cnv.W - DW) / 2;
+      W.Overlay.Y := (W.Cnv.H - DH) / 2;
+      W.Overlay.W := DW;
+      W.Overlay.H := DH;
+      Widgets.Clear_Focus (W.Root);
+      W.Overlay.Dirty := True;
+      W.Overlay.Layout;
+   end Apply_Overlay;
+
    procedure Event_Loop (W : in out Window) is
       Queue : Word_Array
         with Address => SSE.To_Address
@@ -411,7 +438,8 @@ package body Trinket.Window is
                    W.Root.Layout;
                 end if;
              end if;
-          elsif W.Pending_Modal /= null and then not W.In_Modal then
+          end if;
+          if W.Pending_Modal /= null and then not W.In_Modal then
              W.In_Modal := True;
              W.Saved_Root := W.Root;
              W.Root := W.Pending_Modal;
@@ -424,6 +452,19 @@ package body Trinket.Window is
              Widgets.Clear_Focus (W.Root);
              W.Root.Dirty := True;
              W.Root.Layout;
+          end if;
+          --  M9z: a dialog queued by the handler that just ended
+          --  the current one starts now.
+          if W.Pending_Overlay /= null and then not W.In_Modal then
+             declare
+                Panel : constant Widgets.Any_Widget :=
+                  W.Pending_Overlay;
+                PW    : constant U64 := W.Pending_OW;
+                PH    : constant U64 := W.Pending_OH;
+             begin
+                W.Pending_Overlay := null;
+                Apply_Overlay (W, Panel, PW, PH);
+             end;
           end if;
          Flush_Dirty (W);
          if IPC_Recv (W.Sink_EP, Reply_H) /= IPC_Ok then
@@ -553,6 +594,10 @@ package body Trinket.Window is
                    elsif Queue (Slot) = Win.Input_Event_Close then
                       if W.In_Modal then
                          W.Modal_Wanted := True;   --  cancel the dialog
+                      elsif W.On_Quit /= null then
+                         --  M9z: let the app veto the quit (unsaved
+                         --  buffers); it calls Request_Quit when ok.
+                         W.On_Quit.all;
                       else
                          Done := True;
                       end if;
@@ -611,28 +656,26 @@ package body Trinket.Window is
    procedure Start_Modal_Overlay
      (W : in out Window; Panel : Widgets.Any_Widget;
       Width, Height : U64) is
-      DW : U64;
-      DH : U64;
    begin
-      if W.In_Modal or else Panel = null
-        or else W.Overlay /= null or else not W.Opened
-      then
-         return;   --  never clobber a menu popup or a modal
+      if Panel = null or else not W.Opened then
+         return;
       end if;
-      DW := U64'Min (Width, (if W.Cnv.W >= 16 then W.Cnv.W - 8 else 8));
-      DH := U64'Min (Height, (if W.Cnv.H >= 16 then W.Cnv.H - 8 else 8));
-      W.In_Modal := True;
-      W.Modal_Overlay := True;
-      W.Modal_Wanted := False;
-      W.Prev_Buttons := 0;   --  stale press state eats the first click
-      W.Overlay := Panel;
-      W.Overlay.X := (W.Cnv.W - DW) / 2;
-      W.Overlay.Y := (W.Cnv.H - DH) / 2;
-      W.Overlay.W := DW;
-      W.Overlay.H := DH;
-      Widgets.Clear_Focus (W.Root);
-      W.Overlay.Dirty := True;
-      W.Overlay.Layout;
+      if W.In_Modal then
+         --  One dialog at a time — unless the current one is
+         --  already exiting (M9z): the successor is queued and
+         --  starts as soon as the exit completes at the loop top.
+         if not W.Modal_Wanted then
+            return;
+         end if;
+         W.Pending_Overlay := Panel;
+         W.Pending_OW := Width;
+         W.Pending_OH := Height;
+         return;
+      end if;
+      if W.Overlay /= null then
+         return;   --  never clobber a menu popup
+      end if;
+      Apply_Overlay (W, Panel, Width, Height);
    end Start_Modal_Overlay;
 
    function In_Modal (W : Window) return Boolean is (W.In_Modal);
@@ -715,6 +758,12 @@ package body Trinket.Window is
    begin
       W.On_Resize := Cb;
    end Set_Resize_Handler;
+
+   procedure Set_Quit_Handler
+     (W : in out Window; Cb : Quit_Callback) is
+   begin
+      W.On_Quit := Cb;
+   end Set_Quit_Handler;
 
    procedure Close (W : in out Window) is
       Result : U64;

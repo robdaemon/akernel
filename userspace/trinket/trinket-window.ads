@@ -123,6 +123,15 @@ package Trinket.Window is
     procedure Set_Resize_Handler
       (W : in out Window; Cb : Resize_Callback);
 
+    --  M9z: close-gadget / quit-decision hook. When the close
+    --  gadget fires (and no modal is up), the loop calls On_Quit
+    --  instead of exiting, so the app can refuse (Edit prompts
+    --  for unsaved buffers); the app finishes quitting with
+    --  Request_Quit. Unset: the close gadget exits immediately.
+    type Quit_Callback is access procedure;
+    procedure Set_Quit_Handler
+      (W : in out Window; Cb : Quit_Callback);
+
    procedure Close (W : in out Window);
 
    --  M88: in-window popup/overlay. Open_Popup floats a widget
@@ -175,10 +184,16 @@ private
        In_Modal     : Boolean := False;  --  a modal owns input
        Saved_Root   : Widgets.Any_Widget := null;  --  pre-modal root
        Pending_Modal : Widgets.Any_Widget := null; --  queued swap-in
+       --  M9z: a queued overlay dialog (Message_Box chaining). A
+       --  button handler that ends the current modal may queue the
+       --  next one here; the loop starts it right after the exit.
+       Pending_Overlay : Widgets.Any_Widget := null;
+       Pending_OW, Pending_OH : U64 := 0;
        Prev_Buttons : U64 := 0;
         On_Menu      : Menu_Callback := null;
         On_App       : App_Port.Msg_Callback := null;
         On_Resize    : Resize_Callback := null;
+        On_Quit      : Quit_Callback := null;  --  M9z close hook
        App_Port     : Trinket.App_Port.Port;
        --  M88 overlay: the floating widget + the repaint band
        --  it vacated on Close_Popup.
