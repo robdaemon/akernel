@@ -446,35 +446,49 @@ package body Trinket.Window is
                     + (Tail mod Win.Input_Queue_Events) * 2;
                   Val := Queue (Slot + 1);
                   if Queue (Slot) = Win.Input_Event_Key then
-                     if W.In_Modal and then W.Overlay /= null then
-                        --  M9x dialog: Escape cancels like the
-                        --  close gadget, Tab cycles INSIDE the
-                        --  dialog, other keys reach it only.
-                        if (Val and 16#FF#) = 27 then
-                           Request_Modal_Exit (W);
-                        elsif (Val and 16#FF#) = Key_Tab then
-                           Widgets.Cycle_Focus (W.Overlay);
+                     declare
+                        --  M9y: Ctrl+Home / Ctrl+End arrive as a
+                        --  nav code plus the Ctrl qualifier bit
+                        --  (Bureau packs it); map them onto the
+                        --  synthetic Trinket codes so widgets bind
+                        --  them. Plain keys pass through the code.
+                        Code : constant U64 :=
+                          (if (Val and 16#FF#) = Key_Home
+                             and then Win.Key_Ctrl (Val) /= 0
+                           then Key_Ctrl_Home
+                           elsif (Val and 16#FF#) = Key_End
+                             and then Win.Key_Ctrl (Val) /= 0
+                           then Key_Ctrl_End
+                           else Val and 16#FF#);
+                     begin
+                        if W.In_Modal and then W.Overlay /= null then
+                           --  M9x dialog: Escape cancels like the
+                           --  close gadget, Tab cycles INSIDE the
+                           --  dialog, other keys reach it only.
+                           if Code = 27 then
+                              Request_Modal_Exit (W);
+                           elsif Code = Key_Tab then
+                              Widgets.Cycle_Focus (W.Overlay);
+                           else
+                              Consumed := W.Overlay.On_Key (Code);
+                           end if;
+                        elsif W.Overlay /= null then
+                           --  M88: menu popup — Escape closes, other
+                           --  keys go to the overlay only; Tab never
+                           --  cycles the tree behind it.
+                           if Code = 27 then
+                              Close_Popup (W);
+                           else
+                              Consumed := W.Overlay.On_Key (Code);
+                           end if;
+                        elsif Code = Key_Tab then
+                           --  M87h: Tab never reaches widgets; it
+                           --  cycles the window's focus chain.
+                           Widgets.Cycle_Focus (W.Root);
                         else
-                           Consumed := W.Overlay.On_Key
-                             (Val and 16#FF#);
+                           Consumed := W.Root.On_Key (Code);
                         end if;
-                     elsif W.Overlay /= null then
-                        --  M88: menu popup — Escape closes, other
-                        --  keys go to the overlay only; Tab never
-                        --  cycles the tree behind it.
-                        if (Val and 16#FF#) = 27 then
-                           Close_Popup (W);
-                        else
-                           Consumed := W.Overlay.On_Key
-                             (Val and 16#FF#);
-                        end if;
-                     elsif (Val and 16#FF#) = Key_Tab then
-                        --  M87h: Tab never reaches widgets; it
-                        --  cycles the window's focus chain.
-                        Widgets.Cycle_Focus (W.Root);
-                     else
-                        Consumed := W.Root.On_Key (Val and 16#FF#);
-                     end if;
+                     end;
                   elsif Queue (Slot) = Win.Input_Event_Pointer then
                      X := Win.Pointer_X (Val);
                      Y := Win.Pointer_Y (Val);

@@ -235,6 +235,19 @@ package Aegir_User.Window is
     Input_Event_Screen_Mode : constant U64 := 6;  --  M91, backdrop only
     Input_Signal_Bit   : constant U64 := 1;
 
+    --  Key event value (Input_Event_Key): the translated code in
+    --  the low byte (printable ASCII, a control byte, or a
+    --  Trinket.Key_* nav code) plus qualifier bits that Bureau
+    --  packs from the seat driver's modifiers (Mod_Ctrl/Mod_Alt).
+    --  Clients that only mask 16#FF# keep seeing the code; clients
+    --  that need qualifiers (Ctrl+Home vs Home, future ^C
+    --  handling) read the helpers below.
+    Key_Mod_Ctrl : constant U64 := 16#100#;
+    Key_Mod_Alt  : constant U64 := 16#200#;
+    function Key_Code (V : U64) return U64 is (V and 16#FF#);
+    function Key_Ctrl (V : U64) return U64 is (V and Key_Mod_Ctrl);
+    function Key_Alt  (V : U64) return U64 is (V and Key_Mod_Alt);
+
     --  Bureau's screen bar height (M92): a backdrop window's
     --  initial frame is (0, Screen_Bar_H + 1) with height
     --  Screen_H - Screen_Bar_H - 1; later mode switches arrive

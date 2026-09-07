@@ -39,6 +39,15 @@ package Trinket is
    Key_Pagedown : constant U64 := 16#87#;
    Key_Delete   : constant U64 := 16#88#;
 
+   --  Qualifier-synthesized nav codes (M9y): Bureau now packs the
+   --  Ctrl/Alt bits above a key event's code (aegir_user-window
+   --  Key_Ctrl/Key_Alt); Trinket.Window maps Ctrl+Home / Ctrl+End
+   --  onto these two new codes so widgets bind them without an
+   --  On_Key signature change. Append-only, like the rest of the
+   --  set (no seat key ever produces them directly).
+   Key_Ctrl_Home : constant U64 := 16#89#;
+   Key_Ctrl_End  : constant U64 := 16#8A#;
+
    --  Printable-range keys with widget-level semantics (M87h):
    --  the US keymap delivers Tab as HT and Return as LF.
    Key_Tab      : constant U64 := 9;

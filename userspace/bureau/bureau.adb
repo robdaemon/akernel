@@ -2474,7 +2474,15 @@ begin
          then
             Dismiss_Menu;
          elsif not Try_Accelerator (Message.Words (0)) then
-            Forward_Key (Message.Words (0));
+            --  Forward the code WITH the qualifier bits (M9y): the
+            --  focused client reads Key_Ctrl/Key_Alt to tell
+            --  Ctrl+Home from Home; masked readers are unchanged.
+            Forward_Key
+              (Message.Words (0)
+               or (if (Key_Mods and Mod_Ctrl) /= 0
+                   then Win.Key_Mod_Ctrl else 0)
+               or (if (Key_Mods and Mod_Alt) /= 0
+                   then Win.Key_Mod_Alt else 0));
          end if;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);
 
