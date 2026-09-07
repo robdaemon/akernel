@@ -116,7 +116,7 @@ procedure Demo is
              (1 => Trinket.Menus.It (2, "Paint bar", 'P',
                                      Ctrl => True),
               2 => Trinket.Menus.Sep,
-              3 => Trinket.Menus.It (1, "Quit")))),
+              3 => Trinket.Menus.It (1, "Quit", 'q', Alt => True)))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);

@@ -117,8 +117,10 @@ package body Edit_App is
          Trinket.Window.Set_Menus
            (Win,
             (1 => Trinket.Menus.M
-               ("File", (Trinket.Menus.It (1, "Save"),
-                         Trinket.Menus.It (2, "Quit")))));
+               ("File", (Trinket.Menus.It (1, "Save", 's', Alt => True),
+                         Trinket.Menus.Sep,
+                         Trinket.Menus.It (2, "Quit", 'q',
+                                           Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Debug_Put_Line ("edit online");
          Trinket.Window.Run (Win);

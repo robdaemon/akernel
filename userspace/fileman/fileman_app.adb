@@ -984,7 +984,9 @@ package body Fileman_App is
                          Trinket.Menus.It (6, "Swap"),
                          Trinket.Menus.It (7, "New Drawer"),
                          Trinket.Menus.It (8, "Delete"),
-                         Trinket.Menus.It (9, "Quit")))));
+                         Trinket.Menus.Sep,
+                         Trinket.Menus.It (9, "Quit", 'q',
+                                           Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          --  Phase B: the pumped directory fill arrives as app
          --  messages; without the handler the post would sit in

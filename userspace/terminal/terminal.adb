@@ -573,7 +573,8 @@ procedure Terminal is
       end if;
       Trinket.Menus.Serialize
         ((1 => Trinket.Menus.M
-            ("Terminal", (1 => Trinket.Menus.It (1, "Quit")))),
+            ("Terminal", (1 => Trinket.Menus.It (1, "Quit", 'q',
+                                                 Alt => True)))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);

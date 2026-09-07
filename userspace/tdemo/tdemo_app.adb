@@ -418,7 +418,9 @@ package body Tdemo_App is
                ("File", (Trinket.Menus.It (1, "Save"),
                          Trinket.Menus.It (2, "Revert"),
                          Trinket.Menus.It (3, "Cancel"),
-                         Trinket.Menus.It (4, "Quit")))));
+                         Trinket.Menus.Sep,
+                         Trinket.Menus.It (4, "Quit", 'q',
+                                           Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Debug_Put_Line ("tdemo online");
          Trinket.Window.Run (Win);
