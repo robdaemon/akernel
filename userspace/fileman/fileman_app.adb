@@ -30,11 +30,13 @@ package body Fileman_App is
    Console_EP : constant Syscalls.U64 := 1;
    FS_EP      : constant Syscalls.U64 := 2;
    Bureau_EP  : constant Syscalls.U64 := 3;
-   --  M94: Startup programs receive the full command ABI — args at
-   --  4, elevation at 5, netserv at 6 — so children (Edit etc.)
-   --  are spawned with that same uniform layout.
+   --  M94/M9x: Startup programs receive the full command ABI —
+   --  args at 4, elevation at 5, netserv at 6, libman at 7 — so
+   --  children (Edit etc.) are spawned with that same uniform
+   --  layout and share the resident clipboard.
    Elevated_EP : constant Syscalls.U64 := 5;
    Net_EP      : constant Syscalls.U64 := 6;
+   Libman_EP   : constant Syscalls.U64 := 7;
 
    Win : Trinket.Window.Window;
 
@@ -369,7 +371,12 @@ package body Fileman_App is
                           Syscalls.Right_Map + Syscalls.Right_Read, 0);
       Syscalls.Set_Grant (4, Elevated_EP, Syscalls.Right_Send, 0);
       Syscalls.Set_Grant (5, Net_EP, Syscalls.Right_Send, 0);
-      Result := Syscalls.Spawn (Mem_Cap, 6, Proc_Cap);
+      --  Handle 7: libman Send — without it a spawned Edit
+      --  private-spawns its own clipboard copy and cross-app
+      --  paste silently fails.
+      Syscalls.Set_Grant (6, Libman_EP,
+                          Syscalls.Right_Send + Syscalls.Right_Transfer, 0);
+      Result := Syscalls.Spawn (Mem_Cap, 7, Proc_Cap);
       Result := Syscalls.Cap_Delete (Args_Cap);
       Result := Syscalls.Cap_Delete (Mem_Cap);
       pragma Unreferenced (Result);
