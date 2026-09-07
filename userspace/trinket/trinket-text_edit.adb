@@ -495,6 +495,18 @@ package body Trinket.Text_Edit is
       elsif Code = Key_End then
          Collapse (W.all);
          W.Cur_C := W.Lines (W.Cur_L).Len;
+      elsif Code = Key_Ctrl_Home then
+         --  M9y: top of the buffer (cursor + view).
+         Collapse (W.all);
+         W.Top := 0;
+         W.Cur_L := 1;
+         W.Cur_C := 0;
+      elsif Code = Key_Ctrl_End then
+         --  M9y: end of the buffer; Ensure_Cursor_Visible runs the
+         --  view down so the last line shows at the bottom.
+         Collapse (W.all);
+         W.Cur_L := W.N;
+         W.Cur_C := W.Lines (W.Cur_L).Len;
       elsif Code = Key_Pageup then
          Collapse (W.all);
          W.Top := (if W.Top > W.Visible_Rows
@@ -671,13 +683,53 @@ package body Trinket.Text_Edit is
                     (C, X0, LY, S (Drop + 1 .. S'Length),
                      Text_Dark);
                end if;
-               --  Cursor bar (never offscreen left once
-               --  Ensure_Cursor_Visible ran; guard anyway).
+               --  M9y: block cursor covering the glyph at the
+               --  caret (the character after the insertion gap),
+               --  like the Terminal: a Sel_Blue cell with the
+               --  glyph in Pane. On a cell the selection band
+               --  already colors Sel_Blue, so the block inverts
+               --  (Pane cell + dark glyph) to stay visible. At
+               --  end of line (no glyph) the block is one space
+               --  wide at the gap. Clipped at the right edge;
+               --  never offscreen left once Ensure_Cursor_Visible
+               --  ran (guard anyway).
                if LN = W.Cur_L and then W.Cur_C >= Drop then
-                  Paint.Fill_Rect
-                    (C, X0 + Col_X (S, W.Cur_C) - XD, LY,
-                     X0 + Col_X (S, W.Cur_C) - XD + 1, LY + LH,
-                     Text_Dark);
+                  declare
+                     GX : constant U64 :=
+                       X0 + Col_X (S, W.Cur_C) - XD;
+                     --  EOL block: a space wide, 8 px if the font
+                     --  collapses spaces to zero advance.
+                     GW : constant U64 :=
+                       (if W.Cur_C < W.Lines (LN).Len
+                        then Fonts.Text_Width
+                          (S (W.Cur_C + 1 .. W.Cur_C + 1))
+                        elsif Fonts.Text_Width (" ") > 0
+                        then Fonts.Text_Width (" ")
+                        else 8);
+                     X1 : constant U64 := U64'Min
+                       (GX + GW, TX0 + W.W - 2 * Pad);
+                     --  The char under the caret is on the band.
+                     Seld : constant Boolean :=
+                       W.Sel and then SL >= 0 and then EL > SL
+                       and then W.Cur_C >= SL
+                       and then W.Cur_C < EL;
+                  begin
+                     if X1 > GX then
+                        if Seld then
+                           Paint.Fill_Rect
+                             (C, GX, LY, X1, LY + LH, Pane);
+                        else
+                           Paint.Fill_Rect
+                             (C, GX, LY, X1, LY + LH, Sel_Blue);
+                        end if;
+                        if W.Cur_C < W.Lines (LN).Len then
+                           Fonts.Draw_Text
+                             (C, GX, LY,
+                              S (W.Cur_C + 1 .. W.Cur_C + 1),
+                              (if Seld then Text_Dark else Pane));
+                        end if;
+                     end if;
+                  end;
                end if;
             end;
          end;
