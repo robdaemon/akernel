@@ -192,10 +192,64 @@ $(TERMINUS_STAMP): $(TERMINUS_TARBALL)
 	rmdir third_party/.terminus-extract
 	touch $@
 
+#  FreeType 2.13.x (M9A): the TrueType/OpenType rasterizer. The
+#  vendored tree is fetched at build like lwIP; the committed part
+#  of the port is userspace/freetype/port (ftoption.h/ftmodule.h +
+#  the gpr), and Trinket.Fonts drives it behind the BDF handle API.
+FREETYPE_VER := 2.13.3
+FREETYPE_TAG := VER-2-13-3
+FREETYPE_TARBALL := third_party/download/freetype-$(FREETYPE_VER).tar.gz
+FREETYPE_SHA256 := bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103
+FREETYPE_STAMP := third_party/freetype/.stamp-$(FREETYPE_VER)
+
+$(FREETYPE_TARBALL):
+	mkdir -p third_party/download
+	curl -sL --fail --max-time 600 -o $@.tmp \
+	  https://github.com/freetype/freetype/archive/refs/tags/$(FREETYPE_TAG).tar.gz
+	echo "$(FREETYPE_SHA256)  $@.tmp" | sha256sum -c -
+	mv $@.tmp $@
+
+$(FREETYPE_STAMP): $(FREETYPE_TARBALL) $(wildcard third_party/patches/freetype-*.patch)
+	rm -rf third_party/freetype third_party/.freetype-extract
+	mkdir -p third_party/.freetype-extract
+	tar xzf $(FREETYPE_TARBALL) -C third_party/.freetype-extract
+	mv third_party/.freetype-extract/freetype-$(FREETYPE_TAG) third_party/freetype
+	rmdir third_party/.freetype-extract
+	set -e; for p in third_party/patches/freetype-*.patch; do \
+	  [ -e "$$p" ] || break; \
+	  patch -d third_party/freetype -p1 < "$$p"; \
+	done
+	touch $@
+
+#  DejaVu fonts 2.37 (M9A): OFL-adjacent (Bitstream Vera license)
+#  TTFs staged into Sys:Fonts/ — DejaVu Sans (UI font showcase) and
+#  DejaVu Sans Mono — plus the license text.
+DEJAVU_VER := 2.37
+DEJAVU_TAG := version_2_37
+DEJAVU_TARBALL := third_party/download/dejavu-fonts-ttf-$(DEJAVU_VER).tar.bz2
+DEJAVU_SHA256 := fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7
+DEJAVU_STAMP := third_party/dejavu/.stamp-$(DEJAVU_VER)
+
+$(DEJAVU_TARBALL):
+	mkdir -p third_party/download
+	curl -sL --fail --max-time 600 -o $@.tmp \
+	  https://github.com/dejavu-fonts/dejavu-fonts/releases/download/$(DEJAVU_TAG)/dejavu-fonts-ttf-$(DEJAVU_VER).tar.bz2
+	echo "$(DEJAVU_SHA256)  $@.tmp" | sha256sum -c -
+	mv $@.tmp $@
+
+$(DEJAVU_STAMP): $(DEJAVU_TARBALL)
+	rm -rf third_party/dejavu third_party/.dejavu-extract
+	mkdir -p third_party/.dejavu-extract
+	tar xjf $(DEJAVU_TARBALL) -C third_party/.dejavu-extract
+	mv third_party/.dejavu-extract/dejavu-fonts-ttf-$(DEJAVU_VER) third_party/dejavu
+	rmdir third_party/.dejavu-extract
+	touch $@
+
 #  Supply-chain scanning support (docs/SCANNING.md): fetch the pinned
 #  tarballs without building anything, so tools/check_pins.py can
 #  re-verify them (CI deps job) and the SBOM stays current.
-fetch-pins: $(LWIP_TARBALL) $(TERMINUS_TARBALL)
+fetch-pins: $(LWIP_TARBALL) $(TERMINUS_TARBALL) \
+	$(FREETYPE_TARBALL) $(DEJAVU_TARBALL)
 	@echo "pins fetched: lwip $(LWIP_VER), terminus-font $(TERMINUS_VER)"
 
 #  Local scanning conveniences (docs/SCANNING.md). Each is the same

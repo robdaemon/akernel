@@ -38,9 +38,12 @@ TOOLCHAIN = "gnat_riscv64_elf"
 LICENSES = {
     "lwip": "BSD-3-Clause",
     "terminus-font": "OFL-1.1",
+    "freetype": "FTL-1.1 OR GPL-2.0-or-later",
+    "dejavu-fonts": "Bitstream-Vera",
 }
 # Makefile variable prefix -> SBOM display name.
-DISPLAY = {"LWIP": "lwip", "TERMINUS": "terminus-font"}
+DISPLAY = {"LWIP": "lwip", "TERMINUS": "terminus-font",
+           "FREETYPE": "freetype", "DEJAVU": "dejavu-fonts"}
 
 # Field whose value is wall-clock time and therefore excluded from the
 # deterministic comparison.

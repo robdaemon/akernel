@@ -1,20 +1,70 @@
 {
   "SPDXID": "SPDXRef-DOCUMENT",
   "creationInfo": {
-    "created": "2026-09-07T01:38:50Z",
+    "created": "2026-09-07T23:38:47Z",
     "creators": [
       "Tool: aegir tools/gen_sbom.py"
     ]
   },
   "dataLicense": "CC0-1.0",
   "documentDescribes": [
+    "SPDXRef-Package-DEJAVU",
+    "SPDXRef-Package-FREETYPE",
     "SPDXRef-Package-LWIP",
     "SPDXRef-Package-TERMINUS",
     "SPDXRef-Package-gnat_riscv64_elf"
   ],
-  "documentNamespace": "https://github.com/robdaemon/aegir/spdx/ff54997b58f1f6b7",
+  "documentNamespace": "https://github.com/robdaemon/aegir/spdx/64cfaa58773b3766",
   "name": "aegir",
   "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-DEJAVU",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/DEJAVU@2.37",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "dejavu-fonts",
+      "supplier": "NOASSERTION",
+      "versionInfo": "2.37"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-FREETYPE",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/FREETYPE@2.13.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "freetype",
+      "supplier": "NOASSERTION",
+      "versionInfo": "2.13.3"
+    },
     {
       "SPDXID": "SPDXRef-Package-LWIP",
       "checksums": [
@@ -83,6 +133,16 @@
     }
   ],
   "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-DEJAVU",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-FREETYPE",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
     {
       "relatedSpdxElement": "SPDXRef-Package-LWIP",
       "relationshipType": "CONTAINS",
