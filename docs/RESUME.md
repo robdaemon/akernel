@@ -13,6 +13,30 @@ repository.
 
 ## Recently shipped
 
+- **System clipboard (Amiga clipboard.device flavor)** — a resident
+  shared library, `Sys:Libs/Clipboard` v1.0 (`961777d`): libman
+  entries gained a `Resident` flag so the one loaded instance is
+  never expunged at `Open_Count = 0` (measured client facts
+  documented in libman: the registry is a chunk-appended Tables =
+  unbounded distinct names; clients unbounded via per-open mint +
+  Natural refcount). Server (libserv) holds one 32 KiB plain-text
+  buffer; `Put` replaces atomically (Too_Big leaves the old
+  contents), `Get` reads by offset. Transfers ride a client buffer
+  memobj mapped at a guarded VA, per-op cap deleted. Client API
+  `Akernel_User.Clipboard`. Text_Edit gained the selection/editing
+  API (`871e35e`): Select All / Selected_Text (multi-line) /
+  Delete_Selected / CRLF-aware Insert_Text. Edit's Edit menu
+  (`c3dc7a8`) wires Cut/Copy/Paste/Select All (Ctrl+X/C/V/A).
+  Uniform ABI work (`99e0634`): libman was NOT reachable from GUI
+  programs (handle 6 was netserv and `Libs.Libman_Handle` was
+  stale) — every uniform spawner (devmgr Startup, terminal's shell,
+  desktop's drawer, Scripting.Exec) now grants libman at append-only
+  handle 7, RTS default moved to 7, CLI crates without the cap
+  still private-spawn. Terminal Paste (`99e0634`) feeds clipboard
+  bytes through its line discipline (echo + history in sync).
+  Gates: make test 18xx PASS / 0 FAIL incl. clip round-trip /
+  too-big / resident-across-close and tedit select/cut/paste cases.
+
 - **BeFS on-disk block size 1 KiB -> 4 KiB** (`f829f78`): "larger
   blocks for modern disks" — Sys: is now staged and served at
   4096-byte blocks (mkbefs + host tools parameterized in `26c0a4e`/
