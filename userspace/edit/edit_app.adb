@@ -1,6 +1,7 @@
 with Ada.Text_IO;
 with Akernel_User.Syscalls;
 with Akernel_User.CLI;
+with Akernel_User.Clipboard;
 with Trinket;
 with Trinket.Widgets;
 with Trinket.Widgets.Tabs;
@@ -16,7 +17,8 @@ with Trinket.File_Requester;
 --  (Alt+O) picks a file in the shared requester and opens it in a
 --  new tab, Save (Alt+S) writes the ACTIVE tab, Save As re-picks
 --  a target path and renames the tab, Quit (Alt+Q) or the close
---  gadget leaves.
+--  gadget leaves. Edit menu: Cut/Copy/Paste/Select All (Ctrl+X/C/
+--  V/A) through the system clipboard (Sys:Libs/Clipboard).
 package body Edit_App is
    use Akernel_User.Syscalls;
    use type Akernel_User.Syscalls.U64;
@@ -185,7 +187,85 @@ package body Edit_App is
          On_Save_As_Pick'Access);
    end Save_As_Action;
 
-   --  File menu (Amiga screen bar — right-click).
+   --  File menu (Amiga screen bar — right-click) + Edit menu
+   --  (clipboard milestone): ids 11..14.
+   Clipboard_Cap : U64 := 0;
+
+   function Ensure_Clipboard return Boolean is
+   begin
+      if Clipboard_Cap = 0 then
+         Clipboard_Cap := Akernel_User.Clipboard.Open;
+         if Clipboard_Cap = 0 then
+            Debug_Put_Line ("edit: clipboard open failed");
+         end if;
+      end if;
+      return Clipboard_Cap /= 0;
+   end Ensure_Clipboard;
+
+   procedure Edit_Cut is
+   begin
+      if Doc_Count = 0
+        or else not TE.Has_Selection (Docs (Current).Box.all)
+        or else not Ensure_Clipboard
+      then
+         return;
+      end if;
+      declare
+         Sel : constant String :=
+           TE.Selected_Text (Docs (Current).Box.all);
+      begin
+         if Akernel_User.Clipboard.Put (Clipboard_Cap, Sel)
+           = Akernel_User.Clipboard.Status_Ok
+         then
+            TE.Delete_Selected (Docs (Current).Box.all);
+         end if;
+      end;
+   end Edit_Cut;
+
+   procedure Edit_Copy is
+   begin
+      if Doc_Count = 0
+        or else not TE.Has_Selection (Docs (Current).Box.all)
+        or else not Ensure_Clipboard
+      then
+         return;
+      end if;
+      declare
+         Sel : constant String :=
+           TE.Selected_Text (Docs (Current).Box.all);
+         St  : constant U64 :=
+           Akernel_User.Clipboard.Put (Clipboard_Cap, Sel);
+      begin
+         if St /= Akernel_User.Clipboard.Status_Ok then
+            Debug_Put_Line ("edit: clipboard put failed");
+         end if;
+      end;
+   end Edit_Copy;
+
+   procedure Edit_Paste is
+      Buf : constant String_Acc :=
+        new String (1 .. Akernel_User.Clipboard.Clipboard_Max);
+      Len : Natural := 0;
+      St  : U64;
+   begin
+      if Doc_Count = 0 or else not Ensure_Clipboard then
+         return;
+      end if;
+      Buf (Buf'Range) := (others => ' ');
+      St := Akernel_User.Clipboard.Get
+        (Clipboard_Cap, Buf.all, Len);
+      if St = Akernel_User.Clipboard.Status_Ok and then Len > 0 then
+         TE.Insert_Text (Docs (Current).Box.all, Buf (1 .. Len));
+      end if;
+   end Edit_Paste;
+
+   procedure Edit_Select_All is
+   begin
+      if Doc_Count > 0 then
+         TE.Select_All (Docs (Current).Box.all);
+      end if;
+   end Edit_Select_All;
+
    procedure Menu_Picked (Id : U64) is
    begin
       if Id = 1 then
@@ -198,6 +278,14 @@ package body Edit_App is
          Open_Action;
       elsif Id = 5 then
          Save_As_Action;
+      elsif Id = 11 then
+         Edit_Cut;
+      elsif Id = 12 then
+         Edit_Copy;
+      elsif Id = 13 then
+         Edit_Paste;
+      elsif Id = 14 then
+         Edit_Select_All;
       end if;
    end Menu_Picked;
 
@@ -276,7 +364,17 @@ package body Edit_App is
                          Trinket.Menus.It (5, "Save As"),
                          Trinket.Menus.Sep,
                          Trinket.Menus.It (2, "Quit", 'q',
-                                           Alt => True)))));
+                                           Alt => True))),
+             2 => Trinket.Menus.M
+               ("Edit", (Trinket.Menus.It (11, "Cut", 'x',
+                                            Ctrl => True),
+                         Trinket.Menus.It (12, "Copy", 'c',
+                                            Ctrl => True),
+                         Trinket.Menus.It (13, "Paste", 'v',
+                                            Ctrl => True),
+                         Trinket.Menus.Sep,
+                         Trinket.Menus.It (14, "Select All", 'a',
+                                            Ctrl => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Debug_Put_Line ("edit online");
          Trinket.Window.Run (Win);
