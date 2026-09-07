@@ -196,12 +196,19 @@ The heavy scanners are not vendored; CI fetches pinned releases
 `.github/workflows/security.yml`). To run them locally, install the
 same pins and put them on `PATH` (the scan-* targets then use them).
 
-GNATprove (proof baseline): install a version-aligned pair with
+GNATprove (proof baseline): **prerequisite — Alire 2.1.1** (GitHub
+runners don't ship it; CI installs the pinned release binary
+`alr-2.1.1-bin-x86_64-linux.zip`, sha256
+`09c66bcd8c35dd4b97b72c3d9b76e44caa6964a2db35aba069f396f00f1f64c7`).
+Then install a version-aligned pair with
 `alr install gnatprove gnat_riscv64_elf` (e.g. 16.1.0 — analysis-only;
-the build keeps its pinned 15.3.1 crates), then run through `alr exec`
-so the cross `light-rv64imafdc` runtime resolves:
+the build keeps its pinned 15.3.1 crates), register the cross compiler
+with `alr toolchain --select gnat_riscv64_elf`, and run with the alr
+bin dir on `PATH` so gprconfig resolves the cross `light-rv64imafdc`
+runtime (no crate solve is involved):
 
 ```bash
-alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+# ALR_BIN = dir containing the alr-installed riscv64-elf-gcc / gnatprove
+PATH="$ALR_BIN:$PATH" gnatprove -P akernel.gpr -f --mode=prove --level=1 \
   --timeout=30 --report=all
 ```

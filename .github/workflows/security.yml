@@ -89,21 +89,51 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      # GitHub runners do not ship Alire. Pin the v2.1.1 release binary
+      # (sha256-checked like every other fetched artifact in this repo).
+      - name: Install Alire (pinned v2.1.1)
+        run: |
+          curl -sL --fail --max-time 180 -o /tmp/alr.zip \
+            https://github.com/alire-project/alire/releases/download/v2.1.1/alr-2.1.1-bin-x86_64-linux.zip
+          echo "09c66bcd8c35dd4b97b72c3d9b76e44caa6964a2db35aba069f396f00f1f64c7  /tmp/alr.zip" | sha256sum -c -
+          unzip -o -q /tmp/alr.zip -d /tmp/alr-bin
+          sudo install -m 0755 /tmp/alr-bin/bin/alr /usr/local/bin/alr
+          alr version
+
       # Analysis toolchain only — the kernel itself keeps building with
       # its pinned 15.3.1 crates (see docs/SCANNING.md). 16.1.0 is the
-      # matching pair in the community index.
+      # matching pair in the community index. Cache the install so the
+      # weekly runs don't re-download ~1 GB of toolchain.
+      - name: Cache Alire toolchains
+        env:
+          ALR_CACHE_SLOT: alr-2.1.1-gnatprove-16.1.0
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.alire
+            ~/.config/alire
+          key: ${{ env.ALR_CACHE_SLOT }}
+
       - name: Install GNATprove + aligned cross toolchain (alr)
         run: |
           alr install gnatprove
           alr install gnat_riscv64_elf
+          # Register the cross compiler as the default toolchain so
+          # gnatprove's knowledge base resolves riscv64-elf/light-rv64imafdc.
+          alr toolchain --select gnat_riscv64_elf
 
       # Whole-project analysis; the SPARK surface today is the
       # Kernel.Capabilities pure-logic subset. gnatprove exits 0 with
       # unproved checks (recorded as audit entries, not failures);
-      # errors/failed checks exit non-zero and fail the job.
+      # errors/failed checks exit non-zero and fail the job. The alr bin
+      # dir is put on PATH so gprconfig finds the cross compiler; no
+      # crate solve is needed (that is why this is not `alr exec`).
       - name: GNATprove proof baseline
         run: |
-          alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+          ALR_BIN="$(dirname "$(find "$HOME/.alire" -name riscv64-elf-gcc -path '*/bin/*' 2>/dev/null | head -1)")"
+          test -n "$ALR_BIN" || { echo "alr toolchain bin not found"; exit 1; }
+          export PATH="$ALR_BIN:$PATH"
+          gnatprove -P akernel.gpr -f --mode=prove --level=1 \
             --timeout=30 --report=all
           tail -40 obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out
 
