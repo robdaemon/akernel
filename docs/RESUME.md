@@ -13,6 +13,26 @@ repository.
 
 ## Recently shipped
 
+- **BeFS on-disk block size 1 KiB -> 4 KiB** (`f829f78`): "larger
+  blocks for modern disks" — Sys: is now staged and served at
+  4096-byte blocks (mkbefs + host tools parameterized in `26c0a4e`/
+  `0de01e3`; engine Block_Size 4096, Sec_Per_Block 8, Batch_Max 8
+  blocks per 32 KiB read). Fixes the 4 KiB flip exposed: dir-
+  creation btree headers + inode_size were stamped for 1024-byte
+  geometry (root pointer mapped onto the header block; every walk
+  of a fresh directory read the header as a leaf); Leaf_Max was a
+  "full 1024-byte node" bound (64) that forced ~4x too many tree
+  splits and let big dirs outgrow the 12-run tree stream (now
+  Block_Size/8); Volume_Info byte capacities used a leftover <<10;
+  and runtime rewrites of STAGED env/config files updated the
+  size/last_modified indices but never the name index — staged
+  files modified at runtime now get their name entry on first
+  write/truncate (Index_Ensure). FAT stays at 4 KiB clusters: the
+  fat32 driver caps at 8 sectors/cluster by design (cluster-sized
+  buffers); raising it is a driver rework, deferred. Gates: make
+  test 1874 PASS / 0 FAIL at SMP4 (900 s), 1870 at SMP1 (1200 s),
+  test-replay ok.
+
 - **Fileman sorted listings** (commit above): rows are buffered
   during the pumped read and committed folders-first, then by
   name with a comparator matching the volume's case behavior —
