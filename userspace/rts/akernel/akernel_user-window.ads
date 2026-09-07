@@ -112,7 +112,8 @@ use type Akernel_User.Syscalls.U64;
 --        shortcut). Separators have no Id and are never
 --        hovered, picked or accelerated.
 --
---  Up to 6 windows. Bureau owns stacking, focus
+--  Up to 20 windows (surface-region-derived; M9x raised
+--  from 6). Bureau owns stacking, focus
 --  (click-to-focus/raise), title dragging and per-window
 --  titles.
 --

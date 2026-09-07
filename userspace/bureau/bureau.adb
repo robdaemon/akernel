@@ -49,13 +49,16 @@ procedure Bureau is
 
    Buf_VA   : constant U64 := 16#6000_0000#;
    --  Per-slot client surface maps: one stride per slot from
-   --  Surf_VA0. Region plan (m80f/m80g): 0x6800..0x6E00 =
-   --  96 MiB, queues at 0x6E00 (1 MiB of one-page maps), menus
-   --  at 0x6E10. At the 8 MiB stride 1080p needs, that is 12
-   --  slots; past 12 windows the region itself must move.
+   --  Surf_VA0. Region plan (m9x): 0x6400..0x6E00 = 160 MiB,
+   --  queues at 0x6E00 (1 MiB of one-page maps), menus at
+   --  0x6E10. At the 8 MiB stride 1080p needs, that is 20
+   --  slots (was 12 from 0x6800; raised so real desktops —
+   --  fileman panes, drawers, editors + a requester — don't
+   --  collide). The composite buffer at Buf_VA (<= ~8.5 MiB)
+   --  ends well below the new region start.
    --  Max_Win_Slots derives from the region so the table cap
    --  can never outrun the VA window.
-   Surf_VA0 : constant U64 := 16#6800_0000#;
+   Surf_VA0 : constant U64 := 16#6400_0000#;
    Surf_Slot_Stride : constant U64 := 16#80_0000#;  --  m80g: 8 MiB
    --  Per-slot client input-queue maps (v3): one page each.
    Queue_VA0 : constant U64 := 16#6E00_0000#;
@@ -123,7 +126,7 @@ procedure Bureau is
     --  (Akernel_User.Tables) and the cap is the surface-region
     --  capacity below, not an arbitrary count.
     Max_Win_Slots : constant Natural :=
-      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  12
+      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  20
     --  32 chunks = 8 MiB = exactly the Surf_Slot_Stride window.
     --  (m80g: 16 -> 32; a 1920x1080 pane is 2025 pages.)
     --  Headroom added WITH the v5 zoom consumer: a zoomed pane
