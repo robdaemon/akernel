@@ -591,28 +591,23 @@ procedure Bureau is
 
    --  Shortcut hint text helpers (bodies below Panel_W).
    function Shortcut_Key_Name (C : Natural) return String;
-   function Shortcut_Mods (It : Item_Rec) return String;
-   function Shortcut_Hint (It : Item_Rec) return String;
+   function Shortcut_Cap (It : Item_Rec) return String;
+   function Shortcut_Gutter_W (It : Item_Rec) return U64;
 
    function Panel_W return U64 is
       W : Window_Rec renames Wins (Menu_Slot).all;
       M : Menu_Rec renames W.Menus (Active_Menu);
       Max_L : Natural := 0;
-      Max_H : Natural := 0;
+      Max_G : U64 := 0;
    begin
       for K in M.First + 1 .. M.First + M.Count loop
          Max_L := Natural'Max (Max_L, W.Items (K).Label_Len);
-         if not W.Items (K).Is_Separator
-           and then W.Items (K).Shortcut /= 0
-         then
-            Max_H := Natural'Max
-              (Max_H, Shortcut_Hint (W.Items (K))'Length);
-         end if;
+         Max_G := U64'Max (Max_G, Shortcut_Gutter_W (W.Items (K)));
       end loop;
       return 14
         + U64 (Max_L) * 8
-        + (if Max_H > 0 then 10 + U64 (Max_H) * 8 + 10 else 0)
-        + 14;
+        + (if Max_G > 0 then 12 + Max_G else 0)
+        + 12;
    end Panel_W;
 
    --  Shortcut key display name for the hint gutter: printable
@@ -637,31 +632,35 @@ procedure Bureau is
       end case;
    end Shortcut_Key_Name;
 
-   --  Modifier prefix for the hint gutter ("Ctrl+", "Alt+",
-   --  "Ctrl+Alt+", or "").
-   function Shortcut_Mods
-     (It : Item_Rec) return String
-   is
+   --  Modifier name(s) shown in the keycap ("Ctrl", "Alt",
+   --  "Ctrl+Alt"), or "" when the shortcut is unqualified.
+   function Shortcut_Cap (It : Item_Rec) return String is
    begin
       if It.Shortcut_Ctrl and then It.Shortcut_Alt then
-         return "Ctrl+Alt+";
+         return "Ctrl+Alt";
       elsif It.Shortcut_Ctrl then
-         return "Ctrl+";
+         return "Ctrl";
       elsif It.Shortcut_Alt then
-         return "Alt+";
+         return "Alt";
       else
          return "";
       end if;
-   end Shortcut_Mods;
+   end Shortcut_Cap;
 
-   --  The whole hint ("Ctrl+F"); "" when the item has no shortcut.
-   function Shortcut_Hint (It : Item_Rec) return String is
+   --  Pixels the right-aligned hint gutter needs for item It
+   --  (keycapped modifier + gap + plain key name), 0 when the
+   --  item has no shortcut. The keycap box is cap-len*8 + 6.
+   function Shortcut_Gutter_W (It : Item_Rec) return U64 is
+      Cap_W  : constant U64 := U64 (Shortcut_Cap (It)'Length) * 8 + 6;
+      Key_W  : constant U64 :=
+        U64 (Shortcut_Key_Name (It.Shortcut)'Length) * 8;
    begin
       if It.Shortcut = 0 or else It.Is_Separator then
-         return "";
+         return 0;
       end if;
-      return Shortcut_Mods (It) & Shortcut_Key_Name (It.Shortcut);
-   end Shortcut_Hint;
+      return (if Shortcut_Cap (It)'Length > 0 then Cap_W + 4 else 0)
+        + Key_W;
+   end Shortcut_Gutter_W;
 
    function Panel_X return U64 is
       Raw : constant U64 :=
@@ -726,7 +725,17 @@ procedure Bureau is
                   declare
                      Hot : constant Boolean :=
                        Idx = Hot_Item and then not W.Items (Idx).Disabled;
-                     Hint : constant String := Shortcut_Hint (W.Items (Idx));
+                     Cap : constant String := Shortcut_Cap (W.Items (Idx));
+                     Key : constant String :=
+                       Shortcut_Key_Name (W.Items (Idx).Shortcut);
+                     Gutter : constant U64 :=
+                       Shortcut_Gutter_W (W.Items (Idx));
+                     Row_BG : constant Pixel :=
+                       (if Hot then Title_Blue else Bar_Face);
+                     Key_C  : constant Pixel :=
+                       (if Hot then Title_Text
+                        elsif W.Items (Idx).Disabled then Title_Gray
+                        else Text_Dark);
                   begin
                      if Hot then
                         Fill_Rect (PX0 + 2, RY, PX0 + PW - 2,
@@ -746,15 +755,34 @@ procedure Bureau is
                                      (1 .. W.Items (Idx).Label_Len),
                                    Text_Dark, Bar_Face, Stretch => 1);
                      end if;
-                     --  Right-justified shortcut hint, same color
-                     --  family as the label's state.
-                     if Hint'Length > 0 then
-                        Draw_Text
-                          (PX0 + PW - 10 - U64 (Hint'Length) * 8,
-                           RY + 2, Hint,
-                           (if Hot then Title_Text else Title_Gray),
-                           (if Hot then Title_Blue else Bar_Face),
-                           Stretch => 1);
+                     --  Right-justified accelerator gutter: the
+                     --  modifier reads as a real key (raised keycap
+                     --  with a dark label), the key name as plain
+                     --  text after it. Contrast fixed vs. the first
+                     --  pass (Title_Gray on Bar_Face was invisible).
+                     if Gutter > 0 then
+                        declare
+                           X0 : constant U64 := PX0 + PW - 12 - Gutter;
+                        begin
+                           if Cap'Length > 0 then
+                              Fill_Rect
+                                (X0, RY + 1, X0 + U64 (Cap'Length) * 8 + 6,
+                                 RY + 11, Title_Text);
+                              Draw_Text
+                                (X0 + 3, RY + 2, Cap,
+                                 Text_Dark, Title_Text, Stretch => 1);
+                              Bevel
+                                (X0, RY + 1,
+                                 X0 + U64 (Cap'Length) * 8 + 6, RY + 11);
+                              Draw_Text
+                                (X0 + U64 (Cap'Length) * 8 + 10, RY + 2,
+                                 Key, Key_C, Row_BG, Stretch => 1);
+                           else
+                              Draw_Text
+                                (X0, RY + 2, Key, Key_C, Row_BG,
+                                 Stretch => 1);
+                           end if;
+                        end;
                      end if;
                   end;
                end if;
