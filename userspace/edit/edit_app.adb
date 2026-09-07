@@ -171,6 +171,11 @@ package body Edit_App is
    --  onto the exiting modal.
    Prompt_Doc : Natural := 0;   --  the doc the open dialog names
    procedure Prompt_Quit_Doc (Idx : Natural);  --  body after On_Quit_Choice
+   --  Docs the user dropped with "Don't Save" in the CURRENT quit
+   --  pass: the chain skips them (they stay open+dirty if a later
+   --  Cancel aborts the pass). Cleared on Cancel and on a fresh
+   --  Try_Quit.
+   Quit_Skip : array (1 .. Max_Docs) of Boolean := (others => False);
 
    procedure Save_Doc (Idx : Natural) is
       Save_Cur : constant Natural := Current;
@@ -195,6 +200,17 @@ package body Edit_App is
       end if;
    end Focus_Doc;
 
+   --  First dirty doc the current pass has not dropped.
+   function Next_Pending return Natural is
+   begin
+      for J in 1 .. Doc_Count loop
+         if Is_Dirty (J) and then not Quit_Skip (J) then
+            return J;
+         end if;
+      end loop;
+      return 0;
+   end Next_Pending;
+
    procedure On_Quit_Choice (Choice : Natural) is
       Idx : constant Natural := Prompt_Doc;
       Nxt : Natural;
@@ -203,57 +219,37 @@ package body Edit_App is
       if Idx not in 1 .. Doc_Count then
          return;
       end if;
-      Nxt := 0;
-      for J in 1 .. Doc_Count loop
-         if Is_Dirty (J) then
-            Nxt := J;
-            exit;
-         end if;
-      end loop;
-      if Choice = 1 then
-         --  Save this doc; finish quitting only when everything
-         --  is saved — otherwise chain the next dirty doc (or
-         --  park on this one if it could not be written).
+      if Choice = 0 or else Choice = 4 then
+         --  Dismissed / Cancel: abandon the whole quit pass.
+         Quit_Skip := (others => False);
+         return;
+      elsif Choice = 1 then
+         --  Save this doc, then keep going.
          Save_Doc (Idx);
          if Is_Dirty (Idx) then
-            Nxt := Idx;
-         else
-            Nxt := 0;
-            for J in 1 .. Doc_Count loop
-               if Is_Dirty (J) then
-                  Nxt := J;
-                  exit;
-               end if;
-            end loop;
-         end if;
-         if Nxt = 0 then
-            Trinket.Window.Request_Quit (Win);
-         elsif Is_Dirty (Idx) then
-            Focus_Doc (Idx);      --  untitled/failed write: stay
-         else
-            Prompt_Quit_Doc (Nxt);
+            --  Untitled or a failed write: park here (Save As).
+            Quit_Skip := (others => False);
+            Focus_Doc (Idx);
+            return;
          end if;
       elsif Choice = 2 then
-         --  Save All.
+         --  Save All (skipping docs already dropped).
          for J in 1 .. Doc_Count loop
-            if Is_Dirty (J) then
+            if Is_Dirty (J) and then not Quit_Skip (J) then
                Save_Doc (J);
             end if;
          end loop;
-         Nxt := 0;
-         for J in 1 .. Doc_Count loop
-            if Is_Dirty (J) then
-               Nxt := J;
-               exit;
-            end if;
-         end loop;
-         if Nxt = 0 then
-            Trinket.Window.Request_Quit (Win);
-         else
-            Focus_Doc (Nxt);      --  untitled/failed: don't lose it
-         end if;
+      else
+         --  Choice = 3: Don't Save this doc (drop it for this quit).
+         Quit_Skip (Idx) := True;
       end if;
-      --  Choice 0 (dismissed) / 3 (Cancel): stay open.
+      Nxt := Next_Pending;
+      if Nxt = 0 then
+         Quit_Skip := (others => False);
+         Trinket.Window.Request_Quit (Win);
+      else
+         Prompt_Quit_Doc (Nxt);
+      end if;
    end On_Quit_Choice;
 
    procedure Prompt_Quit_Doc (Idx : Natural) is
@@ -263,15 +259,17 @@ package body Edit_App is
         (Win,
          "Save changes?",
          "Would you like to save changes to " & Doc_Name (Idx) & "?",
-         "Save|Save All|Cancel",
+         "Save|Save All|Don't Save|Cancel",
          On_Quit_Choice'Access);
    end Prompt_Quit_Doc;
 
    --  M9z: Quit goes through the dirty-buffer check (Save / Save
-   --  All / Cancel per dirty doc) instead of quitting blindly.
+   --  All / Don't Save / Cancel per dirty doc) instead of quitting
+   --  blindly.
    procedure Try_Quit is
       Idx : Natural;
    begin
+      Quit_Skip := (others => False);   --  a fresh quit pass
       if Doc_Count = 0 then
          Trinket.Window.Request_Quit (Win);
          return;

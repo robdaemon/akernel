@@ -1,4 +1,3 @@
-with Trinket.Fonts;
 with Trinket.Widgets;
 with Trinket.Widgets.Button;
 with Trinket.Widgets.Label;
@@ -115,11 +114,8 @@ package body Trinket.Message_Box is
         Widgets.New_Group (Widgets.Vertical);
       RowB  : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Horizontal);
-      LH    : constant Natural :=
-        Natural (Trinket.Fonts.Line_Height);
       Lines : Natural := 0;
-      DW    : constant U64 := 440;
-      DH    : U64;
+      DW, DH : U64;
    begin
       if On_Choice = null then
          return;
@@ -130,13 +126,10 @@ package body Trinket.Message_Box is
       Widgets.Group (Root.all).Add (Face);
       Widgets.Group (Face.all).Add (Col);
 
-      --  Count wrapped lines for the dialog height (re-run the
-      --  wrap into real labels at the same time).
       Add_Wrapped (Col, Prompt);
       Lines := Widgets.Group (Col.all).N;
       if Lines = 0 then
          Widgets.Group (Col.all).Add (Widgets.Label.New_Label (" "));
-         Lines := 1;
       end if;
 
       --  Buttons: '|'-separated labels, 1 .. Max_Buttons, wired
@@ -180,10 +173,16 @@ package body Trinket.Message_Box is
       end;
       Widgets.Group (Face.all).Add (RowB);
 
-      --  Title + frame + insets + one label row per prompt line +
-      --  the button row; generous so nothing clips.
-      DH := U64 (3) * Trinket.U64 (LH) + 70
-        + Trinket.U64 (Lines) * Trinket.U64 (LH);
+      --  Size the dialog to its content: Min_Size of the built
+      --  tree plus a small margin. A too-small box clips the
+      --  sunken face's bottom border and the button row.
+      declare
+         MW, MH : U64;
+      begin
+         Root.all.Min_Size (MW, MH);
+         DW := MW + 24;
+         DH := MH + 28;
+      end;
       Trinket.Window.Start_Modal_Overlay (Win, Root, DW, DH);
    end Request;
 

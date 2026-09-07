@@ -19,12 +19,14 @@ repository.
   prefix. New `Trinket.Message_Box` (File_Requester's overlay-modal
   lineage) shows a titled, word-wrapped prompt with a '|'-separated
   button row and delivers the 1-based choice after the dialog
-  exits. Trinket.Window gained modal CHAINING (a button handler may
-  queue the successor dialog — it starts as the current one exits)
-  and a `Set_Quit_Handler` close-gadget hook. Edit's Quit (menu and
-  close gadget) walks the dirty docs: Save writes the named doc and
-  prompts the next dirty one, Save All writes every dirty doc then
-  quits, Cancel stays; an untitled or failed write stops the quit
+  exits; the dialog is sized from the widget tree's Min_Size so it
+  never clips. Trinket.Window gained modal CHAINING (a button
+  handler may queue the successor dialog — it starts as the current
+  one exits) and a `Set_Quit_Handler` close-gadget hook. Edit's
+  Quit (menu and close gadget) walks the dirty docs: Save writes
+  the named doc and prompts the next dirty one, Save All writes
+  every dirty doc then quits, Don't Save drops that doc for this
+  quit, Cancel stays; an untitled or failed write stops the quit
   and takes focus (it needs Save As). Gates: make test 1894 PASS /
   0 FAIL at SMP4.
 
