@@ -1,15 +1,15 @@
 with Ada.Streams;
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.Sockets;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.Sockets;
+with Aegir_User.Syscalls;
 with GNAT.Sockets;
 with Gsock_Test_Dns;
 
 --  Gsock_Test (milestone 73): smoke of the GNAT.Sockets port over
 --  the netserv bridge (vendored g-socket/g-socthi + the
---  akernel_gsocket.c port layer).  Everything is hairpin-
+--  aegir_gsocket.c port layer).  Everything is hairpin-
 --  deterministic: numeric gethostbyname/getaddrinfo, a UDP round
 --  trip (auto-bind, sender address), select expiry / readiness /
 --  abort, a TCP listen-connect-accept echo with peer-address and
@@ -28,10 +28,10 @@ procedure Gsock_Test is
    use type U32;
 
    package AS       renames Ada.Streams;
-   package Console  renames Akernel_User.Console;
-   package Files    renames Akernel_User.Files;
-   package Sock     renames Akernel_User.Sockets;
-   package Syscalls renames Akernel_User.Syscalls;
+   package Console  renames Aegir_User.Console;
+   package Files    renames Aegir_User.Files;
+   package Sock     renames Aegir_User.Sockets;
+   package Syscalls renames Aegir_User.Syscalls;
    package GS       renames GNAT.Sockets;
 
    use type AS.Stream_Element_Offset;
@@ -269,7 +269,7 @@ begin
       end;
 
       --  DNS: point Net:dns at ourselves and let the responder
-      --  task answer the A-record query for test.akernel.
+      --  task answer the A-record query for test.aegir.
       declare
          Def     : aliased constant String := "10.0.2.3";
          WSt     : U64;
@@ -298,7 +298,7 @@ begin
 
           declare
             H : constant GS.Host_Entry_Type :=
-              GS.Get_Host_By_Name ("test.akernel");
+              GS.Get_Host_By_Name ("test.aegir");
          begin
             Expect (GS.Addresses_Length (H) = 1
                     and then GS.Addresses (H) =

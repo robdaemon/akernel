@@ -1,16 +1,16 @@
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Unset: delete an environment variable (milestone 41b; the Amiga
 --  C:Unset analog). "Unset NAME" deletes ENV:NAME.
 
 procedure Unset is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count /= 1 then

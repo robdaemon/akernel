@@ -1,7 +1,7 @@
 with Ada.Text_IO;
-with Akernel_User.Syscalls;
-with Akernel_User.CLI;
-with Akernel_User.Clipboard;
+with Aegir_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Clipboard;
 with Trinket;
 with Trinket.Widgets;
 with Trinket.Widgets.Tabs;
@@ -20,8 +20,8 @@ with Trinket.File_Requester;
 --  gadget leaves. Edit menu: Cut/Copy/Paste/Select All (Ctrl+X/C/
 --  V/A) through the system clipboard (Sys:Libs/Clipboard).
 package body Edit_App is
-   use Akernel_User.Syscalls;
-   use type Akernel_User.Syscalls.U64;
+   use Aegir_User.Syscalls;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
    package TE renames Trinket.Text_Edit;
 
@@ -194,7 +194,7 @@ package body Edit_App is
    function Ensure_Clipboard return Boolean is
    begin
       if Clipboard_Cap = 0 then
-         Clipboard_Cap := Akernel_User.Clipboard.Open;
+         Clipboard_Cap := Aegir_User.Clipboard.Open;
          if Clipboard_Cap = 0 then
             Debug_Put_Line ("edit: clipboard open failed");
          end if;
@@ -214,8 +214,8 @@ package body Edit_App is
          Sel : constant String :=
            TE.Selected_Text (Docs (Current).Box.all);
       begin
-         if Akernel_User.Clipboard.Put (Clipboard_Cap, Sel)
-           = Akernel_User.Clipboard.Status_Ok
+         if Aegir_User.Clipboard.Put (Clipboard_Cap, Sel)
+           = Aegir_User.Clipboard.Status_Ok
          then
             TE.Delete_Selected (Docs (Current).Box.all);
          end if;
@@ -234,9 +234,9 @@ package body Edit_App is
          Sel : constant String :=
            TE.Selected_Text (Docs (Current).Box.all);
          St  : constant U64 :=
-           Akernel_User.Clipboard.Put (Clipboard_Cap, Sel);
+           Aegir_User.Clipboard.Put (Clipboard_Cap, Sel);
       begin
-         if St /= Akernel_User.Clipboard.Status_Ok then
+         if St /= Aegir_User.Clipboard.Status_Ok then
             Debug_Put_Line ("edit: clipboard put failed");
          end if;
       end;
@@ -244,7 +244,7 @@ package body Edit_App is
 
    procedure Edit_Paste is
       Buf : constant String_Acc :=
-        new String (1 .. Akernel_User.Clipboard.Clipboard_Max);
+        new String (1 .. Aegir_User.Clipboard.Clipboard_Max);
       Len : Natural := 0;
       St  : U64;
    begin
@@ -252,9 +252,9 @@ package body Edit_App is
          return;
       end if;
       Buf (Buf'Range) := (others => ' ');
-      St := Akernel_User.Clipboard.Get
+      St := Aegir_User.Clipboard.Get
         (Clipboard_Cap, Buf.all, Len);
-      if St = Akernel_User.Clipboard.Status_Ok and then Len > 0 then
+      if St = Aegir_User.Clipboard.Status_Ok and then Len > 0 then
          TE.Insert_Text (Docs (Current).Box.all, Buf (1 .. Len));
       end if;
    end Edit_Paste;
@@ -343,9 +343,9 @@ package body Edit_App is
    begin
       Tabs_W := Widgets.Tabs.New_Tabs (Tab_Moved'Access);
 
-      if Akernel_User.CLI.Arg_Count >= 1 then
-         for I in 1 .. Akernel_User.CLI.Arg_Count loop
-            Add_Doc (new String'(Akernel_User.CLI.Argument (I)));
+      if Aegir_User.CLI.Arg_Count >= 1 then
+         for I in 1 .. Aegir_User.CLI.Arg_Count loop
+            Add_Doc (new String'(Aegir_User.CLI.Argument (I)));
          end loop;
       else
          Add_Doc (null);   --  untitled "(new file)" tab

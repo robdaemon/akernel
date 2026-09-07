@@ -1,10 +1,10 @@
 with System;
 with System.Storage_Elements;
 with Interfaces;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
-with Akernel_User.Console;
-with Akernel_User.Tables;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
+with Aegir_User.Console;
+with Aegir_User.Tables;
 with Fileserver_Tables;
 with Fileserver_Pipes;
 
@@ -35,12 +35,12 @@ with Fileserver_Pipes;
 --  slot 0; the most recent buffer stays mapped.
 
 procedure Fileserver is
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
    use type Interfaces.Unsigned_8;
    use System.Storage_Elements;
 
-   package Syscalls renames Akernel_User.Syscalls;
-   package Files renames Akernel_User.Files;
+   package Syscalls renames Aegir_User.Syscalls;
+   package Files renames Aegir_User.Files;
 
    --  Big tables (File_Table/Volumes/Assigns + the Max_*
    --  constants and entry types) live in library-level package
@@ -199,7 +199,7 @@ procedure Fileserver is
          Length        => Syscalls.Page_Size) /= 0
         or else Syscalls.Cap_Delete (Cap) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: path buffer release failed");
       end if;
       return Len > 0;
@@ -437,7 +437,7 @@ procedure Fileserver is
       --  caps (e.g. a forwarded Buf cap) still sitting in the buffer.
       Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-         Akernel_User.Console.Put_Line ("fileserver: reply failed");
+         Aegir_User.Console.Put_Line ("fileserver: reply failed");
       end if;
    end Reply2;
 
@@ -469,7 +469,7 @@ procedure Fileserver is
          VA            => File_Win_VA,
          Length        => Syscalls.Page_Size) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: lead-in unmap failed");
          Ok := False;
          return;
@@ -807,7 +807,7 @@ procedure Fileserver is
                Syscalls.Message.Words (0) := Files.Status_Ok;
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("fileserver: reply failed");
                end if;
                return;
@@ -863,7 +863,7 @@ procedure Fileserver is
                Syscalls.Message.Words (0) := Files.Status_Ok;
                Syscalls.Message.Caps := (others => 0);
                if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("fileserver: reply failed");
                end if;
                return;
@@ -965,7 +965,7 @@ procedure Fileserver is
       Badge  : U64 := 0;
       Cap    : U64 := 0;
    end record;
-   package Fwd_Tab is new Akernel_User.Tables (Forward_Cap_Entry);
+   package Fwd_Tab is new Aegir_User.Tables (Forward_Cap_Entry);
 
    --  Reuse a previously-minted forward cap when the same caller
    --  (badge = process id) hits the same fs-driver volume. This
@@ -1217,7 +1217,7 @@ procedure Fileserver is
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: attr buffer cap delete failed");
       end if;
       if not Done then
@@ -1280,7 +1280,7 @@ procedure Fileserver is
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: attr buffer cap delete failed");
       end if;
       if not Done then
@@ -1343,7 +1343,7 @@ procedure Fileserver is
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: query buffer cap delete failed");
       end if;
       if not Done then
@@ -1403,13 +1403,13 @@ procedure Fileserver is
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: query open buffer cap delete failed");
       end if;
       if Ntfn /= 0
         and then Syscalls.Cap_Delete (Ntfn) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: query open ntfn cap delete failed");
       end if;
       if not Done then
@@ -1460,7 +1460,7 @@ procedure Fileserver is
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: query poll buffer cap delete failed");
       end if;
       if not Done then
@@ -1641,7 +1641,7 @@ procedure Fileserver is
          VA            => Buf_Win_VA,
          Length        => Buf_Bytes) /= 0
       then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("fileserver: buffer unmap failed");
       end if;
    end Unmap_Buf;
@@ -1706,12 +1706,12 @@ procedure Fileserver is
                      if Syscalls.IPC_Reply (Pend_Reply (S))
                        /= Syscalls.IPC_Ok
                      then
-                        Akernel_User.Console.Put_Line
+                        Aegir_User.Console.Put_Line
                           ("fileserver: pipe drain reply failed");
                      end if;
                   end;
                   if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
-                     Akernel_User.Console.Put_Line
+                     Aegir_User.Console.Put_Line
                        ("fileserver: pipe drain buf drop failed");
                   end if;
                   Pend_Clear (S);
@@ -1745,12 +1745,12 @@ procedure Fileserver is
                      if Syscalls.IPC_Reply (Pend_Reply (S))
                        /= Syscalls.IPC_Ok
                      then
-                        Akernel_User.Console.Put_Line
+                        Aegir_User.Console.Put_Line
                           ("fileserver: pipe drain reply failed");
                      end if;
                   end;
                   if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
-                     Akernel_User.Console.Put_Line
+                     Aegir_User.Console.Put_Line
                        ("fileserver: pipe drain buf drop failed");
                   end if;
                   Pend_Clear (S);
@@ -1781,11 +1781,11 @@ procedure Fileserver is
             if Syscalls.IPC_Reply (Pend_Reply (S))
               /= Syscalls.IPC_Ok
             then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("fileserver: pipe fail reply failed");
             end if;
             if Syscalls.Cap_Delete (Pend_Buf (S)) /= 0 then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("fileserver: pipe fail buf drop failed");
             end if;
             Pend_Clear (S);
@@ -2141,11 +2141,11 @@ procedure Fileserver is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer cap delete failed");
          end if;
       end if;
@@ -2383,7 +2383,7 @@ procedure Fileserver is
                      VA            => File_Win_VA,
                      Length        => Span * Syscalls.Page_Size) /= 0
                   then
-                     Akernel_User.Console.Put_Line
+                     Aegir_User.Console.Put_Line
                        ("fileserver: window unmap failed");
                      Status := Files.Status_Not_Found;
                      Count := 0;
@@ -2416,11 +2416,11 @@ procedure Fileserver is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer cap delete failed");
          end if;
       end if;
@@ -2615,7 +2615,7 @@ procedure Fileserver is
             VA            => Buf_Win_VA,
             Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer unmap failed");
          end if;
          Mapped := False;
@@ -2642,11 +2642,11 @@ procedure Fileserver is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fileserver: buffer cap delete failed");
          end if;
       end if;
@@ -2700,7 +2700,7 @@ procedure Fileserver is
          then
             Syscalls.Message.Caps := (others => 0);
             if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("fileserver: reply failed");
             end if;
             return;
@@ -2821,13 +2821,13 @@ procedure Fileserver is
    end Handle_Close;
 
 begin
-   Akernel_User.Console.Set_Endpoint (2);  --  console grant
-   Akernel_User.Console.Put_Line ("fileserver online");
+   Aegir_User.Console.Set_Endpoint (2);  --  console grant
+   Aegir_User.Console.Put_Line ("fileserver online");
    Seed_Virtual_Volumes;
 
    loop
       if Syscalls.IPC_Recv (EP, Reply_H) /= Syscalls.IPC_Ok then
-         Akernel_User.Console.Put_Line ("fileserver: recv failed");
+         Aegir_User.Console.Put_Line ("fileserver: recv failed");
          exit;
       end if;
 

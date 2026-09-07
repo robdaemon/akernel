@@ -1,9 +1,9 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces;
 with System.Storage_Elements;
-with Akernel_User.CLI;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
 with Font8x8;
 
 package body Trinket.Fonts is
@@ -295,8 +295,8 @@ package body Trinket.Fonts is
    --  binding (fuzz keeps fs on handle 4).
    procedure Ensure_FS is
    begin
-      if Akernel_User.Files.Endpoint = 0 then
-         Akernel_User.Files.Bind (2);   --  handle 2 = fs Send
+      if Aegir_User.Files.Endpoint = 0 then
+         Aegir_User.Files.Bind (2);   --  handle 2 = fs Send
       end if;
    end Ensure_FS;
 
@@ -304,7 +304,7 @@ package body Trinket.Fonts is
    --  (private instances); the buffer is a transient heap read.
    procedure Try_Load (Path : String; F : out Font_Rec;
                        OK : out Boolean) is
-      use Akernel_User;
+      use Aegir_User;
       use System.Storage_Elements;
       Size  : U64;
       Count : U64;
@@ -355,7 +355,7 @@ package body Trinket.Fonts is
       Mono.Descent := 2;
       --  M89: the prefs pick overrides the compiled-in default.
       declare
-         Env : constant String := Akernel_User.CLI.Get_Env ("Font");
+         Env : constant String := Aegir_User.CLI.Get_Env ("Font");
       begin
          if Env'Length > 0 then
             Try_Load (Env, Global, OK);
@@ -556,7 +556,7 @@ package body Trinket.Fonts is
       Pixel_Size  : out Natural;
       OK          : out Boolean)
    is
-      use Akernel_User;
+      use Aegir_User;
       Size  : U64;
       Count : U64;
       St    : U64;

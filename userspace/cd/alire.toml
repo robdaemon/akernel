@@ -1,5 +1,5 @@
-name = "akernel_cd"
-description = "akernel cd"
+name = "aegir_cd"
+description = "aegir cd"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -274,7 +274,7 @@ def build(path, mib):
     hello_i = img.alloc()
     hello_d = img.alloc()
 
-    readme_body = b"Hello from the akernel BeFS volume.\n"
+    readme_body = b"Hello from the aegir BeFS volume.\n"
     hello_body = b"Subdir hello from BeFS!\n"
     #  Two non-adjacent direct runs with a free hole between them:
     #  body spans 2 blocks + a half-block tail (2560 B at BLK 1024).

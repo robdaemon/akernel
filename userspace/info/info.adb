@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Info: volume capacity (milestone 41; the Amiga C:Info
 --  analog). "Info [<volume>]"; no argument reports the system
@@ -12,8 +12,8 @@ with Akernel_User.Files;
 --  1 = console stream (Send), 2 = file server (Send).
 
 procedure Info is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 
    procedure Report (Volume : String) is
@@ -24,25 +24,25 @@ procedure Info is
         Files.Volume_Info (Volume, Total, Free, Cluster);
    begin
       if St /= Files.Status_Ok then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("Info: can't query " & Volume);
          return;
       end if;
-      Akernel_User.Console.Put_Line ("volume " & Volume);
-      Akernel_User.Console.Put_Line ("  total  " & Total'Image & " bytes");
+      Aegir_User.Console.Put_Line ("volume " & Volume);
+      Aegir_User.Console.Put_Line ("  total  " & Total'Image & " bytes");
       if Free = CLI.U64'Last then
-         Akernel_User.Console.Put_Line ("  free   unknown");
+         Aegir_User.Console.Put_Line ("  free   unknown");
       else
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("  free   " & Free'Image & " bytes");
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("  used   " & CLI.U64'Image (Total - Free) & " bytes");
       end if;
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("  cluster" & Cluster'Image & " bytes");
    end Report;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count = 0 then

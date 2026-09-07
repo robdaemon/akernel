@@ -1,5 +1,5 @@
-name = "akernel_echo_server"
-description = "akernel IPC echo server (fuzzer peer)"
+name = "aegir_echo_server"
+description = "aegir IPC echo server (fuzzer peer)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -2,12 +2,12 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Ada.Streams;
-with Akernel_User.Syscalls;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
-with Akernel_User.Files;
-with Akernel_User.Clipboard;
-with Akernel_User.Window;
+with Aegir_User.Syscalls;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
+with Aegir_User.Files;
+with Aegir_User.Clipboard;
+with Aegir_User.Window;
 with Trinket;
 with Trinket.Menus;
 with Trinket.Paint;
@@ -36,7 +36,7 @@ with Terminal_Scroll;
 --  at the bottom.
 
 procedure Terminal is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_8;
 
@@ -294,16 +294,16 @@ procedure Terminal is
       Got   : U64;
    begin
       if Clipboard_Svc = 0 then
-         Clipboard_Svc := Akernel_User.Clipboard.Open;
+         Clipboard_Svc := Aegir_User.Clipboard.Open;
          if Clipboard_Svc = 0 then
             Debug_Put_Line ("terminal: clipboard open failed");
             return;
          end if;
       end if;
       loop
-         St := Akernel_User.Clipboard.Read
+         St := Aegir_User.Clipboard.Read
            (Clipboard_Svc, Off, Chunk'Address, Chunk'Length, Got);
-         exit when St /= Akernel_User.Clipboard.Status_Ok
+         exit when St /= Aegir_User.Clipboard.Status_Ok
            or else Got = 0;
          for I in 1 .. Natural (Got) loop
             Input_Char (Chunk (I));
@@ -373,9 +373,9 @@ procedure Terminal is
 
    procedure Flush_Surface is
    begin
-      Result := Akernel_User.Window.Surface_Update
+      Result := Aegir_User.Window.Surface_Update
         (Win_EP, Surf_Id, 0, 0, Surf_W, Surf_H);
-      if Result /= Akernel_User.Window.Status_Ok then
+      if Result /= Aegir_User.Window.Status_Ok then
          Debug_Put_Line ("terminal update failed");
       end if;
    end Flush_Surface;
@@ -424,14 +424,14 @@ procedure Terminal is
    --  FIFO and echo into the scrollback; navigation keys scroll
    --  the view; pointer events operate the scrollbar.
    procedure Drain_Input_Queue is
-      Head : constant U64 := Queue (Akernel_User.Window.Input_Queue_Head);
-      Tail : U64 := Queue (Akernel_User.Window.Input_Queue_Tail);
+      Head : constant U64 := Queue (Aegir_User.Window.Input_Queue_Head);
+      Tail : U64 := Queue (Aegir_User.Window.Input_Queue_Tail);
       Slot : U64;
    begin
       while Tail < Head loop
-         Slot := Akernel_User.Window.Input_Queue_First
-           + (Tail mod Akernel_User.Window.Input_Queue_Events) * 2;
-         if Queue (Slot) = Akernel_User.Window.Input_Event_Key then
+         Slot := Aegir_User.Window.Input_Queue_First
+           + (Tail mod Aegir_User.Window.Input_Queue_Events) * 2;
+         if Queue (Slot) = Aegir_User.Window.Input_Event_Key then
             declare
                Code : constant Natural :=
                  Natural (Queue (Slot + 1) and 16#FF#);
@@ -447,16 +447,16 @@ procedure Terminal is
                   Handle_Nav (U64 (Code));
                end if;
             end;
-         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Pointer
+         elsif Queue (Slot) = Aegir_User.Window.Input_Event_Pointer
          then
             declare
                Val : constant U64 := Queue (Slot + 1);
                X   : constant U64 :=
-                 Akernel_User.Window.Pointer_X (Val);
+                 Aegir_User.Window.Pointer_X (Val);
                Y   : constant U64 :=
-                 Akernel_User.Window.Pointer_Y (Val);
+                 Aegir_User.Window.Pointer_Y (Val);
                Btn : constant U64 :=
-                 Akernel_User.Window.Pointer_Buttons (Val);
+                 Aegir_User.Window.Pointer_Buttons (Val);
                K   : Trinket.Widgets.Pointer_Kind;
                Consumed : Boolean;
                pragma Unreferenced (Consumed);
@@ -475,21 +475,21 @@ procedure Terminal is
                Prev_Buttons := Btn;
                Consumed := Terminal_Scroll.Handle_Pointer (K, X, Y);
             end;
-         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Close
+         elsif Queue (Slot) = Aegir_User.Window.Input_Event_Close
          then
             --  Close gadget (CLOSEWINDOW analog): destroy the
             --  surface and leave; the shell's console channel
             --  dies with us and the shell exits on its next
             --  read.
-            Result := Akernel_User.Window.Surface_Destroy
+            Result := Aegir_User.Window.Surface_Destroy
               (Win_EP, Surf_Id);
             Process_Exit;
-         elsif Queue (Slot) = Akernel_User.Window.Input_Event_Menu
+         elsif Queue (Slot) = Aegir_User.Window.Input_Event_Menu
          then
             --  Screen-bar menu pick (kind 4; value = item Id).
             --  Terminal > Quit takes the close-gadget path.
             if (Queue (Slot + 1) and 16#FFFF_FFFF#) = 1 then
-               Result := Akernel_User.Window.Surface_Destroy
+               Result := Aegir_User.Window.Surface_Destroy
                  (Win_EP, Surf_Id);
                Process_Exit;
             elsif (Queue (Slot + 1) and 16#FFFF_FFFF#) = 2 then
@@ -498,7 +498,7 @@ procedure Terminal is
          end if;
          Tail := Tail + 1;
       end loop;
-      Queue (Akernel_User.Window.Input_Queue_Tail) := Tail;
+      Queue (Aegir_User.Window.Input_Queue_Tail) := Tail;
    end Drain_Input_Queue;
 
    ------------------------------------------------------------------
@@ -521,9 +521,9 @@ procedure Terminal is
       Proc_Cap : U64 := 0;
       Args_Cap : U64 := 0;
    begin
-      Akernel_User.Files.Bind (FS_EP);
-      St := Akernel_User.Files.Stat ("BD0:System/Shell", Size);
-      if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+      Aegir_User.Files.Bind (FS_EP);
+      St := Aegir_User.Files.Stat ("BD0:System/Shell", Size);
+      if St /= Aegir_User.Files.Status_Ok or else Size = 0 then
          Debug_Put_Line ("terminal shell stat failed");
          return;
       end if;
@@ -540,14 +540,14 @@ procedure Terminal is
          Result := Cap_Delete (Mem_Cap);
          return;
       end if;
-      St := Akernel_User.Files.Open ("BD0:System/Shell", Size);
-      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+      St := Aegir_User.Files.Open ("BD0:System/Shell", Size);
+      while St = Aegir_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            ("BD0:System/Shell", Off,
             System'To_Address (Integer_Address (Shell_Stage_VA + Off)),
             Chunk, Count);
-         exit when St /= Akernel_User.Files.Status_Ok
+         exit when St /= Aegir_User.Files.Status_Ok
            or else Count /= Chunk;
          Off := Off + Chunk;
       end loop;
@@ -626,7 +626,7 @@ procedure Terminal is
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);
       if Minted /= Syscall_Failed then
-         Result := Akernel_User.Window.Surface_Set_Menus
+         Result := Aegir_User.Window.Surface_Set_Menus
            (Win_EP, Surf_Id, Minted);
          Result := Cap_Delete (Minted);
       end if;
@@ -636,16 +636,16 @@ procedure Terminal is
 
    ------------------------------------------------------------------
 
-   package RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
-   package Win renames Akernel_User.Window;
+   package RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
+   package Win renames Aegir_User.Window;
 
    Status   : U64;
    Label    : U64;
    Badge    : U64;
-   Request  : Akernel_User.Streams.Stream_Request;
-   Response : Akernel_User.Streams.Stream_Response;
+   Request  : Aegir_User.Streams.Stream_Request;
+   Response : Aegir_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
    Reply_H  : U64;
 
@@ -666,8 +666,8 @@ begin
    then
       Fail ("queue map failed");
    end if;
-   Queue (Akernel_User.Window.Input_Queue_Head) := 0;
-   Queue (Akernel_User.Window.Input_Queue_Tail) := 0;
+   Queue (Aegir_User.Window.Input_Queue_Head) := 0;
+   Queue (Aegir_User.Window.Input_Queue_Tail) := 0;
    Ntfn_Cap := Ntfn_Create;
    if Ntfn_Cap = Syscall_Failed
      or else Ntfn_Bind_Thread (Ntfn_Cap) /= 0
@@ -768,7 +768,7 @@ begin
    --  3. Wire the surface buffer to Trinket and initialize the
    --  scrollback/scroller. Bind the file server first because
    --  Trinket.Fonts loads Sys:Fonts/font8x8.bdf from disk.
-   Akernel_User.Files.Bind (FS_EP);
+   Aegir_User.Files.Bind (FS_EP);
    Trinket.Fonts.Init;
 
    declare
@@ -809,7 +809,7 @@ begin
       if Sink_Mint = Syscall_Failed then
          Fail ("sink mint failed");
       end if;
-      Message.Label := Akernel_User.Streams.Op_Attach_Sink;
+      Message.Label := Aegir_User.Streams.Op_Attach_Sink;
       Message.Words := (others => 0);
       Message.Caps := (others => 0);
       Message.Caps (0) := Sink_Mint;
@@ -851,7 +851,7 @@ begin
          --  Bureau enqueued events; drain at our own pace.
          Drain_Input_Queue;
 
-      elsif Label = Akernel_User.Streams.Op_Write then
+      elsif Label = Aegir_User.Streams.Op_Write then
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop
@@ -865,7 +865,7 @@ begin
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
-      elsif Label = Akernel_User.Streams.Op_Input then
+      elsif Label = Aegir_User.Streams.Op_Input then
          --  Seat input (focused keys from Bureau): line
          --  discipline lives in the console device — queue for
          --  Op_Read, echo into the scrollback, track the input
@@ -884,7 +884,7 @@ begin
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
-      elsif Label = Akernel_User.Streams.Op_Read then
+      elsif Label = Aegir_User.Streams.Op_Read then
          --  Drain the input FIFO (Count = 0 when empty).
          declare
             Ch : Character;
@@ -892,10 +892,10 @@ begin
             Response.Count := 0;
             Response.Data := (others => 0);
             while Response.Count <
-              Akernel_User.Syscalls.U64 (Request.Count)
+              Aegir_User.Syscalls.U64 (Request.Count)
               and then Response.Count <
-                Akernel_User.Syscalls.U64
-                  (Akernel_User.Streams.Max_Chunk)
+                Aegir_User.Syscalls.U64
+                  (Aegir_User.Streams.Max_Chunk)
               and then Input_Get (Ch)
             loop
                Response.Count := Response.Count + 1;
@@ -913,7 +913,7 @@ begin
                null;
             end;
          end if;
-      elsif Label = Akernel_User.Streams.Op_Endcli then
+      elsif Label = Aegir_User.Streams.Op_Endcli then
          --  EndCLI (M85a): the shell asks us to close its
          --  console window. Reply FIRST (the shell is our
          --  caller; calling Bureau before replying would
@@ -928,7 +928,7 @@ begin
             Debug_Put_Line ("terminal reply failed");
             Process_Exit;
          end if;
-         Result := Akernel_User.Window.Surface_Destroy
+         Result := Aegir_User.Window.Surface_Destroy
            (Win_EP, Surf_Id);
          Process_Exit;
       else

@@ -1,5 +1,5 @@
-name = "akernel_makedir"
-description = "akernel makedir"
+name = "aegir_makedir"
+description = "aegir makedir"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -1,10 +1,10 @@
-with Akernel_User;
-with Akernel_User.Syscalls;
+with Aegir_User;
+with Aegir_User.Syscalls;
 
 package body Testlib_Lib is
 
-   use Akernel_User;
-   use Akernel_User.Syscalls;
+   use Aegir_User;
+   use Aegir_User.Syscalls;
    use type U64;
 
    Result : U64;

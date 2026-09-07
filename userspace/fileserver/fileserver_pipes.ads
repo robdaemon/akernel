@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 with Interfaces;
 
 --  PIPE: volume backing store (milestone 46a): Amiga-style named
@@ -13,7 +13,7 @@ with Interfaces;
 --  their retry loops as degradation, never as the hot path.
 --
 --  M80d: pipes and pendings are grow-on-demand chunk chains
---  (Akernel_User.Tables) — capacity is RAM, not Max_Pipes /
+--  (Aegir_User.Tables) — capacity is RAM, not Max_Pipes /
 --  Max_Pending literals, and the 32 x 16 KiB rings moved out of
 --  BSS into arena chunks.  (Milestone 69 headroom note: `run`
 --  can background a pipeline, and a background job holds its
@@ -28,7 +28,7 @@ with Interfaces;
 --  fileserver_tables burn class).
 
 package Fileserver_Pipes is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
 
    Pipe_Bytes    : constant := 16384;
    Max_Pipe_Name : constant := 40;

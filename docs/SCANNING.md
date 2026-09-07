@@ -1,6 +1,6 @@
-# akernel — security scanning ledger
+# aegir — security scanning ledger
 
-This file is the single record for akernel's vulnerability-scanning
+This file is the single record for aegir's vulnerability-scanning
 program: what surfaces are covered, which tools back each scan, the
 current baseline of findings, and how results are remediated.
 
@@ -46,7 +46,7 @@ repo modules — no PyPI dependency surface.
 ## Baseline: dependency CVEs
 
 _Recorded 2026-09-07. Tool: osv-scanner 2.5.1 (built 2026-08-17) over the
-committed SBOM (`docs/sbom/akernel.spdx.json`)._
+committed SBOM (`docs/sbom/aegir.spdx.json`)._
 
 **osv-scanner result:** 0 vulnerabilities; the SBOM parses and all 3
 packages are enumerated. Caveat recorded as a tool limitation: all
@@ -119,7 +119,7 @@ the alr bin dir on `PATH` so gprconfig resolves the cross
 **Feasibility determination (first real proof):** GNATprove can analyze
 the kernel project. Required setup: `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR`
 pointing at the alr config that holds the toolchain selection; invoke
-as `alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1
+as `alr exec -- gnatprove -P aegir.gpr -f --mode=prove --level=1
 --timeout=30 --report=all`; a package body defaults to `SPARK_Mode =>
 Off` even when its spec is On, so the body must declare On explicitly.
 
@@ -257,9 +257,9 @@ gprbuild; gnatprove's compile phase needs it registered), and run with
 the alr
 bin dir on `PATH` so gprconfig resolves the cross `light-rv64imafdc`
 runtime (no crate solve is involved). On a **fresh checkout** the
-`config/akernel_config.{ads,gpr,h}` files are absent (Alire-generated,
-gitignored) and gnatprove fails at `akernel.gpr: imported project file
-"config/akernel_config.gpr" not found` — regenerate them first
+`config/aegir_config.{ads,gpr,h}` files are absent (Alire-generated,
+gitignored) and gnatprove fails at `aegir.gpr: imported project file
+"config/aegir_config.gpr" not found` — regenerate them first
 (solve only, no build):
 
 ```bash
@@ -274,6 +274,6 @@ Then run the proof with the alr bin dir on `PATH`:
 # (CE may call Last_Chance_Handler) that the kernel build suppresses via
 # -gnatw.X — expected noise from syscall-dispatcher range conversions in
 # arch-traps.adb, not proof failures.
-PATH="$ALR_BIN:$PATH" gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+PATH="$ALR_BIN:$PATH" gnatprove -P aegir.gpr -f --mode=prove --level=1 \
   --timeout=30 --report=all --warnings=off
 ```

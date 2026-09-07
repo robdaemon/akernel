@@ -1,5 +1,5 @@
-name = "akernel_delete"
-description = "akernel delete"
+name = "aegir_delete"
+description = "aegir delete"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

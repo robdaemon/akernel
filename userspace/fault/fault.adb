@@ -1,15 +1,15 @@
 with Interfaces;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Fault: translate a return code to text (milestone 41b; the
 --  Amiga C:Fault analog). "Fault <n>" prints the description and
 --  exits with RC_Ok.
 
 procedure Fault is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 
    function Parse (S : String) return CLI.U64 is
@@ -24,7 +24,7 @@ procedure Fault is
       return Result;
    end Parse;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count /= 1 then
@@ -40,19 +40,19 @@ begin
       end if;
 
       if Code = CLI.RC_Ok then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            (CLI.Argument (1) & " = OK");
       elsif Code = CLI.RC_Warn then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            (CLI.Argument (1) & " = Warning");
       elsif Code = CLI.RC_Error then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            (CLI.Argument (1) & " = Error");
       elsif Code = CLI.RC_Fail then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            (CLI.Argument (1) & " = Fail");
       else
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            (CLI.Argument (1) & " = return code " & CLI.Argument (1));
       end if;
    end;

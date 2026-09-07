@@ -1,5 +1,5 @@
-name = "akernel_gsock_test"
-description = "akernel GNAT.Sockets smoke test (hairpin UDP/TCP/DNS)"
+name = "aegir_gsock_test"
+description = "aegir GNAT.Sockets smoke test (hairpin UDP/TCP/DNS)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -1,4 +1,4 @@
---  akernel BeFS server (milestone 82c read, 82e journaled write):
+--  aegir BeFS server (milestone 82c read, 82e journaled write):
 --  pure-Ada BeFS (Bfs_Engine) over the partition endpoint, behind
 --  the file server's VFS. This unit is the wire-protocol front —
 --  console, block RPC bounce buffer, fs protocol dispatch — in
@@ -7,16 +7,16 @@
 --  Handles: 1 = console endpoint, 2 = partN endpoint (badged
 --  partition send cap), 3 = svc EP.
 
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
 with Bfs_Engine;
 with Interfaces;
 with System;
 with System.Storage_Elements;
 
 procedure Bfs is
-   package Syscalls renames Akernel_User.Syscalls;
+   package Syscalls renames Aegir_User.Syscalls;
    use type Syscalls.U64;
    use type Interfaces.Unsigned_8;
    use System.Storage_Elements;
@@ -80,7 +80,7 @@ procedure Bfs is
 
    procedure Fail (Msg : String) is
    begin
-      Akernel_User.Console.Put_Line (Msg);
+      Aegir_User.Console.Put_Line (Msg);
       loop
          null;
       end loop;
@@ -101,12 +101,12 @@ procedure Bfs is
    --  the first word is the Path_In_Buf marker; the received cap
    --  copy is deleted here.
    function Path_Of (First : Natural; Slot : Natural) return String is
-      Name : String (1 .. Akernel_User.Files.Max_Path) :=
+      Name : String (1 .. Aegir_User.Files.Max_Path) :=
         (others => Character'Val (0));
       Len  : Natural := 0;
    begin
       if Syscalls.Message.Words (First)
-           /= Akernel_User.Files.Path_In_Buf
+           /= Aegir_User.Files.Path_In_Buf
       then
          for P in 0 .. 31 loop
             declare
@@ -138,7 +138,7 @@ procedure Bfs is
             return Name (1 .. 0);
          end if;
          declare
-            Win : array (0 .. Akernel_User.Files.Max_Path)
+            Win : array (0 .. Aegir_User.Files.Max_Path)
               of Interfaces.Unsigned_8
               with Address => To_Address (Integer_Address (Path_Win_VA));
          begin
@@ -154,7 +154,7 @@ procedure Bfs is
             Length        => Syscalls.Page_Size) /= 0
            or else Syscalls.Cap_Delete (Cap) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bfs: path buffer release failed");
          end if;
       end;
@@ -241,10 +241,10 @@ procedure Bfs is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+            Aegir_User.Console.Put_Line ("bfs: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+            Aegir_User.Console.Put_Line ("bfs: buffer cap delete failed");
          end if;
       end if;
       Reply2 (Status, Count);
@@ -393,11 +393,11 @@ procedure Bfs is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bfs: attr buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bfs: attr buffer cap delete failed");
          end if;
       end if;
@@ -465,10 +465,10 @@ procedure Bfs is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+             Aegir_User.Console.Put_Line ("bfs: buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+             Aegir_User.Console.Put_Line ("bfs: buffer cap delete failed");
           end if;
        end if;
        Reply2 (Status, Count);
@@ -549,11 +549,11 @@ procedure Bfs is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: attr buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: attr buffer cap delete failed");
           end if;
        end if;
@@ -591,13 +591,13 @@ procedure Bfs is
        Buf    : constant U64 := Syscalls.Message.Caps (0);
        Status : U64 := Status_Ok;
        Mapped : Boolean := False;
-       Win    : array (0 .. Akernel_User.Files.Max_Path)
+       Win    : array (0 .. Aegir_User.Files.Max_Path)
          of Interfaces.Unsigned_8
          with Address => To_Address (Integer_Address (Buf_Win_VA));
     begin
        declare
           From   : constant String := Path_Of (0, 1);
-          To     : String (1 .. Akernel_User.Files.Max_Path);
+          To     : String (1 .. Aegir_User.Files.Max_Path);
           To_Len : Natural := 0;
        begin
           if From'Length = 0 or else Buf = 0 then
@@ -614,7 +614,7 @@ procedure Bfs is
           else
              Mapped := True;
              --  m82i: TO is buffer-carried, up to Max_Path.
-             for I in 0 .. Akernel_User.Files.Max_Path - 1 loop
+             for I in 0 .. Aegir_User.Files.Max_Path - 1 loop
                 exit when Win (I) = Interfaces.Unsigned_8 (0);
                 To_Len := To_Len + 1;
                 To (To_Len) := Character'Val (Natural (Win (I)));
@@ -634,10 +634,10 @@ procedure Bfs is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line ("bfs: buffer unmap failed");
+             Aegir_User.Console.Put_Line ("bfs: buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line ("bfs: buffer cap delete failed");
+             Aegir_User.Console.Put_Line ("bfs: buffer cap delete failed");
           end if;
        end if;
        Reply2 (Status, 0);
@@ -706,11 +706,11 @@ procedure Bfs is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query buffer cap delete failed");
           end if;
        end if;
@@ -784,18 +784,18 @@ procedure Bfs is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query open buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query open buffer cap delete failed");
           end if;
        end if;
        if Status /= Status_Ok and then Ntfn /= 0 then
           --  The engine did not take the notification cap.
           if Syscalls.Cap_Delete (Ntfn) /= 0 then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query open ntfn cap delete failed");
           end if;
        end if;
@@ -842,11 +842,11 @@ procedure Bfs is
              VA            => Buf_Win_VA,
              Length        => Buf_Bytes) /= 0
           then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query poll buffer unmap failed");
           end if;
           if Syscalls.Cap_Delete (Buf) /= 0 then
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: query poll buffer cap delete failed");
           end if;
        end if;
@@ -888,8 +888,8 @@ procedure Bfs is
    end Handle_Volume_Info;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_Cap);
-   Akernel_User.Console.Put_Line ("bfs starting");
+   Aegir_User.Console.Set_Endpoint (Console_Cap);
+   Aegir_User.Console.Put_Line ("bfs starting");
 
    --  32 KiB block-read bounce (M94: batched reads up to 64
    --  sectors per request instead of one 1 KiB block per IPC).
@@ -920,7 +920,7 @@ begin
       Fail ("bfs no filesystem on partition");
    end if;
 
-   Akernel_User.Console.Put_Line ("bfs online");
+   Aegir_User.Console.Put_Line ("bfs online");
 
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then

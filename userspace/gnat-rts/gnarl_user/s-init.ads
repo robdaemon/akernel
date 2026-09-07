@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Tasking-enabled variant of System.Init for the Akernel Ravenscar runtime.
+--  Tasking-enabled variant of System.Init for the Aegir Ravenscar runtime.
 --  Identical to the non-tasking gnat_user/s-init.ads except that
 --  __gl_main_priority and __gl_main_cpu are owned by System.Tasking
 --  (s-taskin.adb) when tasking is active, so they are not exported here.

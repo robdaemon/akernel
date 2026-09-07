@@ -1,5 +1,5 @@
-name = "akernel_list"
-description = "akernel list"
+name = "aegir_list"
+description = "aegir list"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

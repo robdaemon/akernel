@@ -1,5 +1,5 @@
-name = "akernel_testlib"
-description = "akernel Testlib shared library server (milestone 58)"
+name = "aegir_testlib"
+description = "aegir Testlib shared library server (milestone 58)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

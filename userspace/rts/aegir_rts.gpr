@@ -1,0 +1,27 @@
+--  The aegir userspace runtime (milestone 40): every userspace
+--  program links this ONE static library instead of compiling the
+--  aegir/ sources into itself.
+--
+--  Layers (physical = this directory, aegir/):
+--    glue          start/stub/syscall asm, linker script — invisible
+--                  to programs
+--    kernel ABI    Aegir_User.Syscalls, .IPC
+--    service APIs  .Streams, .Console, .Files, .MMIO, .Display,
+--                  .Window, .CLI, Font8x8
+--
+--  The GNAT runtime itself is userspace/gnat-rts (milestone 53a):
+--  full libgnat with ZCX exceptions + finalization; its gnat_user/
+--  owns the aegir shadow units (system.ads, s-memory heap,
+--  s-soflin/s-init non-tasking bodies, a-reatim over rdtime).
+library project Aegir_RTS is
+   for Source_Dirs use ("aegir");
+   for Object_Dir use "../../obj/userspace/rts";
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "../../lib/userspace/rts";
+   for Library_Name use "aegir_user";
+   for Library_Kind use "static";
+   for Languages use ("Ada", "Asm");
+   for Target use "riscv64-elf";
+   for Runtime ("Ada") use "../gnat-rts";
+
+end Aegir_RTS;

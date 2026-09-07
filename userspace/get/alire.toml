@@ -1,5 +1,5 @@
-name = "akernel_get"
-description = "akernel get"
+name = "aegir_get"
+description = "aegir get"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

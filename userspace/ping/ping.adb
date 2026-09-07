@@ -1,8 +1,8 @@
 with Interfaces;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Sockets;
-with Akernel_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Sockets;
+with Aegir_User.Syscalls;
 
 --  Ping (milestone 71c): ICMP echo over a netserv ping socket —
 --  the Amiga C:Ping analog:
@@ -26,10 +26,10 @@ procedure Ping is
    use type U32;
    use type U8;
 
-   package CLI  renames Akernel_User.CLI;
-   package Sock renames Akernel_User.Sockets;
-   package Syscalls renames Akernel_User.Syscalls;
-   package Console renames Akernel_User.Console;
+   package CLI  renames Aegir_User.CLI;
+   package Sock renames Aegir_User.Sockets;
+   package Syscalls renames Aegir_User.Syscalls;
+   package Console renames Aegir_User.Console;
 
    --  Uniform command ABI handle 6 (Scripting.Net_EP): the
    --  netserv client endpoint every command spawner grants.

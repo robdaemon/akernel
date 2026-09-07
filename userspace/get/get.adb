@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Get: print an environment variable (milestone 41b; the Amiga
 --  C:Get analog). Variables are files in ENV: (resolved to
@@ -8,11 +8,11 @@ with Akernel_User.Files;
 --  are reported and the command exits with RC_Error.
 
 procedure Get is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count /= 1 then
@@ -26,7 +26,7 @@ begin
          CLI.Fail_With
            (CLI.Argument (1) & ": not set", CLI.RC_Error);
       end if;
-      Akernel_User.Console.Put_Line (Value);
+      Aegir_User.Console.Put_Line (Value);
    end;
 
    CLI.Exit_With (CLI.RC_Ok);

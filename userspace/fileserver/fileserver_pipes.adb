@@ -1,4 +1,4 @@
-with Akernel_User.Tables;
+with Aegir_User.Tables;
 
 package body Fileserver_Pipes is
    use Interfaces;
@@ -18,11 +18,11 @@ package body Fileserver_Pipes is
       Eof    : Boolean := False;
    end record;
 
-   --  M80d: grow-on-demand chunk chains (Akernel_User.Tables);
+   --  M80d: grow-on-demand chunk chains (Aegir_User.Tables);
    --  the 16 KiB rings moved out of BSS (32 x 16 KiB) into arena
    --  chunks.  Pipes (I) reads unchanged via the renames below;
    --  scans run 1 .. Pipe_Tab.Last and creation appends.
-   package Pipe_Tab is new Akernel_User.Tables (Pipe_Entry);
+   package Pipe_Tab is new Aegir_User.Tables (Pipe_Entry);
 
    function Pipes (I : Natural) return Pipe_Tab.Element_Access
      renames Pipe_Tab.Ref;
@@ -155,7 +155,7 @@ package body Fileserver_Pipes is
 
    --  M80d: grow-on-demand like the pipes themselves; Stash fails
    --  (poll fallback) only on arena OOM now.
-   package Pend_Tab is new Akernel_User.Tables (Pending_Entry);
+   package Pend_Tab is new Aegir_User.Tables (Pending_Entry);
 
    function Pendings (I : Natural) return Pend_Tab.Element_Access
      renames Pend_Tab.Ref;

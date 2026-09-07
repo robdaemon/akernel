@@ -1,5 +1,5 @@
-name = "akernel_sort"
-description = "akernel sort"
+name = "aegir_sort"
+description = "aegir sort"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -1,8 +1,8 @@
 with Trinket.Paint;
 with Trinket.Widgets.Scrollbar;
 with Trinket.Fonts;
-with Akernel_User.Syscalls;
-with Akernel_User.Theme;
+with Aegir_User.Syscalls;
+with Aegir_User.Theme;
 
 package body Trinket.Iconview is
 
@@ -212,7 +212,7 @@ package body Trinket.Iconview is
                            else (Cell_W - TW) / 2),
                      CY + 6 + Icon_Px,
                      Item.Text (1 .. Shown),
-                     (if I = W.Sel then Akernel_User.Theme.Title_Text
+                     (if I = W.Sel then Aegir_User.Theme.Title_Text
                       else Text_Dark));
                end if;
             end if;
@@ -303,7 +303,7 @@ package body Trinket.Iconview is
          --  (Listview's M84c pattern). Selection first, callback
          --  after.
          declare
-            Now    : constant U64 := Akernel_User.Syscalls.Read_Time;
+            Now    : constant U64 := Aegir_User.Syscalls.Read_Time;
             Double : constant Boolean :=
               Idx = W.Last_Press_Cell
               and then Now - W.Last_Press_Time < Double_Click_Ticks;

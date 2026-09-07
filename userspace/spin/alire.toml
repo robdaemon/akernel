@@ -1,5 +1,5 @@
-name = "akernel_spin"
-description = "akernel preemption test spinner"
+name = "aegir_spin"
+description = "aegir preemption test spinner"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

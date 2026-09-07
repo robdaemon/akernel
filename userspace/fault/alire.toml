@@ -1,5 +1,5 @@
-name = "akernel_fault"
-description = "akernel fault"
+name = "aegir_fault"
+description = "aegir fault"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

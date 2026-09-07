@@ -1,5 +1,5 @@
-name = "akernel_demo"
-description = "akernel IPC demo server (fuzzer peer)"
+name = "aegir_demo"
+description = "aegir IPC demo server (fuzzer peer)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

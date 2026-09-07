@@ -26,7 +26,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Akernel version (milestone 53a): Clock = riscv time CSR x 100 ns.
+--  Aegir version (milestone 53a): Clock = riscv time CSR x 100 ns.
 --  The kernel enables U-mode counter reads via scounteren at boot
 --  (Arch.SBI.Enable_User_Counters); qemu virt runs the timebase at
 --  10 MHz. All arithmetic goes through Long_Long_Integer explicitly:
@@ -38,7 +38,7 @@ package body Ada.Real_Time is
    subtype LLI is Long_Long_Integer;
 
    function Rdtime return LLI
-     with Import, Convention => C, External_Name => "akernel_rdtime";
+     with Import, Convention => C, External_Name => "aegir_rdtime";
 
    Ns_Per_Sec : constant := 1_000_000_000;
 

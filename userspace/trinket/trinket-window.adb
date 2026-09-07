@@ -1,15 +1,15 @@
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
-with Akernel_User.Window;
+with Aegir_User.Syscalls;
+with Aegir_User.Window;
 with Trinket.Paint;
 with Trinket.Fonts;
 with Trinket.Menus;
 
 package body Trinket.Window is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type Trinket.U64;
    use type Widgets.Any_Widget;
-   package Win renames Akernel_User.Window;
+   package Win renames Aegir_User.Window;
    package SSE renames System.Storage_Elements;
 
    --  Mapping VAs (fixed literals, never derived — the 37b
@@ -648,7 +648,7 @@ package body Trinket.Window is
    end Set_App_Handler;
 
    --  Milestone 61: serialize the tree into a one-page memobj
-   --  (layout in akernel_user-window.ads) and hand Bureau a
+   --  (layout in aegir_user-window.ads) and hand Bureau a
    --  Map+Read+Transfer mint; Bureau copies it out, so the page
    --  is deleted right after the call. The wire packing itself
    --  is Trinket.Menus.Serialize (shared with raw-protocol

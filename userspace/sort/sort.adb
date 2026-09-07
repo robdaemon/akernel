@@ -1,9 +1,9 @@
 with Interfaces;
 with System;
 with Ada.Text_IO;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Sort: order a file's lines byte-wise (milestone 41c; the
 --  Amiga C:Sort analog). "Sort <from> <to>"; ascending on the
@@ -23,8 +23,8 @@ with Akernel_User.Files;
 --  1 = console stream (Send), 2 = file server (Send).
 
 procedure Sort is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 
    subtype U64 is CLI.U64;
@@ -196,7 +196,7 @@ procedure Sort is
    Lines : Line_Access;
 
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count /= 0 and then CLI.Arg_Count /= 2 then

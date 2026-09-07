@@ -1,9 +1,9 @@
 with Interfaces;
 with System.Storage_Elements;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.IPC;
-with Akernel_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.IPC;
+with Aegir_User.Syscalls;
 
 --  Elevate: run a command with the admin cap (milestone 45;
 --  the Amiga has no analog — think sudo). A dumb client of
@@ -23,10 +23,10 @@ with Akernel_User.Syscalls;
 --  chain — the Call then fails and we exit RC_Fail).
 
 procedure Elevate is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
-   package Proto is new Akernel_User.IPC (U64, U64);
+   package Proto is new Aegir_User.IPC (U64, U64);
 
    Svc_EP     : constant U64 := 5;
    Op_Elevate : constant U64 := 1;
@@ -37,14 +37,14 @@ procedure Elevate is
    Mem_Cap : U64;
    St      : U64;
    R_Label : U64;
-   Code    : U64 := Akernel_User.CLI.RC_Fail;
+   Code    : U64 := Aegir_User.CLI.RC_Fail;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
 
-   if Akernel_User.CLI.Arg_Count < 1 then
-      Akernel_User.CLI.Fail_With
+   if Aegir_User.CLI.Arg_Count < 1 then
+      Aegir_User.CLI.Fail_With
         ("usage: Elevate <command> [args...]",
-         Akernel_User.CLI.RC_Error);
+         Aegir_User.CLI.RC_Error);
    end if;
 
    --  Pack "cmd args..." NUL-terminated into one page.
@@ -53,8 +53,8 @@ begin
      or else Mem_Map (Address_Space_Cap, Mem_Cap, Stage_VA, 0,
                       4096, 3) /= 0
    then
-      Akernel_User.CLI.Fail_With ("Elevate: out of memory",
-                                  Akernel_User.CLI.RC_Fail);
+      Aegir_User.CLI.Fail_With ("Elevate: out of memory",
+                                  Aegir_User.CLI.RC_Fail);
    end if;
 
    declare
@@ -64,9 +64,9 @@ begin
         with Address => To_Address (Integer_Address (Stage_VA));
       Pos  : U64 := 0;
    begin
-      for A in 1 .. Akernel_User.CLI.Arg_Count loop
+      for A in 1 .. Aegir_User.CLI.Arg_Count loop
          declare
-            Arg : constant String := Akernel_User.CLI.Argument (A);
+            Arg : constant String := Aegir_User.CLI.Argument (A);
          begin
             if A > 1 then
                Page (Pos) := Character'Pos (' ');
@@ -91,20 +91,20 @@ begin
       Response       => Code);
 
    if St /= 0 then
-      Akernel_User.CLI.Fail_With
+      Aegir_User.CLI.Fail_With
         ("Elevate: the elevation service is unavailable",
-         Akernel_User.CLI.RC_Fail);
+         Aegir_User.CLI.RC_Fail);
    end if;
 
    if Code = 255 then
       --  The daemon staged nothing: its console is the serial
       --  boot console, so the user-facing message is OURS.
       --  255 is elevated's cannot-find-executable reply.
-      Akernel_User.CLI.Fail_With
+      Aegir_User.CLI.Fail_With
         ("Elevate: cannot find executable: " &
-         Akernel_User.CLI.Argument (1),
-         Akernel_User.CLI.RC_Fail);
+         Aegir_User.CLI.Argument (1),
+         Aegir_User.CLI.RC_Fail);
    end if;
 
-   Akernel_User.CLI.Exit_With (Code);
+   Aegir_User.CLI.Exit_With (Code);
 end Elevate;

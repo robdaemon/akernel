@@ -1,5 +1,5 @@
-name = "akernel_ping"
-description = "akernel ping (ICMP echo over netserv ping sockets)"
+name = "aegir_ping"
+description = "aegir ping (ICMP echo over netserv ping sockets)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

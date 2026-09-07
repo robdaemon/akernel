@@ -1,12 +1,12 @@
 with Interfaces;
 with Ada.Unchecked_Deallocation;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.CLI;
 with Scripting.Exec;
 
 package body Scripting.Interp is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
    function Lower (C : Character) return Character is
@@ -97,7 +97,7 @@ package body Scripting.Interp is
       procedure Free is new Ada.Unchecked_Deallocation
         (Byte_Array, Buf_Access);
 
-      Full  : constant String := Akernel_User.CLI.Resolve_Path (Path);
+      Full  : constant String := Aegir_User.CLI.Resolve_Path (Path);
       Size  : U64 := 0;
       Count : U64 := 0;
       St    : U64;
@@ -158,7 +158,7 @@ package body Scripting.Interp is
       If_Depth   : Natural := 0;
       Skip_Count : Natural := 0;
       Cond       : Boolean := False;
-      Fail_Max   : U64 := Akernel_User.CLI.RC_Error;
+      Fail_Max   : U64 := Aegir_User.CLI.RC_Error;
       Done       : Boolean := False;
       Abort_Run  : Boolean := False;
       Jumped     : Boolean := False;
@@ -182,12 +182,12 @@ package body Scripting.Interp is
       function Add_Local (Name : String) return Natural is
       begin
          if Name'Length = 0 or else Name'Length > Max_Name then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bad local name: " & Name);
             return 0;
          end if;
          if NLoc = Max_Locals then
-            Akernel_User.Console.Put_Line ("too many locals (16)");
+            Aegir_User.Console.Put_Line ("too many locals (16)");
             return 0;
          end if;
          NLoc := NLoc + 1;
@@ -202,7 +202,7 @@ package body Scripting.Interp is
       is
       begin
          if Value'Length > Max_Value then
-            Akernel_User.Console.Put_Line ("local value too long");
+            Aegir_User.Console.Put_Line ("local value too long");
             return False;
          end if;
          Locals (Slot).Val (1 .. Value'Length) := Value;
@@ -237,7 +237,7 @@ package body Scripting.Interp is
                      end if;
                   end if;
                   if Template = Max_Locals then
-                     Akernel_User.Console.Put_Line
+                     Aegir_User.Console.Put_Line
                        ("too many locals (16)");
                      Bad := True;
                      return;
@@ -267,7 +267,7 @@ package body Scripting.Interp is
             end if;
          end loop;
          if Eq = 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bad .def (want .def name=value)");
             Bad := True;
             return;
@@ -275,7 +275,7 @@ package body Scripting.Interp is
          Trim (Rest (Rest'First .. Eq - 1), NF, NL);
          Trim (Rest (Eq + 1 .. Rest'Last), VF, VL);
          if NL < NF then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("bad .def (want .def name=value)");
             Bad := True;
             return;
@@ -351,12 +351,12 @@ package body Scripting.Interp is
               Locals (Slot).Val (1 .. VLen);
             return;
          end if;
-         if Akernel_User.Files.Stat ("ENV:" & Name, Sz) =
-           Akernel_User.Files.Status_Ok
+         if Aegir_User.Files.Stat ("ENV:" & Name, Sz) =
+           Aegir_User.Files.Status_Ok
          then
             Defined := True;
             declare
-               V : constant String := Akernel_User.CLI.Get_Env (Name);
+               V : constant String := Aegir_User.CLI.Get_Env (Name);
             begin
                VLen := Natural'Min (V'Length, Val'Length);
                if VLen > 0 then
@@ -384,7 +384,7 @@ package body Scripting.Interp is
          procedure Put_Char (C : Character) is
          begin
             if Out_Len = Out_Buf'Length then
-               Akernel_User.Console.Put_Line ("script line too long");
+               Aegir_User.Console.Put_Line ("script line too long");
                Bad := True;
                return;
             end if;
@@ -430,7 +430,7 @@ package body Scripting.Interp is
                            Lookup (Line (J .. K - 1), Env_Only,
                                    VBuf.all, VL, Def);
                            if not Def then
-                              Akernel_User.Console.Put_Line
+                              Aegir_User.Console.Put_Line
                                 ("bad substitution: <"
                                  & Line (J .. K - 1) & ">");
                               Bad := True;
@@ -466,7 +466,7 @@ package body Scripting.Interp is
       begin
          Bad := False;
          if Rest'Length = 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("usage: .set <name> [value]");
             Bad := True;
             return;
@@ -507,7 +507,7 @@ package body Scripting.Interp is
       begin
          Bad := False;
          if If_Depth = Max_If then
-            Akernel_User.Console.Put_Line ("if nested too deep (8)");
+            Aegir_User.Console.Put_Line ("if nested too deep (8)");
             Bad := True;
             return;
          end if;
@@ -553,7 +553,7 @@ package body Scripting.Interp is
                begin
                   if Same_Word (W1, "exists") then
                      if R1'Length = 0 then
-                        Akernel_User.Console.Put_Line
+                        Aegir_User.Console.Put_Line
                           ("if exists what?");
                         Bad := True;
                         return;
@@ -567,10 +567,10 @@ package body Scripting.Interp is
                         --  Stat answers directories too
                         --  (milestone 64), so exists is
                         --  Amiga-true for drawers.
-                        Result := Akernel_User.Files.Stat
-                          (Akernel_User.CLI.Resolve_Path
+                        Result := Aegir_User.Files.Stat
+                          (Aegir_User.CLI.Resolve_Path
                              (R1 (PF .. PL)), Sz) =
-                          Akernel_User.Files.Status_Ok;
+                          Aegir_User.Files.Status_Ok;
                      end;
                   elsif R1'Length > 0 then
                      declare
@@ -603,7 +603,7 @@ package body Scripting.Interp is
                               begin
                                  Trim (R2, BF, BL);
                                  if BL < BF then
-                                    Akernel_User.Console.Put_Line
+                                    Aegir_User.Console.Put_Line
                                       ("if: missing value after "
                                        & Op);
                                     Bad := True;
@@ -627,7 +627,7 @@ package body Scripting.Interp is
                                        BL := BL - 1;
                                     end loop;
                                     if BL < BF then
-                                       Akernel_User.Console
+                                       Aegir_User.Console
                                          .Put_Line
                                          ("if: missing value after "
                                           & Op);
@@ -648,7 +648,7 @@ package body Scripting.Interp is
                                        if not OkA
                                          or else not OkB
                                        then
-                                          Akernel_User.Console
+                                          Aegir_User.Console
                                             .Put_Line
                                             ("if: val needs"
                                              & " numbers");
@@ -727,7 +727,7 @@ package body Scripting.Interp is
       begin
          Bad := False;
          if If_Depth = 0 then
-            Akernel_User.Console.Put_Line ("else without if");
+            Aegir_User.Console.Put_Line ("else without if");
             Bad := True;
             return;
          end if;
@@ -744,7 +744,7 @@ package body Scripting.Interp is
       begin
          Bad := False;
          if If_Depth = 0 then
-            Akernel_User.Console.Put_Line ("endif without if");
+            Aegir_User.Console.Put_Line ("endif without if");
             Bad := True;
             return;
          end if;
@@ -821,25 +821,25 @@ package body Scripting.Interp is
 
    begin
       if Depth > Max_Nest then
-         Akernel_User.Console.Put_Line ("scripts nested too deep");
-         return Akernel_User.CLI.RC_Error;
+         Aegir_User.Console.Put_Line ("scripts nested too deep");
+         return Aegir_User.CLI.RC_Error;
       end if;
-      St := Akernel_User.Files.Open (Full, Size);
-      if St /= Akernel_User.Files.Status_Ok then
-         Akernel_User.Console.Put_Line ("can't open script " & Full);
-         return Akernel_User.CLI.RC_Error;
+      St := Aegir_User.Files.Open (Full, Size);
+      if St /= Aegir_User.Files.Status_Ok then
+         Aegir_User.Console.Put_Line ("can't open script " & Full);
+         return Aegir_User.CLI.RC_Error;
       end if;
       if Size > Max_Script then
-         Akernel_User.Console.Put_Line ("script too big " & Full);
-         return Akernel_User.CLI.RC_Error;
+         Aegir_User.Console.Put_Line ("script too big " & Full);
+         return Aegir_User.CLI.RC_Error;
       end if;
       Buf := new Byte_Array (0 .. (if Size = 0 then 0 else Size - 1));
-      St := Akernel_User.Files.Read
+      St := Aegir_User.Files.Read
         (Full, 0, Buf.all'Address, Size, Count);
-      if St /= Akernel_User.Files.Status_Ok or else Count /= Size then
-         Akernel_User.Console.Put_Line ("can't read script " & Full);
+      if St /= Aegir_User.Files.Status_Ok or else Count /= Size then
+         Aegir_User.Console.Put_Line ("can't read script " & Full);
          Free (Buf);
-         return Akernel_User.CLI.RC_Error;
+         return Aegir_User.CLI.RC_Error;
       end if;
 
       --  Everything big lives on the heap from here on (see the
@@ -1020,7 +1020,7 @@ package body Scripting.Interp is
                                           begin
                                              if SRest'Length = 0
                                              then
-                                                Akernel_User
+                                                Aegir_User
                                                   .Console.Put_Line
                                                   ("usage: skip"
                                                    & " <label>"
@@ -1044,7 +1044,7 @@ package body Scripting.Interp is
                                                    then
                                                       Back := True;
                                                    else
-                                                      Akernel_User
+                                                      Aegir_User
                                                         .Console
                                                         .Put_Line
                                                         ("usage:"
@@ -1077,7 +1077,7 @@ package body Scripting.Interp is
                                                       Jumped := True;
                                                       RC := 0;
                                                    else
-                                                      Akernel_User
+                                                      Aegir_User
                                                         .Console
                                                         .Put_Line
                                                         ("label not"
@@ -1112,7 +1112,7 @@ package body Scripting.Interp is
                                                 N := Parse_Nat
                                                   (QRest, Ok);
                                                 if not Ok then
-                                                   Akernel_User
+                                                   Aegir_User
                                                      .Console
                                                      .Put_Line
                                                      ("quit: bad"
@@ -1141,7 +1141,7 @@ package body Scripting.Interp is
                                              N := Parse_Nat
                                                (FRest, Ok);
                                              if not Ok then
-                                                Akernel_User
+                                                Aegir_User
                                                   .Console.Put_Line
                                                   ("usage: failat"
                                                    & " <n>");
@@ -1202,7 +1202,7 @@ package body Scripting.Interp is
                                                 end loop;
                                              end if;
                                              if Noline then
-                                                Akernel_User.Console
+                                                Aegir_User.Console
                                                   .Put
                                                   (Txt
                                                      (Txt'First
@@ -1210,13 +1210,13 @@ package body Scripting.Interp is
                                              elsif TL
                                                >= Txt'First
                                              then
-                                                Akernel_User.Console
+                                                Aegir_User.Console
                                                   .Put_Line
                                                   (Txt
                                                      (Txt'First
                                                       .. TL));
                                              else
-                                                Akernel_User.Console
+                                                Aegir_User.Console
                                                   .Put_Line ("");
                                              end if;
                                              RC := 0;
@@ -1247,7 +1247,7 @@ package body Scripting.Interp is
                                              --  script continues.
                                              RC :=
                                                (if Cond then 0
-                                                else Akernel_User
+                                                else Aegir_User
                                                   .CLI.RC_Warn);
                                           end;
                                        else
@@ -1260,7 +1260,7 @@ package body Scripting.Interp is
                            end if;
                         end if;
                         if Bad then
-                           RC := Akernel_User.CLI.RC_Error;
+                           RC := Aegir_User.CLI.RC_Error;
                            Abort_Run := True;
                         end if;
                      end;
@@ -1281,8 +1281,8 @@ package body Scripting.Interp is
       --  AmigaDOS reports "ENDIF expected". A quit overrides
       --  (its RC is the script's answer).
       if not Abort_Run and then not Done and then If_Depth > 0 then
-         Akernel_User.Console.Put_Line ("missing endif");
-         RC := Akernel_User.CLI.RC_Error;
+         Aegir_User.Console.Put_Line ("missing endif");
+         RC := Aegir_User.CLI.RC_Error;
       end if;
       Free (Buf);
       Free_Locals (Locals);

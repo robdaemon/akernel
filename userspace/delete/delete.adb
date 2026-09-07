@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Text_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Delete: remove files (milestone 41; the Amiga C:Delete
 --  analog). "Delete <name> [<name> ...]"; each argument is
@@ -19,7 +19,7 @@ with Akernel_User.CLI;
 --  flushes a piped consumer's EOF.
 
 procedure Delete is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    Worst : CLI.U64 := CLI.RC_Ok;
 begin
    CLI.Init;

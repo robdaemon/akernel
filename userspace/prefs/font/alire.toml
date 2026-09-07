@@ -1,5 +1,5 @@
-name = "akernel_font"
-description = "akernel font"
+name = "aegir_font"
+description = "aegir font"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

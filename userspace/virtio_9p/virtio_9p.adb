@@ -1,9 +1,9 @@
 with System;
 with System.Storage_Elements;
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -34,13 +34,13 @@ with Virtio.Queues;
 --  little-endian, native on this target.
 --
 --  9P2000.L session: Tversion (msize 36864, "9P2000.L") then
---  Tattach (fid 0 = the share root, afid NOFID, uname "akernel",
+--  Tattach (fid 0 = the share root, afid NOFID, uname "aegir",
 --  aname "/", n_uname NONUNAME) then a root Tgetattr self-test.
 --  Fid 0 is kept for the driver's lifetime; file operations walk
---  clones off it per op because the akernel fs protocol is
+--  clones off it per op because the aegir fs protocol is
 --  stateless (every op carries a full path, volume-stripped).
 --
---  Host: volume protocol (m79b, the Akernel_User.Files wire ops,
+--  Host: volume protocol (m79b, the Aegir_User.Files wire ops,
 --  dispatched by label 1..18 on the service endpoint): Stat/Open
 --  (Twalk + Tgetattr), Read (walk + Tlopen O_RDONLY + Tread
 --  chunks, fat32 bounds semantics: offset >= size is
@@ -57,7 +57,7 @@ with Virtio.Queues;
 --  12..20 reply buffer (36 KiB).
 
 procedure Virtio_9p is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U8;
    use type Virtio.U16;
@@ -67,7 +67,7 @@ procedure Virtio_9p is
 
    --  Short selector for the fs wire-protocol constants (no
    --  use-visibility: the package also declares a U64 subtype).
-   package Files renames Akernel_User.Files;
+   package Files renames Aegir_User.Files;
 
    subtype U8 is Interfaces.Unsigned_8;
 
@@ -176,7 +176,7 @@ procedure Virtio_9p is
    Aux_Fid  : constant Virtio.U32 := 2;
 
    --  Fixed VA window for the per-op client buffer cap (8 pages,
-   --  32 KiB — the Akernel_User.Files buffer geometry), mapped,
+   --  32 KiB — the Aegir_User.Files buffer geometry), mapped,
    --  copied, unmapped and cap-deleted on every Read.
    Buf_Win_VA    : constant U64 := 16#5100_0000#;
    Cli_Buf_Bytes : constant U64 := 8 * 4096;
@@ -289,7 +289,7 @@ procedure Virtio_9p is
 
    procedure Fail (S : String) is
    begin
-      Akernel_User.Console.Put_Line ("FAIL " & S);
+      Aegir_User.Console.Put_Line ("FAIL " & S);
       Process_Exit;
    end Fail;
 
@@ -494,7 +494,7 @@ procedure Virtio_9p is
    end Round_Trip;
 
    ------------------------------------------------------------------
-   --  Host: volume server (Akernel_User.Files wire ops)
+   --  Host: volume server (Aegir_User.Files wire ops)
    ------------------------------------------------------------------
 
    --  Per-op client buffer overlay (valid while mapped).
@@ -1404,7 +1404,7 @@ procedure Virtio_9p is
    end Handle_File_Op;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -1425,7 +1425,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-9p msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-9p msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -1535,7 +1535,7 @@ begin
          Keep := Keep + 1;
          Tag (Keep) := Character'Val (Cfg8 (1 + I));
       end loop;
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("virtio-9p mount tag '" & Tag (1 .. Keep) & "'");
    end;
 
@@ -1581,7 +1581,7 @@ begin
       Begin_Req (T_Attach);
       Put32 (Root_Fid);
       Put32 (No_Fid);
-      Put_Str ("akernel");
+      Put_Str ("aegir");
       Put_Str ("/");
       Put32 (No_Uname);
       Err := Round_Trip (R_Attach);
@@ -1616,7 +1616,7 @@ begin
          end if;
       end;
 
-      Akernel_User.Console.Put_Line ("PASS virtio-9p attach ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-9p attach ok");
    end;
 
    ------------------------------------------------------------------
@@ -1625,7 +1625,7 @@ begin
    --  file server).
    ------------------------------------------------------------------
 
-   Akernel_User.Console.Put_Line ("virtio-9p online");
+   Aegir_User.Console.Put_Line ("virtio-9p online");
 
    loop
       Result := IPC_Recv (Svc_EP, Reply_H);

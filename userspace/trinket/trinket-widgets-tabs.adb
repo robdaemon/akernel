@@ -1,6 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
-with Akernel_User.Theme;
+with Aegir_User.Theme;
 
 package body Trinket.Widgets.Tabs is
    use type Trinket.U64;
@@ -134,7 +134,7 @@ package body Trinket.Widgets.Tabs is
       F   : constant Pixel :=
         (if Active then Face
          elsif I = W.Hover_Tab and then I /= W.Press_Tab
-         then Akernel_User.Theme.Face_Hi
+         then Aegir_User.Theme.Face_Hi
          else Win_Face);
       LW  : constant U64 :=
         Fonts.Text_Width (W.Labels (I).Buf (1 .. W.Labels (I).Len));

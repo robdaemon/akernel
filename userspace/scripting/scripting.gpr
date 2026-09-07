@@ -1,4 +1,4 @@
-with "../rts/akernel_rts.gpr";
+with "../rts/aegir_rts.gpr";
 
 --  Scripting (milestone 70): the shared shell-script machinery.
 --  Programs that run commands or scripts link libscripting.a IN

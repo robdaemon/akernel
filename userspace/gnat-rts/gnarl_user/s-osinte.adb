@@ -6,11 +6,11 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---                      Akernel Ravenscar port (M67b)                       --
+--                      Aegir Ravenscar port (M67b)                       --
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Minimal body mapping the GNARL OS interface onto the Akernel syscall
+--  Minimal body mapping the GNARL OS interface onto the Aegir syscall
 --  layer. This replaces the light-tasking-polarfiresoc System.BB layer.
 
 pragma Style_Checks (Off);
@@ -46,22 +46,22 @@ package body System.OS_Interface is
    __tls_bss_end : U64;
    pragma Import (C, __tls_bss_end, "__tls_bss_end");
 
-   --  Raw Akernel syscalls (provided by libakernel / the program).
+   --  Raw Aegir syscalls (provided by libaegir / the program).
 
    function Raw_Thread_Self return U64
-     with Import, Convention => C, External_Name => "akernel_sys_thread_self";
+     with Import, Convention => C, External_Name => "aegir_sys_thread_self";
 
    procedure Raw_Thread_Exit
-     with Import, Convention => C, External_Name => "akernel_sys_thread_exit";
+     with Import, Convention => C, External_Name => "aegir_sys_thread_exit";
 
    function Raw_Thread_Create return U64
-     with Import, Convention => C, External_Name => "akernel_sys_thread_create";
+     with Import, Convention => C, External_Name => "aegir_sys_thread_create";
 
    function Raw_Sleep_Until (Deadline : U64) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_sleep_until";
+     with Import, Convention => C, External_Name => "aegir_sys_sleep_until";
 
    function Raw_Mem_Alloc (Pages : U64) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_mem_alloc";
+     with Import, Convention => C, External_Name => "aegir_sys_mem_alloc";
 
    function Raw_Mem_Map
      (Address_Space : U64;
@@ -70,22 +70,22 @@ package body System.OS_Interface is
       Offset        : U64;
       Length        : U64;
       Flags         : U64) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_mem_map";
+     with Import, Convention => C, External_Name => "aegir_sys_mem_map";
 
    function Raw_Set_Priority
      (Target       : U64;
       New_Priority : U64;
       Old_Priority : System.Address) return U64
-     with Import, Convention => C, External_Name => "akernel_sys_set_priority";
+     with Import, Convention => C, External_Name => "aegir_sys_set_priority";
 
    function Raw_Read_Time return U64
-     with Import, Convention => C, External_Name => "akernel_rdtime";
+     with Import, Convention => C, External_Name => "aegir_rdtime";
 
    procedure Raw_Yield
-     with Import, Convention => C, External_Name => "akernel_sys_yield";
+     with Import, Convention => C, External_Name => "aegir_sys_yield";
 
    procedure Raw_Debug_Putchar (C : U64)
-     with Import, Convention => C, External_Name => "akernel_sys_debug_putchar";
+     with Import, Convention => C, External_Name => "aegir_sys_debug_putchar";
 
 
    --  Fixed VA windows for secondary-thread resources. The initial thread
@@ -199,7 +199,7 @@ package body System.OS_Interface is
             return;
          end if;
          --  Own-address-space authority is uniform-ABI cap 255
-         --  (Akernel_User.Syscalls.Address_Space_Cap).
+         --  (Aegir_User.Syscalls.Address_Space_Cap).
          if Raw_Mem_Map
               (Address_Space => 255,
                Cap           => New_Cap,

@@ -1,5 +1,5 @@
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 
 --  Preemption canary: never yields, never makes syscalls after the
 --  banner. Under a cooperative-only scheduler this thread would hang
@@ -23,19 +23,19 @@ with Akernel_User.Syscalls;
 --  still spins forever and would still hang the boot if timer
 --  preemption broke.  SMP keeps priority 0: siblings hide the hog.
 procedure Spin is
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
    Old : Integer;
-   St  : Akernel_User.Syscalls.U64;
+   St  : Aegir_User.Syscalls.U64;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   if Akernel_User.Syscalls.CPU_Count = 1 then
-      St := Akernel_User.Syscalls.Set_Priority
-        (Akernel_User.Syscalls.Priority_Self, -1, Old);
+   Aegir_User.Console.Set_Endpoint (1);
+   if Aegir_User.Syscalls.CPU_Count = 1 then
+      St := Aegir_User.Syscalls.Set_Priority
+        (Aegir_User.Syscalls.Priority_Self, -1, Old);
       if St /= 0 then
-         Akernel_User.Console.Put_Line ("spin: priority demote failed");
+         Aegir_User.Console.Put_Line ("spin: priority demote failed");
       end if;
    end if;
-   Akernel_User.Console.Put_Line ("spin online");
+   Aegir_User.Console.Put_Line ("spin online");
    loop
       null;
    end loop;

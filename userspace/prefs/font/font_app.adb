@@ -1,7 +1,7 @@
 with Ada.Directories;
-with Akernel_User.CLI;
-with Akernel_User.Syscalls;
-with Akernel_User.Theme;
+with Aegir_User.CLI;
+with Aegir_User.Syscalls;
+with Aegir_User.Theme;
 with Trinket;
 with Trinket.Fonts;
 with Trinket.Listview;
@@ -11,13 +11,13 @@ with Trinket.Widgets.Button;
 with Trinket.Window;
 
 package body Font_App is
-   use Akernel_User.Syscalls;
-   use type Akernel_User.Syscalls.U64;
+   use Aegir_User.Syscalls;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
    package LV renames Trinket.Listview;
    package Fonts renames Trinket.Fonts;
    package Paint renames Trinket.Paint;
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    use type Trinket.Fonts.Handle;
 
    Win : Trinket.Window.Window;
@@ -72,7 +72,7 @@ package body Font_App is
    Worst_LH : U64 := 16;   --  largest PIXEL_SIZE seen + slack
 
    overriding procedure Draw (W : Preview; C : Trinket.Canvas) is
-      use Akernel_User.Theme;
+      use Aegir_User.Theme;
       LH : U64;
    begin
       Paint.Fill_Rect (C, W.X, W.Y, W.X + W.W, W.Y + W.H, Pane);

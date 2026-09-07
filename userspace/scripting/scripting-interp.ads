@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Scripting.Interp (milestone 70 chunk 2): the AmigaDOS-subset
 --  script interpreter core. The host (the shell's `execute`
@@ -60,17 +60,17 @@ generic
    --  subprogram carries no accessibility check, unlike an
    --  access-to-subprogram type would).
    with function Run_Line
-     (Cmd : String) return Akernel_User.Syscalls.U64;
+     (Cmd : String) return Aegir_User.Syscalls.U64;
    --  Interactive line read for `ask`: the shell reads the raw
    --  console stream (Scripting.Console_IO), C:Execute reads
-   --  stdin (Akernel_User.CLI.Get_Line — trailer-aware, so
+   --  stdin (Aegir_User.CLI.Get_Line — trailer-aware, so
    --  `echo y | Execute script` composes).
    with procedure Ask_Line
      (Prompt    : String;
       Reply     : out String;
       Reply_Len : out Natural);
 package Scripting.Interp is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
 
    Max_Script : constant := 16 * 1024;  --  slurp cap (bytes)
    Max_Nest   : constant := 4;          --  execute-in-script depth

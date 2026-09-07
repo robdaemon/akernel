@@ -1,4 +1,4 @@
-# Akernel resume
+# Aegir resume
 
 Live state and open work. Landed milestone narratives live in
 `docs/HISTORY.md`; from M74 on, the `git log` commit bodies carry
@@ -23,7 +23,7 @@ repository.
   buffer; `Put` replaces atomically (Too_Big leaves the old
   contents), `Get` reads by offset. Transfers ride a client buffer
   memobj mapped at a guarded VA, per-op cap deleted. Client API
-  `Akernel_User.Clipboard`. Text_Edit gained the selection/editing
+  `Aegir_User.Clipboard`. Text_Edit gained the selection/editing
   API (`871e35e`): Select All / Selected_Text (multi-line) /
   Delete_Selected / CRLF-aware Insert_Text. Edit's Edit menu
   (`c3dc7a8`) wires Cut/Copy/Paste/Select All (Ctrl+X/C/V/A).
@@ -817,7 +817,7 @@ growth, attribute writes).
   status, type fourcc, data size, name[24]) and Op_Attr_Read = 20
   (path words 0..3, attr name words 4..5, buffer cap -> status,
   count, full size, type; whole-attribute read). Client API
-  Akernel_User.Files.Attr_List/Attr_Read; fileserver forwards both
+  Aegir_User.Files.Attr_List/Attr_Read; fileserver forwards both
   verbatim for Is_FS volumes (non-FS: Not_Found empty-list for
   list, Bad_Args for read); fat32 rejects both via its default
   branch. Bfs_Engine walks the inode small_data region at 232
@@ -1030,7 +1030,7 @@ growth, attribute writes).
   otherwise use (0 for path-only ops, 1 when slot 0 is a data/
   predicate/rename-TO buffer, 2 for query-open); append-only —
   old servers would just Not_Found the marker "name". Client
-  (akernel_user-files): lazy 1-page path buffer at the new fixed
+  (aegir_user-files): lazy 1-page path buffer at the new fixed
   window 0x4400_8000 (above the 8-page read buffer, below the
   0x4600_0000 link base), Stage_Path picks inline vs buffer per
   op; Q strings widened to Max_Path. VFS (fileserver):
@@ -1045,7 +1045,7 @@ growth, attribute writes).
   (17 checks: 61-char dir, 113-char file; mkdir/write/readback/
   stat_ex/readdir/attr write+read+list/rename long FROM+TO/
   delete/rmdir; fat32 long-path miss probe). KEY DEBUG LESSON:
-  Akernel_User.Console.Put_Line from a server MID-OP clobbers
+  Aegir_User.Console.Put_Line from a server MID-OP clobbers
   Syscalls.Message (the console write reuses the IPC buffer) —
   every "words look corrupted" observation via an inserted print
   was the print's own fault; use Syscalls.Debug_Put_Line for
@@ -1092,13 +1092,13 @@ growth, attribute writes).
   AFAFAF, desktop solid #888888 (marble dither average), bar/
   menus AFAFAF with blue hot items, focused title text gets
   MUI's "shadow" style (dark +1,+1 copy under white).  Values
-  live only in Akernel_User.Theme.  Known nit left for M86c:
+  live only in Aegir_User.Theme.  Known nit left for M86c:
   selected listview rows draw dark text on the blue band
   (uninverted).  QMP-verified colors pixel-exact.  1851 PASS
   SMP4 / 1850 SMP1, 0 FAIL.
 
-- **M86a done** (this commit): Akernel_User.Theme — the single
-  palette source (userspace/rts/akernel/akernel_user-theme.ads,
+- **M86a done** (this commit): Aegir_User.Theme — the single
+  palette source (userspace/rts/aegir/aegir_user-theme.ads,
   dependency-free constants, opt-in like Font8x8: only programs
   that with it carry it).  Bureau's and Trinket's hand-synced
   palette blocks are now renames of Theme constants; the
@@ -1106,7 +1106,7 @@ growth, attribute writes).
   #FFFFFF (bureau's copy only blanked not-yet-mapped windows,
   visually nil).  Object renames in Ada take NO "constant"
   keyword ("constant not permitted in renaming declaration");
-  and pragma Pure/Preelaborate can't be used — the Akernel_User
+  and pragma Pure/Preelaborate can't be used — the Aegir_User
   root is uncategorized ("wrong categorization" errors).
   VERIFICATION LESSON: full-frame screendump pixel-diffs are
   useless across boots — startup spawn order is racy, so window
@@ -1116,7 +1116,7 @@ growth, attribute writes).
   here).  1850 PASS SMP4 / 1846 SMP1, 0 FAIL.
 
 - **M85c done** (this commit): glob wiring. Dir and List take a
-  wildcard pattern argument (Akernel_User.Glob syntax): the
+  wildcard pattern argument (Aegir_User.Glob syntax): the
   pattern is the tail after the last ':' or '/' (no separator:
   the whole arg, listed from the cwd — Dir) and the walk stays
   Start_Search ("*") with a Glob.Match filter per Simple_Name.
@@ -1134,7 +1134,7 @@ growth, attribute writes).
   ("  B.TXT 4", "  C.DAT 9"), plus a cwd-relative pattern-only
   arg. 1851 PASS SMP4 / 1850 SMP1, 0 FAIL.
 
-- **M85b done** (this commit): Akernel_User.Glob — the shared
+- **M85b done** (this commit): Aegir_User.Glob — the shared
   Amiga MatchPatternNoCase analog, pure and syscall-free.
   Tokens: ? (any char), * (shorthand for #?), #x (zero or more
   of item x — literal, ?, %, escaped char or group), % (empty
@@ -1149,12 +1149,12 @@ growth, attribute writes).
   case, escapes, negation, malformed).  NOTE: bfs_engine has
   its own minimal Glob_Match (*, ? only, case-sensitive) behind
   C:Query — left alone deliberately; swapping it for
-  Akernel_User.Glob would change Query to case-insensitive
+  Aegir_User.Glob would change Query to case-insensitive
   semantics and is a separate decision.  1776 PASS SMP4 /
   1777 SMP1, 0 FAIL.
 
 - **M85a done** (this commit): EndCLI. New streams op
-  Op_Endcli = 5 (append-only) + Akernel_User.Streams.Endcli
+  Op_Endcli = 5 (append-only) + Aegir_User.Streams.Endcli
   (Endpoint) helper; reply Count 0 = "closing, exit" / 1 = "not
   a window, stay up" / IPC failure = 1. Terminal handles it by
   REPLYING FIRST (rendezvous discipline: calling Bureau before
@@ -1197,12 +1197,12 @@ growth, attribute writes).
   ~1 ms. Root cause: the runtime's required switches (from
   runtime.xml) carry NO -O flag, so ALL userspace built at -O0
   with checks; the compositor's per-pixel pane-copy/fill loops
-  ran ~0.5 us/pixel. Fixes: (1) -O2 in akernel_program.gpr's
+  ran ~0.5 us/pixel. Fixes: (1) -O2 in aegir_program.gpr's
   new Compiler package (project switches land after the
   runtime's, so it wins); (2) bureau Fill_Rect + Draw_Window
   pane copy + trinket-paint Fill_Rect now use row-slice
   assignment (block set/copy, not per-pixel checked stores).
-  -O2 surfaced strict-aliasing warnings in Akernel_User.Tables
+  -O2 surfaced strict-aliasing warnings in Aegir_User.Tables
   instantiations: Element_Access is carved by address
   arithmetic, now carries pragma No_Strict_Aliasing. Result:
   1M-px composite 478 -> 11 ms; maximize total ~1.2 s -> ~90
@@ -1275,7 +1275,7 @@ growth, attribute writes).
   layout at 15 pages and M82g actually overflowed it
   (0x6FFF3FF0). User_Stack_Top/User_Stack_Pages live in
   kernel-processes.ads now; init (previously 4 pages with a
-  duplicated constant in akernel.adb) shares them. The IPC buffer
+  duplicated constant in aegir.adb) shares them. The IPC buffer
   page is NOT relocated — the stack move alone removes the
   ceiling — but the last two fixed-constant userspace references
   (Thread_Create_Write_Params, Set_Grant) now discover the VA
@@ -1322,7 +1322,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   1714 PASS / 0 FAIL, SMP4 and SMP1.
 
 - **M80d done** (this commit): userspace grow-on-demand tables.
-  New RTS helper Akernel_User.Tables (generic over element type,
+  New RTS helper Aegir_User.Tables (generic over element type,
   chunk-append growth over Mem_Alloc, 64-page chunks mapped into
   the new Table_Arena window 0x7000_0000..0x7FF0_0000 — the hole
   M83 left below the stack; compile-time arena-fit guard; lazy
@@ -1346,7 +1346,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
 
 - **M80e done** (this commit): network tables + s-osinte thread
   tables growable. netserv: Socks/Pend/Resolves are
-  Akernel_User.Tables chunk chains (sock ids stay stable chunk
+  Aegir_User.Tables chunk chains (sock ids stay stable chunk
   indices — the badge is the id); Alloc_Sock appends when no
   free slot, capped at Max_Sock_Ids = the ring-window capacity;
   the sock-ring VA window grew 8 MiB -> 86 MiB (0x5420_0000..
@@ -1356,7 +1356,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   id->pcb list (open candidate 3 retires). lwIP: pools were
   already malloc-backed (MEMP_MEM_MALLOC=1); DNS_TABLE_SIZE
   4 -> 16 is the effective concurrent-resolve bound. Client RTS
-  Akernel_User.Sockets: ring stride 1 MiB -> 64 KiB, ring window
+  Aegir_User.Sockets: ring stride 1 MiB -> 64 KiB, ring window
   0x4A00..0x5100 (1792 pairs), Resolve_VA moved to 0x5100_0000,
   slot table via the helper. s-osinte: the mod-64 Descriptor/
   ATCB/Priority arrays (two live threads with congruent cap
@@ -1374,7 +1374,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   SMP4 and SMP1.
 
 - **M80f done** (this commit): remaining server tables ->
-  Akernel_User.Tables. serial Lines (appends stamp the U64'Last
+  Aegir_User.Tables. serial Lines (appends stamp the U64'Last
   free marker — zeroed chunk slots would alias badge 0) and
   Sinks; devmgr Lines (append-only manifest table; Last doubles
   as Line_Count) and Input_Svc (0..3 -> growable), both with a
@@ -1382,7 +1382,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   overflow; shell Jobs (job numbers user-visible via jobs/wait/
   kill — chunk-append keeps them stable; allocate = free slot,
   then steal oldest Done, then grow); libman Entries + client
-  Akernel_User.Libs Open_Table (Cap=0 free markers match the
+  Aegir_User.Libs Open_Table (Cap=0 free markers match the
   zeroed default); gloss FDs (the chunk index IS the fd —
   lowest-free-fd semantics preserved, slots 1..2 padded once so
   the first file fd stays 3) and Dir_Slots (DIR* = index); bfs
@@ -1420,7 +1420,7 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
   surface ok" exercise the big path).
 
 - **M80h done** (this commit): policy + census. AGENTS.md gains
-  the capacity rule: tables grow on demand (Akernel_User.Tables
+  the capacity rule: tables grow on demand (Aegir_User.Tables
   chunk chains / kernel PMM slabs) or wire to a policy constant
   with room; a surviving static Max_* carries a written
   justification (wire format, hardware ring, boot order,

@@ -1,9 +1,9 @@
 with Ada.Directories;
 with System;
 with System.Storage_Elements;
-with Akernel_User.CLI;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
 with Trinket;
 with Trinket.Images;
 with Trinket.Widgets;
@@ -16,10 +16,10 @@ with Trinket.Menus;
 
 package body Fileman_App is
 
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Dirs renames Ada.Directories;
-   package Syscalls renames Akernel_User.Syscalls;
-   package Files renames Akernel_User.Files;
+   package Syscalls renames Aegir_User.Syscalls;
+   package Files renames Aegir_User.Files;
    package Images renames Trinket.Images;
 
    use type Syscalls.U64;

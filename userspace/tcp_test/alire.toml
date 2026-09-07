@@ -1,5 +1,5 @@
-name = "akernel_tcp_test"
-description = "akernel netserv socket smoke test (TCP hairpin + slirp)"
+name = "aegir_tcp_test"
+description = "aegir netserv socket smoke test (TCP hairpin + slirp)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

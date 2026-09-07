@@ -85,14 +85,14 @@ extern "C" {
 #include "env.h"
 
 #if defined (AKERNEL_ENV_FILES)
-/* 53c: akernel environment variables ARE files (m33a ruling):
+/* 53c: aegir environment variables ARE files (m33a ruling):
    ENV:<NAME> under Sys:Prefs/Env, resolved by the fileserver's
-   assign table. Akernel_User.Gloss exports these three; they do
+   assign table. Aegir_User.Gloss exports these three; they do
    fs IPC, so they only work once the process has an fs endpoint
    (gloss lazy-binds handle 2 when the program bound nothing). */
-extern int akernel_env_get (const char *name, char *buf, int bufsz);
-extern int akernel_env_set (const char *name, const char *value);
-extern int akernel_env_unset (const char *name);
+extern int aegir_env_get (const char *name, char *buf, int bufsz);
+extern int aegir_env_set (const char *name, const char *value);
+extern int aegir_env_unset (const char *name);
 #endif
 
 void
@@ -102,7 +102,7 @@ __gnat_getenv (char *name, int *len, char **value)
    /* Static: the runtime is No_Tasking and a-envvar copies the
       value out immediately. */
    static char env_buf[4096];
-   int n = akernel_env_get (name, env_buf, sizeof (env_buf) - 1);
+   int n = aegir_env_get (name, env_buf, sizeof (env_buf) - 1);
    if (n < 0)
      {
        *len = 0;
@@ -129,7 +129,7 @@ void
 __gnat_setenv (char *name, char *value)
 {
 #if defined (AKERNEL_ENV_FILES)
-  akernel_env_set (name, value);
+  aegir_env_set (name, value);
 #else
 #if (defined (__vxworks) && (defined (__RTP__) || _WRS_VXWORKS_MAJOR >= 7)) \
     || defined (__APPLE__)
@@ -186,7 +186,7 @@ __gnat_environ (void)
 void __gnat_unsetenv (char *name)
 {
 #if defined (AKERNEL_ENV_FILES)
-  akernel_env_unset (name);
+  aegir_env_unset (name);
 #else
 #if defined (__hpux__) || defined (__sun__) \
      || (defined (__vxworks) && ! defined (__RTP__) \

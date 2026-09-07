@@ -1,5 +1,5 @@
-name = "akernel_init"
-description = "akernel init user-space process"
+name = "aegir_init"
+description = "aegir init user-space process"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

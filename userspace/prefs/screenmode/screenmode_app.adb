@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Syscalls;
-with Akernel_User.Window;
+with Aegir_User.CLI;
+with Aegir_User.Syscalls;
+with Aegir_User.Window;
 with Trinket.Fonts;
 with Trinket.Listview;
 with Trinket.Widgets;
@@ -8,12 +8,12 @@ with Trinket.Widgets.Button;
 with Trinket.Window;
 
 package body Screenmode_App is
-   use Akernel_User.Syscalls;
-   use type Akernel_User.Syscalls.U64;
+   use Aegir_User.Syscalls;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
    package LV renames Trinket.Listview;
-   package CLI renames Akernel_User.CLI;
-   package Win renames Akernel_User.Window;
+   package CLI renames Aegir_User.CLI;
+   package Win renames Aegir_User.Window;
 
    Bureau_EP : constant U64 := 3;  --  uniform ABI handle
 

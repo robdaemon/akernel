@@ -1,9 +1,9 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
-with Akernel_User.Tables;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
+with Aegir_User.Tables;
 
 --  Library manager (milestone 65 Tier-1 follow-up).
 --  Amiga-style shared-library list: a single library server is
@@ -13,7 +13,7 @@ with Akernel_User.Tables;
 --  the library server exits.
 
 procedure Libman is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
    Console_Cap : constant U64 := 1;
@@ -38,9 +38,9 @@ procedure Libman is
       Resident    : Boolean := False;  --  never expunge at Open_Count=0
    end record;
 
-   --  m80f: chunk-appended (Akernel_User.Tables); Name_Len = 0 is
+   --  m80f: chunk-appended (Aegir_User.Tables); Name_Len = 0 is
    --  the free marker (matches the zeroed default).
-   package Ent_Tab is new Akernel_User.Tables (Library_Entry);
+   package Ent_Tab is new Aegir_User.Tables (Library_Entry);
    function Entries (I : Natural) return Ent_Tab.Element_Access
      renames Ent_Tab.Ref;
 
@@ -186,8 +186,8 @@ procedure Libman is
       St      : U64;
       Discard : U64;
    begin
-      St := Akernel_User.Files.Stat (Path, Size);
-      if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+      St := Aegir_User.Files.Stat (Path, Size);
+      if St /= Aegir_User.Files.Status_Ok or else Size = 0 then
          return 0;
       end if;
 
@@ -204,15 +204,15 @@ procedure Libman is
          return 0;
       end if;
 
-      St := Akernel_User.Files.Open (Path, Size);
-      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+      St := Aegir_User.Files.Open (Path, Size);
+      while St = Aegir_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Path, Off,
             System'To_Address
               (System.Storage_Elements.Integer_Address (Stage_VA + Off)),
             Chunk, Count);
-         exit when St /= Akernel_User.Files.Status_Ok or else Count /= Chunk;
+         exit when St /= Aegir_User.Files.Status_Ok or else Count /= Chunk;
          Off := Off + Count;
       end loop;
 
@@ -420,7 +420,7 @@ procedure Libman is
    Name     : String (1 .. 40);
    Name_Len : Natural;
 begin
-   Akernel_User.Files.Bind (FS_Cap);
+   Aegir_User.Files.Bind (FS_Cap);
 
    --  Wait for the Sys filesystem before accepting any library
    --  requests; FAT32 mounts are pushed asynchronously by init.
@@ -429,8 +429,8 @@ begin
       Status : U64;
    begin
       for Try in 1 .. 100_000 loop
-         Status := Akernel_User.Files.Stat ("Sys:Libs", Size);
-         if Status = Akernel_User.Files.Status_Ok then
+         Status := Aegir_User.Files.Stat ("Sys:Libs", Size);
+         if Status = Aegir_User.Files.Status_Ok then
             exit;
          end if;
          Yield;

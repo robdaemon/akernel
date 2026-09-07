@@ -1,5 +1,5 @@
-name = "akernel_dir"
-description = "akernel Dir command (milestone 32)"
+name = "aegir_dir"
+description = "aegir Dir command (milestone 32)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

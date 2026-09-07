@@ -1,5 +1,5 @@
-name = "akernel_fileman"
-description = "akernel file manager"
+name = "aegir_fileman"
+description = "aegir file manager"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

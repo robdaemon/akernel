@@ -34,7 +34,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Tasking-enabled version of the Akernel runtime System package.
+--  Tasking-enabled version of the Aegir runtime System package.
 --  This overrides userspace/gnat-rts/gnat_user/system.ads when the
 --  tasking runtime project is built. The only material difference is the
 --  removal of pragma Restrictions (No_Tasking).

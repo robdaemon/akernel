@@ -1,9 +1,9 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Text_IO;
-with Akernel_User.CLI;
-with Akernel_User.Files;
-with Akernel_User.Glob;
+with Aegir_User.CLI;
+with Aegir_User.Files;
+with Aegir_User.Glob;
 
 --  List: detailed directory listing (milestone 41c; the Amiga
 --  C:List analog). "List [<dir>]"; no argument lists the root of
@@ -13,7 +13,7 @@ with Akernel_User.Glob;
 --  files get an Amiga-style stamp column; volumes without
 --  timestamps (initrd, procfs, pipes) print none.
 --
---  Milestone 85c: a wildcard pattern (Akernel_User.Glob syntax)
+--  Milestone 85c: a wildcard pattern (Aegir_User.Glob syntax)
 --  filters by name, split off at the last ':' or '/' like Dir
 --  ("List #?.info", "List BD0:(foo|bar)"); no separator lists the
 --  cwd.  Arguments without wildcard tokens keep the plain-
@@ -25,24 +25,24 @@ with Akernel_User.Glob;
 --  raises in Start_Search and exits RC_Error like before.
 
 procedure List is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Dirs renames Ada.Directories;
    use type Dirs.File_Kind;
-   use type Akernel_User.Files.U64;
+   use type Aegir_User.Files.U64;
 
    Months : constant array (1 .. 12) of String (1 .. 3) :=
      ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec");
 
-   function Two (N : Akernel_User.Files.U64) return String is
+   function Two (N : Aegir_User.Files.U64) return String is
      (Character'Val (Character'Pos ('0') + Natural (N / 10))
       & Character'Val (Character'Pos ('0') + Natural (N mod 10)));
 
    --  FAT encodings -> "15-Aug-2026 19:12:34"; a zero stamp
    --  (volumes without timestamps) prints nothing.
    procedure Put_Stamp (Path, Name : String) is
-      use type Akernel_User.Files.U64;
-      Size, D, T : Akernel_User.Files.U64;
+      use type Aegir_User.Files.U64;
+      Size, D, T : Aegir_User.Files.U64;
       Is_D       : Boolean;
       Full : constant String :=
         (if Path'Length > 0
@@ -51,8 +51,8 @@ procedure List is
          then Path & Name
          else Path & "/" & Name);
    begin
-      if Akernel_User.Files.Stat_Ex (Full, Size, D, T, Is_D) /=
-           Akernel_User.Files.Status_Ok
+      if Aegir_User.Files.Stat_Ex (Full, Size, D, T, Is_D) /=
+           Aegir_User.Files.Status_Ok
         or else D = 0
       then
          return;
@@ -98,7 +98,7 @@ begin
       declare
          Has_Pat : constant Boolean :=
            Arg'Length > 0
-           and then Akernel_User.Glob.Is_Pattern
+           and then Aegir_User.Glob.Is_Pattern
              (Arg (Sep + 1 .. Arg'Last));
          Path : constant String :=
            (if Arg'Length = 0 then "BD0:"
@@ -114,7 +114,7 @@ begin
          while Dirs.More_Entries (Search) loop
             Dirs.Get_Next_Entry (Search, Ent);
             if Has_Pat
-              and then not Akernel_User.Glob.Match
+              and then not Aegir_User.Glob.Match
                 (Pattern, Dirs.Simple_Name (Ent))
             then
                null;  --  filtered out

@@ -1,8 +1,8 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
-with Akernel_User.Window;
+with Aegir_User.Syscalls;
+with Aegir_User.Window;
 with Trinket.Menus;
 
 --  Demo: second Bureau client (milestone 30, slice b) — proves
@@ -23,7 +23,7 @@ with Trinket.Menus;
 --  console writes.
 
 procedure Demo is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_8;
 
@@ -57,7 +57,7 @@ procedure Demo is
       16#FF30_80D0#, 16#FF60_68B0#, 16#FFA0_40C0#, 16#FFF0_F0F0#);
    Strip_BG : constant Pixel := 16#FF18_1818#;
 
-   package Win renames Akernel_User.Window;
+   package Win renames Aegir_User.Window;
 
    Surf_Id : U64;
    Pages   : U64;

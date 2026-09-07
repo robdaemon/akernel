@@ -1,5 +1,5 @@
-name = "akernel_search"
-description = "akernel search"
+name = "aegir_search"
+description = "aegir search"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

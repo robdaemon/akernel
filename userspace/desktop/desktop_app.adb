@@ -1,7 +1,7 @@
-with Akernel_User.CLI;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
-with Akernel_User.Window;
+with Aegir_User.CLI;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
+with Aegir_User.Window;
 with System.Storage_Elements;
 with Trinket.Fonts;
 with Trinket.Iconview;
@@ -11,14 +11,14 @@ with Trinket.Widgets;
 with Trinket.Window;
 
 package body Desktop_App is
-   use Akernel_User.Syscalls;
-   use type Akernel_User.Syscalls.U64;
+   use Aegir_User.Syscalls;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    package IV renames Trinket.Iconview;
    package Images renames Trinket.Images;
-   package Win renames Akernel_User.Window;
+   package Win renames Aegir_User.Window;
 
    Console_EP : constant U64 := 1;  --  uniform ABI handles
    FS_EP      : constant U64 := 2;

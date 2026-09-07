@@ -1,5 +1,5 @@
-name = "akernel_testlib_client"
-description = "akernel Testlib client (milestone 58)"
+name = "aegir_testlib_client"
+description = "aegir Testlib client (milestone 58)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

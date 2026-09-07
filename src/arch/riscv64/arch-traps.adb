@@ -1138,7 +1138,7 @@ package body Arch.Traps is
    --  Sys_Thread_IPC_VA (m73): return the calling thread's IPC
    --  buffer user VA. Secondary threads get their own buffer page
    --  (s-osinte maps it below the legacy 16#6FFF_0000# window), so
-   --  the Akernel_User.Syscalls Message view must be per-thread.
+   --  the Aegir_User.Syscalls Message view must be per-thread.
    procedure Handle_Thread_IPC_VA (Frame : System.Address) is
       Current : constant Kernel.Tasks.Thread_Access :=
         Kernel.Scheduler.Current;

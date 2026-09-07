@@ -1,9 +1,9 @@
 ## Project rules (permanent — read first)
 
 - **Builds are serial.** Never `make -jN`: every crate's gprbuild
-  builds the shared `akernel_rts` library project, and concurrent
+  builds the shared `aegir_rts` library project, and concurrent
   gprlib runs crash (`CONSTRAINT_ERROR : gprlib.adb index check
-  failed`) and corrupt `libakernel_user.a` mid-archive. Plain
+  failed`) and corrupt `libaegir_user.a` mid-archive. Plain
   `make all` / `make test` only.
 - **Capability/syscall/ABI numbers are append-only.** Never
   renumber or rearrange existing assignments (syscall numbers,
@@ -23,7 +23,7 @@
 - Fixed-size tables are already silently full — add headroom in the
   same commit that adds a consumer.
 - **Capacity tables grow on demand** (M80): chunk-chained via
-  `Akernel_User.Tables` / kernel PMM slabs, or wired to a policy
+  `Aegir_User.Tables` / kernel PMM slabs, or wired to a policy
   constant with room. A static `Max_*` ceiling that survives needs
   a written justification in its comment — wire format, hardware
   ring, boot order, transient staging, or a sizing argument.

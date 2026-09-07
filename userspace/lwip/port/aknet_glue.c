@@ -6,7 +6,7 @@
  *  service thread (frame drain, bounded poll-drain or a 50 ms
  *  ticker notification), so NO_SYS needs no locking here.
  *
- *  IP addresses cross the boundary as host-order u32 (the akernel
+ *  IP addresses cross the boundary as host-order u32 (the aegir
  *  convention: 10.0.2.15 = 0x0A00020F); the glue converts.
  *
  *  Hairpin: m71c looped "dst == our own address" traffic back

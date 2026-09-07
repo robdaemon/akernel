@@ -1,7 +1,7 @@
 with System;
 with Interfaces;
-with Akernel_User.Syscalls;
-with Akernel_User.Theme;
+with Aegir_User.Syscalls;
+with Aegir_User.Theme;
 
 --  Trinket (milestone 56): the opt-in GUI widget library — the
 --  MUI-style retained widget tree that renders client-side into
@@ -9,22 +9,22 @@ with Akernel_User.Theme;
 --  Trinket owns everything inside the pane.
 --
 --  Root package: pixel types, the palette (renames of
---  Akernel_User.Theme, milestone 86a — one skin shared with
+--  Aegir_User.Theme, milestone 86a — one skin shared with
 --  Bureau's chrome), and the Canvas record every draw op takes.
 package Trinket is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
    subtype Pixel is Interfaces.Unsigned_32;  -- AARRGGBB
 
-   --  Palette (milestone 86a: Akernel_User.Theme, shared with
+   --  Palette (milestone 86a: Aegir_User.Theme, shared with
    --  Bureau; renames keep widget code untouched).
-   Face      : Pixel renames Akernel_User.Theme.Face;
-   Win_Face  : Pixel renames Akernel_User.Theme.Win_Face;
-   Bevel_Hi  : Pixel renames Akernel_User.Theme.Bevel_Hi;
-   Bevel_Lo  : Pixel renames Akernel_User.Theme.Bevel_Lo;
-   Border    : Pixel renames Akernel_User.Theme.Border;
-   Pane      : Pixel renames Akernel_User.Theme.Pane;
-   Sel_Blue  : Pixel renames Akernel_User.Theme.Sel_Blue;
-   Text_Dark : Pixel renames Akernel_User.Theme.Text_Dark;
+   Face      : Pixel renames Aegir_User.Theme.Face;
+   Win_Face  : Pixel renames Aegir_User.Theme.Win_Face;
+   Bevel_Hi  : Pixel renames Aegir_User.Theme.Bevel_Hi;
+   Bevel_Lo  : Pixel renames Aegir_User.Theme.Bevel_Lo;
+   Border    : Pixel renames Aegir_User.Theme.Border;
+   Pane      : Pixel renames Aegir_User.Theme.Pane;
+   Sel_Blue  : Pixel renames Aegir_User.Theme.Sel_Blue;
+   Text_Dark : Pixel renames Aegir_User.Theme.Text_Dark;
 
    --  Navigation key codes (milestone 57): virtio_input sends
    --  these for keys outside ASCII. Text-only consumers drop

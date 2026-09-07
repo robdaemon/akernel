@@ -2,8 +2,8 @@ with Interfaces;
 with System;
 with System.Storage_Elements;
 with Ada.Unchecked_Conversion;
-with Akernel_User.Syscalls;
-with Akernel_User.Console;
+with Aegir_User.Syscalls;
+with Aegir_User.Console;
 
 --  Procfs (milestone 37b): kernel introspection as a filesystem.
 --  Serves the file protocol subset (stat/open/read/readdir) on its
@@ -27,7 +27,7 @@ procedure Procfs is
    subtype U64 is Interfaces.Unsigned_64;
    use type U64;
 
-   package Syscalls renames Akernel_User.Syscalls;
+   package Syscalls renames Aegir_User.Syscalls;
 
    Console_Cap  : constant U64 := 1;
    Svc_EP       : constant U64 := 2;
@@ -468,7 +468,7 @@ procedure Procfs is
       Syscalls.Message.Words (3) := 0;
       Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-         Akernel_User.Console.Put_Line ("procfs reply failed");
+         Aegir_User.Console.Put_Line ("procfs reply failed");
          Syscalls.Process_Exit;
       end if;
    end Reply2;
@@ -725,12 +725,12 @@ procedure Procfs is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("procfs buffer unmap failed");
          end if;
          --  Buffer caps transferred per op are deleted per op.
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("procfs buffer cap delete failed");
          end if;
       end if;
@@ -830,14 +830,14 @@ procedure Procfs is
       end loop;
       Syscalls.Message.Caps := (others => 0);
       if Syscalls.IPC_Reply (Reply_H) /= Syscalls.IPC_Ok then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("procfs readdir reply failed");
          Syscalls.Process_Exit;
       end if;
    end Handle_Read_Dir;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_Cap);
+   Aegir_User.Console.Set_Endpoint (Console_Cap);
 
    Info_Cap := Syscalls.Mem_Alloc (1);
    Render_Cap := Syscalls.Mem_Alloc (1);
@@ -858,15 +858,15 @@ begin
         Length        => Syscalls.Page_Size,
         Flags         => 3) /= 0
    then
-      Akernel_User.Console.Put_Line ("procfs scratch alloc failed");
+      Aegir_User.Console.Put_Line ("procfs scratch alloc failed");
       Syscalls.Process_Exit;
    end if;
 
-   Akernel_User.Console.Put_Line ("procfs online");
+   Aegir_User.Console.Put_Line ("procfs online");
 
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
-         Akernel_User.Console.Put_Line ("procfs recv failed");
+         Aegir_User.Console.Put_Line ("procfs recv failed");
          Syscalls.Process_Exit;
       end if;
 

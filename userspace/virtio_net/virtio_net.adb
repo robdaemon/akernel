@@ -2,8 +2,8 @@ with System;
 with System.Storage_Elements;
 with System.Machine_Code;
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -56,7 +56,7 @@ with Virtio.Queues;
 --  before the service loop starts.
 
 procedure Virtio_Net is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U8;
    use type Virtio.U16;
@@ -248,7 +248,7 @@ procedure Virtio_Net is
 
    procedure Fail (S : String) is
    begin
-      Akernel_User.Console.Put_Line ("FAIL " & S);
+      Aegir_User.Console.Put_Line ("FAIL " & S);
       Process_Exit;
    end Fail;
 
@@ -399,7 +399,7 @@ procedure Virtio_Net is
    end Transmit;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -420,7 +420,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-net msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-net msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -460,11 +460,11 @@ begin
    --  here.  Report whether the device offered VIRTIO_F_VERSION_1
    --  so a future QEMU config change is visible in the boot log.
    if (Dev.Device_Features_Hi and Feat_Version_1) /= 0 then
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("virtio-net legacy datapath (modern offered, not negotiated),"
          & " virtio_net_hdr 10 bytes");
    else
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("virtio-net legacy datapath, virtio_net_hdr 10 bytes");
    end if;
 
@@ -640,14 +640,14 @@ begin
          Bits := Ntfn_Wait (Ntfn_Cap);
       end loop;
 
-      Akernel_User.Console.Put_Line ("PASS virtio-net arp reply ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-net arp reply ok");
    end;
 
    ------------------------------------------------------------------
    --  Frame service loop
    ------------------------------------------------------------------
 
-   Akernel_User.Console.Put_Line ("virtio-net service online");
+   Aegir_User.Console.Put_Line ("virtio-net service online");
 
    declare
       Frame_Len : U64;
@@ -774,7 +774,7 @@ begin
                   if IPC_Reply (Reply_H) /= IPC_Ok then
                      Debug_Put_Line ("virtio-net reply failed");
                   end if;
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("virtio-net rx ring online");
                end if;
             end if;

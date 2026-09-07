@@ -1,5 +1,5 @@
-name = "akernel_serial"
-description = "akernel serial user-space driver"
+name = "aegir_serial"
+description = "aegir serial user-space driver"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

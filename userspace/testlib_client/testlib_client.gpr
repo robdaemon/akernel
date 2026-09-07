@@ -1,8 +1,8 @@
 
 --  Testlib_Client (milestone 58 Tier-1): hand-rolled client for the
 --  Testlib shared library. Demonstrates the rendezvous flow before
---  Akernel_User.Libs.Open_Library is implemented in piece 4.
-project Testlib_Client extends "../rts/akernel_program.gpr" is
+--  Aegir_User.Libs.Open_Library is implemented in piece 4.
+project Testlib_Client extends "../rts/aegir_program.gpr" is
    for Source_Dirs use (".");
    for Exec_Dir use "../../bin/userspace";
    for Object_Dir use "../../obj/userspace/testlib_client";

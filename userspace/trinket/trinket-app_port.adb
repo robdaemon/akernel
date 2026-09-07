@@ -48,7 +48,7 @@ package body Trinket.App_Port is
      (P             : in out Port;
       Code, A0, A1, A2 : U64) return Boolean
    is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Ok     : Boolean;
       Ignore : U64;
    begin

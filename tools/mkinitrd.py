@@ -9,7 +9,7 @@ HEADER = "<4sIQQ"  # magic, version, cpio_size, reserved
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wrap cpio archive in akernel initrd header")
+    parser = argparse.ArgumentParser(description="Wrap cpio archive in aegir initrd header")
     parser.add_argument("cpio", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()

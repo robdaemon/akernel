@@ -1,6 +1,6 @@
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
 with Interfaces;
 with System.Storage_Elements;
 
@@ -26,7 +26,7 @@ with System.Storage_Elements;
 --  timestamps carry a fixed date (no RTC). No sparse writes.
 
 procedure Fat32 is
-   package Syscalls renames Akernel_User.Syscalls;
+   package Syscalls renames Aegir_User.Syscalls;
    subtype U64 is Syscalls.U64;
    use type U64;
    use type Interfaces.Unsigned_8;
@@ -208,7 +208,7 @@ procedure Fat32 is
 
    procedure Fail (Msg : String) is
    begin
-      Akernel_User.Console.Put_Line (Msg);
+      Aegir_User.Console.Put_Line (Msg);
       Syscalls.Process_Exit;
    end Fail;
 
@@ -1508,12 +1508,12 @@ procedure Fat32 is
    --  word is the Path_In_Buf marker; the received cap copy is
    --  deleted here.
    function Path_Of (First : Natural; Slot : Natural) return String is
-      Name : String (1 .. Akernel_User.Files.Max_Path) :=
+      Name : String (1 .. Aegir_User.Files.Max_Path) :=
         (others => Character'Val (0));
       Len  : Natural := 0;
    begin
       if Syscalls.Message.Words (First)
-           /= Akernel_User.Files.Path_In_Buf
+           /= Aegir_User.Files.Path_In_Buf
       then
          for P in 0 .. 31 loop
             declare
@@ -1546,7 +1546,7 @@ procedure Fat32 is
          end if;
          declare
             Win : Byte_Array
-              (0 .. U64 (Akernel_User.Files.Max_Path))
+              (0 .. U64 (Aegir_User.Files.Max_Path))
               with Address => To_Address (Integer_Address (Path_Win_VA));
          begin
             for I in Win'Range loop
@@ -1561,7 +1561,7 @@ procedure Fat32 is
             Length        => Syscalls.Page_Size) /= 0
            or else Syscalls.Cap_Delete (Cap) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fat32: path buffer release failed");
          end if;
       end;
@@ -1832,11 +1832,11 @@ procedure Fat32 is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fat32: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fat32: buffer cap delete failed");
          end if;
       end if;
@@ -1995,11 +1995,11 @@ procedure Fat32 is
               VA            => Buf_Win_VA,
               Length        => Buf_Bytes) /= 0
          then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fat32: buffer unmap failed");
          end if;
          if Syscalls.Cap_Delete (Buf) /= 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("fat32: buffer cap delete failed");
          end if;
       end if;
@@ -2299,7 +2299,7 @@ procedure Fat32 is
       Attr    : Interfaces.Unsigned_8 := 0;
       Status  : U64 := Status_Ok;
       Mapped  : Boolean := False;
-      Win     : Byte_Array (0 .. U64 (Akernel_User.Files.Max_Path))
+      Win     : Byte_Array (0 .. U64 (Aegir_User.Files.Max_Path))
         with Address => To_Address (Integer_Address (Buf_Win_VA));
 
       procedure Process is
@@ -2316,7 +2316,7 @@ procedure Fat32 is
 
          declare
             Path : constant String := Path_Of (0, 1);
-            To   : String (1 .. Akernel_User.Files.Max_Path);
+            To   : String (1 .. Aegir_User.Files.Max_Path);
             To_Len : Natural := 0;
          begin
             if Path'Length = 0 then
@@ -2330,7 +2330,7 @@ procedure Fat32 is
             end if;
             Mapped := True;
             --  m82i: TO is buffer-carried, up to Max_Path.
-            for I in U64 (0) .. U64 (Akernel_User.Files.Max_Path - 1)
+            for I in U64 (0) .. U64 (Aegir_User.Files.Max_Path - 1)
             loop
                exit when Win (I) = 0;
                To_Len := To_Len + 1;
@@ -2341,7 +2341,7 @@ procedure Fat32 is
                VA            => Buf_Win_VA,
                Length        => Buf_Bytes) /= 0
             then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("fat32: buffer unmap failed");
             end if;
             Mapped := False;
@@ -2435,12 +2435,12 @@ procedure Fat32 is
            VA            => Buf_Win_VA,
            Length        => Buf_Bytes) /= 0
       then
-         Akernel_User.Console.Put_Line ("fat32: buffer unmap failed");
+         Aegir_User.Console.Put_Line ("fat32: buffer unmap failed");
       end if;
       if Buf /= 0
         and then Syscalls.Cap_Delete (Buf) /= 0
       then
-         Akernel_User.Console.Put_Line ("fat32: buffer cap delete failed");
+         Aegir_User.Console.Put_Line ("fat32: buffer cap delete failed");
       end if;
 
       Reply2 (Status, 0);
@@ -2481,8 +2481,8 @@ procedure Fat32 is
    end Handle_Volume_Info;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_Cap);
-   Akernel_User.Console.Put_Line ("fat32 starting");
+   Aegir_User.Console.Set_Endpoint (Console_Cap);
+   Aegir_User.Console.Put_Line ("fat32 starting");
 
    Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
    if Blk_Buf_Cap = Syscalls.Syscall_Failed
@@ -2539,7 +2539,7 @@ begin
       Fail ("fat32 no filesystem on device");
    end if;
 
-   Akernel_User.Console.Put_Line ("fat32 online");
+   Aegir_User.Console.Put_Line ("fat32 online");
 
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then

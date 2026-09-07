@@ -1,5 +1,5 @@
-name = "akernel_query"
-description = "akernel query"
+name = "aegir_query"
+description = "aegir query"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

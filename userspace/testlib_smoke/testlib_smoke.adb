@@ -1,14 +1,14 @@
 with Interfaces;
-with Akernel_User;
-with Akernel_User.Console;
-with Akernel_User.Libs;
-with Akernel_User.Syscalls;
+with Aegir_User;
+with Aegir_User.Console;
+with Aegir_User.Libs;
+with Aegir_User.Syscalls;
 
-use Akernel_User;
-use Akernel_User.Syscalls;
+use Aegir_User;
+use Aegir_User.Syscalls;
 
 --  Non-interactive smoke test for the milestone 58 Tier-1 shared-library
---  demo. Uses Akernel_User.Libs.Open_Library, calls Uppercase, and
+--  demo. Uses Aegir_User.Libs.Open_Library, calls Uppercase, and
 --  prints the reply to the console.
 
 procedure Testlib_Smoke is

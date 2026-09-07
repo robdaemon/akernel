@@ -1,5 +1,5 @@
-name = "akernel_memstage"
-description = "akernel preemption test memstage spawn-v2 target"
+name = "aegir_memstage"
+description = "aegir preemption test memstage spawn-v2 target"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -1,5 +1,5 @@
-name = "akernel_teardown"
-description = "akernel endpoint-teardown test peer (fuzzer)"
+name = "aegir_teardown"
+description = "aegir endpoint-teardown test peer (fuzzer)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

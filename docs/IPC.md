@@ -3,8 +3,8 @@
 Status: core implemented (ep_create, call/recv/reply, cap transfer,
 reply cap, endpoint slab, FIFO caller queue, grant-list spawn with
 rights-subset enforcement + badges, Boot_File_Object image caps,
-bootinfo page, Akernel_User.IPC typed wrappers, init namespace
-composition via bootinfo-name grant tokens, Akernel_User.Streams
+bootinfo page, Aegir_User.IPC typed wrappers, init namespace
+composition via bootinfo-name grant tokens, Aegir_User.Streams
 endpoint streams + console output path via the console server in
 Drivers/Serial). Deferred items at bottom.
 
@@ -241,7 +241,7 @@ reads, shared buffers) moves through `Memory_Object` caps:
 must be read-only): the initrd image frames are mapped borrowed and
 read-only (pinned statics, never freed). File data need not start on
 a page boundary, so the syscall returns the lead-in byte offset in
-a1 (userspace stub `akernel_sys_mem_map_file` / wrapper
+a1 (userspace stub `aegir_sys_mem_map_file` / wrapper
 `Mem_Map_File`; the asm stub injects flags=read-only). The mappable
 extent is the file's true page span, ceil((lead-in + length) / 4096)
 pages. Servers holding boot-file caps map files directly instead of
@@ -400,7 +400,7 @@ Volumes are Amiga-style: a device name (`RD0`) and a volume label
 qualified (`RD0:System/Init` or `Initrd:System/Init`); volume
 prefixes always compare case-insensitively, path comparison follows
 the volume's case flag (the initrd mounts `ci`). Unqualified names
-are a client-side concern: Akernel_User.Files prepends a default
+are a client-side concern: Aegir_User.Files prepends a default
 volume (`RD0`, settable) — the seed of a PATH resolver. Other
 devices get their label from the mounted filesystem itself; the
 manifest directive is the initrd's boot-time equivalent.
@@ -585,13 +585,13 @@ automated one would re-run the suite forever).
 
 ## RTS implications
 
-- `Akernel_User.IPC` (implemented): typed wrappers over
+- `Aegir_User.IPC` (implemented): typed wrappers over
   call/recv/reply, generic over request/response payload records
   marshalled into the 6-word area (larger payloads via memory caps).
-- `Akernel_User.Streams` (implemented): `Endpoint_Stream`, an
+- `Aegir_User.Streams` (implemented): `Endpoint_Stream`, an
   Ada.Streams `Root_Stream_Type` over endpoint caps, is the
   fundamental I/O substrate (40-byte chunks, Op_Write/Op_Read
-  labels, (Count, Data) records); `Akernel_User.Console` binds it to
+  labels, (Count, Data) records); `Aegir_User.Console` binds it to
   the init-minted console endpoint (`console` manifest token /
   devmgr class-0 grant) with Drivers/Serial as the console server.
   Console writes are line-atomic on both paths: the server buffers
@@ -656,7 +656,7 @@ set_priority(target, request) -> a0 0/1, a1 old (syscall 35)
 thread_create() -> thread cap handle or U64'Last (syscall 36)
   Creates a new thread in the CALLING process. The caller fills
   a parameter block in its IPC buffer first (words/caps layout in
-  Akernel_User.Syscalls.Thread_Create_Params). The kernel maps
+  Aegir_User.Syscalls.Thread_Create_Params). The kernel maps
   the supplied stack + IPC-buffer memory-object pages into the
   process address space, allocates a kernel stack, sets tp and
   a0 from the parameters, and enqueues the thread. Returns a
@@ -722,7 +722,7 @@ the library server.
 
 ### Manager protocol
 
-`Akernel_User.Libs` contacts `System/Libman` at handle 5:
+`Aegir_User.Libs` contacts `System/Libman` at handle 5:
 
 - Open request (label 1): words 0..4 carry a NUL-terminated
   library path (40 chars), word 5 = minimum version.
@@ -749,7 +749,7 @@ per-client spawn:
 
 ### API
 
-`Akernel_User.Libs` provides:
+`Aegir_User.Libs` provides:
 
 - `Open_Library (Name, Min_Version => N)` returns the service cap
   handle, or `Invalid_Handle` (0) on failure.

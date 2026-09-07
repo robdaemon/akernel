@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Device manager (lives in init for now; packaged separately so it
 --  can move to its own program later). Reads the driver database
@@ -22,22 +22,22 @@ with Akernel_User.Syscalls;
 --  to mount a block-backed volume.
 
 package Device_Manager is
-   procedure Run (Console_EP : Akernel_User.Syscalls.U64);
+   procedure Run (Console_EP : Aegir_User.Syscalls.U64);
    --  Launch the display stack (Bureau + terminal) from the Sys
    --  filesystem; call after the FS chain is online and
-   --  Akernel_User.Files is bound.
+   --  Aegir_User.Files is bound.
    procedure Start_Display;
-   function Block_Service return Akernel_User.Syscalls.U64;
+   function Block_Service return Aegir_User.Syscalls.U64;
    --  Net_Service returns init's Send side of the service endpoint
    --  of the spawned virtio class-1 (network) driver, 0 when no
    --  network device was found; init grants it to System/Netserv
    --  via the "netdev" manifest token.
-   function Net_Service return Akernel_User.Syscalls.U64;
+   function Net_Service return Aegir_User.Syscalls.U64;
    --  Np_Service returns init's Send side of the service endpoint
    --  of the spawned virtio class-9 (9P host share) driver, 0 when
    --  no 9p device was found; init then pushes the Host: volume
    --  mount to the file server (m79).
-   function Np_Service return Akernel_User.Syscalls.U64;
+   function Np_Service return Aegir_User.Syscalls.U64;
    --  The elevation service (milestone 45): init creates the
    --  endpoint and stores it here (Send side for the
    --  "elevated_svc" manifest token); Start_Elevated stages and
@@ -45,14 +45,14 @@ package Device_Manager is
    --  Receive side and the admin bootinfo cap. Tolerates a
    --  missing image (logs and returns; Elevate then fails
    --  cleanly on the unanswered Call).
-   Elevated_EP : Akernel_User.Syscalls.U64 := 0;
+   Elevated_EP : Aegir_User.Syscalls.U64 := 0;
    --  Netserv client endpoint (m71c): init hands the owner cap
    --  here so Spawn_Program can grant the Send side to Sys:
    --  programs at uniform handle 5 (terminals re-grant it to
    --  their shells at handle 6).
-   Net_Client_EP : Akernel_User.Syscalls.U64 := 0;
+   Net_Client_EP : Aegir_User.Syscalls.U64 := 0;
    --  Library manager endpoint (milestone 65): Send side granted to
    --  every spawned program so Open_Library can reach the manager.
-   Libman_EP : Akernel_User.Syscalls.U64 := 0;
+   Libman_EP : Aegir_User.Syscalls.U64 := 0;
    procedure Start_Elevated;
 end Device_Manager;

@@ -1,8 +1,8 @@
 with System;
 with System.Storage_Elements;
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -55,7 +55,7 @@ with Virtio.Queues;
 --  so the cache is trivially coherent.
 
 procedure Virtio_Blk is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U8;
    use type Virtio.U16;
@@ -529,7 +529,7 @@ procedure Virtio_Blk is
 
    procedure Fail (S : String) is
    begin
-      Akernel_User.Console.Put_Line ("FAIL " & S);
+      Aegir_User.Console.Put_Line ("FAIL " & S);
       Process_Exit;
    end Fail;
 
@@ -550,7 +550,7 @@ procedure Virtio_Blk is
    end Map_Region;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -571,7 +571,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-blk msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-blk msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -602,10 +602,10 @@ begin
    end if;
 
    if Have_Flush then
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("PASS virtio-blk flush feature negotiated");
    else
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("FAIL virtio-blk flush feature absent");
    end if;
 
@@ -741,7 +741,7 @@ begin
       end loop;
 
       if Ok then
-         Akernel_User.Console.Put_Line ("PASS virtio-blk read sector ok");
+         Aegir_User.Console.Put_Line ("PASS virtio-blk read sector ok");
       else
          Fail ("virtio-blk read sector bad data");
       end if;
@@ -760,7 +760,7 @@ begin
       end loop;
 
       if Ok then
-         Akernel_User.Console.Put_Line ("PASS virtio-blk pattern sector ok");
+         Aegir_User.Console.Put_Line ("PASS virtio-blk pattern sector ok");
       else
          Fail ("virtio-blk pattern sector bad data");
       end if;
@@ -791,26 +791,26 @@ begin
       end loop;
 
       if Ok then
-         Akernel_User.Console.Put_Line ("PASS virtio-blk write readback ok");
+         Aegir_User.Console.Put_Line ("PASS virtio-blk write readback ok");
       else
          Fail ("virtio-blk write readback bad data");
       end if;
 
       if Capacity = 2048 then
-         Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
+         Aegir_User.Console.Put_Line ("PASS virtio-blk capacity ok");
       else
-         Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
+         Aegir_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
       end if;
    else
       --  Filesystem image: the read above succeeded, nothing else
       --  is safe to assert sector-by-sector and nothing is safe to
       --  write.
-      Akernel_User.Console.Put_Line ("PASS virtio-blk read sector ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-blk read sector ok");
 
       if Capacity = 1048576 then  --  512 MiB image (M93: BeFS Sys: + FAT32 data)
-         Akernel_User.Console.Put_Line ("PASS virtio-blk capacity ok");
+         Aegir_User.Console.Put_Line ("PASS virtio-blk capacity ok");
       else
-         Akernel_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
+         Aegir_User.Console.Put_Line ("FAIL virtio-blk capacity bad");
       end if;
    end if;
 
@@ -818,7 +818,7 @@ begin
    --  Block service loop
    ------------------------------------------------------------------
 
-   Akernel_User.Console.Put_Line ("virtio-blk service online");
+   Aegir_User.Console.Put_Line ("virtio-blk service online");
 
    declare
       Sector  : U64;

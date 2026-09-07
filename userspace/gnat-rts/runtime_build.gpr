@@ -1,4 +1,4 @@
---  Builds the Akernel userspace GNAT runtime (milestones 53a + 67b):
+--  Builds the Aegir userspace GNAT runtime (milestones 53a + 67b):
 --  a near-native libgnat for riscv64-elf with full ZCX exception
 --  propagation (raise-gcc.c + __gnat_personality_v0 + crt0
 --  __register_frame of .eh_frame, milestone 53a), finalization,
@@ -8,7 +8,7 @@
 --  gnat_riscv64_elf 15.3.1 Alire toolchain (the full gcc-15.3.1
 --  libgnat common set) minus board files (i-fe310*, newlib-bb.c,
 --  start-ram.S) and minus units gnat_user/ shadows
---  (s-memory.adb -- the akernel memobj heap). gnat_full/ (milestone
+--  (s-memory.adb -- the aegir memobj heap). gnat_full/ (milestone
 --  53b) vendors the FULL file-I/O stack from the gcc-15.3.0 tarball.
 --  gnarl_user/ supplies the tasking/Ravenscar overrides (system.ads,
 --  s-osinte.adb, s-taprop.adb, s-multip.adb, System.Soft_Links).

@@ -1,6 +1,6 @@
 with Ada.Command_Line;
 with Ada.Directories;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Rename: rename or move within one volume (milestone 41; the
 --  Amiga C:Rename analog). "Rename <from> <to>"; the target must
@@ -11,7 +11,7 @@ with Akernel_User.CLI;
 --  Ada.Directories.Rename (gloss rename -> fs Op_Rename).
 
 procedure Rename is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
 begin
    CLI.Init;
 

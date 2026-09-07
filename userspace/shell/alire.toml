@@ -1,5 +1,5 @@
-name = "akernel_shell"
-description = "akernel interactive shell (milestone 31)"
+name = "aegir_shell"
+description = "aegir interactive shell (milestone 31)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

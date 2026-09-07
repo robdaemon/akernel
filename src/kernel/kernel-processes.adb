@@ -146,7 +146,7 @@ package body Kernel.Processes is
      (others => 0);
 
    --  Spawn loop / entry sp use the spec-level User_Stack_Top /
-   --  User_Stack_Pages constants (shared with init in akernel.adb).
+   --  User_Stack_Pages constants (shared with init in aegir.adb).
 
    --  ELF image handed to the loader: a byte source (physmap range
    --  or memory-object frames) + size.

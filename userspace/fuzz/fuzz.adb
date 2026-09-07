@@ -9,14 +9,14 @@ with Ada.Calendar;
 with Ada.Text_IO;
 with Ada.Environment_Variables;
 with Ada.Directories;
-with Akernel_User.Syscalls;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
-with Akernel_User.Glob;
-with Akernel_User.Clipboard;
-with Akernel_User.Libs;
+with Aegir_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
+with Aegir_User.Glob;
+with Aegir_User.Clipboard;
+with Aegir_User.Libs;
 with Trinket;
 with Trinket.Widgets;
 with Trinket.Text_Edit;
@@ -29,7 +29,7 @@ with Fuzz_Port;
 --  process granted the ipc_test endpoint (handle 1, badge 0xEC40), the
 --  console endpoint Send cap (handle 2) and the Tests/Echo_Server
 --  Boot_File_Object image cap (handle 3).  Test output goes through
---  the console server (Akernel_User.Console over the endpoint stream);
+--  the console server (Aegir_User.Console over the endpoint stream);
 --  the random phase still hits the raw debug_putchar syscall as a
 --  fuzz target.
 --
@@ -63,7 +63,7 @@ procedure Fuzz is
    --  into the heap mappings below).  M83's 256 KiB stack has
    --  headroom; the static discipline stays regardless.
    Pids : array
-     (0 .. Akernel_User.Syscalls.Process_Table_Slots - 1)
+     (0 .. Aegir_User.Syscalls.Process_Table_Slots - 1)
      of U64 := (others => 0);
 
    --  M68: the ntfn section binds the fuzz main thread to N2
@@ -118,12 +118,12 @@ procedure Fuzz is
 
    procedure Put (S : String) is
    begin
-      Akernel_User.Console.Put (S);
+      Aegir_User.Console.Put (S);
    end Put;
 
    procedure Put_Line (S : String) is
    begin
-      Akernel_User.Console.Put_Line (S);
+      Aegir_User.Console.Put_Line (S);
    end Put_Line;
 
    Hex_Digits : constant String := "0123456789abcdef";
@@ -196,11 +196,11 @@ procedure Fuzz is
       Status : U64;
    begin
       for Try in 1 .. 100_000 loop
-         Status := Akernel_User.Files.Stat (Name, Size);
-         if Status = Akernel_User.Files.Status_Ok then
+         Status := Aegir_User.Files.Stat (Name, Size);
+         if Status = Aegir_User.Files.Status_Ok then
             return True;
          end if;
-         Akernel_User.Syscalls.Yield;
+         Aegir_User.Syscalls.Yield;
       end loop;
       return False;
    end Await_Volume;
@@ -236,7 +236,7 @@ procedure Fuzz is
       Expected : U64;
       Prefix   : String)
    is
-      use type Akernel_User.Syscalls.U64;
+      use type Aegir_User.Syscalls.U64;
       use System.Storage_Elements;
 
       Stage_VA : constant U64 := 16#5700_0000#;
@@ -251,20 +251,20 @@ procedure Fuzz is
       Chunk    : U64;
       Count    : U64;
       Staged   : Boolean := True;
-      AS       : constant U64 := Akernel_User.Syscalls.Address_Space_Cap;
+      AS       : constant U64 := Aegir_User.Syscalls.Address_Space_Cap;
       Args_Page : String (1 .. Args'Length + 1)
         with Volatile, Address => System'To_Address
           (Integer_Address (Args_VA));
       Discard : U64;
    begin
-      Status := Akernel_User.Files.Stat (Path, Size);
-      Check (Status = Akernel_User.Files.Status_Ok and then Size > 0,
+      Status := Aegir_User.Files.Stat (Path, Size);
+      Check (Status = Aegir_User.Files.Status_Ok and then Size > 0,
              Prefix & " stat");
 
-      Mem_Cap := Akernel_User.Syscalls.Mem_Alloc ((Size + 4095) / 4096);
-      Check (Mem_Cap /= Akernel_User.Syscalls.Syscall_Failed,
+      Mem_Cap := Aegir_User.Syscalls.Mem_Alloc ((Size + 4095) / 4096);
+      Check (Mem_Cap /= Aegir_User.Syscalls.Syscall_Failed,
              Prefix & " staging object allocated");
-      Check (Akernel_User.Syscalls.Mem_Map
+      Check (Aegir_User.Syscalls.Mem_Map
                (Address_Space => AS,
                 Cap           => Mem_Cap,
                 VA            => Stage_VA,
@@ -273,26 +273,26 @@ procedure Fuzz is
                 Flags         => 3) = 0,
              Prefix & " staging object mapped");
 
-      Status := Akernel_User.Files.Open (Path, Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Open (Path, Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              Prefix & " open ok");
       Off := 0;
       while Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            (Path, Off,
             System'To_Address (Integer_Address (Stage_VA + Off)),
             Chunk, Count);
          Staged := Staged
-           and then Status = Akernel_User.Files.Status_Ok
+           and then Status = Aegir_User.Files.Status_Ok
            and then Count = Chunk;
          Off := Off + Chunk;
       end loop;
       Check (Staged, Prefix & " ELF staged into memory object");
 
-      Args_Cap := Akernel_User.Syscalls.Mem_Alloc (1);
-      Check (Args_Cap /= Akernel_User.Syscalls.Syscall_Failed
-             and then Akernel_User.Syscalls.Mem_Map
+      Args_Cap := Aegir_User.Syscalls.Mem_Alloc (1);
+      Check (Args_Cap /= Aegir_User.Syscalls.Syscall_Failed
+             and then Aegir_User.Syscalls.Mem_Map
                (AS, Args_Cap, Args_VA, 0, 4096, 3) = 0,
              Prefix & " args object mapped");
       for I in Args'Range loop
@@ -300,28 +300,28 @@ procedure Fuzz is
       end loop;
       Args_Page (Args'Length + 1) := Character'Val (0);
 
-      Akernel_User.Syscalls.Set_Grant
-        (0, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Akernel_User.Files.Endpoint,
-         Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (2, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
+        (0, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Aegir_User.Files.Endpoint,
+         Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (2, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
         (3, Args_Cap,
-         Akernel_User.Syscalls.Right_Map +
-           Akernel_User.Syscalls.Right_Read, 0);
+         Aegir_User.Syscalls.Right_Map +
+           Aegir_User.Syscalls.Right_Read, 0);
       --  Handle 5: the elevation service (milestone 45) — the
       --  uniform command ABI; fuzz's own copy rides the
       --  "elevated_svc" manifest token (handle 9).
-      Akernel_User.Syscalls.Set_Grant
-        (4, Elevated_Cap, Akernel_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (4, Elevated_Cap, Aegir_User.Syscalls.Right_Send, 0);
       --  Handle 6: the netserv client endpoint (m71c) — the
       --  uniform command ABI; fuzz's own copy rides the "net"
       --  manifest token (handle 11).
-      Akernel_User.Syscalls.Set_Grant
-        (5, Net_Cap, Akernel_User.Syscalls.Right_Send, 0);
-      Status := Akernel_User.Syscalls.Spawn (Mem_Cap, 6, Proc);
+      Aegir_User.Syscalls.Set_Grant
+        (5, Net_Cap, Aegir_User.Syscalls.Right_Send, 0);
+      Status := Aegir_User.Syscalls.Spawn (Mem_Cap, 6, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
@@ -337,7 +337,7 @@ procedure Fuzz is
       begin
          while not Done and then Clock <= Deadline loop
             Status :=
-              Akernel_User.Syscalls.Reap_Process_Code (Proc, Code);
+              Aegir_User.Syscalls.Reap_Process_Code (Proc, Code);
             if Status = 0 then
                Done := True;
                exit;
@@ -349,20 +349,20 @@ procedure Fuzz is
       Check (Done and then Code = Expected,
              Prefix & " exit code");
 
-      Discard := Akernel_User.Syscalls.Mem_Unmap
+      Discard := Aegir_User.Syscalls.Mem_Unmap
         (AS, Stage_VA, ((Size + 4095) / 4096) * 4096);
-      Discard := Akernel_User.Syscalls.Cap_Delete (Mem_Cap);
-      Discard := Akernel_User.Syscalls.Mem_Unmap (AS, Args_VA, 4096);
-      Discard := Akernel_User.Syscalls.Cap_Delete (Args_Cap);
+      Discard := Aegir_User.Syscalls.Cap_Delete (Mem_Cap);
+      Discard := Aegir_User.Syscalls.Mem_Unmap (AS, Args_VA, 4096);
+      Discard := Aegir_User.Syscalls.Cap_Delete (Args_Cap);
    end Run_Command;
    Echo_Image : constant U64 := 3;
 
-   package Console_RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
+   package Console_RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
 
-   Console_Request  : Akernel_User.Streams.Stream_Request;
-   Console_Response : Akernel_User.Streams.Stream_Response;
+   Console_Request  : Aegir_User.Streams.Stream_Request;
+   Console_Response : Aegir_User.Streams.Stream_Response;
    Reply_Label      : U64;
    Mem_Cap          : U64;
 
@@ -391,7 +391,7 @@ procedure Fuzz is
       Check (Total /= 0, "m83 deep stack recursion (150 KiB) survives");
    end Deep_Stack_Tests;
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
    Put_Line ("fuzz online");
 
    --  Directed cases first.
@@ -444,14 +444,14 @@ begin
    Console_Request := (Count => 1, Data => (others => 0));
    Console_Request.Data (1) := Character'Pos ('.');
    Status := Console_RPC.Call
-     (Console_EP, Akernel_User.Streams.Op_Write, Console_Request,
+     (Console_EP, Aegir_User.Streams.Op_Write, Console_Request,
       Console_RPC.No_Caps, Reply_Label, Console_Response);
    Check (Status = 0 and then Console_Response.Count = 1,
           "console write rpc round-trips");
    --  A read op on the output-only console yields EOF (count 0).
    Console_Request := (Count => 4, Data => (others => 0));
    Status := Console_RPC.Call
-     (Console_EP, Akernel_User.Streams.Op_Read, Console_Request,
+     (Console_EP, Aegir_User.Streams.Op_Read, Console_Request,
       Console_RPC.No_Caps, Reply_Label, Console_Response);
    Check (Status = 0 and then Console_Response.Count = 0,
           "console read reports eof");
@@ -461,7 +461,7 @@ begin
    --  also exercises the refcounted frame teardown path.
    declare
       Mem_VA : constant U64 := 16#5000_0000#;
-      AS     : constant U64 := Akernel_User.Syscalls.Address_Space_Cap;
+      AS     : constant U64 := Aegir_User.Syscalls.Address_Space_Cap;
 
       type Page_Words is array (0 .. 511) of U64;
       Mapped : Page_Words
@@ -508,7 +508,7 @@ begin
              "mem_unmap twice rejected");
       Check (Raw_Ecall
                (Number => Sys_Mem_Unmap, A0 => AS,
-                A1 => Akernel_User.Syscalls.IPC_Buffer_VA,
+                A1 => Aegir_User.Syscalls.IPC_Buffer_VA,
                 A2 => 4096) = 1,
              "mem_unmap refuses owned pages");
 
@@ -516,24 +516,24 @@ begin
       --  Mem_Cap names a live 1-page object with Manage here.
       declare
          PA : constant U64 :=
-           Akernel_User.Syscalls.Mem_Object_PA (Mem_Cap, 0);
+           Aegir_User.Syscalls.Mem_Object_PA (Mem_Cap, 0);
       begin
          Check (PA /= 0 and then PA mod 4096 = 0,
                 "mem_object_pa returns aligned frame PA");
-         Check (Akernel_User.Syscalls.Mem_Object_PA (Mem_Cap, 1) = 0,
+         Check (Aegir_User.Syscalls.Mem_Object_PA (Mem_Cap, 1) = 0,
                 "mem_object_pa out of range rejected");
-         Check (Akernel_User.Syscalls.Mem_Object_PA (16#FEED_BEEF#, 0) = 0,
+         Check (Aegir_User.Syscalls.Mem_Object_PA (16#FEED_BEEF#, 0) = 0,
                 "mem_object_pa invalid cap rejected");
       end;
 
       --  io_map / irq_create (syscalls 23/24): fuzz holds no
       --  device_resource cap, so creation is refused outright.
-      Check (Akernel_User.Syscalls.IO_Map
+      Check (Aegir_User.Syscalls.IO_Map
              (16#FEED_BEEF#, 16#1000_0000#, 4096) =
-               Akernel_User.Syscalls.Syscall_Failed,
+               Aegir_User.Syscalls.Syscall_Failed,
              "io_map without resource cap rejected");
-      Check (Akernel_User.Syscalls.IRQ_Create (16#FEED_BEEF#, 10) =
-               Akernel_User.Syscalls.Syscall_Failed,
+      Check (Aegir_User.Syscalls.IRQ_Create (16#FEED_BEEF#, 10) =
+               Aegir_User.Syscalls.Syscall_Failed,
              "irq_create without resource cap rejected");
    end;
 
@@ -633,22 +633,22 @@ begin
          --  by init; wait for it.
          Check (Await_Volume ("Sys:README.TXT"),
                 "bfs volume appears");
-         Status := Akernel_User.Files.Stat ("BD0:README.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:README.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 36,
                 "bfs stat readme size");
 
-         Status := Akernel_User.Files.Stat ("Sys:README.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Stat ("Sys:README.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs volume label resolves");
 
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:README.TXT", 0, Buf'Address, 64, Count);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Count = 36;
          declare
             Text : constant String :=
-              "Hello from the akernel BeFS volume.";
+              "Hello from the aegir BeFS volume.";
          begin
             for I in 0 .. 34 loop
                Match := Match
@@ -662,14 +662,14 @@ begin
          --  FRAGMENT.BIN: byte i = (i*5+1) mod 256, 2560 bytes —
          --  two direct runs separated by a deliberate free hole,
          --  so reads must cross the run boundary (mkbefs fixture).
-         Status := Akernel_User.Files.Stat ("BD0:FRAGMENT.BIN", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:FRAGMENT.BIN", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 2560,
                 "bfs stat fragment size");
 
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:FRAGMENT.BIN", 0, Big_Buf'Address, 512, Count);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Count = 512;
          for J in 0 .. 511 loop
             Match := Match
@@ -680,9 +680,9 @@ begin
 
          --  Read spanning the hole: offset 2048 lands in the
          --  second run, 1000 straddles run1 -> run2.
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:FRAGMENT.BIN", 1000, Big_Buf'Address, 256, Count);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Count = 256;
          for J in 0 .. 255 loop
             Match := Match
@@ -691,9 +691,9 @@ begin
          end loop;
          Check (Match, "bfs fragment hole-crossing read ok");
 
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:FRAGMENT.BIN", 2048, Big_Buf'Address, 512, Count);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Count = 512;
          for J in 0 .. 511 loop
             Match := Match
@@ -703,37 +703,37 @@ begin
          Check (Match, "bfs fragment tail ok");
 
          --  Read at EOF must come back empty, past EOF rejected.
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:FRAGMENT.BIN", 2560, Buf'Address, 64, Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 0,
                 "bfs read at eof empty");
 
-         Status := Akernel_User.Files.Stat ("BD0:EMPTY.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:EMPTY.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 0,
                 "bfs empty file size");
 
          --  Case sensitivity: BeFS is case-sensitive, so a
          --  lowercase probe must NOT resolve (contrast with FAT32).
-         Status := Akernel_User.Files.Stat ("BD0:readme.txt", Size);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Status := Aegir_User.Files.Stat ("BD0:readme.txt", Size);
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs names case-sensitive");
 
-         Status := Akernel_User.Files.Stat ("BD0:NOSUCH.BIN", Size);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Status := Aegir_User.Files.Stat ("BD0:NOSUCH.BIN", Size);
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs unknown file rejected");
 
          --  Nested path through the SUBDIR btree.
-         Status := Akernel_User.Files.Stat
+         Status := Aegir_User.Files.Stat
            ("BD0:SUBDIR/HELLO.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 24,
                 "bfs subdir stat ok");
 
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD0:SUBDIR/HELLO.TXT", 0, Buf'Address, 64, Count);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Count = 24;
          declare
             Text : constant String := "Subdir hello from BeFS!";
@@ -758,9 +758,9 @@ begin
             Seen    : Natural := 0;
          begin
             for Index in 0 .. 40 loop
-               Status := Akernel_User.Files.Read_Dir
+               Status := Aegir_User.Files.Read_Dir
                  ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
-               exit when Status /= Akernel_User.Files.Status_Ok;
+               exit when Status /= Aegir_User.Files.Status_Ok;
                if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT" then
                   Check (not Ent_Dir and then Ent_Sz = 36,
                          "bfs readdir readme entry ok");
@@ -781,17 +781,17 @@ begin
 
          --  Directory open is rejected, directory stat answers
          --  is-dir (wire contract: stat succeeds on dirs).
-         Status := Akernel_User.Files.Open ("BD0:SUBDIR", Size);
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
+         Status := Aegir_User.Files.Open ("BD0:SUBDIR", Size);
+         Check (Status = Aegir_User.Files.Status_Bad_Args,
                 "bfs open dir rejected");
 
          declare
             WD, WT : U64;
             Dir_D  : Boolean;
          begin
-            Status := Akernel_User.Files.Stat_Ex
+            Status := Aegir_User.Files.Stat_Ex
               ("BD0:SUBDIR", Size, WD, WT, Dir_D);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Dir_D,
                    "bfs dir stat reports is-dir");
          end;
@@ -807,35 +807,35 @@ begin
             Total_T     : U64;
             Block_T     : U64;
          begin
-            Status := Akernel_User.Files.Volume_Info
+            Status := Aegir_User.Files.Volume_Info
               ("BD0:", Total_T, Free_Before, Block_T);
 
             --  Cleanup of possible leftovers (statuses ignored).
-            Status := Akernel_User.Files.Delete ("BD0:AKFILE.TXT");
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Delete ("BD0:AKFILE.TXT");
+            Status := Aegir_User.Files.Delete
               ("BD0:MKTEST/INNER.TXT");
-            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Rmdir ("BD0:MKTEST");
+            Status := Aegir_User.Files.Delete
               ("BD0:RENDIR/MOVED.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:REN.B");
-            Status := Akernel_User.Files.Rmdir ("BD0:RENDIR");
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Delete ("BD0:REN.B");
+            Status := Aegir_User.Files.Rmdir ("BD0:RENDIR");
+            Status := Aegir_User.Files.Delete
               ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT");
-            Status := Akernel_User.Files.Rmdir ("BD0:QLONGD/QDEEPD");
-            Status := Akernel_User.Files.Rmdir ("BD0:QLONGD");
-            Status := Akernel_User.Files.Delete ("BD0:LIVE1.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVE2.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:NOTLIVE.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO0.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO1.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO2.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO3.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO4.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO5.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO6.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO7.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO8.TXT");
-            Status := Akernel_User.Files.Delete ("BD0:LIVEO9.TXT");
+            Status := Aegir_User.Files.Rmdir ("BD0:QLONGD/QDEEPD");
+            Status := Aegir_User.Files.Rmdir ("BD0:QLONGD");
+            Status := Aegir_User.Files.Delete ("BD0:LIVE1.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVE2.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:NOTLIVE.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO0.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO1.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO2.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO3.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO4.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO5.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO6.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO7.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO8.TXT");
+            Status := Aegir_User.Files.Delete ("BD0:LIVEO9.TXT");
 
             --  Create-by-write, then read back.
             declare
@@ -846,20 +846,20 @@ begin
                     (Character'Pos (Payload (I + 1)));
                end loop;
             end;
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:AKFILE.TXT", 0, Buf'Address, 7, Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Count = 7,
                    "bfs write creates file");
 
-            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Status := Aegir_User.Files.Stat ("BD0:AKFILE.TXT", Size);
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Size = 7,
                    "bfs created file stats");
 
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               ("BD0:AKFILE.TXT", 0, Buf'Address, 16, Count);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 7;
             declare
                Payload : constant String := "AKBEFS!";
@@ -873,39 +873,39 @@ begin
             Check (Match, "bfs created file reads back");
 
             --  Extend at EOF (append into the same block).
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:AKFILE.TXT", 7, Buf'Address, 7, Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Count = 7,
                    "bfs append ok");
-            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Status := Aegir_User.Files.Stat ("BD0:AKFILE.TXT", Size);
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Size = 14,
                    "bfs appended size");
 
             --  Sparse write rejected (offset past EOF).
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:AKFILE.TXT", 100, Buf'Address, 4, Count);
-            Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+            Check (Status = Aegir_User.Files.Status_Out_Of_Range,
                    "bfs sparse write rejected");
 
             --  Write into a missing directory rejected.
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:NOSUCH/F.TXT", 0, Buf'Address, 4, Count);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs write with bad parent rejected");
 
             --  Mkdir, nested file, readdir, rmdir lifecycle.
-            Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Mkdir ("BD0:MKTEST");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs mkdir ok");
-            Status := Akernel_User.Files.Mkdir ("BD0:MKTEST");
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Status := Aegir_User.Files.Mkdir ("BD0:MKTEST");
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "bfs mkdir existing rejected");
 
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:MKTEST/INNER.TXT", 0, Buf'Address, 7, Count);
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs nested write ok");
 
             declare
@@ -914,56 +914,56 @@ begin
                Ent_Dir : Boolean;
                Ent_Sz  : U64;
             begin
-               Status := Akernel_User.Files.Read_Dir
+               Status := Aegir_User.Files.Read_Dir
                  ("BD0:MKTEST", 0, Ent, Ent_L, Ent_Dir, Ent_Sz);
-               Check (Status = Akernel_User.Files.Status_Ok
+               Check (Status = Aegir_User.Files.Status_Ok
                       and then Ent_L = 9
                       and then Ent (1 .. 9) = "INNER.TXT"
                       and then not Ent_Dir and then Ent_Sz = 7,
                       "bfs mkdir entry visible in readdir");
             end;
 
-            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Status := Aegir_User.Files.Rmdir ("BD0:MKTEST");
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "bfs rmdir non-empty rejected");
 
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Delete
               ("BD0:MKTEST/INNER.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs delete ok");
-            Status := Akernel_User.Files.Stat
+            Status := Aegir_User.Files.Stat
               ("BD0:MKTEST/INNER.TXT", Size);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs deleted file gone");
 
-            Status := Akernel_User.Files.Rmdir ("BD0:MKTEST");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Rmdir ("BD0:MKTEST");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs rmdir empty ok");
 
             --  Rename in place, then move across directories.
-            Status := Akernel_User.Files.Rename
+            Status := Aegir_User.Files.Rename
               ("BD0:AKFILE.TXT", "BD0:REN.B");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs rename ok");
-            Status := Akernel_User.Files.Stat ("BD0:AKFILE.TXT", Size);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Status := Aegir_User.Files.Stat ("BD0:AKFILE.TXT", Size);
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs rename source gone");
-            Status := Akernel_User.Files.Stat ("BD0:REN.B", Size);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Status := Aegir_User.Files.Stat ("BD0:REN.B", Size);
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Size = 14,
                    "bfs rename target keeps data");
 
-            Status := Akernel_User.Files.Mkdir ("BD0:RENDIR");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Mkdir ("BD0:RENDIR");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs mkdir for move ok");
-            Status := Akernel_User.Files.Rename
+            Status := Aegir_User.Files.Rename
               ("BD0:REN.B", "BD0:RENDIR/MOVED.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs move across dirs ok");
 
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               ("BD0:RENDIR/MOVED.TXT", 0, Buf'Address, 16, Count);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 14;
             declare
                Payload : constant String := "AKBEFS!AKBEFS!";
@@ -977,29 +977,29 @@ begin
             Check (Match, "bfs moved file content intact");
 
             --  A directory cannot move into its own subtree.
-            Status := Akernel_User.Files.Rename
+            Status := Aegir_User.Files.Rename
               ("BD0:RENDIR", "BD0:RENDIR/SUB");
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "bfs rename into own subtree rejected");
 
             --  Truncate to zero.
-            Status := Akernel_User.Files.Truncate
+            Status := Aegir_User.Files.Truncate
               ("BD0:RENDIR/MOVED.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs truncate ok");
-            Status := Akernel_User.Files.Stat
+            Status := Aegir_User.Files.Stat
               ("BD0:RENDIR/MOVED.TXT", Size);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Size = 0,
                    "bfs truncated size zero");
 
             --  Final cleanup: the volume returns to fixture state.
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Delete
               ("BD0:RENDIR/MOVED.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs moved file deleted");
-            Status := Akernel_User.Files.Rmdir ("BD0:RENDIR");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Rmdir ("BD0:RENDIR");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs rendir removed");
 
             --  No leaked blocks: free space round-trips.
@@ -1008,9 +1008,9 @@ begin
                Free2  : U64;
                Block2 : U64;
             begin
-               Status := Akernel_User.Files.Volume_Info
+               Status := Aegir_User.Files.Volume_Info
                  ("BD0:", Total2, Free2, Block2);
-               Check (Status = Akernel_User.Files.Status_Ok
+               Check (Status = Aegir_User.Files.Status_Ok
                       and then Free_Before /= 0
                       and then Free2 = Free_Before,
                       "bfs write path leaks no blocks");
@@ -1025,9 +1025,9 @@ begin
                Seen    : Natural := 0;
             begin
                for Index in 0 .. 40 loop
-                  Status := Akernel_User.Files.Read_Dir
+                  Status := Aegir_User.Files.Read_Dir
                     ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
-                  exit when Status /= Akernel_User.Files.Status_Ok;
+                  exit when Status /= Aegir_User.Files.Status_Ok;
                   if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT"
                   then
                      Seen := Seen + 1;
@@ -1065,9 +1065,9 @@ begin
                   Buf (I) := Interfaces.Unsigned_8
                     (Character'Pos (Text (Text'First + I)));
                end loop;
-               Status := Akernel_User.Files.Write
+               Status := Aegir_User.Files.Write
                  (Path, 0, Buf'Address, U64 (Text'Length), Count);
-               Check (Status = Akernel_User.Files.Status_Ok
+               Check (Status = Aegir_User.Files.Status_Ok
                       and then Count = U64 (Text'Length),
                       "bfs query scratch write " & Path);
             end Put_Text;
@@ -1076,9 +1076,9 @@ begin
                                Want_Path : String; Want_Size : U64;
                                Msg : String) is
             begin
-               Status := Akernel_User.Files.Query
+               Status := Aegir_User.Files.Query
                  ("BD0:", Pred, Idx, QP, QL, QSz, QDir);
-               Check (Status = Akernel_User.Files.Status_Ok
+               Check (Status = Aegir_User.Files.Status_Ok
                       and then QL = Want_Path'Length
                       and then QP (1 .. QL) = Want_Path
                       and then (QDir or else QSz = Want_Size),
@@ -1088,9 +1088,9 @@ begin
             procedure Q_None (Pred : String; Idx : U64;
                               Msg : String) is
             begin
-               Status := Akernel_User.Files.Query
+               Status := Aegir_User.Files.Query
                  ("BD0:", Pred, Idx, QP, QL, QSz, QDir);
-               Check (Status = Akernel_User.Files.Status_Not_Found,
+               Check (Status = Aegir_User.Files.Status_Not_Found,
                       Msg);
             end Q_None;
          begin
@@ -1098,26 +1098,26 @@ begin
             --  QFRAG.BIN < QHELLO.TXT (in QZDIR/) < QREADME.TXT
             --  < QZDIR).
             Put_Text ("BD0:QREADME.TXT",
-                      "Hello from the akernel BeFS volume." & ASCII.LF);
+                      "Hello from the aegir BeFS volume." & ASCII.LF);
             Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:QEMPTY.TXT", 0, Buf'Address, 1, Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Count = 1,
                    "bfs query scratch created");
-            Status := Akernel_User.Files.Truncate ("BD0:QEMPTY.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Truncate ("BD0:QEMPTY.TXT");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch emptied");
             for I in 0 .. 9 loop
                Buf (I) := Interfaces.Unsigned_8 (I * 5 + 1);
             end loop;
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:QFRAG.BIN", 0, Buf'Address, 10, Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Count = 10,
                    "bfs query scratch frag created");
-            Status := Akernel_User.Files.Mkdir ("BD0:QZDIR");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Mkdir ("BD0:QZDIR");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch dir created");
             Put_Text ("BD0:QZDIR/QHELLO.TXT",
                       "Subdir hello from BeFS!" & ASCII.LF);
@@ -1174,13 +1174,13 @@ begin
             --  No match, parse error, non-FS volume.
             Q_None ("name==""NOSUCH*""", 0,
                     "bfs query no match");
-            Status := Akernel_User.Files.Query
+            Status := Aegir_User.Files.Query
               ("BD0:", "==", 0, QP, QL, QSz, QDir);
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "bfs query parse error rejected");
-            Status := Akernel_User.Files.Query
+            Status := Aegir_User.Files.Query
               ("BD1:", "name==""*""", 0, QP, QL, QSz, QDir);
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "fat query rejected");
 
             --  The C: command end-to-end (exit codes only; the
@@ -1191,21 +1191,21 @@ begin
                           "query command rejects bad predicate");
 
             --  Cleanup: the volume returns to its staged state.
-            Status := Akernel_User.Files.Delete
+            Status := Aegir_User.Files.Delete
               ("BD0:QZDIR/QHELLO.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch hello deleted");
-            Status := Akernel_User.Files.Rmdir ("BD0:QZDIR");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Rmdir ("BD0:QZDIR");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch dir removed");
-            Status := Akernel_User.Files.Delete ("BD0:QREADME.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Delete ("BD0:QREADME.TXT");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch readme deleted");
-            Status := Akernel_User.Files.Delete ("BD0:QFRAG.BIN");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Delete ("BD0:QFRAG.BIN");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch frag deleted");
-            Status := Akernel_User.Files.Delete ("BD0:QEMPTY.TXT");
-            Check (Status = Akernel_User.Files.Status_Ok,
+            Status := Aegir_User.Files.Delete ("BD0:QEMPTY.TXT");
+            Check (Status = Aegir_User.Files.Status_Ok,
                    "bfs query scratch empty deleted");
             --  Long paths (m82g): the result path rides back in
              --  the client buffer, so paths beyond 24 chars
@@ -1215,12 +1215,12 @@ begin
                 QP2 : String (1 .. 64);
                 QL2 : Natural;
              begin
-                Status := Akernel_User.Files.Mkdir ("BD0:QLONGD");
-                Check (Status = Akernel_User.Files.Status_Ok,
+                Status := Aegir_User.Files.Mkdir ("BD0:QLONGD");
+                Check (Status = Aegir_User.Files.Status_Ok,
                        "bfs long path dir created");
-                Status := Akernel_User.Files.Mkdir
+                Status := Aegir_User.Files.Mkdir
                   ("BD0:QLONGD/QDEEPD");
-                Check (Status = Akernel_User.Files.Status_Ok,
+                Check (Status = Aegir_User.Files.Status_Ok,
                        "bfs long path nested dir created");
                 declare
                    Payload : constant String := "AKBEFS!";
@@ -1230,37 +1230,37 @@ begin
                         (Character'Pos (Payload (I + 1)));
                    end loop;
                 end;
-                Status := Akernel_User.Files.Write
+                Status := Aegir_User.Files.Write
                   ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT", 0,
                    Buf'Address, 7, Count);
-                Check (Status = Akernel_User.Files.Status_Ok
+                Check (Status = Aegir_User.Files.Status_Ok
                        and then Count = 7,
                        "bfs long path file written");
-                Status := Akernel_User.Files.Query
+                Status := Aegir_User.Files.Query
                   ("BD0:", "name==""DEEPFILE.TXT""", 0, QP2, QL2,
                    QSz, QDir);
-                Check (Status = Akernel_User.Files.Status_Ok
+                Check (Status = Aegir_User.Files.Status_Ok
                        and then QL2 = 26
                        and then QP2 (1 .. QL2)
                          = "QLONGD/QDEEPD/DEEPFILE.TXT"
                        and then QSz = 7,
                        "bfs query long path via buffer");
-                Status := Akernel_User.Files.Delete
+                Status := Aegir_User.Files.Delete
                   ("BD0:QLONGD/QDEEPD/DEEPFILE.TXT");
-                Check (Status = Akernel_User.Files.Status_Ok,
+                Check (Status = Aegir_User.Files.Status_Ok,
                        "bfs long path file deleted");
-                Status := Akernel_User.Files.Rmdir
+                Status := Aegir_User.Files.Rmdir
                   ("BD0:QLONGD/QDEEPD");
-                Check (Status = Akernel_User.Files.Status_Ok,
+                Check (Status = Aegir_User.Files.Status_Ok,
                        "bfs long path nested dir removed");
-                Status := Akernel_User.Files.Rmdir ("BD0:QLONGD");
-                Check (Status = Akernel_User.Files.Status_Ok,
+                Status := Aegir_User.Files.Rmdir ("BD0:QLONGD");
+                Check (Status = Aegir_User.Files.Status_Ok,
                        "bfs long path dir removed");
              end;
           end;
 
-         Status := Akernel_User.Files.Sync;
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Sync;
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs sync ok");
 
          declare
@@ -1268,9 +1268,9 @@ begin
             Free  : U64;
             Block : U64;
          begin
-            Status := Akernel_User.Files.Volume_Info
+            Status := Aegir_User.Files.Volume_Info
               ("BD0:", Total, Free, Block);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Total = 262144 * 1024
                    and then Block = 4096
                    and then Free < Total,
@@ -1286,30 +1286,30 @@ begin
             AType  : U64;
             ASize  : U64;
          begin
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:README.TXT", 0, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then AN_L = 9 and then AN (1 .. 9) = "BEOS:TYPE"
                    and then AType = 16#4D49_4D53# and then ASize = 10,
                    "bfs attr list first entry");
 
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:README.TXT", 1, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then AN_L = 12
                    and then AN (1 .. 12) = "META:comment"
                    and then AType = 16#4353_5452# and then ASize = 15,
                    "bfs attr list second entry");
 
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:README.TXT", 2, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs attr list ends");
 
             --  The root inode carries be:volume_id ('ULLG').
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:", 0, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then AN_L = 12
                    and then AN (1 .. 12) = "be:volume_id"
                    and then AType = 16#554C_4C47# and then ASize = 8,
@@ -1318,21 +1318,21 @@ begin
             --  HELLO.TXT has no attributes at all (the internal
             --  name pseudo-attribute is skipped, like Haiku's
             --  attribute iterator and tools/befs_dump.py).
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:SUBDIR/HELLO.TXT", 0, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs attr list empty file");
 
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD0:NOSUCH.BIN", 0, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs attr list unknown file");
 
             --  FAT32 has no attributes: the op forwards verbatim
             --  and the fat32 server rejects unknown labels.
-            Status := Akernel_User.Files.Attr_List
+            Status := Aegir_User.Files.Attr_List
               ("BD1:README.TXT", 0, AN, AN_L, AType, ASize);
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "fat attr list rejected");
          end;
 
@@ -1341,10 +1341,10 @@ begin
             AType  : U64;
             ASize  : U64;
          begin
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD0:README.TXT", "BEOS:TYPE", Buf'Address, 64,
                Count, ASize, AType);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 10 and then ASize = 10
               and then AType = 16#4D49_4D53#;
             declare
@@ -1358,10 +1358,10 @@ begin
             end;
             Check (Match, "bfs attr read mime ok");
 
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD0:README.TXT", "META:comment", Buf'Address, 64,
                Count, ASize, AType);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 15 and then ASize = 15
               and then AType = 16#4353_5452#;
             declare
@@ -1377,10 +1377,10 @@ begin
 
             --  be:volume_id rides the root inode as a little-
             --  endian u64: 0x004D3832_42454653 on disk.
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD0:", "be:volume_id", Buf'Address, 64,
                Count, ASize, AType);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 8 and then ASize = 8
               and then AType = 16#554C_4C47#;
             declare
@@ -1395,16 +1395,16 @@ begin
             end;
             Check (Match, "bfs attr read volume id ok");
 
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD0:README.TXT", "NOSUCH", Buf'Address, 64,
                Count, ASize, AType);
-            Check (Status = Akernel_User.Files.Status_Not_Found,
+            Check (Status = Aegir_User.Files.Status_Not_Found,
                    "bfs attr read unknown rejected");
 
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD1:README.TXT", "BEOS:TYPE", Buf'Address, 64,
                Count, ASize, AType);
-            Check (Status = Akernel_User.Files.Status_Bad_Args,
+            Check (Status = Aegir_User.Files.Status_Bad_Args,
                    "fat attr read rejected");
          end;
          Live_Query_Tests;
@@ -1421,7 +1421,7 @@ begin
       --  48 KiB process stack over (trap at 0x6FFF3FF0,
       --  pre-M83 layout).
       procedure Live_Query_Tests is
-         use Akernel_User.Syscalls;
+         use Aegir_User.Syscalls;
          Ntf  : U64;
          LQH  : U64 := 0;
          LK   : U64;
@@ -1432,9 +1432,9 @@ begin
              Ntf := Ntfn_Create;
              Check (Ntf /= Syscall_Failed,
                     "live query ntfn created");
-             Status := Akernel_User.Files.Query_Open
+             Status := Aegir_User.Files.Query_Open
                ("BD0:", "name==""LIVE*.TXT""", Ntf, LQH);
-             Check (Status = Akernel_User.Files.Status_Ok
+             Check (Status = Aegir_User.Files.Status_Ok
                     and then LQH /= 0,
                     "live query opened");
 
@@ -1448,50 +1448,50 @@ begin
                      (Character'Pos (Payload (I + 1)));
                 end loop;
              end;
-             Status := Akernel_User.Files.Write
+             Status := Aegir_User.Files.Write
                ("BD0:LIVE1.TXT", 0, Buf'Address, 7, Count);
-             Check (Status = Akernel_User.Files.Status_Ok
+             Check (Status = Aegir_User.Files.Status_Ok
                     and then Count = 7,
                     "live query matching file created");
              Bits := Ntfn_Wait (Ntf);
              Check (Bits /= Syscall_Failed
                     and then (Bits and 1) /= 0,
                     "live query doorbell rang");
-             Status := Akernel_User.Files.Query_Poll
+             Status := Aegir_User.Files.Query_Poll
                ("BD0:", LQH, LK, LP, LPL);
-             Check (Status = Akernel_User.Files.Status_Ok
+             Check (Status = Aegir_User.Files.Status_Ok
                     and then LK = 1
                     and then LPL = 9
                     and then LP (1 .. 9) = "LIVE1.TXT",
                     "live query added event");
-             Status := Akernel_User.Files.Query_Poll
+             Status := Aegir_User.Files.Query_Poll
                ("BD0:", LQH, LK, LP, LPL);
-             Check (Status = Akernel_User.Files.Status_Not_Found,
+             Check (Status = Aegir_User.Files.Status_Not_Found,
                     "live query queue drained");
 
              --  A non-matching create queues nothing (no wait:
              --  the doorbell must not have rung).
-             Status := Akernel_User.Files.Write
+             Status := Aegir_User.Files.Write
                ("BD0:NOTLIVE.TXT", 0, Buf'Address, 7, Count);
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query non-matching file created");
-             Status := Akernel_User.Files.Query_Poll
+             Status := Aegir_User.Files.Query_Poll
                ("BD0:", LQH, LK, LP, LPL);
-             Check (Status = Akernel_User.Files.Status_Not_Found,
+             Check (Status = Aegir_User.Files.Status_Not_Found,
                     "live query non-match silent");
 
              --  Deleting a matching entry queues "removed".
-             Status := Akernel_User.Files.Delete
+             Status := Aegir_User.Files.Delete
                ("BD0:LIVE1.TXT");
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query matching file deleted");
              Bits := Ntfn_Wait (Ntf);
              Check (Bits /= Syscall_Failed
                     and then (Bits and 1) /= 0,
                     "live query doorbell on remove");
-             Status := Akernel_User.Files.Query_Poll
+             Status := Aegir_User.Files.Query_Poll
                ("BD0:", LQH, LK, LP, LPL);
-             Check (Status = Akernel_User.Files.Status_Ok
+             Check (Status = Aegir_User.Files.Status_Ok
                     and then LK = 2
                     and then LPL = 9
                     and then LP (1 .. 9) = "LIVE1.TXT",
@@ -1499,24 +1499,24 @@ begin
 
              --  Close: the handle dies, later mutations are
              --  silent.
-             Status := Akernel_User.Files.Query_Close
+             Status := Aegir_User.Files.Query_Close
                ("BD0:", LQH);
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query closed");
-             Status := Akernel_User.Files.Write
+             Status := Aegir_User.Files.Write
                ("BD0:LIVE2.TXT", 0, Buf'Address, 7, Count);
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query post-close file created");
-             Status := Akernel_User.Files.Query_Poll
+             Status := Aegir_User.Files.Query_Poll
                ("BD0:", LQH, LK, LP, LPL);
-             Check (Status = Akernel_User.Files.Status_Bad_Args,
+             Check (Status = Aegir_User.Files.Status_Bad_Args,
                     "live query closed handle rejected");
 
              --  Queue overflow: 10 matching creates > 8-deep
              --  queue, then a resync event.
-             Status := Akernel_User.Files.Query_Open
+             Status := Aegir_User.Files.Query_Open
                ("BD0:", "name==""LIVEO*.TXT""", Ntf, LQH);
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query reopened for overflow");
              declare
                 LN : String (1 .. 14) := "BD0:LIVEO0.TXT";
@@ -1524,7 +1524,7 @@ begin
                 for I in 0 .. 9 loop
                    LN (10) := Character'Val
                      (Character'Pos ('0') + I);
-                   Status := Akernel_User.Files.Write
+                   Status := Aegir_User.Files.Write
                      (LN, 0, Buf'Address, 7, Count);
                 end loop;
              end;
@@ -1537,9 +1537,9 @@ begin
                 Got_Resync : Boolean := False;
              begin
                 for I in 1 .. 10 loop
-                   Status := Akernel_User.Files.Query_Poll
+                   Status := Aegir_User.Files.Query_Poll
                      ("BD0:", LQH, LK, LP, LPL);
-                   exit when Status /= Akernel_User.Files.Status_Ok;
+                   exit when Status /= Aegir_User.Files.Status_Ok;
                    if LK = 1 then
                       Got_Add := Got_Add + 1;
                    elsif LK = 3 then
@@ -1548,21 +1548,21 @@ begin
                 end loop;
                 Check (Got_Add = 8 and then Got_Resync,
                        "live query overflow resync");
-                Status := Akernel_User.Files.Query_Poll
+                Status := Aegir_User.Files.Query_Poll
                   ("BD0:", LQH, LK, LP, LPL);
                 Check
-                  (Status = Akernel_User.Files.Status_Not_Found,
+                  (Status = Aegir_User.Files.Status_Not_Found,
                    "live query overflow drained");
              end;
-             Status := Akernel_User.Files.Query_Close
+             Status := Aegir_User.Files.Query_Close
                ("BD0:", LQH);
-             Check (Status = Akernel_User.Files.Status_Ok,
+             Check (Status = Aegir_User.Files.Status_Ok,
                     "live query overflow closed");
 
              --  Cleanup.
-             Status := Akernel_User.Files.Delete
+             Status := Aegir_User.Files.Delete
                ("BD0:NOTLIVE.TXT");
-             Status := Akernel_User.Files.Delete
+             Status := Aegir_User.Files.Delete
                ("BD0:LIVE2.TXT");
              declare
                 LN : String (1 .. 14) := "BD0:LIVEO0.TXT";
@@ -1570,7 +1570,7 @@ begin
                 for I in 0 .. 9 loop
                    LN (10) := Character'Val
                      (Character'Pos ('0') + I);
-                   Status := Akernel_User.Files.Delete (LN);
+                   Status := Aegir_User.Files.Delete (LN);
                 end loop;
              end;
              Check (Cap_Delete (Ntf) = 0,
@@ -1619,7 +1619,7 @@ begin
             N_Len := 7;
          end Dup_Name;
       begin
-         Status := Akernel_User.Files.Volume_Info
+         Status := Aegir_User.Files.Volume_Info
            ("BD0:", Tot, Free_0, Blk_T);
          Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
 
@@ -1630,9 +1630,9 @@ begin
          Fails := 0;
          for I in 0 .. 55 loop
             SP_Name (I);
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               (Name (1 .. N_Len), 0, Buf'Address, 1, Count);
-            if Status /= Akernel_User.Files.Status_Ok
+            if Status /= Aegir_User.Files.Status_Ok
               or else Count /= 1
             then
                Fails := Fails + 1;
@@ -1640,21 +1640,21 @@ begin
          end loop;
          Check (Fails = 0, "bfs split: 56 creates ok");
 
-         Status := Akernel_User.Files.Stat ("BD0:SP00.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:SP00.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 1,
                 "bfs split: first file stats");
-         Status := Akernel_User.Files.Stat ("BD0:SP55.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:SP55.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 1,
                 "bfs split: last file stats");
 
          --  Directory listing walks the whole leaf chain.
          Seen := 0;
          for Index in 0 .. 90 loop
-            Status := Akernel_User.Files.Read_Dir
+            Status := Aegir_User.Files.Read_Dir
               ("BD0:", U64 (Index), Ent, Ent_L, Ent_D, Ent_S);
-            exit when Status /= Akernel_User.Files.Status_Ok;
+            exit when Status /= Aegir_User.Files.Status_Ok;
             if Ent_L = 8 and then Ent (1 .. 2) = "SP" then
                Seen := Seen + 1;
             end if;
@@ -1670,10 +1670,10 @@ begin
          begin
             Seen := 0;
             loop
-               Status := Akernel_User.Files.Query
+               Status := Aegir_User.Files.Query
                  ("BD0:", "name==""SP4*.TXT""", U64 (Seen),
                   QP, QL, QSz, QD);
-               exit when Status /= Akernel_User.Files.Status_Ok;
+               exit when Status /= Aegir_User.Files.Status_Ok;
                exit when QL /= 8 or else QP (1 .. 3) /= "SP4";
                Seen := Seen + 1;
             end loop;
@@ -1686,14 +1686,14 @@ begin
          Fails := 0;
          for I in 0 .. 27 loop
             Dup_Name (I);
-            Status := Akernel_User.Files.Mkdir (Name (1 .. N_Len));
-            if Status /= Akernel_User.Files.Status_Ok then
+            Status := Aegir_User.Files.Mkdir (Name (1 .. N_Len));
+            if Status /= Aegir_User.Files.Status_Ok then
                Fails := Fails + 1;
             end if;
             Name (8 .. 16) := "/SAME.TXT";
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               (Name (1 .. 16), 0, Buf'Address, 1, Count);
-            if Status /= Akernel_User.Files.Status_Ok
+            if Status /= Aegir_User.Files.Status_Ok
               or else Count /= 1
             then
                Fails := Fails + 1;
@@ -1705,12 +1705,12 @@ begin
          for I in 0 .. 27 loop
             Dup_Name (I);
             Name (8 .. 16) := "/SAME.TXT";
-            Status := Akernel_User.Files.Delete (Name (1 .. 16));
-            if Status /= Akernel_User.Files.Status_Ok then
+            Status := Aegir_User.Files.Delete (Name (1 .. 16));
+            if Status /= Aegir_User.Files.Status_Ok then
                Fails := Fails + 1;
             end if;
-            Status := Akernel_User.Files.Rmdir (Name (1 .. 7));
-            if Status /= Akernel_User.Files.Status_Ok then
+            Status := Aegir_User.Files.Rmdir (Name (1 .. 7));
+            if Status /= Aegir_User.Files.Status_Ok then
                Fails := Fails + 1;
             end if;
          end loop;
@@ -1719,8 +1719,8 @@ begin
          Fails := 0;
          for I in 0 .. 55 loop
             SP_Name (I);
-            Status := Akernel_User.Files.Delete (Name (1 .. N_Len));
-            if Status /= Akernel_User.Files.Status_Ok then
+            Status := Aegir_User.Files.Delete (Name (1 .. N_Len));
+            if Status /= Aegir_User.Files.Status_Ok then
                Fails := Fails + 1;
             end if;
          end loop;
@@ -1733,9 +1733,9 @@ begin
          --  again so the index returns to empty for the host-side
          --  post-test check.)
          Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD0:SPFINAL.TXT", 0, Buf'Address, 1, Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 1,
                 "bfs split: index insert after stress");
          declare
@@ -1744,27 +1744,27 @@ begin
             QSz : U64;
             QD  : Boolean;
          begin
-            Status := Akernel_User.Files.Query
+            Status := Aegir_User.Files.Query
               ("BD0:", "name==""SPFINAL.TXT""", 0, QP, QL, QSz, QD);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then QL = 11
                    and then QP (1 .. 11) = "SPFINAL.TXT",
                    "bfs split: index survives stress");
          end;
-         Status := Akernel_User.Files.Delete ("BD0:SPFINAL.TXT");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete ("BD0:SPFINAL.TXT");
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs split: index probe cleaned");
 
          --  Removed entries never free their tree nodes (no
          --  merge-on-remove): the leak is bounded by the grown
          --  root/index trees (~11 blocks observed; Free is in
          --  BYTES, so the bound is 24 blocks in bytes).
-         Status := Akernel_User.Files.Volume_Info
+         Status := Aegir_User.Files.Volume_Info
            ("BD0:", Tot, Free_1, Blk_T);
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("bfs split: free before/after" & U64'Image (Free_0)
             & U64'Image (Free_1));
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Free_0 /= 0
                 and then Free_1 <= Free_0
                 and then Free_1 + 24 * 1024 >= Free_0,
@@ -1791,9 +1791,9 @@ begin
          procedure Check_Block (Path : String; Off : U64;
                                 C : Character; Msg : String) is
          begin
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               (Path, Off, WBuf'Address, 1024, Count);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = 1024;
             for I in 0 .. 1023 loop
                Match := Match
@@ -1803,20 +1803,20 @@ begin
             Check (Match, Msg);
          end Check_Block;
       begin
-         Status := Akernel_User.Files.Volume_Info
+         Status := Aegir_User.Files.Volume_Info
            ("BD0:", Tot, Free_0, Blk_T);
          Fails := 0;
          for K in 0 .. 27 loop
             for I in 0 .. 1023 loop
                WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('A'));
             end loop;
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:FZA.BIN", U64 (K) * 1024, WBuf'Address, 1024,
                Count);
-            if Status /= Akernel_User.Files.Status_Ok
+            if Status /= Aegir_User.Files.Status_Ok
               or else Count /= 1024
             then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("bfs indirect: write A K=" & U64'Image (U64 (K))
                   & " status" & U64'Image (Status));
                Fails := Fails + 1;
@@ -1824,13 +1824,13 @@ begin
             for I in 0 .. 1023 loop
                WBuf (I) := Interfaces.Unsigned_8 (Character'Pos ('B'));
             end loop;
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               ("BD0:FZB.BIN", U64 (K) * 1024, WBuf'Address, 1024,
                Count);
-            if Status /= Akernel_User.Files.Status_Ok
+            if Status /= Aegir_User.Files.Status_Ok
               or else Count /= 1024
             then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("bfs indirect: write B K=" & U64'Image (U64 (K))
                   & " status" & U64'Image (Status));
                Fails := Fails + 1;
@@ -1838,8 +1838,8 @@ begin
          end loop;
          Check (Fails = 0, "bfs indirect: interleaved grows ok");
 
-         Status := Akernel_User.Files.Stat ("BD0:FZA.BIN", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD0:FZA.BIN", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 28 * 1024,
                 "bfs indirect: size crosses into indirect");
 
@@ -1852,15 +1852,15 @@ begin
          Check_Block ("BD0:FZB.BIN", 27 * 1024, 'B',
                       "bfs indirect: last indirect run reads back");
 
-         Status := Akernel_User.Files.Delete ("BD0:FZA.BIN");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete ("BD0:FZA.BIN");
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs indirect: file A deleted");
-         Status := Akernel_User.Files.Delete ("BD0:FZB.BIN");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete ("BD0:FZB.BIN");
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs indirect: file B deleted");
-         Status := Akernel_User.Files.Volume_Info
+         Status := Aegir_User.Files.Volume_Info
            ("BD0:", Tot, Free_1, Blk_T);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Free_0 /= 0
                 and then Free_1 = Free_0,
                 "bfs indirect: blocks round-trip exactly");
@@ -1884,7 +1884,7 @@ begin
                Buf (I) := Interfaces.Unsigned_8
                  (Character'Pos (V (V'First + I)));
             end loop;
-            Status := Akernel_User.Files.Attr_Write
+            Status := Aegir_User.Files.Attr_Write
               ("BD0:FZATTR.TXT", Attr, 16#4353_5452#,
                Buf'Address, U64 (V'Length));
          end Put_Attr;
@@ -1893,10 +1893,10 @@ begin
          procedure Check_Attr (Attr : String; V : String;
                                Msg : String) is
          begin
-            Status := Akernel_User.Files.Attr_Read
+            Status := Aegir_User.Files.Attr_Read
               ("BD0:FZATTR.TXT", Attr, Buf'Address, 64,
                Count, ASize, AType);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = U64 (V'Length)
               and then ASize = U64 (V'Length)
               and then AType = 16#4353_5452#;
@@ -1908,15 +1908,15 @@ begin
             Check (Match, Msg);
          end Check_Attr;
       begin
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD0:FZATTR.TXT", 0, Buf'Address, 4, Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 4,
                 "bfs attrw: target created");
 
          --  Insert, then read back.
          Put_Attr ("META:test", "hello");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: insert ok");
          Check_Attr ("META:test", "hello",
                      "bfs attrw: insert reads back");
@@ -1924,12 +1924,12 @@ begin
          --  Replace with a longer, then a shorter value (tail
          --  shifts both ways).
          Put_Attr ("META:test", "world!!");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: grow replace ok");
          Check_Attr ("META:test", "world!!",
                      "bfs attrw: grow replace reads back");
          Put_Attr ("META:test", "hi");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: shrink replace ok");
          Check_Attr ("META:test", "hi",
                      "bfs attrw: shrink replace reads back");
@@ -1937,17 +1937,17 @@ begin
          --  Second attribute: enumeration sees both (the name
          --  pseudo-attribute is skipped).
          Put_Attr ("META:two", "22");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: second insert ok");
-         Status := Akernel_User.Files.Attr_List
+         Status := Aegir_User.Files.Attr_List
            ("BD0:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then AN_L = 9 and then AN (1 .. 9) = "META:test"
                 and then ASize = 2,
                 "bfs attrw: list first attr");
-         Status := Akernel_User.Files.Attr_List
+         Status := Aegir_User.Files.Attr_List
            ("BD0:FZATTR.TXT", 1, AN, AN_L, AType, ASize);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then AN_L = 8 and then AN (1 .. 8) = "META:two"
                 and then ASize = 2,
                 "bfs attrw: list second attr");
@@ -1959,9 +1959,9 @@ begin
             QSz : U64;
             QD  : Boolean;
          begin
-            Status := Akernel_User.Files.Query
+            Status := Aegir_User.Files.Query
               ("BD0:", "META:test==""hi""", 0, QP, QL, QSz, QD);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then QL = 10
                    and then QP (1 .. 10) = "FZATTR.TXT",
                    "bfs attrw: query sees new attr");
@@ -1969,36 +1969,36 @@ begin
 
          --  Remove: the remaining attribute's bytes survive the
          --  tail shift.
-         Status := Akernel_User.Files.Attr_Write
+         Status := Aegir_User.Files.Attr_Write
            ("BD0:FZATTR.TXT", "META:test", 0, Buf'Address, 0);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: remove ok");
-         Status := Akernel_User.Files.Attr_Read
+         Status := Aegir_User.Files.Attr_Read
            ("BD0:FZATTR.TXT", "META:test", Buf'Address, 64,
             Count, ASize, AType);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs attrw: removed attr gone");
          Check_Attr ("META:two", "22",
                      "bfs attrw: survivor intact after remove");
-         Status := Akernel_User.Files.Attr_List
+         Status := Aegir_User.Files.Attr_List
            ("BD0:FZATTR.TXT", 0, AN, AN_L, AType, ASize);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then AN_L = 8 and then AN (1 .. 8) = "META:two",
                 "bfs attrw: list after remove");
 
          --  Removing an absent attribute and writing on fat32
          --  both fail cleanly.
-         Status := Akernel_User.Files.Attr_Write
+         Status := Aegir_User.Files.Attr_Write
            ("BD0:FZATTR.TXT", "META:nosuch", 0, Buf'Address, 0);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs attrw: remove absent rejected");
-         Status := Akernel_User.Files.Attr_Write
+         Status := Aegir_User.Files.Attr_Write
            ("BD1:README.TXT", "META:x", 0, Buf'Address, 0);
-         Check (Status = Akernel_User.Files.Status_Bad_Args,
+         Check (Status = Aegir_User.Files.Status_Bad_Args,
                 "bfs attrw: fat attr write rejected");
 
-         Status := Akernel_User.Files.Delete ("BD0:FZATTR.TXT");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete ("BD0:FZATTR.TXT");
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs attrw: cleanup ok");
       end Attr_Write_Tests;
 
@@ -2030,16 +2030,16 @@ begin
          Is_D  : Boolean;
          LPV   : constant String := "lpv";
       begin
-         Status := Akernel_User.Files.Delete (F);
-         Status := Akernel_User.Files.Delete (G);
-         Status := Akernel_User.Files.Delete (X);
-         Status := Akernel_User.Files.Rmdir (D1);
+         Status := Aegir_User.Files.Delete (F);
+         Status := Aegir_User.Files.Delete (G);
+         Status := Aegir_User.Files.Delete (X);
+         Status := Aegir_User.Files.Rmdir (D1);
 
-         Status := Akernel_User.Files.Mkdir (D1);
-         if Status /= Akernel_User.Files.Status_Ok then
+         Status := Aegir_User.Files.Mkdir (D1);
+         if Status /= Aegir_User.Files.Status_Ok then
             Put_Line ("m82i debug: mkdir status" & U64'Image (Status));
          end if;
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: mkdir ok");
 
          declare
@@ -2050,14 +2050,14 @@ begin
                Buf (I) := Interfaces.Unsigned_8
                  (Character'Pos (Payload (Payload'First + I)));
             end loop;
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Write
               (F, 0, Buf'Address, U64 (Payload'Length), Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Count = U64 (Payload'Length),
                    "bfs longpath: write ok");
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               (F, 0, Buf'Address, 64, Count);
-            Match := Status = Akernel_User.Files.Status_Ok
+            Match := Status = Aegir_User.Files.Status_Ok
               and then Count = U64 (Payload'Length);
             for I in 0 .. Payload'Length - 1 loop
                Match := Match
@@ -2067,8 +2067,8 @@ begin
             Check (Match, "bfs longpath: readback ok");
          end;
 
-         Status := Akernel_User.Files.Stat_Ex (F, Size, WD, WT, Is_D);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat_Ex (F, Size, WD, WT, Is_D);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 23 and then not Is_D,
                 "bfs longpath: stat_ex ok");
 
@@ -2076,16 +2076,16 @@ begin
          --  directory path (reply entry names stay 24 chars).
          Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('x'));
          Buf (1) := Interfaces.Unsigned_8 (10);
-         Status := Akernel_User.Files.Write (X, 0, Buf'Address, 2, Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Write (X, 0, Buf'Address, 2, Count);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 2,
                 "bfs longpath: sibling write");
          Idx := 0;
          Found := False;
          loop
-            Status := Akernel_User.Files.Read_Dir
+            Status := Aegir_User.Files.Read_Dir
               (D1, Idx, Ent, Ent_L, EDir, ESz);
-            exit when Status /= Akernel_User.Files.Status_Ok;
+            exit when Status /= Aegir_User.Files.Status_Ok;
             if Ent_L = 5 and then Ent (1 .. 5) = "X.TXT" then
                Found := not EDir;
             end if;
@@ -2100,118 +2100,118 @@ begin
             Buf (I) := Interfaces.Unsigned_8
               (Character'Pos (LPV (I + 1)));
          end loop;
-         Status := Akernel_User.Files.Attr_Write
+         Status := Aegir_User.Files.Attr_Write
            (F, "META:lp", 16#4353_5452#, Buf'Address, 3);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: attr write ok");
-         Status := Akernel_User.Files.Attr_Read
+         Status := Aegir_User.Files.Attr_Read
            (F, "META:lp", Buf'Address, 64, Count, ASize, AType);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 3
                 and then Buf (0) = Interfaces.Unsigned_8
                   (Character'Pos ('l')),
                 "bfs longpath: attr read ok");
-         Status := Akernel_User.Files.Attr_List
+         Status := Aegir_User.Files.Attr_List
            (F, 0, AN, AN_L, AType, ASize);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then AN_L = 7 and then AN (1 .. 7) = "META:lp",
                 "bfs longpath: attr list ok");
 
          --  Long FROM (slot 1) and long TO (buffer): rename,
          --  probe both, then rename back for cleanup symmetry.
-         Status := Akernel_User.Files.Rename (F, G);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Rename (F, G);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: rename ok");
-         Status := Akernel_User.Files.Stat (F, Size);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Status := Aegir_User.Files.Stat (F, Size);
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs longpath: from gone after rename");
-         Status := Akernel_User.Files.Stat (G, Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat (G, Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = 23,
                 "bfs longpath: to live after rename");
 
          --  fat32 answers the marker path too: a 67-char probe
          --  misses cleanly (no crash, no garbage match).
-         Status := Akernel_User.Files.Stat
+         Status := Aegir_User.Files.Stat
            ("BD1:FZNOFILE_m82i_long_request_path_wire_capacity_probe_0009.TXT",
             Size);
-         Check (Status = Akernel_User.Files.Status_Not_Found,
+         Check (Status = Aegir_User.Files.Status_Not_Found,
                 "bfs longpath: fat long path misses cleanly");
 
-         Status := Akernel_User.Files.Delete (G);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete (G);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: delete renamed ok");
-         Status := Akernel_User.Files.Delete (X);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete (X);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: delete sibling ok");
-         Status := Akernel_User.Files.Rmdir (D1);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Rmdir (D1);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "bfs longpath: rmdir ok");
       end Long_Path_Tests;
    begin
-      Akernel_User.Files.Bind (FS_EP);
+      Aegir_User.Files.Bind (FS_EP);
 
       --  The server needs its name table from init first; retry
       --  while it reports not-ready.
       loop
-         Status := Akernel_User.Files.Stat ("System/Manifest", Size);
-         exit when Status /= Akernel_User.Files.Status_Not_Ready
+         Status := Aegir_User.Files.Stat ("System/Manifest", Size);
+         exit when Status /= Aegir_User.Files.Status_Not_Ready
            or else Tries >= 10_000;
          Tries := Tries + 1;
-         Akernel_User.Syscalls.Yield;
+         Aegir_User.Syscalls.Yield;
       end loop;
 
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size =
-               Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap),
+               Aegir_User.Syscalls.Boot_File_Size (Manifest_Cap),
              "fs stat matches boot file size");
 
-      Status := Akernel_User.Files.Stat ("no/such/file", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("no/such/file", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fs stat unknown name rejected");
 
-      Status := Akernel_User.Files.Open ("System/Manifest", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Open ("System/Manifest", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fs open manifest ok");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("System/Manifest", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 64;
       for I in Buf'Range loop
          Match := Match
            and then U64 (Buf (I)) =
-             Akernel_User.Syscalls.Boot_Read_Byte
+             Aegir_User.Syscalls.Boot_Read_Byte
                (Manifest_Cap, U64 (I));
       end loop;
       Check (Match, "fs read bytes match boot byte API");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("System/Manifest", Size - 16, Buf'Address, 64, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 16,
              "fs read clamps at EOF");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("System/Manifest", Size, Buf'Address, 64, Count);
-      Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+      Check (Status = Aegir_User.Files.Status_Out_Of_Range,
              "fs read past EOF rejected");
 
       --  Volumes: device name and label both resolve; volume
       --  prefixes are case-insensitive, paths follow the volume's
       --  case flag (RD0 mounts ci).
-      Status := Akernel_User.Files.Stat ("Initrd:System/Manifest", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("Initrd:System/Manifest", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size =
-               Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap),
+               Aegir_User.Syscalls.Boot_File_Size (Manifest_Cap),
              "fs stat via volume label");
 
-      Status := Akernel_User.Files.Stat ("rd0:system/manifest", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Stat ("rd0:system/manifest", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fs names case-insensitive on RD0");
 
-      Status := Akernel_User.Files.Stat ("DH0:System/Manifest", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("DH0:System/Manifest", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fs unknown volume rejected");
 
       --  Block volume (WD0, virtio-blk behind Op_Add_Block): the
@@ -2221,23 +2221,23 @@ begin
       --  Sys:, partition 2 = FAT32 Data).
       --  The mount is pushed asynchronously by init; wait for it.
       Check (Await_Volume ("WD0:disk"), "blk volume appears");
-      Status := Akernel_User.Files.Stat ("WD0:disk", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("WD0:disk", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 1048576 * 512,
              "blk volume stat ok");
 
-      Status := Akernel_User.Files.Stat ("Disk:disk", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Stat ("Disk:disk", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "blk volume label resolves");
 
-      Status := Akernel_User.Files.Open ("WD0:disk", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Open ("WD0:disk", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "blk volume open ok");
 
       --  GPT header at LBA 1: "EFI PART" signature.
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("WD0:disk", 512, Buf'Address, 8, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Sig : constant String := "EFI PART";
@@ -2252,9 +2252,9 @@ begin
 
       --  Unaligned offset exercises the file server's partial-
       --  sector copy path.
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("WD0:disk", 513, Buf'Address, 7, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 7;
       declare
          Sig : constant String := "FI PART";
@@ -2277,58 +2277,58 @@ begin
          Part_EP : constant U64 := 7;  --  manifest grant order (part0)
       begin
          Check (Await_Volume ("PD0:disk"), "part volume appears");
-         Akernel_User.Syscalls.Message.Label := 3;  --  part_query
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
-         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
-         Check (Status = Akernel_User.Syscalls.IPC_Ok
-                and then Akernel_User.Syscalls.Message.Words (0) = 0
-                and then Akernel_User.Syscalls.Message.Words (1) = 2048
-                and then Akernel_User.Syscalls.Message.Words (2) = 524288
-                and then Akernel_User.Syscalls.Message.Words (3) = 2,
+         Aegir_User.Syscalls.Message.Label := 3;  --  part_query
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
+         Status := Aegir_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Aegir_User.Syscalls.IPC_Ok
+                and then Aegir_User.Syscalls.Message.Words (0) = 0
+                and then Aegir_User.Syscalls.Message.Words (1) = 2048
+                and then Aegir_User.Syscalls.Message.Words (2) = 524288
+                and then Aegir_User.Syscalls.Message.Words (3) = 2,
                 "part query slot 0 ok");
 
-         Akernel_User.Syscalls.Message.Label := 3;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Words (0) := 1;
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
-         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
-         Check (Status = Akernel_User.Syscalls.IPC_Ok
-                and then Akernel_User.Syscalls.Message.Words (0) = 0
-                and then Akernel_User.Syscalls.Message.Words (1) = 526336
-                and then Akernel_User.Syscalls.Message.Words (2) = 522207
-                and then Akernel_User.Syscalls.Message.Words (3) = 2,
+         Aegir_User.Syscalls.Message.Label := 3;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Words (0) := 1;
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
+         Status := Aegir_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Aegir_User.Syscalls.IPC_Ok
+                and then Aegir_User.Syscalls.Message.Words (0) = 0
+                and then Aegir_User.Syscalls.Message.Words (1) = 526336
+                and then Aegir_User.Syscalls.Message.Words (2) = 522207
+                and then Aegir_User.Syscalls.Message.Words (3) = 2,
                 "part query slot 1 fat ok");
 
-         Akernel_User.Syscalls.Message.Label := 3;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Words (0) := 2;
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
-         Status := Akernel_User.Syscalls.IPC_Call (Part_EP);
-         Check (Status = Akernel_User.Syscalls.IPC_Ok
-                and then Akernel_User.Syscalls.Message.Words (0) = 1
-                and then Akernel_User.Syscalls.Message.Words (3) = 2,
+         Aegir_User.Syscalls.Message.Label := 3;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Words (0) := 2;
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
+         Status := Aegir_User.Syscalls.IPC_Call (Part_EP);
+         Check (Status = Aegir_User.Syscalls.IPC_Ok
+                and then Aegir_User.Syscalls.Message.Words (0) = 1
+                and then Aegir_User.Syscalls.Message.Words (3) = 2,
                 "part query empty slot rejected");
       end;
 
       --  Per-partition raw volume (PD0, mounted by init from the
       --  query results): the partition resolves as "disk" through
       --  the file server -> partmgr -> blk chain.
-      Status := Akernel_User.Files.Stat ("PD0:disk", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("PD0:disk", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 524288 * 512,
              "part volume stat ok");
 
-      Status := Akernel_User.Files.Stat ("Part0:disk", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Stat ("Part0:disk", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "part volume label resolves");
 
       --  FAT32 BPB at the DATA partition (slot 1) start: 0xEB
       --  jump, OEM "mkfs.fat" (8 chars at offset 3). Slot 0 is
       --  BeFS since M93.
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("PD1:disk", 0, Buf'Address, 12, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 12
         and then Buf (0) = 16#EB#;
       declare
@@ -2344,7 +2344,7 @@ begin
 
       --  Sync fans out to the fs-driver volumes; write-through
       --  today, so a no-op passthrough that must report ok.
-      Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
+      Check (Aegir_User.Files.Sync = Aegir_User.Files.Status_Ok,
              "fs sync accepted");
 
       --  FAT32 volume (BD1/Data, System/Fat32 behind the VFS;
@@ -2352,21 +2352,21 @@ begin
       --  read through the file server -> fs driver -> block
       --  driver RPC chain.
       Check (Await_Volume ("BD1:README.TXT"), "fat32 volume appears");
-      Status := Akernel_User.Files.Stat ("BD1:README.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:README.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 37,
              "fat stat readme size");
 
-      Status := Akernel_User.Files.Stat ("Data:README.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Stat ("Data:README.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat volume label resolves");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:README.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 37;
       declare
-         Text : constant String := "Hello from the akernel FAT32 volume.";
+         Text : constant String := "Hello from the aegir FAT32 volume.";
       begin
          for I in 0 .. 35 loop
             Match := Match
@@ -2380,14 +2380,14 @@ begin
       --  BIG.BIN: byte i = (i*7+3) mod 256, 64 KiB — spans 128
       --  clusters on a 1-sector/cluster image, exercising FAT
       --  chain walks in the fs driver.
-      Status := Akernel_User.Files.Stat ("BD1:BIG.BIN", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:BIG.BIN", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 65536,
              "fat stat big.bin size");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:BIG.BIN", 0, Big_Buf'Address, 512, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
          Match := Match
@@ -2396,9 +2396,9 @@ begin
       end loop;
       Check (Match, "fat big.bin head ok");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:BIG.BIN", 65000, Big_Buf'Address, 512, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 512;
       for J in 0 .. 511 loop
          Match := Match
@@ -2408,9 +2408,9 @@ begin
       Check (Match, "fat big.bin tail ok");
 
       --  Cluster-crossing unaligned read (clusters are 1 sector).
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:BIG.BIN", 4091, Buf'Address, 8, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       for J in 0 .. 7 loop
          Match := Match
@@ -2419,25 +2419,25 @@ begin
       end loop;
       Check (Match, "fat unaligned read ok");
 
-      Status := Akernel_User.Files.Stat ("bd1:big.bin", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("bd1:big.bin", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 65536,
              "fat names case-insensitive");
 
-      Status := Akernel_User.Files.Stat ("BD1:NOSUCH.BIN", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:NOSUCH.BIN", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat unknown file rejected");
 
       --  Subdirectory traversal and LFN entries (host-created in
       --  the image: mmd SUBDIR, mcopy with a long name).
-      Status := Akernel_User.Files.Stat ("BD1:SUBDIR/HELLO.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:SUBDIR/HELLO.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 14,
              "fat subdir stat ok");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:subdir/hello.txt", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 14;
       declare
          Text : constant String := "Subdir hello!";
@@ -2451,14 +2451,14 @@ begin
       end;
       Check (Match, "fat subdir read ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:LongFileName.txt", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:LongFileName.txt", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 23,
              "fat lfn stat ok");
 
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("bd1:longfilename.txt", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 23;
       declare
          Text : constant String := "A long file name body.";
@@ -2483,23 +2483,23 @@ begin
          end loop;
       end;
 
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:NEWFILE.TXT", 0, Buf'Address, 14, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 14,
              "fat write create ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:NEWFILE.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:NEWFILE.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 14,
              "fat write stat ok");
 
       for I in 0 .. 13 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:NEWFILE.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 14;
       declare
          Text : constant String := "AKWRITE!+MORE!";
@@ -2513,9 +2513,9 @@ begin
       Check (Match, "fat write readback ok");
 
       --  Create inside a subdirectory.
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:SUBDIR/NEW.TXT", 0, Buf'Address, 0, Count);
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat write zero-length rejected");
 
       declare
@@ -2526,9 +2526,9 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:SUBDIR/NEW.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat write subdir ok");
 
@@ -2537,19 +2537,19 @@ begin
       for J in 0 .. 511 loop
          Big_Buf (J) := Interfaces.Unsigned_8 ((J * 5 + 1) mod 256);
       end loop;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:NEW2.TXT", 0, Big_Buf'Address, 512, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 512,
              "fat write big ok");
 
       --  Extending write at the current end (size grows 8 bytes
       --  per boot; checks stay relative so reruns pass).
-      Status := Akernel_User.Files.Stat ("BD1:EXT.TXT", Size);
+      Status := Aegir_User.Files.Stat ("BD1:EXT.TXT", Size);
       declare
          Prior : U64 := 0;
       begin
-         if Status = Akernel_User.Files.Status_Ok then
+         if Status = Aegir_User.Files.Status_Ok then
             Prior := Size;
          end if;
          declare
@@ -2560,26 +2560,26 @@ begin
                  Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
             end loop;
          end;
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD1:EXT.TXT", Prior, Buf'Address, 8, Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = 8,
                 "fat write extend ok");
-         Status := Akernel_User.Files.Stat ("BD1:EXT.TXT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD1:EXT.TXT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = Prior + 8,
                 "fat write extend stat ok");
       end;
 
       --  Sparse writes rejected; bad parent rejected.
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:NEWFILE.TXT", 100, Buf'Address, 4, Count);
-      Check (Status = Akernel_User.Files.Status_Out_Of_Range,
+      Check (Status = Aegir_User.Files.Status_Out_Of_Range,
              "fat write sparse rejected");
 
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:NODIR/F.TXT", 0, Buf'Address, 4, Count);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat write bad parent rejected");
 
       --  Raw disk write through the VFS bounce path: sector 1000
@@ -2593,18 +2593,18 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("WD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "blk volume write ok");
 
       for I in 0 .. 7 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("WD0:disk", 1000 * 512 + 100, Buf'Address, 8, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Text : constant String := "AKRAWIO!";
@@ -2620,19 +2620,19 @@ begin
       --  20c: delete / truncate / mkdir / rmdir / LFN creation.
       --  Idempotent across reused images: the prelude drops any
       --  leftover MKTEST state from a prior boot.
-      Status := Akernel_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
-      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
+      Status := Aegir_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
+      Status := Aegir_User.Files.Rmdir ("BD1:MKTEST");
 
-      Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Mkdir ("BD1:MKTEST");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat mkdir ok");
 
-      Status := Akernel_User.Files.Mkdir ("BD1:MKTEST");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Status := Aegir_User.Files.Mkdir ("BD1:MKTEST");
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat mkdir exists rejected");
 
-      Status := Akernel_User.Files.Stat ("BD1:MKTEST", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:MKTEST", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 0,
              "fat dir stat ok");
 
@@ -2640,15 +2640,15 @@ begin
          WD, WT : U64;
          Dir_D  : Boolean;
       begin
-         Status := Akernel_User.Files.Stat_Ex
+         Status := Aegir_User.Files.Stat_Ex
            ("BD1:MKTEST", Size, WD, WT, Dir_D);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Dir_D,
                 "fat dir stat reports is-dir");
       end;
 
-      Status := Akernel_User.Files.Mkdir ("BD1:NODIR/SUB");
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Mkdir ("BD1:NODIR/SUB");
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat mkdir bad parent rejected");
 
       --  A fresh directory must be VISIBLE in a listing, not just
@@ -2662,9 +2662,9 @@ begin
          Seen    : Boolean := False;
       begin
          for Index in 0 .. 40 loop
-            Status := Akernel_User.Files.Read_Dir
+            Status := Aegir_User.Files.Read_Dir
               ("BD1:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
-            exit when Status /= Akernel_User.Files.Status_Ok;
+            exit when Status /= Aegir_User.Files.Status_Ok;
             if Ent_L = 6 and then Ent (1 .. 6) = "MKTEST" then
                Seen := True;
             end if;
@@ -2703,18 +2703,18 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat mkdir file write ok");
 
       for I in 0 .. 7 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:MKTEST/INNER.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Text : constant String := "AKINNER!";
@@ -2727,20 +2727,20 @@ begin
       end;
       Check (Match, "fat mkdir file read ok");
 
-      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Status := Aegir_User.Files.Rmdir ("BD1:MKTEST");
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat rmdir non-empty rejected");
 
-      Status := Akernel_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Delete ("BD1:MKTEST/INNER.TXT");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat delete inner ok");
 
-      Status := Akernel_User.Files.Rmdir ("BD1:MKTEST");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Rmdir ("BD1:MKTEST");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rmdir ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:MKTEST", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:MKTEST", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat rmdir gone");
 
       --  Delete: create, delete, gone; directories rejected.
@@ -2752,26 +2752,26 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:DELME.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("BD1:DELME.TXT");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Delete ("BD1:DELME.TXT");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat file delete ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:DELME.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:DELME.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat deleted stat rejected");
 
-      Status := Akernel_User.Files.Delete ("BD1:DELME.TXT");
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Delete ("BD1:DELME.TXT");
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat delete twice rejected");
 
-      Status := Akernel_User.Files.Delete ("BD1:SUBDIR");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Status := Aegir_User.Files.Delete ("BD1:SUBDIR");
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat delete dir rejected");
 
       --  Truncate: chain freed, size zeroed, file writable again.
@@ -2783,33 +2783,33 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:TRUNC.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate setup write ok");
 
-      Status := Akernel_User.Files.Truncate ("BD1:TRUNC.TXT");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Truncate ("BD1:TRUNC.TXT");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat truncate ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:TRUNC.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:TRUNC.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 0,
              "fat truncate zeroes size");
 
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:TRUNC.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat truncate rewrite ok");
 
       for I in 0 .. 7 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:TRUNC.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Text : constant String := "AKTRUNC!";
@@ -2833,24 +2833,24 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:CreatedLongName.dat", 0, Buf'Address, 16, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 16,
              "fat lfn create write ok");
 
-      Status := Akernel_User.Files.Stat
+      Status := Aegir_User.Files.Stat
         ("bd1:createdlongname.dat", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 16,
              "fat lfn create stat ok");
 
       for I in 0 .. 15 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:CreatedLongName.dat", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 16;
       declare
          Text : constant String := "AKLFN-CREATE OK!";
@@ -2872,34 +2872,34 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:DeleteLongName.dat", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat lfn delete setup write ok");
 
-      Status := Akernel_User.Files.Delete ("BD1:DeleteLongName.dat");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Delete ("BD1:DeleteLongName.dat");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat lfn delete ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:DeleteLongName.dat", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:DeleteLongName.dat", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat lfn delete gone");
 
       --  41a: rename/move + volume info. Idempotent across
       --  reused images: the prelude drops leftover RENTEST
       --  state from a prior boot (end state below leaves
       --  RENTEST/MOVED/C.TXT behind on purpose).
-      Status := Akernel_User.Files.Delete ("BD1:RENTEST/MOVED/C.TXT");
-      Status := Akernel_User.Files.Delete ("BD1:RENTEST/SUB/C.TXT");
-      Status := Akernel_User.Files.Delete ("BD1:RENTEST/B.TXT");
-      Status := Akernel_User.Files.Delete ("BD1:RENTEST/A.TXT");
-      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST/MOVED");
-      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST/SUB");
-      Status := Akernel_User.Files.Rmdir ("BD1:RENTEST");
+      Status := Aegir_User.Files.Delete ("BD1:RENTEST/MOVED/C.TXT");
+      Status := Aegir_User.Files.Delete ("BD1:RENTEST/SUB/C.TXT");
+      Status := Aegir_User.Files.Delete ("BD1:RENTEST/B.TXT");
+      Status := Aegir_User.Files.Delete ("BD1:RENTEST/A.TXT");
+      Status := Aegir_User.Files.Rmdir ("BD1:RENTEST/MOVED");
+      Status := Aegir_User.Files.Rmdir ("BD1:RENTEST/SUB");
+      Status := Aegir_User.Files.Rmdir ("BD1:RENTEST");
 
-      Status := Akernel_User.Files.Mkdir ("BD1:RENTEST");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Mkdir ("BD1:RENTEST");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rename mkdir ok");
 
       declare
@@ -2910,27 +2910,27 @@ begin
               Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
       end;
-      Status := Akernel_User.Files.Write
+      Status := Aegir_User.Files.Write
         ("BD1:RENTEST/A.TXT", 0, Buf'Address, 8, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 8,
              "fat rename setup write ok");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST/A.TXT", "BD1:RENTEST/B.TXT");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rename ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:RENTEST/A.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:RENTEST/A.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat rename old gone");
 
       for I in 0 .. 7 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:RENTEST/B.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Text : constant String := "AKRENAME";
@@ -2943,18 +2943,18 @@ begin
       end;
       Check (Match, "fat rename readback ok");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST/B.TXT", "BD1:RENTEST/B.TXT");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat rename exists rejected");
 
-      Status := Akernel_User.Files.Mkdir ("BD1:RENTEST/SUB");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Mkdir ("BD1:RENTEST/SUB");
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rename subdir ok");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST/B.TXT", "BD1:RENTEST/SUB/C.TXT");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rename move ok");
 
       --  Ada.Directories.Rename rides __gnat_rename -> newlib
@@ -2976,16 +2976,16 @@ begin
             Check (False, "fat rename via Ada.Directories ok");
       end;
 
-      Status := Akernel_User.Files.Stat ("BD1:RENTEST/B.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Not_Found,
+      Status := Aegir_User.Files.Stat ("BD1:RENTEST/B.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Not_Found,
              "fat rename move old gone");
 
       for I in 0 .. 7 loop
          Buf (I) := 0;
       end loop;
-      Status := Akernel_User.Files.Read
+      Status := Aegir_User.Files.Read
         ("BD1:RENTEST/SUB/C.TXT", 0, Buf'Address, 64, Count);
-      Match := Status = Akernel_User.Files.Status_Ok
+      Match := Status = Aegir_User.Files.Status_Ok
         and then Count = 8;
       declare
          Text : constant String := "AKRENAME";
@@ -2998,24 +2998,24 @@ begin
       end;
       Check (Match, "fat rename move readback ok");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST/SUB", "BD1:RENTEST/MOVED");
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Check (Status = Aegir_User.Files.Status_Ok,
              "fat rename dir ok");
 
-      Status := Akernel_User.Files.Stat ("BD1:RENTEST/MOVED/C.TXT", Size);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Status := Aegir_User.Files.Stat ("BD1:RENTEST/MOVED/C.TXT", Size);
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Size = 8,
              "fat rename dir keeps contents");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST", "BD1:RENTEST/MOVED/X");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat rename subtree rejected");
 
-      Status := Akernel_User.Files.Rename
+      Status := Aegir_User.Files.Rename
         ("BD1:RENTEST/MOVED/C.TXT", "Initrd:RENTEST-X.TXT");
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "fat rename cross-volume rejected");
 
       declare
@@ -3023,9 +3023,9 @@ begin
          Free    : U64;
          Cluster : U64;
       begin
-         Status := Akernel_User.Files.Volume_Info
+         Status := Aegir_User.Files.Volume_Info
            ("BD1:", Total, Free, Cluster);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Total > 0
                 and then Cluster > 0
                 and then Free /= U64'Last
@@ -3033,9 +3033,9 @@ begin
                 "fat volume info ok");
       end;
 
-      Status := Akernel_User.Files.Volume_Info
+      Status := Aegir_User.Files.Volume_Info
         ("Initrd:System/Init", Size, Count, Match_U);
-      Check (Status = Akernel_User.Files.Status_Bad_Args,
+      Check (Status = Aegir_User.Files.Status_Bad_Args,
              "boot volume info rejected");
 
       --  38b: 64-file create/walk/count/delete proof on BD0 --
@@ -3059,7 +3059,7 @@ begin
          St2       : U64;
          C2        : U64;
       begin
-         St2 := Akernel_User.Files.Mkdir ("BD1:STRESS");
+         St2 := Aegir_User.Files.Mkdir ("BD1:STRESS");
 
          --  Leftover sweep (interrupted earlier run): delete any
          --  F* file the walk turns up, by its ACTUAL name
@@ -3071,9 +3071,9 @@ begin
             FLen : Natural;
          begin
             for Index in 0 .. 400 loop
-               St2 := Akernel_User.Files.Read_Dir
+               St2 := Aegir_User.Files.Read_Dir
                  ("BD1:STRESS", 0, DName, DLen, DDir, DSize);
-               exit when St2 /= Akernel_User.Files.Status_Ok;
+               exit when St2 /= Aegir_User.Files.Status_Ok;
                if DLen > 0 and then DName (1) = 'F'
                  and then not DDir
                then
@@ -3081,7 +3081,7 @@ begin
                   Full (1 .. 11) := "BD1:STRESS/";
                   Full (12 .. 11 + DLen) := DName (1 .. DLen);
                   FLen := 11 + DLen;
-                  St2 := Akernel_User.Files.Delete (Full (1 .. FLen));
+                  St2 := Aegir_User.Files.Delete (Full (1 .. FLen));
                end if;
             end loop;
          end;
@@ -3089,9 +3089,9 @@ begin
          for N in 0 .. 63 loop
             WName (13) := Character'Val (48 + N / 10);
             WName (14) := Character'Val (48 + N mod 10);
-            St2 := Akernel_User.Files.Write
+            St2 := Aegir_User.Files.Write
               (WName, 0, Buf'Address, 4, C2);
-            if St2 /= Akernel_User.Files.Status_Ok or else C2 /= 4 then
+            if St2 /= Aegir_User.Files.Status_Ok or else C2 /= 4 then
                Create_Ok := False;
             end if;
          end loop;
@@ -3099,9 +3099,9 @@ begin
 
          Seen := 0;
          for Index in 0 .. 100 loop
-            St2 := Akernel_User.Files.Read_Dir
+            St2 := Aegir_User.Files.Read_Dir
               ("BD1:STRESS", U64 (Index), DName, DLen, DDir, DSize);
-            exit when St2 /= Akernel_User.Files.Status_Ok;
+            exit when St2 /= Aegir_User.Files.Status_Ok;
             Seen := Seen + 1;
          end loop;
          Check (Seen = 64, "fat stress walk counts 64");
@@ -3109,7 +3109,7 @@ begin
          for N in 0 .. 63 loop
             WName (13) := Character'Val (48 + N / 10);
             WName (14) := Character'Val (48 + N mod 10);
-            if Akernel_User.Files.Delete (WName) /= Akernel_User.Files.Status_Ok
+            if Aegir_User.Files.Delete (WName) /= Aegir_User.Files.Status_Ok
             then
                Delete_Ok := False;
             end if;
@@ -3118,9 +3118,9 @@ begin
 
          Seen := 0;
          for Index in 0 .. 10 loop
-            St2 := Akernel_User.Files.Read_Dir
+            St2 := Aegir_User.Files.Read_Dir
               ("BD1:STRESS", U64 (Index), DName, DLen, DDir, DSize);
-            exit when St2 /= Akernel_User.Files.Status_Ok;
+            exit when St2 /= Aegir_User.Files.Status_Ok;
             Seen := Seen + 1;
          end loop;
          Check (Seen = 0, "fat stress dir empty after deletes");
@@ -3142,8 +3142,8 @@ begin
          for N in 0 .. 63 loop
             GName (12) := Character'Val (48 + N / 10);
             GName (13) := Character'Val (48 + N mod 10);
-            GStat := Akernel_User.Files.Stat (GName, GSize);
-            if GStat /= Akernel_User.Files.Status_Ok
+            GStat := Aegir_User.Files.Stat (GName, GSize);
+            if GStat /= Aegir_User.Files.Status_Ok
               or else GSize /= 12
             then
                All_Ok := False;
@@ -3151,10 +3151,10 @@ begin
          end loop;
          Check (All_Ok, "gen 64 boot files stat ok");
 
-         GStat := Akernel_User.Files.Open ("Tests/Gen/f42", GSize);
-         Check (GStat = Akernel_User.Files.Status_Ok
+         GStat := Aegir_User.Files.Open ("Tests/Gen/f42", GSize);
+         Check (GStat = Aegir_User.Files.Status_Ok
                 and then GSize = 12, "gen file f42 opens");
-         GStat := Akernel_User.Files.Read
+         GStat := Aegir_User.Files.Read
            ("Tests/Gen/f42", 0, RBuf'Address, 12, GCount);
          declare
             Expect : constant String :=
@@ -3168,7 +3168,7 @@ begin
                end if;
             end loop;
          end;
-         Check (GStat = Akernel_User.Files.Status_Ok
+         Check (GStat = Aegir_User.Files.Status_Ok
                 and then GCount = 12 and then RMatch,
                 "gen file f42 content reads");
       end;
@@ -3193,18 +3193,18 @@ begin
          Chunk    : U64;
          Staged   : Boolean := True;
       begin
-         Status := Akernel_User.Files.Stat ("Tests/Memstage", Size);
-         Check (Status = Akernel_User.Files.Status_Ok and then Size > 0,
+         Status := Aegir_User.Files.Stat ("Tests/Memstage", Size);
+         Check (Status = Aegir_User.Files.Status_Ok and then Size > 0,
                 "memstage size via fs");
 
          Pages := (Size + 4095) / 4096;
-         Mem_Cap := Akernel_User.Syscalls.Mem_Alloc (Pages);
-         Check (Mem_Cap /= Akernel_User.Syscalls.Syscall_Failed,
+         Mem_Cap := Aegir_User.Syscalls.Mem_Alloc (Pages);
+         Check (Mem_Cap /= Aegir_User.Syscalls.Syscall_Failed,
                 "memstage staging object allocated");
 
-         Check (Akernel_User.Syscalls.Mem_Map
+         Check (Aegir_User.Syscalls.Mem_Map
                   (Address_Space =>
-                     Akernel_User.Syscalls.Address_Space_Cap,
+                     Aegir_User.Syscalls.Address_Space_Cap,
                    Cap           => Mem_Cap,
                    VA            => Stage_VA,
                    Offset        => 0,
@@ -3212,30 +3212,30 @@ begin
                    Flags         => 3) = 0,
                 "memstage staging object mapped");
 
-         Status := Akernel_User.Files.Open ("Tests/Memstage", Size);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Open ("Tests/Memstage", Size);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "memstage open ok");
 
          Off := 0;
          while Off < Size loop
             Chunk := U64'Min (Size - Off, 32768);
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               ("Tests/Memstage", Off,
                System'To_Address (Integer_Address (Stage_VA + Off)),
                Chunk, Count);
             Staged := Staged
-              and then Status = Akernel_User.Files.Status_Ok
+              and then Status = Aegir_User.Files.Status_Ok
               and then Count = Chunk;
             Off := Off + Chunk;
          end loop;
          Check (Staged, "memstage ELF staged into memory object");
 
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
            (Index       => 0,
             Source_Cap  => 2,  --  fuzz console cap -> child handle 1
-            Rights_Mask => Akernel_User.Syscalls.Right_Send,
+            Rights_Mask => Aegir_User.Syscalls.Right_Send,
             Badge       => 0);
-         Status := Akernel_User.Syscalls.Spawn
+         Status := Aegir_User.Syscalls.Spawn
            (Image_Cap   => Mem_Cap,
             Grant_Count => 1,
             Process_Cap => Proc_Cap);
@@ -3249,10 +3249,10 @@ begin
             Attempts : Natural := 0;
          begin
             while not Reaped and then Attempts < 100_000 loop
-               Reaped   := Akernel_User.Syscalls.Reap_Process (Proc_Cap) = 0;
+               Reaped   := Aegir_User.Syscalls.Reap_Process (Proc_Cap) = 0;
                Attempts := Attempts + 1;
                if not Reaped then
-                  Akernel_User.Syscalls.Yield;
+                  Aegir_User.Syscalls.Yield;
                end if;
             end loop;
             Check (Reaped, "memstage reaped after exit");
@@ -3308,18 +3308,18 @@ begin
    EP := 1;
 
    --  Grant-list validation: unopened source handle.
-   Akernel_User.Syscalls.Set_Grant (0, 250, 0, 0);
+   Aegir_User.Syscalls.Set_Grant (0, 250, 0, 0);
    Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant of unopened cap rejected");
 
    --  Rights escalation: endpoints carry no Read right.
-   Akernel_User.Syscalls.Set_Grant
-     (0, EP, Akernel_User.Syscalls.Right_Read, 0);
+   Aegir_User.Syscalls.Set_Grant
+     (0, EP, Aegir_User.Syscalls.Right_Read, 0);
    Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant rights escalation rejected");
 
    --  Rights mask bits outside the valid set.
-   Akernel_User.Syscalls.Set_Grant (0, EP, 16#400#, 0);
+   Aegir_User.Syscalls.Set_Grant (0, EP, 16#400#, 0);
    Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 1);
    Check (Status = 4, "spawn grant unknown rights bits rejected");
 
@@ -3330,12 +3330,12 @@ begin
    --  Valid grant: endpoint with Send+Receive (badged cap stays
    --  with the fuzzer; echo's own badge is irrelevant) plus the
    --  console Send cap so echo can print.
-   Akernel_User.Syscalls.Set_Grant
+   Aegir_User.Syscalls.Set_Grant
      (0, EP,
-      Akernel_User.Syscalls.Right_Send + Akernel_User.Syscalls.Right_Receive,
+      Aegir_User.Syscalls.Right_Send + Aegir_User.Syscalls.Right_Receive,
       0);
-   Akernel_User.Syscalls.Set_Grant
-     (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+   Aegir_User.Syscalls.Set_Grant
+     (1, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
    Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image, A1 => 2);
    --  fuzz_last_a1 is rewritten by every ecall: capture the process
    --  cap before Check (or anything else) makes another syscall.
@@ -3370,7 +3370,7 @@ begin
       Check (Info_Cap /= U64'Last, "process_info buffer allocated");
       Check (Raw_Ecall
                (Number => Sys_Mem_Map,
-                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
                 A1 => Info_Cap, A2 => Info_VA,
                 A3 => 0, A4 => 4096, A5 => 3) = 0,
              "process_info buffer mapped");
@@ -3408,7 +3408,7 @@ begin
 
       --  Table walk: states in range, pids unique, self present,
       --  exactly one live child linked back to this process.
-      for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1 loop
+      for Slot in 0 .. Aegir_User.Syscalls.Process_Table_Slots - 1 loop
          if Raw_Ecall (Number => Sys_Process_Info, A0 => Resource_Cap,
                        A1 => U64 (Slot), A2 => Info_Cap) = 0
          then
@@ -3467,7 +3467,7 @@ begin
       Check (Admin_Buf /= U64'Last, "admin buffer allocated");
       Check (Raw_Ecall
                (Number => Sys_Mem_Map,
-                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
                 A1 => Admin_Buf, A2 => Admin_VA,
                 A3 => 0, A4 => 4096, A5 => 3) = 0,
              "admin buffer mapped");
@@ -3483,14 +3483,14 @@ begin
                         A1 => U64'Last, A2 => 1, A3 => Admin_Buf)
              = U64'Last,
              "cap_info wrong-kind authority rejected");
-      NoMan_Cap := Akernel_User.Syscalls.Cap_Mint
-        (Admin_Cap, Akernel_User.Syscalls.Right_Transfer, 0);
+      NoMan_Cap := Aegir_User.Syscalls.Cap_Mint
+        (Admin_Cap, Aegir_User.Syscalls.Right_Transfer, 0);
       Check (NoMan_Cap /= U64'Last, "admin mint without Manage ok");
       Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => NoMan_Cap,
                         A1 => U64'Last, A2 => 1, A3 => Admin_Buf)
              = U64'Last,
              "cap_info no-Manage admin rejected");
-      Status := Akernel_User.Syscalls.Cap_Delete (NoMan_Cap);
+      Status := Aegir_User.Syscalls.Cap_Delete (NoMan_Cap);
       Check (Raw_Ecall (Number => Sys_Cap_Info, A0 => Admin_Cap,
                         A1 => U64'Last, A2 => 1, A3 => Console_EP)
              = U64'Last,
@@ -3542,13 +3542,13 @@ begin
       --  rounds, and a dying receiver fails the endpoint (M34).
       My_EP := Raw_Ecall (Number => Sys_EP_Create);
       Check (My_EP < 256, "admin test endpoint created");
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
         (0, My_EP,
-         Akernel_User.Syscalls.Right_Send +
-           Akernel_User.Syscalls.Right_Receive,
+         Aegir_User.Syscalls.Right_Send +
+           Aegir_User.Syscalls.Right_Receive,
          0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
       Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image,
                            A1 => 2);
       Echo2_Proc := Last_A1;
@@ -3567,7 +3567,7 @@ begin
          Proc_Live : Natural := 0;
          Thr_Live  : Natural := 0;
       begin
-         for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
+         for Slot in 0 .. Aegir_User.Syscalls.Process_Table_Slots - 1
          loop
             if Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                           A1 => U64 (Slot), A2 => Admin_Buf) = 0
@@ -3591,7 +3591,7 @@ begin
          Put_Line ("m80 occupancy: process slots"
                    & Natural'Image (Proc_Live) & " /"
                    & Natural'Image
-                     (Natural (Akernel_User.Syscalls.Process_Table_Slots))
+                     (Natural (Aegir_User.Syscalls.Process_Table_Slots))
                    & ", live threads (>="
                    & Natural'Image (Thr_Live) & ")");
       end;
@@ -3624,8 +3624,8 @@ begin
          --  Sleep_Until past-deadline gate, turning this poll
          --  into a busy spin that fits inside one 50 ms quantum
          --  at SMP1: echo2 never got the hart.)
-         Ignore := Akernel_User.Syscalls.Sleep_Until
-           (Akernel_User.Syscalls.Read_Time + 100_000);
+         Ignore := Aegir_User.Syscalls.Sleep_Until
+           (Aegir_User.Syscalls.Read_Time + 100_000);
       end loop;
       Check (APage (3) = 3, "thread_regs echo parked in receive");
       if APage (3) = 3 then
@@ -3667,9 +3667,9 @@ begin
       --  yield loops outrun a console-printing child under SMP4.
       Calls_Ok := True;
       for Round in 1 .. 3 loop
-         Akernel_User.Syscalls.Message.Label := 16#AD#;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps  := (others => 0);
+         Aegir_User.Syscalls.Message.Label := 16#AD#;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps  := (others => 0);
          Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => My_EP);
          if Status /= 0 then
             Calls_Ok := False;
@@ -3685,7 +3685,7 @@ begin
          Ignore := Raw_Ecall (Number => Sys_Yield);
       end loop;
       Check (Reaped2, "admin test echo reaped");
-      Status := Akernel_User.Syscalls.Cap_Delete (My_EP);
+      Status := Aegir_User.Syscalls.Cap_Delete (My_EP);
    end;
 
    --  62: scheduler priorities.  Sys_Set_Priority semantics: self
@@ -3724,7 +3724,7 @@ begin
       Check (Pri_Buf /= U64'Last, "priority info buffer allocated");
       Check (Raw_Ecall
                (Number => Sys_Mem_Map,
-                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
                 A1 => Pri_Buf, A2 => Pri_VA,
                 A3 => 0, A4 => 4096, A5 => 3) = 0,
              "priority info buffer mapped");
@@ -3758,13 +3758,13 @@ begin
       --  not the shared EP -- a dying receiver fails it, M34).
       Pri_EP := Raw_Ecall (Number => Sys_EP_Create);
       Check (Pri_EP < 256, "priority test endpoint created");
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
         (0, Pri_EP,
-         Akernel_User.Syscalls.Right_Send +
-           Akernel_User.Syscalls.Right_Receive,
+         Aegir_User.Syscalls.Right_Send +
+           Aegir_User.Syscalls.Right_Receive,
          0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
       Status := Raw_Ecall (Number => Sys_Spawn, A0 => Echo_Image,
                            A1 => 2);
       Pri_Proc := Last_A1;
@@ -3772,13 +3772,13 @@ begin
              "priority child spawned");
 
       --  A minted copy WITHOUT Manage must not set.
-      NoMan_P := Akernel_User.Syscalls.Cap_Mint
-        (Pri_Proc, Akernel_User.Syscalls.Right_Read, 0);
+      NoMan_P := Aegir_User.Syscalls.Cap_Mint
+        (Pri_Proc, Aegir_User.Syscalls.Right_Read, 0);
       Check (NoMan_P /= U64'Last, "priority no-Manage mint ok");
       Check (Raw_Ecall (Number => Sys_Set_Priority, A0 => NoMan_P,
                         A1 => 5) = 1,
              "priority no-Manage process cap rejected");
-      Status := Akernel_User.Syscalls.Cap_Delete (NoMan_P);
+      Status := Aegir_User.Syscalls.Cap_Delete (NoMan_P);
 
       --  The real cap (Read+Manage) sets; badge of the process
       --  cap is the child's pid (spawn ABI), read via cap_info.
@@ -3793,7 +3793,7 @@ begin
       Pri_Pid := PPage (4);
 
       --  Slot scan by pid: word 8 shows 42 on the blocked child.
-      for Slot in 0 .. Akernel_User.Syscalls.Process_Table_Slots - 1
+      for Slot in 0 .. Aegir_User.Syscalls.Process_Table_Slots - 1
       loop
          if Raw_Ecall (Number => Sys_Process_Info, A0 => Pri_Resource,
                        A1 => U64 (Slot), A2 => Pri_Buf) = 0
@@ -3874,16 +3874,16 @@ begin
          S_Path (S_Len + 1 .. S_Len + 7) := "/status";
          S_Len := S_Len + 7;
 
-         S_St := Akernel_User.Files.Stat (S_Path (1 .. S_Len), S_Size);
-         Check (S_St = Akernel_User.Files.Status_Ok and then S_Size > 0,
+         S_St := Aegir_User.Files.Stat (S_Path (1 .. S_Len), S_Size);
+         Check (S_St = Aegir_User.Files.Status_Ok and then S_Size > 0,
                 "priority proc status stat");
-         S_St := Akernel_User.Files.Open (S_Path (1 .. S_Len), S_Size);
-         Check (S_St = Akernel_User.Files.Status_Ok,
+         S_St := Aegir_User.Files.Open (S_Path (1 .. S_Len), S_Size);
+         Check (S_St = Aegir_User.Files.Status_Ok,
                 "priority proc status opens");
-         S_St := Akernel_User.Files.Read
+         S_St := Aegir_User.Files.Read
            (S_Path (1 .. S_Len), 0, S_Buf'Address,
             U64 (S_Buf'Length), S_Count);
-         Check (S_St = Akernel_User.Files.Status_Ok and then S_Count > 0,
+         Check (S_St = Aegir_User.Files.Status_Ok and then S_Count > 0,
                 "priority proc status reads");
          Check (Has ("priority -128"),
                 "priority proc status renders the clamped value");
@@ -3896,9 +3896,9 @@ begin
       --  Echo exits after three calls; drive them and reap (same
       --  pacing as the admin block: checks double as yields).
       for Round in 1 .. 3 loop
-         Akernel_User.Syscalls.Message.Label := 16#AD#;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps  := (others => 0);
+         Aegir_User.Syscalls.Message.Label := 16#AD#;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps  := (others => 0);
          Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => Pri_EP);
          if Status /= 0 then
             Calls_Ok := False;
@@ -3914,7 +3914,7 @@ begin
          Ignore := Raw_Ecall (Number => Sys_Yield);
       end loop;
       Check (Reaped_P, "priority test echo reaped");
-      Status := Akernel_User.Syscalls.Cap_Delete (Pri_EP);
+      Status := Aegir_User.Syscalls.Cap_Delete (Pri_EP);
    end;
 
    --  63: Trinket.Images — datatype-style decode of the generated
@@ -3983,7 +3983,7 @@ begin
       Check (Img_Mem /= U64'Last
              and then Raw_Ecall
                (Number => Sys_Mem_Map,
-                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
                 A1 => Img_Mem, A2 => Img_VA,
                 A3 => 0, A4 => 8192, A5 => 3) = 0,
              "images canvas pages mapped");
@@ -4014,7 +4014,7 @@ begin
       Trinket.Images.Free (Grad);
       Check (not Trinket.Images.Loaded (Bars),
              "images free clears the record");
-      Status := Akernel_User.Syscalls.Cap_Delete (Img_Mem);
+      Status := Aegir_User.Syscalls.Cap_Delete (Img_Mem);
    end;
 
    --  XPM decoder (milestone 64): the text sibling slots behind
@@ -4089,7 +4089,7 @@ begin
       Check (X_Mem /= U64'Last
              and then Raw_Ecall
                (Number => Sys_Mem_Map,
-                A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
                 A1 => X_Mem, A2 => XVA,
                 A3 => 0, A4 => 8192, A5 => 3) = 0,
              "xpm canvas pages mapped");
@@ -4109,7 +4109,7 @@ begin
 
       Trinket.Images.Free (Chk);
       Trinket.Images.Free (Two);
-      Status := Akernel_User.Syscalls.Cap_Delete (X_Mem);
+      Status := Aegir_User.Syscalls.Cap_Delete (X_Mem);
    end;
 
    --  38a/38b cap stress: the paged cap table allocates a page
@@ -4124,8 +4124,8 @@ begin
       Reuse       : U64;
    begin
       for I in Stress_Caps'Range loop
-         Stress_Caps (I) := Akernel_User.Syscalls.Mem_Alloc (1);
-         if Stress_Caps (I) = Akernel_User.Syscalls.Syscall_Failed then
+         Stress_Caps (I) := Aegir_User.Syscalls.Mem_Alloc (1);
+         if Stress_Caps (I) = Aegir_User.Syscalls.Syscall_Failed then
             Mint_Ok := False;
          elsif Stress_Caps (I) > Max_H then
             Max_H := Stress_Caps (I);
@@ -4135,17 +4135,17 @@ begin
       Check (Max_H >= 256, "cap stress crossed second page");
 
       for I in Stress_Caps'Range loop
-         if Stress_Caps (I) /= Akernel_User.Syscalls.Syscall_Failed
-           and then Akernel_User.Syscalls.Cap_Delete (Stress_Caps (I)) /= 0
+         if Stress_Caps (I) /= Aegir_User.Syscalls.Syscall_Failed
+           and then Aegir_User.Syscalls.Cap_Delete (Stress_Caps (I)) /= 0
          then
             Close_Ok := False;
          end if;
       end loop;
       Check (Close_Ok, "cap stress closed 300");
 
-      Reuse := Akernel_User.Syscalls.Mem_Alloc (1);
-      Check (Reuse /= Akernel_User.Syscalls.Syscall_Failed
-             and then Akernel_User.Syscalls.Cap_Delete (Reuse) = 0,
+      Reuse := Aegir_User.Syscalls.Mem_Alloc (1);
+      Check (Reuse /= Aegir_User.Syscalls.Syscall_Failed
+             and then Aegir_User.Syscalls.Cap_Delete (Reuse) = 0,
              "cap stress table reusable after close");
    end;
 
@@ -4213,48 +4213,48 @@ begin
                   System.Storage_Elements.To_Address
                     (System.Storage_Elements.Integer_Address (Info_VA));
       begin
-         Info_Cap := Akernel_User.Syscalls.Mem_Alloc (1);
-         if Info_Cap /= Akernel_User.Syscalls.Syscall_Failed
-           and then Akernel_User.Syscalls.Mem_Map
-             (Address_Space => Akernel_User.Syscalls.Address_Space_Cap,
+         Info_Cap := Aegir_User.Syscalls.Mem_Alloc (1);
+         if Info_Cap /= Aegir_User.Syscalls.Syscall_Failed
+           and then Aegir_User.Syscalls.Mem_Map
+             (Address_Space => Aegir_User.Syscalls.Address_Space_Cap,
               Cap           => Info_Cap,
               VA            => Info_VA,
               Offset        => 0,
-              Length        => Akernel_User.Syscalls.Page_Size,
+              Length        => Aegir_User.Syscalls.Page_Size,
               Flags         => 3) = 0
-           and then Akernel_User.Syscalls.Process_Info
+           and then Aegir_User.Syscalls.Process_Info
              (Resource => 0,
-              Slot     => Akernel_User.Syscalls.Self_Slot,
+              Slot     => Aegir_User.Syscalls.Self_Slot,
               Buffer   => Info_Cap,
-              Offset   => 0) = Akernel_User.Syscalls.Info_Ok
+              Offset   => 0) = Aegir_User.Syscalls.Info_Ok
          then
             Own_Pid := Info (0);
          end if;
-         if Info_Cap /= Akernel_User.Syscalls.Syscall_Failed then
+         if Info_Cap /= Aegir_User.Syscalls.Syscall_Failed then
             declare
                Unused : U64;
             begin
-               Unused := Akernel_User.Syscalls.Mem_Unmap
-                 (Address_Space => Akernel_User.Syscalls.Address_Space_Cap,
+               Unused := Aegir_User.Syscalls.Mem_Unmap
+                 (Address_Space => Aegir_User.Syscalls.Address_Space_Cap,
                   VA            => Info_VA,
-                  Length        => Akernel_User.Syscalls.Page_Size);
-               Unused := Akernel_User.Syscalls.Cap_Delete (Info_Cap);
+                  Length        => Aegir_User.Syscalls.Page_Size);
+               Unused := Aegir_User.Syscalls.Cap_Delete (Info_Cap);
             end;
          end if;
       end;
 
       Check (Own_Pid /= 0, "own pid known");
 
-      St := Akernel_User.Files.Stat ("Proc:tree", Size);
-      Check (St = Akernel_User.Files.Status_Ok and then Size > 0,
+      St := Aegir_User.Files.Stat ("Proc:tree", Size);
+      Check (St = Aegir_User.Files.Status_Ok and then Size > 0,
              "proc tree stat ok");
 
       --  Tree content: pid lines with spawner links.
-      St := Akernel_User.Files.Open ("Proc:tree", Size);
-      Check (St = Akernel_User.Files.Status_Ok, "proc tree opens");
-      St := Akernel_User.Files.Read
+      St := Aegir_User.Files.Open ("Proc:tree", Size);
+      Check (St = Aegir_User.Files.Status_Ok, "proc tree opens");
+      St := Aegir_User.Files.Read
         ("Proc:tree", 0, Rbuf'Address, U64 (Rbuf'Length), Count);
-      Check (St = Akernel_User.Files.Status_Ok and then Count > 0,
+      Check (St = Aegir_User.Files.Status_Ok and then Count > 0,
              "proc tree reads");
       Check (Contains ("pid "), "proc tree lists pids");
       Check (Contains ("spawner "), "proc tree links spawners");
@@ -4262,9 +4262,9 @@ begin
       --  Root listing: the tree file plus one directory per live
       --  process, named by decimal pid.
       for Index in 0 .. 40 loop
-         St := Akernel_User.Files.Read_Dir
+         St := Aegir_User.Files.Read_Dir
            ("Proc:", U64 (Index), Name, Name_Len, Is_Dir, Size);
-         exit when St /= Akernel_User.Files.Status_Ok;
+         exit when St /= Aegir_User.Files.Status_Ok;
          Entries := Entries + 1;
          if Is_Dir then
             Dir_Entries := Dir_Entries + 1;
@@ -4295,9 +4295,9 @@ begin
          Path (6 .. 5 + First_Len) := First_Dir (1 .. First_Len);
          Path_Len := 5 + First_Len;
 
-         St := Akernel_User.Files.Read_Dir
+         St := Aegir_User.Files.Read_Dir
            (Path (1 .. Path_Len), 0, Name, Name_Len, Is_Dir, Size);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then not Is_Dir
                 and then Name_Len = 6
                 and then Name (1 .. 6) = "status",
@@ -4307,30 +4307,30 @@ begin
          Path (7 + First_Len .. 12 + First_Len) := "status";
          Path_Len := Path_Len + 7;
 
-         St := Akernel_User.Files.Open (Path (1 .. Path_Len), Size);
-         Check (St = Akernel_User.Files.Status_Ok
+         St := Aegir_User.Files.Open (Path (1 .. Path_Len), Size);
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Size > 0, "proc status opens");
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Path (1 .. Path_Len), 0, Rbuf'Address,
             U64 (Rbuf'Length), Count);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Count > 0, "proc status reads");
          Check (Contains ("process "), "proc status names process");
          Check (Contains ("spawner "), "proc status names spawner");
 
          --  Milestone 39: the caps and regs files (admin-gated
          --  dumps rendered by procfs, which holds the admin cap).
-         St := Akernel_User.Files.Read_Dir
+         St := Aegir_User.Files.Read_Dir
            (Path (1 .. 5 + First_Len), 1, Name, Name_Len, Is_Dir,
             Size);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Name_Len = 4
                 and then Name (1 .. 4) = "caps",
                 "proc process dir lists caps");
-         St := Akernel_User.Files.Read_Dir
+         St := Aegir_User.Files.Read_Dir
            (Path (1 .. 5 + First_Len), 2, Name, Name_Len, Is_Dir,
             Size);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Name_Len = 4
                 and then Name (1 .. 4) = "regs",
                 "proc process dir lists regs");
@@ -4338,23 +4338,23 @@ begin
          Path (6 + First_Len) := '/';
          Path (7 + First_Len .. 10 + First_Len) := "caps";
          Path_Len := 10 + First_Len;
-         St := Akernel_User.Files.Open (Path (1 .. Path_Len), Size);
-         Check (St = Akernel_User.Files.Status_Ok
+         St := Aegir_User.Files.Open (Path (1 .. Path_Len), Size);
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Size > 0, "proc caps opens");
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Path (1 .. Path_Len), 0, Rbuf'Address,
             U64 (Rbuf'Length), Count);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Count > 0, "proc caps reads");
          Check (Contains ("handle kind rights"),
                 "proc caps header");
          Check (Contains ("rights="), "proc caps lists entries");
 
          Path (7 + First_Len .. 10 + First_Len) := "regs";
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Path (1 .. Path_Len), 0, Rbuf'Address,
             U64 (Rbuf'Length), Count);
-         Check (St = Akernel_User.Files.Status_Ok
+         Check (St = Aegir_User.Files.Status_Ok
                 and then Count > 0, "proc regs reads");
          Check (Contains ("sepc ") or else Contains ("thread live"),
                 "proc regs frame or live line");
@@ -4373,13 +4373,13 @@ begin
          Self_Path (6 .. 9)  := "self";
          Self_Path (10)     := '/';
          Self_Path (11 .. 16) := "status";
-         St := Akernel_User.Files.Open (Self_Path (1 .. Self_Len), Size);
-         Check (St = Akernel_User.Files.Status_Ok and then Size > 0,
+         St := Aegir_User.Files.Open (Self_Path (1 .. Self_Len), Size);
+         Check (St = Aegir_User.Files.Status_Ok and then Size > 0,
                 "proc self/status opens");
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Self_Path (1 .. Self_Len), 0, Rbuf'Address,
             U64 (Rbuf'Length), Count);
-         Check (St = Akernel_User.Files.Status_Ok and then Count > 0,
+         Check (St = Aegir_User.Files.Status_Ok and then Count > 0,
                 "proc self/status reads");
 
          --  The first line is "process <pid>"; parse it.
@@ -4400,18 +4400,18 @@ begin
       end;
 
       --  Read-only volume: mutating ops and unknown paths.
-      Check (Akernel_User.Files.Delete ("Proc:tree") =
-               Akernel_User.Files.Status_Bad_Args,
+      Check (Aegir_User.Files.Delete ("Proc:tree") =
+               Aegir_User.Files.Status_Bad_Args,
              "proc delete rejected read-only");
-      Check (Akernel_User.Files.Mkdir ("Proc:x") =
-               Akernel_User.Files.Status_Bad_Args,
+      Check (Aegir_User.Files.Mkdir ("Proc:x") =
+               Aegir_User.Files.Status_Bad_Args,
              "proc mkdir rejected read-only");
-      Check (Akernel_User.Files.Stat ("Proc:bogus", Size) =
-               Akernel_User.Files.Status_Not_Found,
+      Check (Aegir_User.Files.Stat ("Proc:bogus", Size) =
+               Aegir_User.Files.Status_Not_Found,
              "proc unknown path not found");
-      Check (Akernel_User.Files.Read_Dir
+      Check (Aegir_User.Files.Read_Dir
                ("Proc:bogus", 0, Name, Name_Len, Is_Dir, Size) =
-               Akernel_User.Files.Status_Not_Found,
+               Aegir_User.Files.Status_Not_Found,
              "proc unknown dir not found");
    end;
 
@@ -4419,14 +4419,14 @@ begin
    --  NB: the reply is copied out of the IPC buffer before any
    --  Check, because Check prints through the console stream, which
    --  itself round-trips through this thread's message buffer.
-   Akernel_User.Syscalls.Message.Label := 16#AB#;
-   Akernel_User.Syscalls.Message.Words := (1, 2, 3, 4, 5, 6);
-   Akernel_User.Syscalls.Message.Caps := (others => 0);
+   Aegir_User.Syscalls.Message.Label := 16#AB#;
+   Aegir_User.Syscalls.Message.Words := (1, 2, 3, 4, 5, 6);
+   Aegir_User.Syscalls.Message.Caps := (others => 0);
    Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
-      R_Label : constant U64 := Akernel_User.Syscalls.Message.Label;
-      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
-        Akernel_User.Syscalls.Message.Words;
+      R_Label : constant U64 := Aegir_User.Syscalls.Message.Label;
+      R_Words : constant Aegir_User.Syscalls.IPC_Word_Array :=
+        Aegir_User.Syscalls.Message.Words;
    begin
       Check (Status = 0, "echo call round 1 returned ok");
       Check (R_Label = 16#AB#, "echo round 1 label round-trips");
@@ -4437,13 +4437,13 @@ begin
    end;
 
    --  Round 2: word 5 must carry the failed double-reply code (1).
-   Akernel_User.Syscalls.Message.Label := 16#CD#;
-   Akernel_User.Syscalls.Message.Words := (6, 5, 4, 3, 2, 1);
-   Akernel_User.Syscalls.Message.Caps := (others => 0);
+   Aegir_User.Syscalls.Message.Label := 16#CD#;
+   Aegir_User.Syscalls.Message.Words := (6, 5, 4, 3, 2, 1);
+   Aegir_User.Syscalls.Message.Caps := (others => 0);
    Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
-      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
-        Akernel_User.Syscalls.Message.Words;
+      R_Words : constant Aegir_User.Syscalls.IPC_Word_Array :=
+        Aegir_User.Syscalls.Message.Words;
    begin
       Check (Status = 0, "echo call round 2 returned ok");
       Check (R_Words (0) = 16#EC40# and then R_Words (1) = 6,
@@ -4457,13 +4457,13 @@ begin
    --  2); echo reports it.
    EP2 := Raw_Ecall (Number => Sys_EP_Create);
    Check (EP2 < 256 and then EP2 /= EP, "second endpoint created");
-   Akernel_User.Syscalls.Message.Label := 16#EF#;
-   Akernel_User.Syscalls.Message.Words := (others => 0);
-   Akernel_User.Syscalls.Message.Caps := (EP2, 0, 0, 0);
+   Aegir_User.Syscalls.Message.Label := 16#EF#;
+   Aegir_User.Syscalls.Message.Words := (others => 0);
+   Aegir_User.Syscalls.Message.Caps := (EP2, 0, 0, 0);
    Status := Raw_Ecall (Number => Sys_IPC_Call, A0 => EP);
    declare
-      R_Words : constant Akernel_User.Syscalls.IPC_Word_Array :=
-        Akernel_User.Syscalls.Message.Words;
+      R_Words : constant Aegir_User.Syscalls.IPC_Word_Array :=
+        Aegir_User.Syscalls.Message.Words;
    begin
       Check (Status = 0, "echo call round 3 returned ok");
       Check (R_Words (0) = 16#EC40#, "echo round 3 badge delivered");
@@ -4499,7 +4499,7 @@ begin
    --  word 0 over a result endpoint, badged 1/2/3 per caller.
    declare
       use System.Storage_Elements;
-      use type Akernel_User.Syscalls.U64;
+      use type Aegir_User.Syscalls.U64;
 
       TD_Stage_VA : constant U64 := 16#5480_0000#;
       TD_Args_VA  : constant U64 := 16#5500_0000#;
@@ -4534,16 +4534,16 @@ begin
              "teardown endpoints created");
 
       --  Stage Tests/Teardown (memstage pattern).
-      Status := Akernel_User.Files.Stat ("Tests/Teardown", TD_Size);
-      Check (Status = Akernel_User.Files.Status_Ok and then TD_Size > 0,
+      Status := Aegir_User.Files.Stat ("Tests/Teardown", TD_Size);
+      Check (Status = Aegir_User.Files.Status_Ok and then TD_Size > 0,
              "teardown size via fs");
 
-      TD_Mem := Akernel_User.Syscalls.Mem_Alloc ((TD_Size + 4095) / 4096);
-      Check (TD_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+      TD_Mem := Aegir_User.Syscalls.Mem_Alloc ((TD_Size + 4095) / 4096);
+      Check (TD_Mem /= Aegir_User.Syscalls.Syscall_Failed,
              "teardown staging object allocated");
-      Check (Akernel_User.Syscalls.Mem_Map
+      Check (Aegir_User.Syscalls.Mem_Map
                (Address_Space =>
-                  Akernel_User.Syscalls.Address_Space_Cap,
+                  Aegir_User.Syscalls.Address_Space_Cap,
                 Cap           => TD_Mem,
                 VA            => TD_Stage_VA,
                 Offset        => 0,
@@ -4551,18 +4551,18 @@ begin
                 Flags         => 3) = 0,
              "teardown staging object mapped");
 
-      Status := Akernel_User.Files.Open ("Tests/Teardown", TD_Size);
-      Check (Status = Akernel_User.Files.Status_Ok,
+      Status := Aegir_User.Files.Open ("Tests/Teardown", TD_Size);
+      Check (Status = Aegir_User.Files.Status_Ok,
              "teardown open ok");
       TD_Off := 0;
       while TD_Off < TD_Size loop
          TD_Chunk := U64'Min (TD_Size - TD_Off, 32768);
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("Tests/Teardown", TD_Off,
             System'To_Address (Integer_Address (TD_Stage_VA + TD_Off)),
             TD_Chunk, TD_Count);
          TD_Staged := TD_Staged
-           and then Status = Akernel_User.Files.Status_Ok
+           and then Status = Aegir_User.Files.Status_Ok
            and then TD_Count = TD_Chunk;
          TD_Off := TD_Off + TD_Chunk;
       end loop;
@@ -4570,16 +4570,16 @@ begin
 
       --  Argument pages: role letter + NUL at grant index 3
       --  (handle 4, Syscalls.Args_Handle).
-      Args_R_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
-      Args_C_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
-      Check (Args_R_Mem /= Akernel_User.Syscalls.Syscall_Failed
-             and then Args_C_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+      Args_R_Mem := Aegir_User.Syscalls.Mem_Alloc (1);
+      Args_C_Mem := Aegir_User.Syscalls.Mem_Alloc (1);
+      Check (Args_R_Mem /= Aegir_User.Syscalls.Syscall_Failed
+             and then Args_C_Mem /= Aegir_User.Syscalls.Syscall_Failed,
              "teardown args objects allocated");
-      Check (Akernel_User.Syscalls.Mem_Map
-               (Akernel_User.Syscalls.Address_Space_Cap,
+      Check (Aegir_User.Syscalls.Mem_Map
+               (Aegir_User.Syscalls.Address_Space_Cap,
                 Args_R_Mem, TD_Args_VA, 0, 4096, 3) = 0
-             and then Akernel_User.Syscalls.Mem_Map
-               (Akernel_User.Syscalls.Address_Space_Cap,
+             and then Aegir_User.Syscalls.Mem_Map
+               (Aegir_User.Syscalls.Address_Space_Cap,
                 Args_C_Mem, TD_Args_VA + 4096, 0, 4096, 3) = 0,
              "teardown args objects mapped");
       Args_R := ('R', Character'Val (0));
@@ -4591,17 +4591,17 @@ begin
       --  run until much later, breaking the FIFO order the test relies
       --  on for Reply_Gone vs Endpoint_Gone.
       for I in 1 .. 2 loop
-         Akernel_User.Syscalls.Set_Grant
-           (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, Res_EP, Akernel_User.Syscalls.Right_Send, U64 (I));
-         Akernel_User.Syscalls.Set_Grant
-           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
+           (0, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, Res_EP, Aegir_User.Syscalls.Right_Send, U64 (I));
+         Aegir_User.Syscalls.Set_Grant
+           (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
          Procs (I) := Proc;
          if Status /= 0 then
             Put ("caller spawn status "); Put_Hex (Status); Put_Line ("");
@@ -4620,19 +4620,19 @@ begin
       end loop;
 
       --  Receiver: receives the head caller, exits without replying.
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
         (0, Svc_EP,
-         Akernel_User.Syscalls.Right_Send +
-           Akernel_User.Syscalls.Right_Receive, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Right_Send +
+           Aegir_User.Syscalls.Right_Receive, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
         (3, Args_R_Mem,
-         Akernel_User.Syscalls.Right_Map +
-           Akernel_User.Syscalls.Right_Read, 0);
-      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Aegir_User.Syscalls.Right_Map +
+           Aegir_User.Syscalls.Right_Read, 0);
+      Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
       Procs (3) := Proc;
       if Status /= 0 then
          Put ("receiver spawn status "); Put_Hex (Status); Put_Line ("");
@@ -4653,17 +4653,17 @@ begin
       end;
 
       --  Caller 3: fresh call on the failed endpoint.
-      Akernel_User.Syscalls.Set_Grant
-        (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 3);
-      Akernel_User.Syscalls.Set_Grant
-        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
+        (0, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Res_EP, Aegir_User.Syscalls.Right_Send, 3);
+      Aegir_User.Syscalls.Set_Grant
+        (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
         (3, Args_C_Mem,
-         Akernel_User.Syscalls.Right_Map +
-           Akernel_User.Syscalls.Right_Read, 0);
-      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Aegir_User.Syscalls.Right_Map +
+           Aegir_User.Syscalls.Right_Read, 0);
+      Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
       Procs (4) := Proc;
       if Status /= 0 then
          Put ("late spawn status "); Put_Hex (Status); Put_Line ("");
@@ -4678,13 +4678,13 @@ begin
       for I in 1 .. 3 loop
          Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
          declare
-            R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+            R_Badge : constant U64 := Aegir_User.Syscalls.Message.Badge;
             R_Code  : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (0);
+              Aegir_User.Syscalls.Message.Words (0);
          begin
-            Akernel_User.Syscalls.Message.Label := 16#7D1#;
-            Akernel_User.Syscalls.Message.Words := (others => 0);
-            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Aegir_User.Syscalls.Message.Label := 16#7D1#;
+            Aegir_User.Syscalls.Message.Words := (others => 0);
+            Aegir_User.Syscalls.Message.Caps := (others => 0);
             Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
             Check (Status = 0, "teardown wake report delivered");
             Put ("  report badge "); Put_Hex (R_Badge);
@@ -4739,18 +4739,18 @@ begin
       begin
          Args_X := ('X', ' ', '4', '2', Character'Val (0));
          for G in 0 .. 2 loop
-            Akernel_User.Syscalls.Set_Grant
-              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Aegir_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
          end loop;
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, X_Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, X_Proc);
          Check (Status = 0 and then X_Proc /= 0,
                 "exit-code peer spawned");
          for Try in 1 .. 1024 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (X_Proc, X_Code);
             if Status = 0 then
                X_Done := True;
@@ -4796,7 +4796,7 @@ begin
                 "generation info buffer allocated");
          Check (Raw_Ecall
                   (Number => Sys_Mem_Map,
-                   A0 => Akernel_User.Syscalls.Address_Space_Cap,
+                   A0 => Aegir_User.Syscalls.Address_Space_Cap,
                    A1 => Gen_Info, A2 => Gen_VA,
                    A3 => 0, A4 => 4096, A5 => 3) = 0,
                 "generation info buffer mapped");
@@ -4804,7 +4804,7 @@ begin
          --  Snapshot live pids by slot (0 = unused; handle 7 =
          --  the manifest device_resource cap).
          for Slot in 0 ..
-           Akernel_User.Syscalls.Process_Table_Slots - 1
+           Aegir_User.Syscalls.Process_Table_Slots - 1
          loop
             if Raw_Ecall (Number => Sys_Process_Info, A0 => 8,
                           A1 => U64 (Slot), A2 => Gen_Info) = 0
@@ -4815,18 +4815,18 @@ begin
 
          Gen_Args := ('X', ' ', '0', Character'Val (0));
          for G in 0 .. 2 loop
-            Akernel_User.Syscalls.Set_Grant
-              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Aegir_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
          end loop;
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
          Check (Status = 0 and then G_Proc /= 0,
                 "generation first peer spawned");
          for Slot in 0 ..
-           Akernel_User.Syscalls.Process_Table_Slots - 1
+           Aegir_User.Syscalls.Process_Table_Slots - 1
          loop
             if Pre (Slot) = 0
               and then Raw_Ecall (Number => Sys_Process_Info,
@@ -4844,7 +4844,7 @@ begin
 
          G_Done := False;
          for Try in 1 .. 1024 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (G_Proc, G_Code);
             if Status = 0 then
                G_Done := True;
@@ -4858,18 +4858,18 @@ begin
                 "generation slot freed on reap");
 
          for G in 0 .. 2 loop
-            Akernel_User.Syscalls.Set_Grant
-              (U64 (G), Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Aegir_User.Syscalls.Set_Grant
+              (U64 (G), Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
          end loop;
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, G_Proc);
          Check (Status = 0 and then G_Proc /= 0,
                 "generation second peer spawned");
          for Slot in 0 ..
-           Akernel_User.Syscalls.Process_Table_Slots - 1
+           Aegir_User.Syscalls.Process_Table_Slots - 1
          loop
             if Pre (Slot) = 0
               and then Raw_Ecall (Number => Sys_Process_Info,
@@ -4889,7 +4889,7 @@ begin
 
          G_Done := False;
          for Try in 1 .. 1024 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (G_Proc, G_Code);
             if Status = 0 then
                G_Done := True;
@@ -5047,7 +5047,7 @@ begin
          declare
             Secs, Ns : U64;
          begin
-            Akernel_User.Syscalls.Read_Clock (Secs, Ns);
+            Aegir_User.Syscalls.Read_Clock (Secs, Ns);
             Check (Secs >= 1_767_225_600  --  2026-01-01 UTC
                    and then Ns < 1_000_000_000,
                    "RTC reads wall time");
@@ -5066,14 +5066,14 @@ begin
          begin
             --  (Write_File is a sibling block's helper; Op_Write
             --  creates the file.)
-            St := Akernel_User.Files.Write
+            St := Aegir_User.Files.Write
               ("BD1:FZCLK.TXT", 0, Txt'Address, 11, Cnt);
-            Check (St = Akernel_User.Files.Status_Ok
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Cnt = 11,
                    "clock stamp source written");
-            St := Akernel_User.Files.Stat_Ex
+            St := Aegir_User.Files.Stat_Ex
               ("BD1:FZCLK.TXT", Size, D, T, Is_D);
-            OkF := St = Akernel_User.Files.Status_Ok
+            OkF := St = Aegir_User.Files.Status_Ok
               and then D /= 16#5A21#
               and then (D / 512) + 1_980 >= 2_026;
             Run_Command ("Sys:C/Delete", "BD1:FZCLK.TXT", 0,
@@ -5111,26 +5111,26 @@ begin
          --  assert here; the dump text is verified on the log.
          if Part_LCH then
          Args_C := ('E', Character'Val (0));
-         Akernel_User.Syscalls.Set_Grant
-           (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
+           (0, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
          declare
             L_Proc : U64;
             L_Code : U64 := 0;
             L_Done : Boolean := False;
          begin
-            Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, L_Proc);
+            Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, L_Proc);
             Check (Status = 0 and then L_Proc /= 0,
                    "last-chance peer spawned");
             for Try in 1 .. 1024 loop
-               Status := Akernel_User.Syscalls.Reap_Process_Code
+               Status := Aegir_User.Syscalls.Reap_Process_Code
                  (L_Proc, L_Code);
                if Status = 0 then
                   L_Done := True;
@@ -5173,8 +5173,8 @@ begin
               ("fuzz: text_io stdout rides the console");
          end;
          Check (TIO_Ok, "Text_IO create/write/read round trip");
-         Status := Akernel_User.Files.Delete ("BD1:FZTIO.TXT");
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Delete ("BD1:FZTIO.TXT");
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "Text_IO test file deleted");
       end;
 
@@ -5187,8 +5187,8 @@ begin
       begin
          --  Prefs/Env exists once any shell has run, but stay
          --  image-order independent (the m36 burn).
-         Status := Akernel_User.Files.Mkdir ("Sys:Prefs");
-         Status := Akernel_User.Files.Mkdir ("Sys:Prefs/Env");
+         Status := Aegir_User.Files.Mkdir ("Sys:Prefs");
+         Status := Aegir_User.Files.Mkdir ("Sys:Prefs/Env");
          EV.Set ("FZ53C", "alive");
          Check (EV.Exists ("FZ53C")
                 and then EV.Value ("FZ53C") = "alive",
@@ -5212,28 +5212,28 @@ begin
             WBuf (I - Script'First) :=
               Interfaces.Unsigned_8 (Character'Pos (Script (I)));
          end loop;
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD1:FZ53C1.TXT", 0, WBuf'Address, U64 (Script'Length),
             Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = U64 (Script'Length),
                 "53c echo script written");
          Run_Command ("Sys:System/Shell", "execute BD1:FZ53C1.TXT",
                       0, "53c echo script");
-         Status := Akernel_User.Files.Open ("BD1:FZ53C1.OUT", Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Open ("BD1:FZ53C1.OUT", Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Size = U64 (Expected'Length),
                 "53c echo output file");
-         if Status = Akernel_User.Files.Status_Ok then
-            Status := Akernel_User.Files.Read
+         if Status = Aegir_User.Files.Status_Ok then
+            Status := Aegir_User.Files.Read
               ("BD1:FZ53C1.OUT", 0, Got'Address,
                U64 (Got'Length), Count);
-            Check (Status = Akernel_User.Files.Status_Ok
+            Check (Status = Aegir_User.Files.Status_Ok
                    and then Got = Expected,
                    "Command_Line args through shell + migrated Echo");
          end if;
-         Status := Akernel_User.Files.Delete ("BD1:FZ53C1.TXT");
-         Status := Akernel_User.Files.Delete ("BD1:FZ53C1.OUT");
+         Status := Aegir_User.Files.Delete ("BD1:FZ53C1.TXT");
+         Status := Aegir_User.Files.Delete ("BD1:FZ53C1.OUT");
       end;
 
       declare
@@ -5255,11 +5255,11 @@ begin
          Ent_Dir  : Boolean;
          Ent_Sz   : U64;
       begin
-         if Akernel_User.Files.Open ("ENV:CWD", C_Size)
-              = Akernel_User.Files.Status_Ok
+         if Aegir_User.Files.Open ("ENV:CWD", C_Size)
+              = Aegir_User.Files.Status_Ok
          then
             C_Size := U64'Min (C_Size, U64 (Old_Cwd'Length));
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               ("ENV:CWD", 0, Old_Cwd'Address, C_Size, Old_U64);
             Old_Len := Natural (Old_U64);
          end if;
@@ -5270,9 +5270,9 @@ begin
          Check (Dirs.Exists ("BD0:System")
                 and then Dirs.Kind ("BD0:System") = Dirs.Directory,
                 "Directories.Exists/Kind on a directory");
-         Check (Akernel_User.Files.Read_Dir
+         Check (Aegir_User.Files.Read_Dir
                   ("BD1:", 0, Ent_Name, Ent_Len, Ent_Dir, Ent_Sz)
-                = Akernel_User.Files.Status_Ok,
+                = Aegir_User.Files.Status_Ok,
                 "Read_Dir probe on BD1: root");
          Dirs.Start_Search (Search, "BD1:", "*");
          while Dirs.More_Entries (Search) loop
@@ -5295,8 +5295,8 @@ begin
                    & ")");
          end;
          if Old_Len > 0 then
-            Status := Akernel_User.Files.Truncate ("ENV:CWD");
-            Status := Akernel_User.Files.Write
+            Status := Aegir_User.Files.Truncate ("ENV:CWD");
+            Status := Aegir_User.Files.Write
               ("ENV:CWD", 0, Old_Cwd'Address, U64 (Old_Len), Old_U64);
          end if;
       end;
@@ -5323,18 +5323,18 @@ begin
            with Volatile, Address => System'To_Address
              (Integer_Address (CI_Args_VA));
       begin
-         Status := Akernel_User.Files.Stat ("Sys:C/Info", CI_Size);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("Sys:C/Info", CI_Size);
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then CI_Size > 0,
                 "info command on Sys:C");
 
-         CI_Mem := Akernel_User.Syscalls.Mem_Alloc
+         CI_Mem := Aegir_User.Syscalls.Mem_Alloc
            ((CI_Size + 4095) / 4096);
-         Check (CI_Mem /= Akernel_User.Syscalls.Syscall_Failed,
+         Check (CI_Mem /= Aegir_User.Syscalls.Syscall_Failed,
                 "info staging object allocated");
-         Check (Akernel_User.Syscalls.Mem_Map
+         Check (Aegir_User.Syscalls.Mem_Map
                   (Address_Space =>
-                     Akernel_User.Syscalls.Address_Space_Cap,
+                     Aegir_User.Syscalls.Address_Space_Cap,
                    Cap           => CI_Mem,
                    VA            => CI_Stage_VA,
                    Offset        => 0,
@@ -5342,43 +5342,43 @@ begin
                    Flags         => 3) = 0,
                 "info staging object mapped");
 
-         Status := Akernel_User.Files.Open ("Sys:C/Info", CI_Size);
-         Check (Status = Akernel_User.Files.Status_Ok,
+         Status := Aegir_User.Files.Open ("Sys:C/Info", CI_Size);
+         Check (Status = Aegir_User.Files.Status_Ok,
                 "info open ok");
          CI_Off := 0;
          while CI_Off < CI_Size loop
             CI_Chunk := U64'Min (CI_Size - CI_Off, 32768);
-            Status := Akernel_User.Files.Read
+            Status := Aegir_User.Files.Read
               ("Sys:C/Info", CI_Off,
                System'To_Address (Integer_Address (CI_Stage_VA + CI_Off)),
                CI_Chunk, CI_Count);
             CI_Staged := CI_Staged
-              and then Status = Akernel_User.Files.Status_Ok
+              and then Status = Aegir_User.Files.Status_Ok
               and then CI_Count = CI_Chunk;
             CI_Off := CI_Off + CI_Chunk;
          end loop;
          Check (CI_Staged, "info ELF staged into memory object");
 
-         CI_Args_Mem := Akernel_User.Syscalls.Mem_Alloc (1);
-         Check (CI_Args_Mem /= Akernel_User.Syscalls.Syscall_Failed
-                and then Akernel_User.Syscalls.Mem_Map
-                  (Akernel_User.Syscalls.Address_Space_Cap,
+         CI_Args_Mem := Aegir_User.Syscalls.Mem_Alloc (1);
+         Check (CI_Args_Mem /= Aegir_User.Syscalls.Syscall_Failed
+                and then Aegir_User.Syscalls.Mem_Map
+                  (Aegir_User.Syscalls.Address_Space_Cap,
                    CI_Args_Mem, CI_Args_VA, 0, 4096, 3) = 0,
                 "info args object mapped");
          CI_Args (1) := Character'Val (0);
 
-         Akernel_User.Syscalls.Set_Grant
-           (0, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, Akernel_User.Files.Endpoint,
-            Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (2, Console_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
+           (0, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, Aegir_User.Files.Endpoint,
+            Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (2, Console_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, CI_Args_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (CI_Mem, 4, CI_Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (CI_Mem, 4, CI_Proc);
          Check (Status = 0 and then CI_Proc /= 0,
                 "info command spawned");
 
@@ -5390,7 +5390,7 @@ begin
          --  deterministically short on SMP4; 4096 restores
          --  headroom.
          for Try in 1 .. 4096 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (CI_Proc, CI_Code);
             if Status = 0 then
                CI_Done := True;
@@ -5443,28 +5443,28 @@ begin
             Buf (I - 1) :=
               Interfaces.Unsigned_8 (Character'Pos (J1 (I)));
          end loop;
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD1:J1.TXT", 0, Buf'Address, U64 (J1'Length), Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = U64 (J1'Length),
                 "join input 1 written");
          for I in J2'Range loop
             Buf (I - 1) :=
               Interfaces.Unsigned_8 (Character'Pos (J2 (I)));
          end loop;
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD1:J2.TXT", 0, Buf'Address, U64 (J2'Length), Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = U64 (J2'Length),
                 "join input 2 written");
          for I in S1'Range loop
             Buf (I - 1) :=
               Interfaces.Unsigned_8 (Character'Pos (S1 (I)));
          end loop;
-         Status := Akernel_User.Files.Write
+         Status := Aegir_User.Files.Write
            ("BD1:SORTIN.TXT", 0, Buf'Address, U64 (S1'Length),
             Count);
-         Check (Status = Akernel_User.Files.Status_Ok
+         Check (Status = Aegir_User.Files.Status_Ok
                 and then Count = U64 (S1'Length),
                 "sort input written");
 
@@ -5473,16 +5473,16 @@ begin
       declare
          Want : constant String := "Hello, joined!" & ASCII.LF;
       begin
-         Status := Akernel_User.Files.Stat ("BD1:JOUT.TXT", Size);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD1:JOUT.TXT", Size);
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Size = U64 (Want'Length);
          for I in 0 .. 63 loop
             Buf (I) := 0;
          end loop;
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD1:JOUT.TXT", 0, Buf'Address, 64, Count);
          Match := Match
-           and then Status = Akernel_User.Files.Status_Ok
+           and then Status = Aegir_User.Files.Status_Ok
            and then Count = U64 (Want'Length);
          for I in Want'Range loop
             Match := Match
@@ -5500,16 +5500,16 @@ begin
          Want : constant String := "apple" & ASCII.LF & "cherry"
            & ASCII.LF & "pear" & ASCII.LF;
       begin
-         Status := Akernel_User.Files.Stat ("BD1:SORTOUT.TXT", Size);
-         Match := Status = Akernel_User.Files.Status_Ok
+         Status := Aegir_User.Files.Stat ("BD1:SORTOUT.TXT", Size);
+         Match := Status = Aegir_User.Files.Status_Ok
            and then Size = U64 (Want'Length);
          for I in 0 .. 63 loop
             Buf (I) := 0;
          end loop;
-         Status := Akernel_User.Files.Read
+         Status := Aegir_User.Files.Read
            ("BD1:SORTOUT.TXT", 0, Buf'Address, 64, Count);
          Match := Match
-           and then Status = Akernel_User.Files.Status_Ok
+           and then Status = Aegir_User.Files.Status_Ok
            and then Count = U64 (Want'Length);
          for I in Want'Range loop
             Match := Match
@@ -5557,13 +5557,13 @@ begin
             for I in 0 .. 63 loop
                Buf (I) := 0;
             end loop;
-            St := Akernel_User.Files.Open ("ENV:" & Name, Size);
-            Match := St = Akernel_User.Files.Status_Ok
+            St := Aegir_User.Files.Open ("ENV:" & Name, Size);
+            Match := St = Aegir_User.Files.Status_Ok
               and then Size = U64 (Want'Length);
             if Match then
-               St := Akernel_User.Files.Read
+               St := Aegir_User.Files.Read
                  ("ENV:" & Name, 0, Buf'Address, 64, Count);
-               Match := St = Akernel_User.Files.Status_Ok
+               Match := St = Aegir_User.Files.Status_Ok
                  and then Count = U64 (Want'Length);
                for I in Want'Range loop
                   Match := Match
@@ -5587,9 +5587,9 @@ begin
                Buf (I - 1) :=
                  Interfaces.Unsigned_8 (Character'Pos (Content (I)));
             end loop;
-             St := Akernel_User.Files.Write
+             St := Aegir_User.Files.Write
                (Path, 0, Buf'Address, U64 (Content'Length), Count);
-             Check (St = Akernel_User.Files.Status_Ok
+             Check (St = Aegir_User.Files.Status_Ok
                     and then Count = U64 (Content'Length),
                     Label_Text);
           end Write_File;
@@ -5604,13 +5604,13 @@ begin
              for I in Buf'Range loop
                 Buf (I) := 0;
              end loop;
-             St := Akernel_User.Files.Open (Path, Size);
-             Match := St = Akernel_User.Files.Status_Ok
+             St := Aegir_User.Files.Open (Path, Size);
+             Match := St = Aegir_User.Files.Status_Ok
                and then Size = U64 (Want'Length);
              if Match then
-                St := Akernel_User.Files.Read
+                St := Aegir_User.Files.Read
                   (Path, 0, Buf'Address, U64 (Want'Length), Count);
-                Match := St = Akernel_User.Files.Status_Ok
+                Match := St = Aegir_User.Files.Status_Ok
                   and then Count = U64 (Want'Length);
                 for I in Want'Range loop
                    Match := Match
@@ -5844,11 +5844,11 @@ begin
             S1, S2 : U64 := 0;
             St     : U64;
          begin
-            St := Akernel_User.Files.Stat ("BD0:FZSM.TXT", S1);
-            Match := St = Akernel_User.Files.Status_Ok;
-            St := Akernel_User.Files.Stat ("BD0:FZSM2.TXT", S2);
+            St := Aegir_User.Files.Stat ("BD0:FZSM.TXT", S1);
+            Match := St = Aegir_User.Files.Status_Ok;
+            St := Aegir_User.Files.Stat ("BD0:FZSM2.TXT", S2);
             Check (Match
-                   and then St = Akernel_User.Files.Status_Ok
+                   and then St = Aegir_User.Files.Status_Ok
                    and then S1 = S2 and then S1 = 16,
                    "cwd-relative copy landed in the cwd");
          end;
@@ -5898,48 +5898,48 @@ begin
             Found_Seed : Boolean := False;
          begin
             for Try in 1 .. 10_000 loop
-               HSt := Akernel_User.Files.Stat ("Host:host_seed.txt", HSize);
-               exit when HSt = Akernel_User.Files.Status_Ok;
-               Akernel_User.Syscalls.Yield;
+               HSt := Aegir_User.Files.Stat ("Host:host_seed.txt", HSize);
+               exit when HSt = Aegir_User.Files.Status_Ok;
+               Aegir_User.Syscalls.Yield;
             end loop;
 
-            if HSt /= Akernel_User.Files.Status_Ok then
+            if HSt /= Aegir_User.Files.Status_Ok then
                Put_Line ("SKIP host share not present");
             else
                Check (HSize = 20, "host seed stat size");
                Check_File ("Host:host_seed.txt",
                            "hello from the host" & ASCII.LF,
                            "host seed contents");
-               HSt := Akernel_User.Files.Stat_Ex
+               HSt := Aegir_User.Files.Stat_Ex
                  ("Host:", HSize, WDate, WTime, HDir);
-               Check (HSt = Akernel_User.Files.Status_Ok
+               Check (HSt = Aegir_User.Files.Status_Ok
                       and then HDir,
                       "host root stat is a directory");
-               HSt := Akernel_User.Files.Stat_Ex
+               HSt := Aegir_User.Files.Stat_Ex
                  ("Host:host_seed.txt", HSize, WDate, WTime, HDir);
-               Check (HSt = Akernel_User.Files.Status_Ok
+               Check (HSt = Aegir_User.Files.Status_Ok
                       and then not HDir,
                       "host seed stat is a file");
-               HSt := Akernel_User.Files.Stat
+               HSt := Aegir_User.Files.Stat
                  ("Host:no_such_file.txt", HSize);
-               Check (HSt = Akernel_User.Files.Status_Not_Found,
+               Check (HSt = Aegir_User.Files.Status_Not_Found,
                       "host missing file stat fails");
-               HSt := Akernel_User.Files.Read
+               HSt := Aegir_User.Files.Read
                  ("Host:host_seed.txt", 20, Buf'Address, 8, Count);
-               Check (HSt = Akernel_User.Files.Status_Out_Of_Range,
+               Check (HSt = Aegir_User.Files.Status_Out_Of_Range,
                       "host read past end is out of range");
-               HSt := Akernel_User.Files.Read
+               HSt := Aegir_User.Files.Read
                  ("Host:", 0, Buf'Address, 8, Count);
-               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+               Check (HSt = Aegir_User.Files.Status_Bad_Args,
                       "host directory read rejected");
                --  Root enumeration: host_seed.txt must appear with
                --  file type and its true size; enumeration ends at
                --  Not_Found.
                Idx := 0;
                loop
-                  HSt := Akernel_User.Files.Read_Dir
+                  HSt := Aegir_User.Files.Read_Dir
                     ("Host:", Idx, Ent, Ent_Len, EDir, ESize);
-                  exit when HSt /= Akernel_User.Files.Status_Ok;
+                  exit when HSt /= Aegir_User.Files.Status_Ok;
                   if Ent (1 .. Ent_Len) = "host_seed.txt" then
                      Found_Seed := not EDir and then ESize = 20;
                   end if;
@@ -5948,11 +5948,11 @@ begin
                end loop;
                Check (Found_Seed
                       and then HSt
-                        = Akernel_User.Files.Status_Not_Found,
+                        = Aegir_User.Files.Status_Not_Found,
                       "host root readdir finds the seed");
-               HSt := Akernel_User.Files.Volume_Info
+               HSt := Aegir_User.Files.Volume_Info
                  ("Host:host_seed.txt", Total, Free, Clus);
-               Check (HSt = Akernel_User.Files.Status_Ok
+               Check (HSt = Aegir_User.Files.Status_Ok
                       and then Clus > 0 and then Total >= Free,
                       "host volume info");
                --  m79c: writes round-trip to the host directory.
@@ -5960,7 +5960,7 @@ begin
                --  content); the Makefile greps the host side after
                --  the suite (FZHOST.TXT present with the content,
                --  host_delete_me.txt gone).
-               HSt := Akernel_User.Files.Delete ("Host:FZHOST.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZHOST.TXT");
                Write_File ("Host:FZHOST.TXT",
                            "guest was here" & ASCII.LF,
                            "host share write creates");
@@ -5970,9 +5970,9 @@ begin
                Buf (0) := Interfaces.Unsigned_8 (Character'Pos ('W'));
                Buf (1) := Interfaces.Unsigned_8 (Character'Pos ('A'));
                Buf (2) := Interfaces.Unsigned_8 (Character'Pos ('S'));
-               HSt := Akernel_User.Files.Write
+               HSt := Aegir_User.Files.Write
                  ("Host:FZHOST.TXT", 6, Buf'Address, 3, Count);
-               Check (HSt = Akernel_User.Files.Status_Ok
+               Check (HSt = Aegir_User.Files.Status_Ok
                       and then Count = 3,
                       "host share offset write");
                Check_File ("Host:FZHOST.TXT",
@@ -5983,78 +5983,78 @@ begin
                Write_File ("Host:FZHOST.TXT",
                            "guest was here" & ASCII.LF,
                            "host share rewrite restores");
-               HSt := Akernel_User.Files.Write
+               HSt := Aegir_User.Files.Write
                  ("Host:FZHOST.TXT", 100, Buf'Address, 3, Count);
-               Check (HSt = Akernel_User.Files.Status_Out_Of_Range,
+               Check (HSt = Aegir_User.Files.Status_Out_Of_Range,
                       "host share sparse write rejected");
-               HSt := Akernel_User.Files.Rmdir ("Host:FZDIR");
-               HSt := Akernel_User.Files.Mkdir ("Host:FZDIR");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               HSt := Aegir_User.Files.Rmdir ("Host:FZDIR");
+               HSt := Aegir_User.Files.Mkdir ("Host:FZDIR");
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share mkdir");
-               HSt := Akernel_User.Files.Mkdir ("Host:FZDIR");
-               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+               HSt := Aegir_User.Files.Mkdir ("Host:FZDIR");
+               Check (HSt = Aegir_User.Files.Status_Bad_Args,
                       "host share mkdir existing rejected");
-               HSt := Akernel_User.Files.Rmdir ("Host:FZDIR");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               HSt := Aegir_User.Files.Rmdir ("Host:FZDIR");
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share rmdir");
                --  The Makefile seeds host_delete_me.txt every
                --  boot; the guest deletes it and the host side
                --  asserts its absence after the suite.
-               HSt := Akernel_User.Files.Stat
+               HSt := Aegir_User.Files.Stat
                  ("Host:host_delete_me.txt", HSize);
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share delete-me seeded");
-               HSt := Akernel_User.Files.Delete
+               HSt := Aegir_User.Files.Delete
                  ("Host:host_delete_me.txt");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share delete");
-               HSt := Akernel_User.Files.Stat
+               HSt := Aegir_User.Files.Stat
                  ("Host:host_delete_me.txt", HSize);
-               Check (HSt = Akernel_User.Files.Status_Not_Found,
+               Check (HSt = Aegir_User.Files.Status_Not_Found,
                       "host share delete gone");
-               HSt := Akernel_User.Files.Delete ("Host:FZRN1.TXT");
-               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZRN1.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZRN2.TXT");
                Write_File ("Host:FZRN1.TXT", "rename me" & ASCII.LF,
                            "host share rename source written");
                Write_File ("Host:FZRN2.TXT", "target" & ASCII.LF,
                            "host share rename target written");
-               HSt := Akernel_User.Files.Rename
+               HSt := Aegir_User.Files.Rename
                  ("Host:FZRN1.TXT", "Host:FZRN2.TXT");
-               Check (HSt = Akernel_User.Files.Status_Bad_Args,
+               Check (HSt = Aegir_User.Files.Status_Bad_Args,
                       "host share rename onto existing rejected");
-               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
-               HSt := Akernel_User.Files.Rename
+               HSt := Aegir_User.Files.Delete ("Host:FZRN2.TXT");
+               HSt := Aegir_User.Files.Rename
                  ("Host:FZRN1.TXT", "Host:FZRN2.TXT");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share rename");
-               HSt := Akernel_User.Files.Stat ("Host:FZRN1.TXT", HSize);
-               Match := HSt = Akernel_User.Files.Status_Not_Found;
-               HSt := Akernel_User.Files.Stat ("Host:FZRN2.TXT", HSize);
+               HSt := Aegir_User.Files.Stat ("Host:FZRN1.TXT", HSize);
+               Match := HSt = Aegir_User.Files.Status_Not_Found;
+               HSt := Aegir_User.Files.Stat ("Host:FZRN2.TXT", HSize);
                Check (Match
-                      and then HSt = Akernel_User.Files.Status_Ok
+                      and then HSt = Aegir_User.Files.Status_Ok
                       and then HSize = 10,
                       "host share rename moved the entry");
-               HSt := Akernel_User.Files.Delete ("Host:FZRN2.TXT");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               HSt := Aegir_User.Files.Delete ("Host:FZRN2.TXT");
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share rename cleanup");
                Write_File ("Host:FZTR.TXT", "truncate me" & ASCII.LF,
                            "host share truncate source written");
-               HSt := Akernel_User.Files.Truncate ("Host:FZTR.TXT");
-               Check (HSt = Akernel_User.Files.Status_Ok,
+               HSt := Aegir_User.Files.Truncate ("Host:FZTR.TXT");
+               Check (HSt = Aegir_User.Files.Status_Ok,
                       "host share truncate");
-               HSt := Akernel_User.Files.Stat ("Host:FZTR.TXT", HSize);
-               Check (HSt = Akernel_User.Files.Status_Ok
+               HSt := Aegir_User.Files.Stat ("Host:FZTR.TXT", HSize);
+               Check (HSt = Aegir_User.Files.Status_Ok
                       and then HSize = 0,
                       "host share truncate to zero");
-               HSt := Akernel_User.Files.Delete ("Host:FZTR.TXT");
-               HSt := Akernel_User.Files.Delete ("Host:FZCOPY.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZTR.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZCOPY.TXT");
                Run_Command
                  ("Sys:C/Copy", "Host:host_seed.txt Host:FZCOPY.TXT",
                   0, "copy within host share via CLI");
                Check_File ("Host:FZCOPY.TXT",
                            "hello from the host" & ASCII.LF,
                            "host share CLI copy contents");
-               HSt := Akernel_User.Files.Delete ("Host:FZCOPY.TXT");
+               HSt := Aegir_User.Files.Delete ("Host:FZCOPY.TXT");
                Run_Command ("Sys:C/Type", "Host:host_seed.txt", 0,
                             "type Host:host_seed.txt");
             end if;
@@ -6087,22 +6087,22 @@ begin
             --  Sys: is the initrd volume; its root does not
             --  answer Stat_Ex as a directory, so the mount probe
             --  stats the always-present README instead.
-            CSt := Akernel_User.Files.Stat ("Sys:README.TXT", CSize);
-            Check (CSt = Akernel_User.Files.Status_Ok
+            CSt := Aegir_User.Files.Stat ("Sys:README.TXT", CSize);
+            Check (CSt = Aegir_User.Files.Status_Ok
                    and then CSize > 0,
                    "census Sys: volume mounted");
-            CSt := Akernel_User.Files.Stat_Ex
+            CSt := Aegir_User.Files.Stat_Ex
               ("Net:", CSize, CWDate, CWTime, CDir);
-            Check (CSt = Akernel_User.Files.Status_Ok
+            Check (CSt = Aegir_User.Files.Status_Ok
                    and then CDir,
                    "census Net: volume mounted");
             for Try in 1 .. 10_000 loop
-               CSt := Akernel_User.Files.Stat_Ex
+               CSt := Aegir_User.Files.Stat_Ex
                  ("Host:", CSize, CWDate, CWTime, CDir);
-               exit when CSt = Akernel_User.Files.Status_Ok;
-               Akernel_User.Syscalls.Yield;
+               exit when CSt = Aegir_User.Files.Status_Ok;
+               Aegir_User.Syscalls.Yield;
             end loop;
-            if CSt = Akernel_User.Files.Status_Ok then
+            if CSt = Aegir_User.Files.Status_Ok then
                Host_Ok := CDir;
                Check (CDir, "census Host: volume mounted");
             else
@@ -6111,10 +6111,10 @@ begin
             --  Net: occupancy: line count of the netstat render.
             COff := 0;
             loop
-               CSt := Akernel_User.Files.Read
+               CSt := Aegir_User.Files.Read
                  ("Net:tcp", COff, CBuf'Address,
                   U64 (CBuf'Length), CCount);
-               exit when CSt /= Akernel_User.Files.Status_Ok
+               exit when CSt /= Aegir_User.Files.Status_Ok
                  or else CCount = 0;
                for I in 0 .. Natural (CCount) - 1 loop
                   if CBuf (I) = Interfaces.Unsigned_8 (10) then
@@ -6126,9 +6126,9 @@ begin
             --  Proc: occupancy: entries in the root listing.
             CIdx := 0;
             loop
-               CSt := Akernel_User.Files.Read_Dir
+               CSt := Aegir_User.Files.Read_Dir
                  ("Proc:", CIdx, CEnt, CEnt_Len, CEDir, CESize);
-               exit when CSt /= Akernel_User.Files.Status_Ok;
+               exit when CSt /= Aegir_User.Files.Status_Ok;
                CProcs := CProcs + 1;
                CIdx := CIdx + 1;
                exit when CIdx > 10_000;
@@ -6161,8 +6161,8 @@ begin
             St   : U64;
             Size : U64;
          begin
-            St := Akernel_User.Files.Stat ("ENV:FZSCR2", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("ENV:FZSCR2", Size);
+            Check (St /= Aegir_User.Files.Status_Ok,
                    "failat stops the script before the next line");
          end;
 
@@ -6181,8 +6181,8 @@ begin
             St   : U64;
             Size : U64;
          begin
-            St := Akernel_User.Files.Stat ("ENV:FZJOBS1", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("ENV:FZJOBS1", Size);
+            Check (St /= Aegir_User.Files.Status_Ok,
                    "job RC 20 stops the script at failat");
          end;
 
@@ -6206,8 +6206,8 @@ begin
             St   : U64;
             Size : U64;
          begin
-            St := Akernel_User.Files.Stat ("ENV:FZJ4", Size);
-            Check (St = Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("ENV:FZJ4", Size);
+            Check (St = Aegir_User.Files.Status_Ok,
                    "C:Wait fallthrough lets the script continue");
          end;
 
@@ -6254,8 +6254,8 @@ begin
              St   : U64;
              Size : U64;
           begin
-             St := Akernel_User.Files.Stat ("ENV:FZBAD", Size);
-             Check (St /= Akernel_User.Files.Status_Ok,
+             St := Aegir_User.Files.Stat ("ENV:FZBAD", Size);
+             Check (St /= Aegir_User.Files.Status_Ok,
                     "bad substitution stops before the next line");
           end;
 
@@ -6317,9 +6317,9 @@ begin
           declare
              St : U64;
           begin
-             St := Akernel_User.Files.Delete ("BD1:FZL1");
-             St := Akernel_User.Files.Delete ("BD1:FZL2");
-             St := Akernel_User.Files.Delete ("BD1:FZL3");
+             St := Aegir_User.Files.Delete ("BD1:FZL1");
+             St := Aegir_User.Files.Delete ("BD1:FZL2");
+             St := Aegir_User.Files.Delete ("BD1:FZL3");
           end;
           Write_File ("BD1:FZLOOP.TXT", Script18,
                       "skip-back loop script written");
@@ -6341,8 +6341,8 @@ begin
              St   : U64;
              Size : U64;
           begin
-             St := Akernel_User.Files.Stat ("ENV:FZQT", Size);
-             Check (St /= Akernel_User.Files.Status_Ok,
+             St := Aegir_User.Files.Stat ("ENV:FZQT", Size);
+             Check (St /= Aegir_User.Files.Status_Ok,
                     "quit stops the script");
           end;
 
@@ -6356,8 +6356,8 @@ begin
              St   : U64;
              Size : U64;
           begin
-             St := Akernel_User.Files.Stat ("ENV:FZQT2", Size);
-             Check (St /= Akernel_User.Files.Status_Ok,
+             St := Aegir_User.Files.Stat ("ENV:FZQT2", Size);
+             Check (St /= Aegir_User.Files.Status_Ok,
                     "inner RC 20 tripped the outer failat");
           end;
 
@@ -6381,7 +6381,7 @@ begin
           --  Glob matcher battery (M85b): pure-function checks of
           --  the MatchPatternNoCase semantics.
           declare
-             package G renames Akernel_User.Glob;
+             package G renames Aegir_User.Glob;
           begin
              Check (G.Match ("*", "anything"), "glob * any");
              Check (G.Match ("*", ""), "glob * empty");
@@ -6445,15 +6445,15 @@ begin
                 for I in Buf'Range loop
                    Buf (I) := 0;
                 end loop;
-                St := Akernel_User.Files.Open (Path, Sz);
-                if St /= Akernel_User.Files.Status_Ok
+                St := Aegir_User.Files.Open (Path, Sz);
+                if St /= Aegir_User.Files.Status_Ok
                   or else Sz > U64 (Buf'Length)
                 then
                    return False;
                 end if;
-                St := Akernel_User.Files.Read
+                St := Aegir_User.Files.Read
                   (Path, 0, Buf'Address, Sz, Cnt);
-                if St /= Akernel_User.Files.Status_Ok
+                if St /= Aegir_User.Files.Status_Ok
                   or else Cnt /= Sz
                 then
                    return False;
@@ -6492,7 +6492,7 @@ begin
                & "dir #?.TXT > BD1:FZPD2.TXT" & ASCII.LF
                & "cd BD1:" & ASCII.LF;
           begin
-             St := Akernel_User.Files.Mkdir ("BD1:FZDIR");
+             St := Aegir_User.Files.Mkdir ("BD1:FZDIR");
              Write_File ("BD1:FZDIR/A.TXT", "alpha",
                          "glob fixture A.TXT written");
              Write_File ("BD1:FZDIR/B.TXT", "beta",
@@ -6598,8 +6598,8 @@ begin
              St   : U64;
              Size : U64;
           begin
-             St := Akernel_User.Files.Stat ("ENV:FZNL", Size);
-             Check (St /= Akernel_User.Files.Status_Ok,
+             St := Aegir_User.Files.Stat ("ENV:FZNL", Size);
+             Check (St /= Aegir_User.Files.Status_Ok,
                     "unknown label stops the script");
           end;
 
@@ -6681,14 +6681,14 @@ begin
             Run_Command ("Sys:System/Shell",
                          "execute BD1:FZPIPE1.TXT",
                          0, "shell runs a pipeline");
-            St := Akernel_User.Files.Open ("BD1:FZPOUT.TXT", Size);
-            Check (St = Akernel_User.Files.Status_Ok
+            St := Aegir_User.Files.Open ("BD1:FZPOUT.TXT", Size);
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Size = U64 (Expected'Length),
                    "pipeline redirect target has the sorted size");
-            St := Akernel_User.Files.Read
+            St := Aegir_User.Files.Read
               ("BD1:FZPOUT.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
-            Check (St = Akernel_User.Files.Status_Ok
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
                    and then Out_Buf (1 .. Expected'Length) = Expected,
                    "piped sort output landed sorted via > file");
@@ -6700,10 +6700,10 @@ begin
             Run_Command ("Sys:System/Shell",
                          "execute BD1:FZPIPE2.TXT",
                          0, "shell runs < and > redirects");
-            St := Akernel_User.Files.Read
+            St := Aegir_User.Files.Read
               ("BD1:FZS2.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
-            Check (St = Akernel_User.Files.Status_Ok
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
                    and then Out_Buf (1 .. Expected'Length) = Expected,
                    "sort < in > out matches the pipeline");
@@ -6725,15 +6725,15 @@ begin
                          0, "shell backgrounds a pipeline");
             Check_Env ("FZBG1", "alive",
                        "script continues after the bg pipeline");
-            St := Akernel_User.Files.Read
+            St := Aegir_User.Files.Read
               ("BD1:FZBG1O.TXT", 0, Out_Buf'Address,
                U64 (Expected'Length), Cnt);
-            Check (St = Akernel_User.Files.Status_Ok
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Cnt = U64 (Expected'Length)
                    and then Out_Buf (1 .. Expected'Length) = Expected,
                    "background pipeline output landed sorted");
-            St := Akernel_User.Files.Stat ("PIPE:BG11", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("PIPE:BG11", Size);
+            Check (St /= Aegir_User.Files.Status_Ok,
                    "wait deleted the job's BG pipe");
 
             Write_File ("BD1:FZBG2.TXT",
@@ -6749,8 +6749,8 @@ begin
                S2  : U64;
                Sz2 : U64;
             begin
-               S2 := Akernel_User.Files.Stat ("ENV:FZBG2", Sz2);
-               Check (S2 /= Akernel_User.Files.Status_Ok,
+               S2 := Aegir_User.Files.Stat ("ENV:FZBG2", Sz2);
+               Check (S2 /= Aegir_User.Files.Status_Ok,
                       "bg pipeline RC 20 stops the script at failat");
             end;
 
@@ -6768,8 +6768,8 @@ begin
                          0, "two bg pipelines, jobs, bare wait");
             Check_Env ("FZBG3", "alive",
                        "bare wait reaped both bg pipelines");
-            St := Akernel_User.Files.Stat ("PIPE:BG21", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("PIPE:BG21", Size);
+            Check (St /= Aegir_User.Files.Status_Ok,
                    "both jobs' BG pipes deleted");
 
             Write_File ("BD1:FZBG4.TXT",
@@ -6783,8 +6783,8 @@ begin
                S3  : U64;
                Sz3 : U64;
             begin
-               S3 := Akernel_User.Files.Stat ("ENV:FZBG4", Sz3);
-               Check (S3 /= Akernel_User.Files.Status_Ok,
+               S3 := Aegir_User.Files.Stat ("ENV:FZBG4", Sz3);
+               Check (S3 /= Aegir_User.Files.Status_Ok,
                       "bad bg pipeline stops the script at failat");
             end;
 
@@ -6800,15 +6800,15 @@ begin
             --  -> device (Op_Flush + VIRTIO_BLK_T_FLUSH).
             Write_File ("BD1:FZWB.TXT", In_File,
                         "write-back test input written");
-            St := Akernel_User.Files.Read
+            St := Aegir_User.Files.Read
               ("BD1:FZWB.TXT", 0, Out_Buf'Address,
                U64 (In_File'Length), Cnt);
-            Check (St = Akernel_User.Files.Status_Ok
+            Check (St = Aegir_User.Files.Status_Ok
                    and then Cnt = U64 (In_File'Length)
                    and then Out_Buf (1 .. In_File'Length) = In_File,
                    "dirty write-back sectors read back coherent");
-            Check (Akernel_User.Files.Sync =
-                     Akernel_User.Files.Status_Ok,
+            Check (Aegir_User.Files.Sync =
+                     Aegir_User.Files.Status_Ok,
                    "sync drives the block flush chain");
          end;
       end;
@@ -6834,13 +6834,13 @@ begin
             for I in 0 .. 63 loop
                Buf (I) := 0;
             end loop;
-            St := Akernel_User.Files.Open ("ENV:" & Name, Size);
-            Match := St = Akernel_User.Files.Status_Ok
+            St := Aegir_User.Files.Open ("ENV:" & Name, Size);
+            Match := St = Aegir_User.Files.Status_Ok
               and then Size = U64 (Want'Length);
             if Match then
-               St := Akernel_User.Files.Read
+               St := Aegir_User.Files.Read
                  ("ENV:" & Name, 0, Buf'Address, 64, Count);
-               Match := St = Akernel_User.Files.Status_Ok
+               Match := St = Aegir_User.Files.Status_Ok
                  and then Count = U64 (Want'Length);
                for I in Want'Range loop
                   Match := Match
@@ -6884,8 +6884,8 @@ begin
             St   : U64;
             Size : U64;
          begin
-            St := Akernel_User.Files.Stat ("ENV:Path", Size);
-            Check (St /= Akernel_User.Files.Status_Ok,
+            St := Aegir_User.Files.Stat ("ENV:Path", Size);
+            Check (St /= Aegir_User.Files.Status_Ok,
                    "reset deleted ENV:Path");
          end;
          Run_Command ("Sys:C/Which", "Copy", 0,
@@ -6919,7 +6919,7 @@ begin
       --  fallback. NIL: discards writes and answers immediate
       --  EOF.
       declare
-         use Akernel_User.Files;
+         use Aegir_User.Files;
          Status : U64;
          Size   : U64;
          Count  : U64;
@@ -6987,7 +6987,7 @@ begin
       --  Race-free by construction: whichever order the peers
       --  actually run, the operations complete identically.
       declare
-         use Akernel_User.Files;
+         use Aegir_User.Files;
          Status : U64;
          Count  : U64;
          Size   : U64;
@@ -7007,19 +7007,19 @@ begin
          Check (Status = Status_Ok, "blocking test pipe created");
          Args_P := ('P', ' ', 'P', 'I', 'P', 'E', ':', 'F', 'Z',
                     'B', '1', others => Character'Val (0));
-         Akernel_User.Syscalls.Set_Grant
-           (0, Res_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, Res_EP, Akernel_User.Syscalls.Right_Send, 20);
-         Akernel_User.Syscalls.Set_Grant
-           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
+           (0, Res_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, Res_EP, Aegir_User.Syscalls.Right_Send, 20);
+         Aegir_User.Syscalls.Set_Grant
+           (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (4, 4, Akernel_User.Syscalls.Right_Send, 0);  --  fs cap
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 5, Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (4, 4, Aegir_User.Syscalls.Right_Send, 0);  --  fs cap
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 5, Proc);
          Check (Status = 0 and then Proc /= 0,
                 "pipe reader peer spawned");
          for I in 1 .. 256 loop
@@ -7031,16 +7031,16 @@ begin
          Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
          declare
             R_W0 : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (0);
+              Aegir_User.Syscalls.Message.Words (0);
             R_W1 : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (1);
+              Aegir_User.Syscalls.Message.Words (1);
             R_W2 : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (2);
+              Aegir_User.Syscalls.Message.Words (2);
             R_B  : constant U64 :=
-              Akernel_User.Syscalls.Message.Badge;
+              Aegir_User.Syscalls.Message.Badge;
          begin
-            Akernel_User.Syscalls.Message.Words := (others => 0);
-            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Aegir_User.Syscalls.Message.Words := (others => 0);
+            Aegir_User.Syscalls.Message.Caps := (others => 0);
             Discard := Raw_Ecall (Number => Sys_IPC_Reply,
                                   A0 => Last_A1);
             Check (Status = 0 and then R_B = 20,
@@ -7052,7 +7052,7 @@ begin
          end;
          Done := False;
          for Try in 1 .. 2048 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (Proc, Code);
             if Status = 0 then
                Done := True;
@@ -7078,19 +7078,19 @@ begin
          Check (Status = Status_Ok, "writer test ring filled");
          Args_P := ('W', ' ', 'P', 'I', 'P', 'E', ':', 'F', 'Z',
                     'B', '2', others => Character'Val (0));
-         Akernel_User.Syscalls.Set_Grant
-           (0, Res_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, Res_EP, Akernel_User.Syscalls.Right_Send, 21);
-         Akernel_User.Syscalls.Set_Grant
-           (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
+           (0, Res_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, Res_EP, Aegir_User.Syscalls.Right_Send, 21);
+         Aegir_User.Syscalls.Set_Grant
+           (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_C_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (4, 4, Akernel_User.Syscalls.Right_Send, 0);  --  fs cap
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 5, Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (4, 4, Aegir_User.Syscalls.Right_Send, 0);  --  fs cap
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 5, Proc);
          Check (Status = 0 and then Proc /= 0,
                 "pipe writer peer spawned");
          for I in 1 .. 256 loop
@@ -7103,14 +7103,14 @@ begin
          Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
          declare
             R_W0 : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (0);
+              Aegir_User.Syscalls.Message.Words (0);
             R_W1 : constant U64 :=
-              Akernel_User.Syscalls.Message.Words (1);
+              Aegir_User.Syscalls.Message.Words (1);
             R_B  : constant U64 :=
-              Akernel_User.Syscalls.Message.Badge;
+              Aegir_User.Syscalls.Message.Badge;
          begin
-            Akernel_User.Syscalls.Message.Words := (others => 0);
-            Akernel_User.Syscalls.Message.Caps := (others => 0);
+            Aegir_User.Syscalls.Message.Words := (others => 0);
+            Aegir_User.Syscalls.Message.Caps := (others => 0);
             Discard := Raw_Ecall (Number => Sys_IPC_Reply,
                                   A0 => Last_A1);
             Check (Status = 0 and then R_B = 21,
@@ -7120,7 +7120,7 @@ begin
          end;
          Done := False;
          for Try in 1 .. 2048 loop
-            Status := Akernel_User.Syscalls.Reap_Process_Code
+            Status := Aegir_User.Syscalls.Reap_Process_Code
               (Proc, Code);
             if Status = 0 then
                Done := True;
@@ -7147,17 +7147,17 @@ begin
 
       --  Sender 1: fresh endpoint, queues behind no receiver.
       Args_C := ('S', Character'Val (0));
-      Akernel_User.Syscalls.Set_Grant
-        (0, Send_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 4);
-      Akernel_User.Syscalls.Set_Grant
-        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
+        (0, Send_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Res_EP, Aegir_User.Syscalls.Right_Send, 4);
+      Aegir_User.Syscalls.Set_Grant
+        (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
         (3, Args_C_Mem,
-         Akernel_User.Syscalls.Right_Map +
-           Akernel_User.Syscalls.Right_Read, 0);
-      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Aegir_User.Syscalls.Right_Map +
+           Aegir_User.Syscalls.Right_Read, 0);
+      Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
       Procs (1) := Proc;
       Check (Status = 0 and then Proc /= 0, "send peer spawned");
 
@@ -7165,12 +7165,12 @@ begin
       --  queueing, and no reply cap may be minted for a send.
       Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Send_EP);
       declare
-         S_Words : constant U64 := Akernel_User.Syscalls.Message.Words (0);
-         S_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+         S_Words : constant U64 := Aegir_User.Syscalls.Message.Words (0);
+         S_Badge : constant U64 := Aegir_User.Syscalls.Message.Badge;
       begin
-         Akernel_User.Syscalls.Message.Label := 16#7D1#;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Aegir_User.Syscalls.Message.Label := 16#7D1#;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
          Check (Status = 0 and then S_Words = 16#5EAD_5EAD#
                 and then S_Badge = 0,
                 "plain send delivered words and badge");
@@ -7182,13 +7182,13 @@ begin
       --  Sender 1's report: Send returned Ok at delivery.
       Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
       declare
-         R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+         R_Badge : constant U64 := Aegir_User.Syscalls.Message.Badge;
          R_Code  : constant U64 :=
-           Akernel_User.Syscalls.Message.Words (0);
+           Aegir_User.Syscalls.Message.Words (0);
       begin
-         Akernel_User.Syscalls.Message.Label := 16#7D1#;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Aegir_User.Syscalls.Message.Label := 16#7D1#;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
          Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
          Check (Status = 0 and then R_Badge = 4 and then R_Code = 0,
                 "plain send woke with Ok on delivery");
@@ -7196,30 +7196,30 @@ begin
 
       --  Sender 2: the teardown endpoint is failed by now, so the
       --  send must fail immediately instead of queueing.
-      Akernel_User.Syscalls.Set_Grant
-        (0, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
-        (1, Res_EP, Akernel_User.Syscalls.Right_Send, 5);
-      Akernel_User.Syscalls.Set_Grant
-        (2, Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-      Akernel_User.Syscalls.Set_Grant
+      Aegir_User.Syscalls.Set_Grant
+        (0, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
+        (1, Res_EP, Aegir_User.Syscalls.Right_Send, 5);
+      Aegir_User.Syscalls.Set_Grant
+        (2, Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+      Aegir_User.Syscalls.Set_Grant
         (3, Args_C_Mem,
-         Akernel_User.Syscalls.Right_Map +
-           Akernel_User.Syscalls.Right_Read, 0);
-      Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+         Aegir_User.Syscalls.Right_Map +
+           Aegir_User.Syscalls.Right_Read, 0);
+      Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
       Procs (2) := Proc;
       Check (Status = 0 and then Proc /= 0,
              "send peer spawned on failed endpoint");
 
       Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
       declare
-         R_Badge : constant U64 := Akernel_User.Syscalls.Message.Badge;
+         R_Badge : constant U64 := Aegir_User.Syscalls.Message.Badge;
          R_Code  : constant U64 :=
-           Akernel_User.Syscalls.Message.Words (0);
+           Aegir_User.Syscalls.Message.Words (0);
       begin
-         Akernel_User.Syscalls.Message.Label := 16#7D1#;
-         Akernel_User.Syscalls.Message.Words := (others => 0);
-         Akernel_User.Syscalls.Message.Caps := (others => 0);
+         Aegir_User.Syscalls.Message.Label := 16#7D1#;
+         Aegir_User.Syscalls.Message.Words := (others => 0);
+         Aegir_User.Syscalls.Message.Caps := (others => 0);
          Ignore := Raw_Ecall (Number => Sys_IPC_Reply, A0 => Last_A1);
          Check (Status = 0 and then R_Badge = 5 and then R_Code = 3,
                 "plain send on failed endpoint rejected");
@@ -7272,18 +7272,18 @@ begin
          --  Two callers queue on the endpoint (no receiver yet).
          Args_C := ('C', Character'Val (0));
          for I in 1 .. 2 loop
-            Akernel_User.Syscalls.Set_Grant
-              (0, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-            Akernel_User.Syscalls.Set_Grant
-              (1, Res_EP, Akernel_User.Syscalls.Right_Send,
+            Aegir_User.Syscalls.Set_Grant
+              (0, D_Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+            Aegir_User.Syscalls.Set_Grant
+              (1, Res_EP, Aegir_User.Syscalls.Right_Send,
                U64 (10 + I));
-            Akernel_User.Syscalls.Set_Grant
-              (2, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-            Akernel_User.Syscalls.Set_Grant
+            Aegir_User.Syscalls.Set_Grant
+              (2, D_Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+            Aegir_User.Syscalls.Set_Grant
               (3, Args_C_Mem,
-               Akernel_User.Syscalls.Right_Map +
-                 Akernel_User.Syscalls.Right_Read, 0);
-            Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+               Aegir_User.Syscalls.Right_Map +
+                 Aegir_User.Syscalls.Right_Read, 0);
+            Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
             Procs (I) := Proc;
             Check (Status = 0 and then Proc /= 0,
                    "deferred-reply caller spawned");
@@ -7296,19 +7296,19 @@ begin
 
          --  D peer: receive both, reply second-first.
          Args_R := ('D', Character'Val (0));
-         Akernel_User.Syscalls.Set_Grant
+         Aegir_User.Syscalls.Set_Grant
            (0, D_Svc_EP,
-            Akernel_User.Syscalls.Right_Send +
-              Akernel_User.Syscalls.Right_Receive, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (1, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
-           (2, D_Svc_EP, Akernel_User.Syscalls.Right_Send, 0);
-         Akernel_User.Syscalls.Set_Grant
+            Aegir_User.Syscalls.Right_Send +
+              Aegir_User.Syscalls.Right_Receive, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (1, D_Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
+           (2, D_Svc_EP, Aegir_User.Syscalls.Right_Send, 0);
+         Aegir_User.Syscalls.Set_Grant
            (3, Args_R_Mem,
-            Akernel_User.Syscalls.Right_Map +
-              Akernel_User.Syscalls.Right_Read, 0);
-         Status := Akernel_User.Syscalls.Spawn (TD_Mem, 4, Proc);
+            Aegir_User.Syscalls.Right_Map +
+              Aegir_User.Syscalls.Right_Read, 0);
+         Status := Aegir_User.Syscalls.Spawn (TD_Mem, 4, Proc);
          Procs (3) := Proc;
          Check (Status = 0 and then Proc /= 0,
                 "deferred-reply server spawned");
@@ -7323,15 +7323,15 @@ begin
             Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => Res_EP);
             declare
                R_Badge : constant U64 :=
-                 Akernel_User.Syscalls.Message.Badge;
+                 Aegir_User.Syscalls.Message.Badge;
                R_Code  : constant U64 :=
-                 Akernel_User.Syscalls.Message.Words (0);
+                 Aegir_User.Syscalls.Message.Words (0);
                R_Order : constant U64 :=
-                 Akernel_User.Syscalls.Message.Words (1);
+                 Aegir_User.Syscalls.Message.Words (1);
             begin
-               Akernel_User.Syscalls.Message.Label := 16#7D1#;
-               Akernel_User.Syscalls.Message.Words := (others => 0);
-               Akernel_User.Syscalls.Message.Caps := (others => 0);
+               Aegir_User.Syscalls.Message.Label := 16#7D1#;
+               Aegir_User.Syscalls.Message.Words := (others => 0);
+               Aegir_User.Syscalls.Message.Caps := (others => 0);
                Ignore := Raw_Ecall
                  (Number => Sys_IPC_Reply, A0 => Last_A1);
                Check (Status = 0,
@@ -7384,7 +7384,7 @@ begin
    --  the VFS when volume lookup fails. Mounting the system
    --  volume seeds C: -> Sys:C and ENV: -> Sys:Prefs/Env.
    declare
-      use type Akernel_User.Syscalls.U64;
+      use type Aegir_User.Syscalls.U64;
       A_Text : String (1 .. 40);
       A_Len  : Natural;
       S1     : U64;
@@ -7395,37 +7395,37 @@ begin
       Count  : U64;
       Txt    : aliased String := "fz36";
    begin
-      Check (Akernel_User.Files.Stat ("C:Dir", S1) =
-               Akernel_User.Files.Status_Ok,
+      Check (Aegir_User.Files.Stat ("C:Dir", S1) =
+               Aegir_User.Files.Status_Ok,
              "boot assign C: resolves");
-      Check (Akernel_User.Files.Stat ("Sys:C/Dir", S2) =
-               Akernel_User.Files.Status_Ok and then S1 = S2,
+      Check (Aegir_User.Files.Stat ("Sys:C/Dir", S2) =
+               Aegir_User.Files.Status_Ok and then S1 = S2,
              "assign target matches direct path");
 
       --  ENV: lands on Sys:Prefs/Env: create the dirs (already
       --  present on reused images — status ignored), write
       --  through the alias, verify at the direct path, delete
       --  through the alias.
-      Ignore := Akernel_User.Files.Mkdir ("Sys:Prefs");
-      Ignore := Akernel_User.Files.Mkdir ("Sys:Prefs/Env");
-      Status := Akernel_User.Files.Write
+      Ignore := Aegir_User.Files.Mkdir ("Sys:Prefs");
+      Ignore := Aegir_User.Files.Mkdir ("Sys:Prefs/Env");
+      Status := Aegir_User.Files.Write
         ("ENV:FZTST", 0, Txt'Address, 4, Count);
-      Check (Status = Akernel_User.Files.Status_Ok
+      Check (Status = Aegir_User.Files.Status_Ok
              and then Count = 4,
              "boot assign ENV: write through alias");
-      Check (Akernel_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
-               Akernel_User.Files.Status_Ok and then S1 = 4,
+      Check (Aegir_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
+               Aegir_User.Files.Status_Ok and then S1 = 4,
              "assign write lands on target path");
-      Check (Akernel_User.Files.Delete ("ENV:FZTST") =
-               Akernel_User.Files.Status_Ok,
+      Check (Aegir_User.Files.Delete ("ENV:FZTST") =
+               Aegir_User.Files.Status_Ok,
              "assign delete through alias");
-      Check (Akernel_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
-               Akernel_User.Files.Status_Not_Found,
+      Check (Aegir_User.Files.Stat ("Sys:Prefs/Env/FZTST", S1) =
+               Aegir_User.Files.Status_Not_Found,
              "assign delete verified at target path");
 
       loop
-         Status := Akernel_User.Files.Assign_List (Idx, A_Text, A_Len);
-         exit when Status /= Akernel_User.Files.Status_Ok;
+         Status := Aegir_User.Files.Assign_List (Idx, A_Text, A_Len);
+         exit when Status /= Aegir_User.Files.Status_Ok;
          if A_Len = 8 and then A_Text (1 .. 8) = "C: Sys:C" then
             Found_C := True;
          end if;
@@ -7436,17 +7436,17 @@ begin
       end loop;
       Check (Found_C and then Found_ENV, "boot assigns listed");
 
-      Check (Akernel_User.Files.Assign_Set ("FZ", "Sys:C") =
-               Akernel_User.Files.Status_Ok,
+      Check (Aegir_User.Files.Assign_Set ("FZ", "Sys:C") =
+               Aegir_User.Files.Status_Ok,
              "assign set");
-      Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
-               Akernel_User.Files.Status_Ok and then S1 = S2,
+      Check (Aegir_User.Files.Stat ("FZ:Dir", S1) =
+               Aegir_User.Files.Status_Ok and then S1 = S2,
              "assign resolves after set (implied separator)");
-      Check (Akernel_User.Files.Assign_Set ("FZ", "") =
-               Akernel_User.Files.Status_Ok,
+      Check (Aegir_User.Files.Assign_Set ("FZ", "") =
+               Aegir_User.Files.Status_Ok,
              "assign removed");
-       Check (Akernel_User.Files.Stat ("FZ:Dir", S1) =
-                Akernel_User.Files.Status_Not_Found,
+       Check (Aegir_User.Files.Stat ("FZ:Dir", S1) =
+                Aegir_User.Files.Status_Not_Found,
               "removed assign stops resolving");
 
        --  M91: Op_List_Volumes enumerates mounted volumes with
@@ -7461,13 +7461,13 @@ begin
           Found_Sys : Boolean := False;
        begin
           loop
-             Status := Akernel_User.Files.Volume_List
+             Status := Aegir_User.Files.Volume_List
                (V_Idx, V_Name, V_Len, V_Kind);
-             exit when Status /= Akernel_User.Files.Status_Ok;
+             exit when Status /= Aegir_User.Files.Status_Ok;
              V_Count := V_Count + 1;
              if V_Len = 3
                and then V_Name (1 .. 3) = "Sys"
-               and then V_Kind = Akernel_User.Files.Vol_Kind_FS
+               and then V_Kind = Aegir_User.Files.Vol_Kind_FS
              then
                 Found_Sys := True;
              end if;
@@ -7485,54 +7485,54 @@ begin
       N1   : U64;
       N2   : U64 := 0;
    begin
-      N1 := Akernel_User.Syscalls.Ntfn_Create;
-      Check (N1 /= Akernel_User.Syscalls.Syscall_Failed,
+      N1 := Aegir_User.Syscalls.Ntfn_Create;
+      Check (N1 /= Aegir_User.Syscalls.Syscall_Failed,
              "ntfn create returns handle");
 
-      N2 := Akernel_User.Syscalls.Ntfn_Create;
-      Check (N2 /= Akernel_User.Syscalls.Syscall_Failed
+      N2 := Aegir_User.Syscalls.Ntfn_Create;
+      Check (N2 /= Aegir_User.Syscalls.Syscall_Failed
              and then N2 /= N1,
              "ntfn create distinct handles");
 
-      Check (Akernel_User.Syscalls.Ntfn_Wait (16#FEED_BEEF#) =
-               Akernel_User.Syscalls.Syscall_Failed,
+      Check (Aegir_User.Syscalls.Ntfn_Wait (16#FEED_BEEF#) =
+               Aegir_User.Syscalls.Syscall_Failed,
              "ntfn wait invalid cap rejected");
-      Check (Akernel_User.Syscalls.Ntfn_Signal (16#FEED_BEEF#, 1) /= 0,
+      Check (Aegir_User.Syscalls.Ntfn_Signal (16#FEED_BEEF#, 1) /= 0,
              "ntfn signal invalid cap rejected");
-      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (16#FEED_BEEF#) /= 0,
+      Check (Aegir_User.Syscalls.Ntfn_Bind_Thread (16#FEED_BEEF#) /= 0,
              "ntfn bind invalid cap rejected");
 
-      Check (Akernel_User.Syscalls.Ntfn_Signal (N1, 5) = 0,
+      Check (Aegir_User.Syscalls.Ntfn_Signal (N1, 5) = 0,
              "ntfn signal ok");
-      Check (Akernel_User.Syscalls.Ntfn_Wait (N1) = 5,
+      Check (Aegir_User.Syscalls.Ntfn_Wait (N1) = 5,
              "ntfn wait returns pending bits");
 
-      Check (Akernel_User.Syscalls.Ntfn_Signal (N1, 2) = 0
-             and then Akernel_User.Syscalls.Ntfn_Signal (N1, 8) = 0,
+      Check (Aegir_User.Syscalls.Ntfn_Signal (N1, 2) = 0
+             and then Aegir_User.Syscalls.Ntfn_Signal (N1, 8) = 0,
              "ntfn signals ok");
-      Check (Akernel_User.Syscalls.Ntfn_Wait (N1) = 10,
+      Check (Aegir_User.Syscalls.Ntfn_Wait (N1) = 10,
              "ntfn bits OR-accumulate");
 
       --  Bound-thread delivery: a signal lands as a synthetic
       --  message on the next IPC_Recv (fast path: bits pending
       --  before the endpoint wait).
-      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N2) = 0,
+      Check (Aegir_User.Syscalls.Ntfn_Bind_Thread (N2) = 0,
              "ntfn bind thread ok");
       Bound_Ntfn := N2;
-      Check (Akernel_User.Syscalls.Ntfn_Bind_Thread (N1) /= 0,
+      Check (Aegir_User.Syscalls.Ntfn_Bind_Thread (N1) /= 0,
              "ntfn second bind rejected");
-      Check (Akernel_User.Syscalls.Ntfn_Signal (N2, 16#AB#) = 0,
+      Check (Aegir_User.Syscalls.Ntfn_Signal (N2, 16#AB#) = 0,
              "ntfn signal bound ok");
       Status := Raw_Ecall (Number => Sys_IPC_Recv, A0 => 1);
       Check (Status = 0
-             and then Akernel_User.Syscalls.Message.Label =
-               Akernel_User.Syscalls.Notification_Label
-             and then Akernel_User.Syscalls.Message.Words (0) = 16#AB#,
+             and then Aegir_User.Syscalls.Message.Label =
+               Aegir_User.Syscalls.Notification_Label
+             and then Aegir_User.Syscalls.Message.Words (0) = 16#AB#,
              "recv delivers bound notification");
 
-      Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (16#FEED_BEEF#, N1, 1) /= 0,
+      Check (Aegir_User.Syscalls.IRQ_Bind_Ntfn (16#FEED_BEEF#, N1, 1) /= 0,
              "irq bind invalid irq cap rejected");
-      Check (Akernel_User.Syscalls.IRQ_Bind_Ntfn (1, N1, 1) /= 0,
+      Check (Aegir_User.Syscalls.IRQ_Bind_Ntfn (1, N1, 1) /= 0,
              "irq bind wrong-kind cap rejected");
    end;
 
@@ -7545,9 +7545,9 @@ begin
 
    --  Shared-library lifecycle (milestone 58 Tier-1).
    declare
-      use Akernel_User.Syscalls;
-      use Akernel_User.Libs;
-      use type Akernel_User.Syscalls.U64;
+      use Aegir_User.Syscalls;
+      use Aegir_User.Libs;
+      use type Aegir_User.Syscalls.U64;
 
       FS_Cap : constant U64 := 4;  --  fuzz manifest grant order
       Libman_Cap : constant U64 := 6;  --  shared-library manager
@@ -7631,30 +7631,30 @@ begin
       Bind (Libman_Cap);
 
       --  Open non-existent library returns Invalid_Handle.
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/NoSuch", Console_Cap, FS_Cap, Bureau_Cap);
-      Check (Lib = Akernel_User.Libs.Invalid_Handle,
+      Check (Lib = Aegir_User.Libs.Invalid_Handle,
              "libs open missing returns invalid");
 
       --  Version floor: Testlib advertises version 1.  Requesting
       --  version 2 must fail.
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap,
          Min_Version => 2);
-      Check (Lib = Akernel_User.Libs.Invalid_Handle,
+      Check (Lib = Aegir_User.Libs.Invalid_Handle,
              "libs version floor rejects low version");
 
       --  Open Testlib (version floor 0) and call Uppercase.
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
-      Check (Lib /= Akernel_User.Libs.Invalid_Handle,
+      Check (Lib /= Aegir_User.Libs.Invalid_Handle,
              "libs open testlib ok");
 
       --  m75: with a manager bound, the open must come from
       --  libman's reply cap (shared cache), not the private-spawn
       --  fallback — this is the IPC-reply cap-transfer regression
       --  test.
-      Check (Akernel_User.Libs.Opened_Via_Libman (Lib),
+      Check (Aegir_User.Libs.Opened_Via_Libman (Lib),
              "libs open delivered via libman reply cap");
 
       Message.Label := 1;
@@ -7670,12 +7670,12 @@ begin
       Check (Status = IPC_Ok
              and then Reply (1 .. 6) = "FUZZME",
              "libs uppercase round-trip ok");
-      Akernel_User.Libs.Close_Library (Lib);
+      Aegir_User.Libs.Close_Library (Lib);
 
       --  Cap-leak check: our open cap count before and after is
       --  unchanged.
       Count1 := Open_Count;
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Message.Label := 1;
       Message.Words := String_To_Words ("leak");
@@ -7683,7 +7683,7 @@ begin
       Message.Badge := 0;
       Status := IPC_Call (Lib);
       Check (Status = IPC_Ok, "libs leak call ok");
-      Akernel_User.Libs.Close_Library (Lib);
+      Aegir_User.Libs.Close_Library (Lib);
       Count2 := Open_Count;
       Check (Count1 /= U64'Last and then Count2 /= U64'Last
              and then Count1 = Count2,
@@ -7701,18 +7701,18 @@ begin
          Buf  : String (1 .. 64) := (others => ' ');
          BLen : Natural;
       begin
-         Clip := Akernel_User.Libs.Open_Library
+         Clip := Aegir_User.Libs.Open_Library
            ("Sys:Libs/Clipboard", Console_Cap, FS_Cap, Bureau_Cap,
             Min_Version => 1);
-         Check (Clip /= Akernel_User.Libs.Invalid_Handle,
+         Check (Clip /= Aegir_User.Libs.Invalid_Handle,
                 "clip open ok");
 
-         St := Akernel_User.Clipboard.Put (Clip, "clip fuzz text");
-         Check (St = Akernel_User.Clipboard.Status_Ok, "clip put ok");
+         St := Aegir_User.Clipboard.Put (Clip, "clip fuzz text");
+         Check (St = Aegir_User.Clipboard.Status_Ok, "clip put ok");
 
          Buf := (others => ' ');
-         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
-         Check (St = Akernel_User.Clipboard.Status_Ok
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
                 and then BLen = 14
                 and then Buf (1 .. 14) = "clip fuzz text",
                 "clip round-trip ok");
@@ -7720,32 +7720,32 @@ begin
          declare
             Big : String (1 .. 40_000) := (others => 'x');
          begin
-            St := Akernel_User.Clipboard.Put (Clip, Big);
-            Check (St = Akernel_User.Clipboard.Status_Too_Big,
+            St := Aegir_User.Clipboard.Put (Clip, Big);
+            Check (St = Aegir_User.Clipboard.Status_Too_Big,
                    "clip too-big rejected");
          end;
 
          Buf := (others => ' ');
-         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
-         Check (St = Akernel_User.Clipboard.Status_Ok
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
                 and then BLen = 14
                 and then Buf (1 .. 14) = "clip fuzz text",
                 "clip too-big leaves old contents");
 
-         Akernel_User.Libs.Close_Library (Clip);
+         Aegir_User.Libs.Close_Library (Clip);
 
          --  Reopen: resident instance, contents still there.
-         Clip := Akernel_User.Libs.Open_Library
+         Clip := Aegir_User.Libs.Open_Library
            ("Sys:Libs/Clipboard", Console_Cap, FS_Cap, Bureau_Cap);
-         Check (Clip /= Akernel_User.Libs.Invalid_Handle,
+         Check (Clip /= Aegir_User.Libs.Invalid_Handle,
                 "clip reopen ok");
          Buf := (others => ' ');
-         St := Akernel_User.Clipboard.Get (Clip, Buf, BLen);
-         Check (St = Akernel_User.Clipboard.Status_Ok
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
                 and then BLen = 14
                 and then Buf (1 .. 14) = "clip fuzz text",
                 "clip resident across close");
-         Akernel_User.Libs.Close_Library (Clip);
+         Aegir_User.Libs.Close_Library (Clip);
       end;
 
       --  Text_Edit editing API (clipboard milestone): a fresh
@@ -7788,9 +7788,9 @@ begin
       --  Multiple clients can open the same library concurrently.
       --  With the shared manager each open mints a distinct cap but
       --  the underlying server is shared.
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
-      Lib2 := Akernel_User.Libs.Open_Library
+      Lib2 := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Check (Lib /= Invalid_Handle and then Lib2 /= Invalid_Handle
              and then Lib /= Lib2,
@@ -7798,22 +7798,22 @@ begin
 
       --  Calling through the first cap still works after closing the
       --  second (ref-counting across opens).
-      Akernel_User.Libs.Close_Library (Lib2);
+      Aegir_User.Libs.Close_Library (Lib2);
       Message.Label := 1;
       Message.Words := String_To_Words ("still");
       Message.Caps := (others => 0);
       Message.Badge := 0;
       Status := IPC_Call (Lib);
       Check (Status = IPC_Ok, "libs shared server survives partial close");
-      Akernel_User.Libs.Close_Library (Lib);
+      Aegir_User.Libs.Close_Library (Lib);
 
       --  Closing the last cap lets the manager expunge the shared
       --  server; a new open succeeds.
-      Lib := Akernel_User.Libs.Open_Library
+      Lib := Aegir_User.Libs.Open_Library
         ("Sys:Libs/Testlib", Console_Cap, FS_Cap, Bureau_Cap);
       Check (Lib /= Invalid_Handle,
              "libs re-open after close ok");
-      Akernel_User.Libs.Close_Library (Lib);
+      Aegir_User.Libs.Close_Library (Lib);
 
       Ignore := Mem_Unmap (AS, Info_Page_VA, 4096);
       Ignore := Cap_Delete (Info_Cap);
@@ -7823,7 +7823,7 @@ begin
    --  mtime ticks (10 MHz on qemu virt); sleep 1 ms and verify we
    --  actually waited.  A past deadline returns immediately.
    declare
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       T0       : constant U64 := Read_Time;
       Deadline : constant U64 := T0 + 10_000;
       R        : U64;
@@ -7919,14 +7919,14 @@ begin
    --  the admin cap — a bogus handle and a plain non-admin cap
    --  (handle 4, the fs endpoint) are both rejected, and the
    --  machine is still here afterwards.
-   Check (Akernel_User.Syscalls.System_Reset (0, 0) =
-            Akernel_User.Syscalls.Syscall_Failed,
+   Check (Aegir_User.Syscalls.System_Reset (0, 0) =
+            Aegir_User.Syscalls.Syscall_Failed,
           "system reset rejects a bogus admin cap");
-   Check (Akernel_User.Syscalls.System_Reset (4, 0) =
-            Akernel_User.Syscalls.Syscall_Failed,
+   Check (Aegir_User.Syscalls.System_Reset (4, 0) =
+            Aegir_User.Syscalls.Syscall_Failed,
           "system reset rejects a non-admin cap");
 
-   Check (Akernel_User.Files.Sync = Akernel_User.Files.Status_Ok,
+   Check (Aegir_User.Files.Sync = Aegir_User.Files.Status_Ok,
           "final sync before completion");
 
    Put ("fuzz complete: calls=");

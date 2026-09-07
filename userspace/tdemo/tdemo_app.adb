@@ -1,5 +1,5 @@
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
 with Trinket.Images;
 with Trinket.Widgets;
 with Trinket.Widgets.Image;
@@ -17,11 +17,11 @@ with Trinket.Window;
 with Trinket.Menus;
 
 package body Tdemo_App is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    package Widgets renames Trinket.Widgets;
    package Images renames Trinket.Images;
-   package Files renames Akernel_User.Files;
+   package Files renames Aegir_User.Files;
    use type Images.Status;
    use type Widgets.Any_Widget;
 
@@ -280,7 +280,7 @@ package body Tdemo_App is
       Widgets.Group (File_Grp.all).Add
         (Widgets.Label.New_Label ("BD0:README.TXT", Inset => True));
 
-      Widgets.Group (Text_Grp.all).Add (Widgets.Label.New_Label ("# Akernel"));
+      Widgets.Group (Text_Grp.all).Add (Widgets.Label.New_Label ("# Aegir"));
       Widgets.Group (Text_Grp.all).Add
         (Widgets.Label.New_Label ("Trinket widget tree, live."));
       Widgets.Group (Text_Grp.all).Add

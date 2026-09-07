@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Sys:Fonts/font8x8.bdf from userspace/rts/akernel/font8x8.ads.
+"""Generate Sys:Fonts/font8x8.bdf from userspace/rts/aegir/font8x8.ads.
 
 font8x8 is LSB-first (bit 0 = leftmost pixel); BDF bitmap rows are
 MSB-first, so each row byte is bit-reversed here. Keeps the on-disk
@@ -64,7 +64,7 @@ def main():
     descent = 4 if tall else 2
     out.append("STARTFONT 2.1")
     name = "font8x8p" if prop else ("font8x8t" if tall else "font8x8")
-    out.append(f"FONT -akernel-{name}-medium-r-normal--{size}-80-75-75-c-80-iso10646-1")
+    out.append(f"FONT -aegir-{name}-medium-r-normal--{size}-80-75-75-c-80-iso10646-1")
     out.append(f"SIZE {size} 75 75")
     out.append(f"FONTBOUNDINGBOX 8 {size} 0 {-descent}")
     out.append("STARTPROPERTIES 4")

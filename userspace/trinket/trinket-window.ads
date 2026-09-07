@@ -105,7 +105,7 @@ package Trinket.Window is
 
    --  Milestone 61: Amiga screen-bar menus. Set_Menus declares
    --  the tree (chrome — Bureau renders/operates it; RMB opens
-   --  the bar, see akernel_user-window.ads); Set_Menu_Handler
+   --  the bar, see aegir_user-window.ads); Set_Menu_Handler
    --  installs the pick callback (item Id). Set_Menus needs the
    --  surface id, so call it AFTER Open; a window with no
    --  Set_Menus shows no bar menus.

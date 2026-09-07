@@ -1,8 +1,8 @@
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.Sockets;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.Sockets;
+with Aegir_User.Syscalls;
 
 --  Tcp_Test (milestone 72c): end-to-end smoke of the netserv TCP
 --  socket layer. Deterministic hairpin half (no wire traffic): a
@@ -26,10 +26,10 @@ procedure Tcp_Test is
    use type U32;
    use type U8;
 
-   package Console  renames Akernel_User.Console;
-   package Files    renames Akernel_User.Files;
-   package Sock     renames Akernel_User.Sockets;
-   package Syscalls renames Akernel_User.Syscalls;
+   package Console  renames Aegir_User.Console;
+   package Files    renames Aegir_User.Files;
+   package Sock     renames Aegir_User.Sockets;
+   package Syscalls renames Aegir_User.Syscalls;
 
    Console_EP : constant U64 := 1;
    FS_Cap     : constant U64 := 2;

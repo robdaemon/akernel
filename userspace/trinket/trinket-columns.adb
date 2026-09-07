@@ -1,8 +1,8 @@
 with Trinket.Paint;
 with Trinket.Widgets.Scrollbar;
 with Trinket.Fonts;
-with Akernel_User.Syscalls;
-with Akernel_User.Theme;
+with Aegir_User.Syscalls;
+with Aegir_User.Theme;
 
 package body Trinket.Columns is
 
@@ -172,9 +172,9 @@ package body Trinket.Columns is
    overriding procedure Draw (W : Columns; C : Canvas) is
       C2      : Canvas := C;
       Vis     : constant U64 := Visible_Rows (W);
-      Sel_C   : constant Pixel := Akernel_User.Theme.Sel_Blue;
-      Txt_C   : constant Pixel := Akernel_User.Theme.Text_Dark;
-      Hi_C    : constant Pixel := Akernel_User.Theme.Title_Text;
+      Sel_C   : constant Pixel := Aegir_User.Theme.Sel_Blue;
+      Txt_C   : constant Pixel := Aegir_User.Theme.Text_Dark;
+      Hi_C    : constant Pixel := Aegir_User.Theme.Title_Text;
       Date_X1, Date_X0, Size_X1, Size_X0, Name_X1 : U64;
       Y       : U64;
    begin
@@ -183,15 +183,15 @@ package body Trinket.Columns is
          return;
       end if;
       Trinket.Paint.Fill_Rect
-        (C2, W.X, W.Y, W.X + W.W, W.Y + W.H, Akernel_User.Theme.Pane);
+        (C2, W.X, W.Y, W.X + W.W, W.Y + W.H, Aegir_User.Theme.Pane);
       Column_Xs (W, Date_X1, Date_X0, Size_X1, Size_X0, Name_X1);
 
       --  Header band: recessed fill + a bottom rule.
       Trinket.Paint.Fill_Rect
-        (C2, W.X, W.Y, W.X + W.W, W.Y + HH, Akernel_User.Theme.Face);
+        (C2, W.X, W.Y, W.X + W.W, W.Y + HH, Aegir_User.Theme.Face);
       Trinket.Paint.Fill_Rect
         (C2, W.X, W.Y + HH - 1, W.X + W.W, W.Y + HH,
-         Akernel_User.Theme.Bevel_Lo);
+         Aegir_User.Theme.Bevel_Lo);
       Trinket.Fonts.Draw_Text_Mono
         (C2, W.X + Name_X0, W.Y + 1, "Name", Txt_C);
       Draw_Right (C2, Size_X0, Size_X1, W.Y + 1, "Size", Txt_C);
@@ -210,7 +210,7 @@ package body Trinket.Columns is
                TY  : constant U64 := Y + (RH - LH) / 2;
                FG  : constant Pixel := (if Sel then Hi_C else Txt_C);
                BG  : constant Pixel := (if Sel then Sel_C
-                                        else Akernel_User.Theme.Pane);
+                                        else Aegir_User.Theme.Pane);
             begin
                if Sel then
                   Trinket.Paint.Fill_Rect
@@ -318,7 +318,7 @@ package body Trinket.Columns is
       Idx := Natural (W.Top + R) + 1;
       if Idx <= W.N then
          declare
-            Now    : constant U64 := Akernel_User.Syscalls.Read_Time;
+            Now    : constant U64 := Aegir_User.Syscalls.Read_Time;
             Double : constant Boolean :=
               Idx = W.Last_Press_Row
               and then Now - W.Last_Press_Time < Double_Click_Ticks;

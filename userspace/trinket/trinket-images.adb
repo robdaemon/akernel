@@ -1,6 +1,6 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces;
-with Akernel_User.Files;
+with Aegir_User.Files;
 with Trinket.Images.Bmp;
 with Trinket.Images.Xpm;
 
@@ -8,7 +8,7 @@ package body Trinket.Images is
    use type U64;
    use type Pixel;
    use type System.Address;
-   package Files renames Akernel_User.Files;
+   package Files renames Aegir_User.Files;
 
    type Byte_Span is array (U64 range <>) of Interfaces.Unsigned_8;
    type Byte_Access is access Byte_Span;

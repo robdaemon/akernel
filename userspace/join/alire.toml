@@ -1,5 +1,5 @@
-name = "akernel_join"
-description = "akernel join"
+name = "aegir_join"
+description = "aegir join"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

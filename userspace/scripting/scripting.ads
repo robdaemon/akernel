@@ -1,10 +1,10 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Scripting (milestone 70): the shared shell-script machinery.
 --  Root package: the uniform-ABI handle constants every command
 --  spawn grants, and the Split_Cmd line utility shared by the
 --  shell and the execution engine. Deliberately declares NO U64
---  subtype of its own — clients `use Akernel_User.Syscalls` for
+--  subtype of its own — clients `use Aegir_User.Syscalls` for
 --  that, and two use-visible U64 subtypes would hide each other.
 --
 --  Children:
@@ -17,21 +17,21 @@ package Scripting is
 
    --  Uniform namespace handles (milestone 31b): every spawned
    --  command inherits these from its spawner.
-   Console_EP : constant Akernel_User.Syscalls.U64 := 1;
-   FS_EP      : constant Akernel_User.Syscalls.U64 := 2;
-   Win_EP     : constant Akernel_User.Syscalls.U64 := 3;
-   Svc_EP     : constant Akernel_User.Syscalls.U64 := 5;
+   Console_EP : constant Aegir_User.Syscalls.U64 := 1;
+   FS_EP      : constant Aegir_User.Syscalls.U64 := 2;
+   Win_EP     : constant Aegir_User.Syscalls.U64 := 3;
+   Svc_EP     : constant Aegir_User.Syscalls.U64 := 5;
    --  Handle 6 (m71c): the netserv client endpoint (Send). Every
    --  command spawner must grant it — an invalid grant source
    --  fails the whole spawn — so the terminal, the fuzz harness
    --  and Scripting.Exec itself were extended in the same
    --  commit.
-   Net_EP     : constant Akernel_User.Syscalls.U64 := 6;
+   Net_EP     : constant Aegir_User.Syscalls.U64 := 6;
    --  Handle 7 (M9x): the library-manager Send cap (Send+Transfer).
    --  Granted by every uniform spawner so shell-spawned commands
    --  reach the one resident library instance (the clipboard)
    --  just like Startup programs do.
-   Libman_EP  : constant Akernel_User.Syscalls.U64 := 7;
+   Libman_EP  : constant Aegir_User.Syscalls.U64 := 7;
 
    --  Split a command line into its first word and the trimmed
    --  remainder: Word = Cmd (Cmd'First .. W_Last), the rest is

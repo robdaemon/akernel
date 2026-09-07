@@ -6,12 +6,12 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---                      Akernel Ravenscar port (M67b)                       --
+--                      Aegir Ravenscar port (M67b)                       --
 --                                                                          --
 ------------------------------------------------------------------------------
 
 --  Minimal System.Task_Primitives.Operations body that maps GNARL onto the
---  Akernel syscall layer through System.OS_Interface.
+--  Aegir syscall layer through System.OS_Interface.
 
 pragma Restrictions (No_Elaboration_Code);
 

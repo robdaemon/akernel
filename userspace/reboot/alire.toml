@@ -1,5 +1,5 @@
-name = "akernel_reboot"
-description = "akernel reboot"
+name = "aegir_reboot"
+description = "aegir reboot"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

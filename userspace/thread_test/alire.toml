@@ -1,5 +1,5 @@
-name = "akernel_thread_test"
-description = "akernel thread primitive smoke test"
+name = "aegir_thread_test"
+description = "aegir thread primitive smoke test"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

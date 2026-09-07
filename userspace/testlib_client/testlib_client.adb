@@ -1,14 +1,14 @@
 with Interfaces;
-with Akernel_User.Syscalls;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Libs;
+with Aegir_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Libs;
 
-use Akernel_User.Syscalls;
-use Akernel_User;
+use Aegir_User.Syscalls;
+use Aegir_User;
 
 --  Testlib_Client: client for the milestone 58 Tier-1 shared-library
---  demo. Uses Akernel_User.Libs.Open_Library/Close_Library, sends the
+--  demo. Uses Aegir_User.Libs.Open_Library/Close_Library, sends the
 --  Uppercase request, and prints the reply.
 
 procedure Testlib_Client is

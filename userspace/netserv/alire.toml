@@ -1,5 +1,5 @@
-name = "akernel_netserv"
-description = "akernel network stack server (ARP/IPv4/ICMP/UDP)"
+name = "aegir_netserv"
+description = "aegir network stack server (ARP/IPv4/ICMP/UDP)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

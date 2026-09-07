@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 with Trinket.App_Port;
 
 --  Milestone 68 fuzz section: headless test of Trinket.App_Port —
@@ -20,7 +20,7 @@ with Trinket.App_Port;
 --  producers (protected-lock serialisation), drop-new overflow,
 --  same-thread posts, and the reserved quit code.
 package Fuzz_Port is
-   procedure Run_Tests (Bound_Ntfn : Akernel_User.Syscalls.U64);
+   procedure Run_Tests (Bound_Ntfn : Aegir_User.Syscalls.U64);
    --  Bound_Ntfn must be the notification cap already bound to the
    --  calling thread (Write right needed for signalling). It is
    --  NOT deleted here — the binding outlives the test.

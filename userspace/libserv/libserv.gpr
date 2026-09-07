@@ -1,4 +1,4 @@
-with "../rts/akernel_rts.gpr";
+with "../rts/aegir_rts.gpr";
 
 --  Libserv (milestone 58 Tier-1): boilerplate for Amiga-style shared
 --  library servers. Library programs link liblibserv.a in addition to

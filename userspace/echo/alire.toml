@@ -1,5 +1,5 @@
-name = "akernel_echo"
-description = "akernel echo"
+name = "aegir_echo"
+description = "aegir echo"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

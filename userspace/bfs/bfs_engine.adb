@@ -30,8 +30,8 @@
 --  splits): leaf insert/remove rebuild the node; a leaf without
 --  room fails the op with Bad_Args.
 
-with Akernel_User.Console;
-with Akernel_User.Tables;
+with Aegir_User.Console;
+with Aegir_User.Tables;
 with Interfaces;
 with System.Storage_Elements;
 
@@ -41,7 +41,7 @@ package body Bfs_Engine is
    --  the old inline-wire cap; the wire now carries 255).
    Max_Path_Len : constant := 255;
 
-   package Syscalls renames Akernel_User.Syscalls;
+   package Syscalls renames Aegir_User.Syscalls;
    use type Syscalls.U64;
    use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_16;
@@ -221,7 +221,7 @@ package body Bfs_Engine is
       end loop;
       if Free = Cache_Slots then
          Fail : begin
-            Akernel_User.Console.Put_Line ("bfs: block cache exhausted");
+            Aegir_User.Console.Put_Line ("bfs: block cache exhausted");
             loop
                null;
             end loop;
@@ -236,7 +236,7 @@ package body Bfs_Engine is
       if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
         or else Syscalls.Message.Words (0) /= 0
       then
-         Akernel_User.Console.Put_Line ("bfs: block read io error");
+         Aegir_User.Console.Put_Line ("bfs: block read io error");
          return Cache_Slots;
       end if;
        declare
@@ -317,7 +317,7 @@ package body Bfs_Engine is
        if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
          or else Syscalls.Message.Words (0) /= 0
        then
-          Akernel_User.Console.Put_Line ("bfs: block write io error");
+          Aegir_User.Console.Put_Line ("bfs: block write io error");
           return False;
        end if;
        return True;
@@ -364,7 +364,7 @@ package body Bfs_Engine is
        end loop;
        if Trans_Count = Max_Trans_Blocks then
           Fail : begin
-             Akernel_User.Console.Put_Line ("bfs: transaction too big");
+             Aegir_User.Console.Put_Line ("bfs: transaction too big");
              loop
                 null;
              end loop;
@@ -1216,7 +1216,7 @@ package body Bfs_Engine is
             --  most depth 4; 8 is a generous bound).
             Depth := Depth + 1;
             if Depth > 8 then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("bfs: btree descent corrupt (child cycle)");
                return;
             end if;
@@ -1263,7 +1263,7 @@ package body Bfs_Engine is
             --  far past any depth-3 tree here (~3k leaves max).
             It.Hops := It.Hops + 1;
             if It.Hops > 10_000 then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("bfs: btree leaf chain corrupt (right-link loop)");
                It.Valid := False;
                return False;
@@ -1281,7 +1281,7 @@ package body Bfs_Engine is
          --  scan grind through garbage entries (per-entry block
          --  reads) instead of terminating. Far past any legitimate
          --  tree here (depth-3, ~3k leaves x 64 entries max).
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("bfs: btree scan excessive (corrupt node?)");
          It.Valid := False;
          return False;
@@ -1846,12 +1846,12 @@ package body Bfs_Engine is
              Ctx.Dir.Direct (Free_Idx) := Run_At_Block (St, 1);
           else
              Free (St, 1);
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("bfs: tree stream out of runs (dir inode "
-                & Akernel_User.Syscalls.U64'Image (Ctx.Dir.Block)
-                & " total " & Akernel_User.Syscalls.U64'Image (Ctx.Total)
+                & Aegir_User.Syscalls.U64'Image (Ctx.Dir.Block)
+                & " total " & Aegir_User.Syscalls.U64'Image (Ctx.Total)
                 & " runs "
-                & Akernel_User.Syscalls.U64'Image
+                & Aegir_User.Syscalls.U64'Image
                   (U64 (Ctx.Dir.Direct'Length)));
              return False;
           end if;
@@ -2026,11 +2026,11 @@ package body Bfs_Engine is
           Entry_Insert_At (C, Pos, Push, Push_V);
           M := Split_Point (C);
           if M = 0 then
-             Akernel_User.Console.Put_Line ("bfs: no legal tree split");
+             Aegir_User.Console.Put_Line ("bfs: no legal tree split");
              return False;
           end if;
           if Level = 0 and then Ctx.Depth >= 3 then
-             Akernel_User.Console.Put_Line ("bfs: tree depth cap hit");
+             Aegir_User.Console.Put_Line ("bfs: tree depth cap hit");
              return False;
           end if;
           if not Tree_Alloc_Node (Ctx, New_Off, New_Blk) then
@@ -2243,7 +2243,7 @@ package body Bfs_Engine is
    ------------------------------------------------------------------
 
     --  m80f: the subscription table is chunk-appended
-    --  (Akernel_User.Tables); the before/after diff machinery
+    --  (Aegir_User.Tables); the before/after diff machinery
     --  passes match sets around BY VALUE, so it keeps a fixed
     --  64-wide bitset — Live_Width is now the (generous) policy
     --  cap on concurrent subscriptions, not a storage bound.
@@ -2489,7 +2489,7 @@ package body Bfs_Engine is
          and then Read_Inode (Name_Index, NI)
          and then not Tree_Insert_Str (NI, Name, Inode_Block)
        then
-          Akernel_User.Console.Put_Line ("bfs: name index add failed");
+          Aegir_User.Console.Put_Line ("bfs: name index add failed");
        end if;
     end Index_Add;
 
@@ -2540,7 +2540,7 @@ package body Bfs_Engine is
          and then Read_Inode (Index_Blk, II)
          and then not Tree_Insert_Int (II, Key, Inode_Block)
        then
-          Akernel_User.Console.Put_Line ("bfs: numeric index add failed");
+          Aegir_User.Console.Put_Line ("bfs: numeric index add failed");
        end if;
     end Index_Add_Num;
 
@@ -2726,7 +2726,7 @@ package body Bfs_Engine is
           end loop;
           if Free_Idx = U64'Last then
              Put_Block (Slot);
-             Akernel_User.Console.Put_Line ("bfs: indirect full");
+             Aegir_User.Console.Put_Line ("bfs: indirect full");
              return False;
           end if;
           if Free_Idx > 0
@@ -2898,7 +2898,7 @@ package body Bfs_Engine is
       if Is_Mounted and then Log_Pos_Start /= Log_Pos_End then
          Is_Mounted := Replay_Log;
          if Is_Mounted then
-            Akernel_User.Console.Put_Line ("bfs: journal replayed");
+            Aegir_User.Console.Put_Line ("bfs: journal replayed");
          end if;
       end if;
 
@@ -4309,7 +4309,7 @@ package body Bfs_Engine is
 
     --  m80f: chunk-appended; the wrapper keeps the existing
     --  0-based slot numbering (wire handle = slot + 1).
-    package Live_Tab is new Akernel_User.Tables (Live_Sub);
+    package Live_Tab is new Aegir_User.Tables (Live_Sub);
     function Subs (I : Natural) return Live_Tab.Element_Access is
       (Live_Tab.Ref (I + 1));
 

@@ -29,7 +29,7 @@ B : constant Widgets.Any_Widget :=
 
 `subtype Pixel is Interfaces.Unsigned_32;` — little-endian `AARRGGBB`.
 
-Palette constants (renames of `Akernel_User.Theme`, M86a — one
+Palette constants (renames of `Aegir_User.Theme`, M86a — one
 skin shared with Bureau chrome; Xen values since M86b):
 
 | name | value | use |

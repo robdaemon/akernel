@@ -1,5 +1,5 @@
-name = "akernel_virtio"
-description = "akernel virtio device library (MMIO transport, virtqueues)"
+name = "aegir_virtio"
+description = "aegir virtio device library (MMIO transport, virtqueues)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

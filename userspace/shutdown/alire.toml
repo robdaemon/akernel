@@ -1,5 +1,5 @@
-name = "akernel_shutdown"
-description = "akernel shutdown"
+name = "aegir_shutdown"
+description = "aegir shutdown"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

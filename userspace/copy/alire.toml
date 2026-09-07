@@ -1,5 +1,5 @@
-name = "akernel_copy"
-description = "akernel copy"
+name = "aegir_copy"
+description = "aegir copy"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

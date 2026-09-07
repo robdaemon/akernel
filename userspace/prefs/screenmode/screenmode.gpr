@@ -1,6 +1,6 @@
 with "../../trinket/trinket.gpr";
 
-project Screenmode extends "../../rts/akernel_program.gpr" is
+project Screenmode extends "../../rts/aegir_program.gpr" is
    for Runtime ("Ada") use "../../gnat-rts";
    for Source_Dirs use (".");
    for Exec_Dir use "../../../bin/userspace";

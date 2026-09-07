@@ -83,7 +83,7 @@ package System.Parameters is
    --  proper implementation of the stack overflow check.
 
    Runtime_Default_Sec_Stack_Size : constant Size_Type := 64 * 1024;
-   --  Akernel: 64 KiB (milestone 53a). The binder bakes this into a
+   --  Aegir: 64 KiB (milestone 53a). The binder bakes this into a
    --  static .bss array per process; big buffers belong to the
    --  System.Memory heap, not the secondary stack.
    --  The run-time chosen default size for secondary stacks that may be

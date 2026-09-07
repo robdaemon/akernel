@@ -1,5 +1,5 @@
 with Trinket.Paint;
-with Akernel_User.Theme;
+with Aegir_User.Theme;
 
 package body Trinket.Widgets.Slider is
    use type Trinket.U64;
@@ -97,7 +97,7 @@ package body Trinket.Widgets.Slider is
       --  Knob: hover brightens, dragging sinks + shifts the grips.
       Paint.Fill_Rect (C, KX, W.Y, KX + Slider_Knob, W.Y + W.H,
                        (if W.Hover and then not W.Dragging
-                        then Akernel_User.Theme.Face_Hi else Face));
+                        then Aegir_User.Theme.Face_Hi else Face));
       Paint.Bevel2 (C, KX, W.Y, KX + Slider_Knob, W.Y + W.H,
                     Raised => not W.Dragging);
       for I in U64 range 0 .. 1 loop

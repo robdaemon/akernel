@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Scripting.Exec (milestone 70 chunk 1): the shell's command
 --  execution engine, extracted unchanged so the script
@@ -19,7 +19,7 @@ with Akernel_User.Syscalls;
 --  pipes are slot-scoped PIPE:BG<j><s> names, deleted when
 --  the job is reaped (see Spawn_Pipeline's Bg_Slot).
 package Scripting.Exec is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
 
    --  Run Word as a child on the caller's channel: same console
    --  (Send, badge 0), fs and Bureau svc caps, a one-page

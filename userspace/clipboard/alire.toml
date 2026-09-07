@@ -1,5 +1,5 @@
-name = "akernel_clipboard"
-description = "akernel Clipboard shared library (Amiga clipboard.device semantics)"
+name = "aegir_clipboard"
+description = "aegir Clipboard shared library (Amiga clipboard.device semantics)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

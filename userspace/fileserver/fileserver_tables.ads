@@ -1,8 +1,8 @@
-with Akernel_User.Syscalls;
-with Akernel_User.Tables;
+with Aegir_User.Syscalls;
+with Aegir_User.Tables;
 
 --  Fileserver's big tables, library level.  M80d: they are
---  grow-on-demand chunk chains now (Akernel_User.Tables over the
+--  grow-on-demand chunk chains now (Aegir_User.Tables over the
 --  Table_Arena window) instead of static Max_* arrays — capacity
 --  is RAM, not a literal.  Historical burn notes: the tables used
 --  to live in BSS because declared inside procedure Fileserver
@@ -19,7 +19,7 @@ with Akernel_User.Tables;
 --  over 'Range become 1 .. <pkg>.Last and free-slot scans fall
 --  through to <pkg>.Append.
 package Fileserver_Tables is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
 
    Max_Name  : constant := 32;
 
@@ -46,7 +46,7 @@ package Fileserver_Tables is
       --  Block-backed volume (Op_Add_Block): the single file
       --  "disk" is the raw device, Blk_Size bytes, served by the
       --  block driver at Blk_EP (block protocol, see
-      --  Akernel_User.Files).
+      --  Aegir_User.Files).
       Is_Block : Boolean := False;
       Blk_EP   : U64 := 0;
       Blk_Size : U64 := 0;
@@ -75,9 +75,9 @@ package Fileserver_Tables is
       Tgt_Len  : Natural := 0;
    end record;
 
-   package File_Tab is new Akernel_User.Tables (File_Entry);
-   package Vol_Tab is new Akernel_User.Tables (Volume_Entry);
-   package Asn_Tab is new Akernel_User.Tables (Assign_Entry);
+   package File_Tab is new Aegir_User.Tables (File_Entry);
+   package Vol_Tab is new Aegir_User.Tables (Volume_Entry);
+   package Asn_Tab is new Aegir_User.Tables (Assign_Entry);
 
    function File_Table
      (I : Natural) return File_Tab.Element_Access renames File_Tab.Ref;

@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Text_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  CD: current directory (milestone 42; the Amiga C:CD analog).
 --  "CD" prints the cwd; "CD <dir>" changes it. Relative paths
@@ -17,7 +17,7 @@ with Akernel_User.CLI;
 --  separator, a-direct convention).
 
 procedure CD is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Dirs renames Ada.Directories;
 begin
    CLI.Init;

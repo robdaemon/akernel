@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Join: concatenate files (milestone 41c; the Amiga C:Join
 --  analog). "Join <f1> <f2> [...] TO <out>"; the TO keyword is
@@ -14,7 +14,7 @@ with Akernel_User.CLI;
 --  Ada.Command_Line.
 
 procedure Join is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package SIO renames Ada.Streams.Stream_IO;
    use type Ada.Streams.Stream_Element_Offset;
 

@@ -1,4 +1,4 @@
-project Bfs extends "../rts/akernel_program.gpr" is
+project Bfs extends "../rts/aegir_program.gpr" is
    --  Milestone 82c: pure-Ada read-only BeFS server (bfs_engine),
    --  re-implemented from the on-disk format with the MIT-licensed
    --  Haiku BFS sources as reference reading.

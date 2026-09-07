@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Path: the command search list (milestone 43; the Amiga
 --  C:Path analog). "Path" lists the entries, one per line;
@@ -22,8 +22,8 @@ with Akernel_User.Files;
 --  1 = console stream (Send), 2 = file server (Send).
 
 procedure Path is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 
    Max_List : constant := 240;  --  ENV values cap at 255 chars
@@ -62,7 +62,7 @@ procedure Path is
       P0 : Natural := List'First;
    begin
       if List'Length = 0 then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("(default search: current dir, volume root, C:)");
          return;
       end if;
@@ -73,7 +73,7 @@ procedure Path is
                  (if List (I) = ';' then I - 1 else I);
             begin
                if Last >= P0 then
-                  Akernel_User.Console.Put_Line (List (P0 .. Last));
+                  Aegir_User.Console.Put_Line (List (P0 .. Last));
                end if;
             end;
             P0 := I + 1;
@@ -83,7 +83,7 @@ procedure Path is
 
    St : CLI.U64;
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    --  The list read must follow the fs bind (Get_Env is an fs
@@ -157,7 +157,7 @@ begin
          if Same (CLI.Argument (2), "ADD") then
             Rebuild;
             if Found then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  (E_Name & " is already in the path");
                CLI.Exit_With (CLI.RC_Warn);
             end if;
@@ -175,7 +175,7 @@ begin
          elsif Same (CLI.Argument (2), "REMOVE") then
             Rebuild;
             if not Found then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  (E_Name & " is not in the path");
                CLI.Exit_With (CLI.RC_Warn);
             end if;

@@ -2,7 +2,7 @@
 --                                                                          --
 --                       A K E R N E L   (Milestone 53c)                    --
 --                                                                          --
---                     System.OS_Constants (akernel)                        --
+--                     System.OS_Constants (aegir)                        --
 --                                                                          --
 -- Hand-written replacement for the generated s-oscons.ads. The embedded  --
 -- pool ships no OS_Constants (it is produced by s-oscons-tmplt.c against  --
@@ -12,7 +12,7 @@
 --                                                                        --
 -- m73 extends the set for the vendored GNAT.Sockets stack: the values    --
 -- below are the AKERNEL socket ABI, implemented by                        --
--- gnat_user/akernel_gsocket.c (fd_set bit layout, struct sizes, option   --
+-- gnat_user/aegir_gsocket.c (fd_set bit layout, struct sizes, option   --
 -- codes). Errno numbers are newlib's (sys/errno.h) — the C layer sets   --
 -- them and System.CRTL's strerror reports them. Option codes follow     --
 -- Linux where the choice is free.                                        --
@@ -44,7 +44,7 @@ package System.OS_Constants is
    SIZEOF_struct_file_attributes : constant := 64;
 
    --  struct dirent allocation for __gnat_readdir's caller buffer:
-   --  our akernel_readdir copies a plain NUL-terminated name
+   --  our aegir_readdir copies a plain NUL-terminated name
    --  (FAT LFN up to 255) into it.
    SIZEOF_struct_dirent_alloc : constant := 280;
 
@@ -73,7 +73,7 @@ package System.OS_Constants is
 
    --  Address families / socket types / wire protocols.  Only AF_INET
    --  exists in the stack; AF_INET6 is declared so the vendored units
-   --  compile, and akernel_gsocket.c answers EAFNOSUPPORT.
+   --  compile, and aegir_gsocket.c answers EAFNOSUPPORT.
 
    AF_UNSPEC : constant := 0;
    AF_UNIX   : constant := 1;
@@ -167,7 +167,7 @@ package System.OS_Constants is
    SIZEOF_nfds_t      : constant := 64;  --  bits in nfds_t
    SIZEOF_pollfd_events : constant := 16;  --  bits in pollfd.events
 
-   --  C struct sizes (akernel_gsocket.c layouts; the Ada side treats
+   --  C struct sizes (aegir_gsocket.c layouts; the Ada side treats
    --  hostent/servent as opaque buffers of exactly this size).
 
    SIZEOF_sockaddr_in  : constant := 16;
@@ -185,7 +185,7 @@ package System.OS_Constants is
    IOV_MAX    : constant := 1024;
    IF_NAMESIZE : constant := 16;
 
-   --  struct addrinfo field offsets (akernel_gsocket.c layout:
+   --  struct addrinfo field offsets (aegir_gsocket.c layout:
    --  4 x int, socklen_t, 3 x pointer on a 64-bit target).
 
    AI_FLAGS_OFFSET     : constant := 0;
@@ -215,7 +215,7 @@ package System.OS_Constants is
    NO_DATA        : constant := 4;
 
    --  Errno values compared by the vendored Ada code — newlib's
-   --  (sys/errno.h), the same space akernel_gsocket.c sets.
+   --  (sys/errno.h), the same space aegir_gsocket.c sets.
    --  ENOERROR is GNAT's own "no error" marker.
 
    ENOERROR       : constant := 0;
@@ -260,7 +260,7 @@ package System.OS_Constants is
    ELOOP          : constant := 92;
    ENAMETOOLONG   : constant := 91;
 
-   --  inet_pton/inet_ntop come from akernel_gsocket.c, not libc.
+   --  inet_pton/inet_ntop come from aegir_gsocket.c, not libc.
 
    Inet_Pton_Linkname : constant String := "__gnat_inet_pton";
    Inet_Ntop_Linkname : constant String := "__gnat_inet_ntop";

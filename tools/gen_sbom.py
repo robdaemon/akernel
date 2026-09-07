@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Deterministic SPDX 2.3 SBOM generator for akernel's supply chain.
+"""Deterministic SPDX 2.3 SBOM generator for aegir's supply chain.
 
-Why not syft: akernel's fetch surface is two sha256-pinned tarballs
+Why not syft: aegir's fetch surface is two sha256-pinned tarballs
 plus one Alire-pinned toolchain. syft has no Alire ecosystem support
 and would only heuristically re-derive what the Makefile pins and the
 alire manifests already state authoritatively. This generator reads
@@ -11,7 +11,7 @@ binary tool in CI). Swap in syft later if the surface ever grows an
 ecosystem syft understands.
 
 Output: SPDX 2.3 JSON document. Default writes
-docs/sbom/akernel.spdx.json (git-committed next to docs/SCANNING.md).
+docs/sbom/aegir.spdx.json (git-committed next to docs/SCANNING.md).
 
 Usage:
   python3 tools/gen_sbom.py                 # regenerate the committed file
@@ -32,7 +32,7 @@ from check_pins import ROOT, expand, makefile_vars
 
 SPDX_VERSION = "SPDX-2.3"
 DATA_LICENSE = "CC0-1.0"
-OUT = ROOT / "docs" / "sbom" / "akernel.spdx.json"
+OUT = ROOT / "docs" / "sbom" / "aegir.spdx.json"
 TOOLCHAIN = "gnat_riscv64_elf"
 # Known licenses from the fetched artifacts' own license texts.
 LICENSES = {
@@ -125,12 +125,12 @@ def make_document(makefile: Path, vars_: dict[str, str], text: str,
         "spdxVersion": SPDX_VERSION,
         "creationInfo": {
             "created": created,
-            "creators": ["Tool: akernel tools/gen_sbom.py"],
+            "creators": ["Tool: aegir tools/gen_sbom.py"],
         },
-        "name": "akernel",
+        "name": "aegir",
         "dataLicense": DATA_LICENSE,
         "documentNamespace":
-            f"https://github.com/robdaemon/akernel/spdx/{digest}",
+            f"https://github.com/robdaemon/aegir/spdx/{digest}",
         "documentDescribes": [p["SPDXID"] for p in packages],
         "packages": packages,
         "relationships": [{

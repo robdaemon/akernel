@@ -216,7 +216,7 @@ private
       --  of the protected action).
 
       Lock : Multiprocessors.Spin_Locks.Spin_Lock;
-      --  SMP lock (plain test-and-set; the Akernel port drops the
+      --  SMP lock (plain test-and-set; the Aegir port drops the
       --  fair-lock layer, which needs per-CPU indices we do not have)
    end record;
    pragma Suppress_Initialization (Protection);

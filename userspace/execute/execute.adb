@@ -1,7 +1,7 @@
-with Akernel_User.Syscalls;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.CLI;
+with Aegir_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.CLI;
 with Scripting;
 with Scripting.Exec;
 with Scripting.Interp;
@@ -20,7 +20,7 @@ with Scripting.Interp;
 --  starts fresh here.
 
 procedure Execute is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use Scripting;  --  handle constants, Split_Cmd
    use type U64;
 
@@ -69,9 +69,9 @@ procedure Execute is
       begin
          if Word = "execute" then
             if Rest'Length = 0 then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("usage: execute <script> [args]");
-               return Akernel_User.CLI.RC_Error;
+               return Aegir_User.CLI.RC_Error;
             end if;
             return Run_Script (Rest);
          elsif SE.Has_Metachar (Cmd) then
@@ -87,28 +87,28 @@ procedure Execute is
    is
       EOF : Boolean;
    begin
-      Akernel_User.Console.Put (Prompt);
-      Akernel_User.CLI.Get_Line (Reply, Reply_Len, EOF);
+      Aegir_User.Console.Put (Prompt);
+      Aegir_User.CLI.Get_Line (Reply, Reply_Len, EOF);
       if EOF then
          Reply_Len := 0;
       end if;
    end Ask;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
-   Akernel_User.Files.Bind (FS_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Files.Bind (FS_EP);
 
-   if Akernel_User.CLI.Arg_Count < 1 then
-      Akernel_User.CLI.Fail_With ("usage: Execute <script> [args]",
-                                  Akernel_User.CLI.RC_Error);
+   if Aegir_User.CLI.Arg_Count < 1 then
+      Aegir_User.CLI.Fail_With ("usage: Execute <script> [args]",
+                                  Aegir_User.CLI.RC_Error);
    end if;
    declare
       SArgs : String (1 .. 160);
       SL    : Natural := 0;
    begin
-      for I in 2 .. Akernel_User.CLI.Arg_Count loop
+      for I in 2 .. Aegir_User.CLI.Arg_Count loop
          declare
-            A : constant String := Akernel_User.CLI.Argument (I);
+            A : constant String := Aegir_User.CLI.Argument (I);
          begin
             exit when SL + A'Length + 1 > SArgs'Length;
             if SL > 0 then
@@ -119,9 +119,9 @@ begin
             SL := SL + A'Length;
          end;
       end loop;
-      Akernel_User.CLI.Exit_With
+      Aegir_User.CLI.Exit_With
         (Run_Script
-           (Akernel_User.CLI.Argument (1)
+           (Aegir_User.CLI.Argument (1)
             & (if SL = 0 then "" else " " & SArgs (1 .. SL))));
    end;
 end Execute;

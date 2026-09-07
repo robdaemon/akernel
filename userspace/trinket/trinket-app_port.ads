@@ -1,5 +1,5 @@
 with System;
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Trinket app port (milestone 68): the Swing/Amiga-style user port
 --  that lets worker tasks talk to a window's event loop without ever
@@ -26,7 +26,7 @@ package Trinket.App_Port is
    use type Trinket.U64;
 
    --  Bureau's input channel signals bit 1 (Input_Signal_Bit in
-   --  Akernel_User.Window); the app port uses bit 2.
+   --  Aegir_User.Window); the app port uses bit 2.
    App_Signal_Bit : constant U64 := 2;
 
    --  Reserved message code: Request_Quit posts this. Apps use

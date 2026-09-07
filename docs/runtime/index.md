@@ -1,4 +1,4 @@
-# Akernel userspace runtime design
+# Aegir userspace runtime design
 
 This directory holds design notes for the custom GNAT runtime and
 userspace execution model.

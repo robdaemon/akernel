@@ -3,7 +3,7 @@
 --  as Testlib_Client but hardcodes the string "hello" and prints the
 --  reply to serial. Used to verify the round-trip without needing a
 --  GUI terminal.
-project Testlib_Smoke extends "../rts/akernel_program.gpr" is
+project Testlib_Smoke extends "../rts/aegir_program.gpr" is
    for Source_Dirs use (".");
    for Exec_Dir use "../../bin/userspace";
    for Object_Dir use "../../obj/userspace/testlib_smoke";

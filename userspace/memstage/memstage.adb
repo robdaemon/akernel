@@ -1,5 +1,5 @@
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 
 --  Spawn-v2 staging target (milestone 12): a finite program the
 --  fuzzer reads into a memory object via the file server, spawns
@@ -7,7 +7,7 @@ with Akernel_User.Syscalls;
 --  handle 1 by the spawner's grant list.
 procedure Memstage is
 begin
-   Akernel_User.Console.Set_Endpoint (1);
-   Akernel_User.Console.Put_Line ("memstage online");
-   Akernel_User.Syscalls.Process_Exit;
+   Aegir_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Put_Line ("memstage online");
+   Aegir_User.Syscalls.Process_Exit;
 end Memstage;

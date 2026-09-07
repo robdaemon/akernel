@@ -1,4 +1,4 @@
-# akernel project state
+# aegir project state
 
 Thin orientation only. Details live in topic docs; read the one matching
 your task instead of everything.
@@ -26,8 +26,8 @@ userspace, per-process namespaces (Plan 9 influence), custom Ada RTS.
 
 ```sh
 make all
-make run        # qemu-system-riscv64 -machine virt -kernel bin/akernel.elf \
-                #   -device loader,file=initrd/out/akernel-initrd.img,addr=0x84000000
+make run        # qemu-system-riscv64 -machine virt -kernel bin/aegir.elf \
+                #   -device loader,file=initrd/out/aegir-initrd.img,addr=0x84000000
 make clean
 make run QEMU_MEMORY=8G QEMU_SMP=4 INITRD_ADDR=0x84000000   # knobs
 ```
@@ -95,7 +95,7 @@ random phase (printable garbage in the log is that fuzz traffic).
 src/kernel/                     kernel-neutral code
 src/arch/riscv64/               RISC-V64 arch code
 src/board/qemu_virt_riscv64/    QEMU virt board/platform code
-userspace/rts/akernel/          user-mode Ada syscall/RTS scaffold
+userspace/rts/aegir/          user-mode Ada syscall/RTS scaffold
 userspace/init|serial|fuzz/     standalone Alire projects
 userspace/virtio/               virtio lib crate (MMIO + PCI transports, virtqueues)
 userspace/virtio_rng/           virtio-rng driver (pins the lib)
@@ -105,7 +105,7 @@ docs/                           this file + topic docs
 Makefile                        top-level build/run
 ```
 
-`akernel.gpr` vars: `AKERNEL_ARCH` (riscv64), `AKERNEL_BOARD`
+`aegir.gpr` vars: `AKERNEL_ARCH` (riscv64), `AKERNEL_BOARD`
 (qemu_virt_riscv64).
 
 ## Important constants
@@ -162,8 +162,8 @@ QEMU virt RAM base:     0x80000000
   write physmap snapshots; Proc: renders them as
   <pid>/status, <pid>/caps, <pid>/regs. Userspace
   builds on ONE RTS static library
-  (userspace/rts/akernel_rts.gpr, layers: glue /
-  kernel ABI / service APIs) plus the Akernel_User.CLI
+  (userspace/rts/aegir_rts.gpr, layers: glue /
+  kernel ABI / service APIs) plus the Aegir_User.CLI
   command layer (args, ENV:, Amiga RC 0/5/10/20 via
   the exit-code channel exit-a0 -> PCB -> reap-a1);
   new commands scaffold with make new-crate.
@@ -218,7 +218,7 @@ QEMU virt RAM base:     0x80000000
   routing, 9-button bar with Copy/Move across panes + Swap). Tier-1 Amiga-style
   shared libraries (58) ride the same uniform ABI: a library
   is a server program installed at Sys:Libs/<Name>,
-  Akernel_User.Libs.Open_Library stages+spawns it on demand
+  Aegir_User.Libs.Open_Library stages+spawns it on demand
   and collects its service cap over a rendezvous cap at
   handle 5 (Send+Receive+Transfer), Close_Library deletes
   the cap; Libserv carries the server boilerplate (wire
@@ -302,7 +302,7 @@ QEMU virt RAM base:     0x80000000
   Which shares the same resolver. Since 44 no
   CLI program binds a default volume: paths
   are cwd-resolved and fully qualified in
-  Akernel_User.CLI (the sole boot-volume
+  Aegir_User.CLI (the sole boot-volume
   owner) before reaching the file server;
   bare Dir lists the cwd. Milestone 45 adds
   elevation: System/Elevated holds the admin

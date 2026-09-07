@@ -1,4 +1,4 @@
-# akernel security scanning (docs/SCANNING.md is the ledger).
+# aegir security scanning (docs/SCANNING.md is the ledger).
 #
 # Jobs:
 #   deps     — supply chain: sha256 pin enforcement, SBOM freshness,
@@ -47,7 +47,7 @@ jobs:
 
       - name: CVE scan over committed SBOM
         run: |
-          /tmp/osv-scanner scan source -L docs/sbom/akernel.spdx.json \
+          /tmp/osv-scanner scan source -L docs/sbom/aegir.spdx.json \
             --format json --output-file /tmp/osv.json
           python3 tools/osv_gate.py /tmp/osv.json
 
@@ -128,8 +128,8 @@ jobs:
           alr toolchain --select gnat_riscv64_elf=15.3.1
           alr toolchain --select gprbuild=26.0.1
 
-      # config/akernel_config.{ads,gpr,h} are Alire-generated and
-      # gitignored, so a fresh checkout has none and akernel.gpr cannot
+      # config/aegir_config.{ads,gpr,h} are Alire-generated and
+      # gitignored, so a fresh checkout has none and aegir.gpr cannot
       # compile. `alr update` (solve only — no compiler download, no
       # build) regenerates them; this is why gnatprove needs no make.
       - name: Generate Alire config artifacts
@@ -150,7 +150,7 @@ jobs:
           ALR_BIN="$(dirname "$(find "$HOME/.alire" -name riscv64-elf-gcc -path '*/bin/*' 2>/dev/null | head -1)")"
           test -n "$ALR_BIN" || { echo "alr toolchain bin not found"; exit 1; }
           export PATH="$ALR_BIN:$PATH"
-          gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+          gnatprove -P aegir.gpr -f --mode=prove --level=1 \
             --timeout=30 --report=all --warnings=off
           tail -40 obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out
 

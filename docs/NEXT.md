@@ -65,7 +65,7 @@ kernel cap tables.
    cap-based (a0 = boot file cap with Read). Init resolves manifest
    program paths to image caps via bootinfo names; fuzzer spawns echo
    from a granted image cap; 40/40 directed PASS.
-7. ~~RTS core~~ — done: `Akernel_User.IPC` typed wrappers (generic
+7. ~~RTS core~~ — done: `Aegir_User.IPC` typed wrappers (generic
    over request/response payload records marshalled into the message's
    6-word area, 48-byte limit); echo server migrated (wire protocol
    unchanged, raw-ecall fuzzer still validates it); `Boot_Cap` /
@@ -73,10 +73,10 @@ kernel cap tables.
    namespaces from manifest tokens that are plain bootinfo entry
    names (kernel-assigned rights), only `ipc_test` stays a special
    badged-endpoint token. 40/40 directed PASS.
-8. ~~RTS streams~~ — done: `Akernel_User.Streams` `Endpoint_Stream`
+8. ~~RTS streams~~ — done: `Aegir_User.Streams` `Endpoint_Stream`
    (Ada.Streams `Root_Stream_Type` over endpoint caps; vendored
    `a-stream`/`a-ioexce` into the RTS, per-program `-gnatg`);
-   `Akernel_User.Console` Put/Put_Line over it; init mints the
+   `Aegir_User.Console` Put/Put_Line over it; init mints the
    console endpoint (`console` = Send, `console_server` = Receive
    manifest tokens); Drivers/Serial is the console server (UART RX
    opportunistic; IRQ-driven RX waits on notifications); fuzz, echo,
@@ -95,7 +95,7 @@ kernel cap tables.
     VA 0x4000_0000 (below text), first-fit + splitting + coalescing,
     grown on demand via mem_alloc(64)/mem_map (8 chunks = 2 MiB
     cap), pulled into every program's closure by a private with on
-    the Akernel_User root spec. `new`/Unchecked_Deallocation work in
+    the Aegir_User root spec. `new`/Unchecked_Deallocation work in
     all userspace programs (heap state is .bss + lazy init, since
     adainit never runs). Secondary stack already functional via the
     light runtime's default pool. Exceptions remain
@@ -108,7 +108,7 @@ kernel cap tables.
     endpoint as Op_Set_Name messages after spawn) and serves
     Stat/Open/Read by name. mem_map accepts Boot_File_Object caps:
     borrowed read-only initrd frames, true-page-span extent, lead-in
-    byte offset returned in a1 (`akernel_sys_mem_map_file` stub
+    byte offset returned in a1 (`aegir_sys_mem_map_file` stub
     injects flags=read-only — Ada's 6th arg lands in a5, so the
     stub moves the delta pointer to a6 and sets a5). Reads are
     stateless; bulk data moves through a client-owned buffer memory
@@ -552,7 +552,7 @@ Next candidates (order open):
       se). Zero-copy exists only behind VIRGL/3D (not planned).
     - Servers/Bureau (new, arch-independent; the compositor /
       window server process — the GUI is named "Bureau",
-      user-chosen, no akernel prefix, screen bar reads
+      user-chosen, no aegir prefix, screen bar reads
       "Bureau"): owns the compositing buffer — IT ALLOCATES
       it (Mem_Alloc 64-page chunks; caps move caller -> callee
       only, replies are words-only, so the earlier
@@ -560,7 +560,7 @@ Next candidates (order open):
       wl_shm direction: client allocates, pushes caps) — one
       scanout resource re-attached onto those pages, TRANSFER
       of damage bands, FLUSH. SLICE 1 DONE (committed): the
-      display-service protocol (akernel_user-display.ads,
+      display-service protocol (aegir_user-display.ads,
       labels 10-13, cursor ops reserved at 14/15) is served by
       virtio_gpu alongside the text sink; Op_Set_Buffer /
       Op_Commit_Buffer / Op_Present / Op_Get_Info all live;
@@ -572,7 +572,7 @@ Next candidates (order open):
       renders desktop + "Bureau" screen bar + matted window
       (WB3 palette, gadtools bevels, blue active title,
       close/depth gadget placeholders), presents the frame, then
-      blocks (no clients yet). font8x8 moved to rts/akernel
+      blocks (no clients yet). font8x8 moved to rts/aegir
       (shared client-side rendering). Burned (then un-burned): a screendump decoder that
       swapped R/B reconstructing PPM pixels made the correct
       AARRGGBB blue title "read as" red; "fixing" the palette
@@ -581,9 +581,9 @@ Next candidates (order open):
       B8G8R8A8 = LE u32 AARRGGBB (low byte = BLUE). Decode PPM
       bytes straight (R,G,B); trust the user's eyes over the
       script. Client display
-      helpers live in akernel_user-display.adb (raw IPC_Call;
+      helpers live in aegir_user-display.adb (raw IPC_Call;
       replies are words-only). SLICE 3 DONE (committed):
-      window protocol v1 (akernel_user-window.ads, labels
+      window protocol v1 (aegir_user-window.ads, labels
       20-24, ONE surface slot bound to Bureau's startup window;
       client allocates surface, pushes chunks, Bureau maps
       read-only and copies Op_Surface_Update bands into the
@@ -740,7 +740,7 @@ Next candidates (order open):
     staging object; initrd fallback when the list is
     unavailable. Burned: INIT ran on ONE 4 KiB stack page
     (spawned processes got 4 in milestone 18b; init's is
-    set up in akernel.adb) — Start_Display's on-stack
+    set up in aegir.adb) — Start_Display's on-stack
     buffer + Files frames overflowed it (store fault at
     stack_base - 8); init now gets 4 stack pages too and
     the startup buffer is library-level. Verified:
@@ -1326,20 +1326,20 @@ Next candidates (order open):
     MILESTONE 40 COMPLETE (a: 4570ceb, b: 86b80a5,
     c: 64b4996) — the userspace RTS, replacing the
     hacked-together per-crate compilation of
-    userspace/rts/akernel sources.
+    userspace/rts/aegir sources.
     (a) RTS as a static library:
-    userspace/rts/akernel_rts.gpr builds
-    libakernel_user.a ONCE (glue asm, s-memory heap
+    userspace/rts/aegir_rts.gpr builds
+    libaegir_user.a ONCE (glue asm, s-memory heap
     override, vendored -gnatg runtime units, all
-    Akernel_User.*); the abstract base project
-    akernel_program.gpr carries Languages/Target/
+    Aegir_User.*); the abstract base project
+    aegir_program.gpr carries Languages/Target/
     Runtime/linker-script/Create_Missing_Dirs so a
     program crate is ~10 lines. Stays on the stock
     light-rv64imafdc GNAT runtime (user-confirmed);
     a custom GNAT runtime (runtime.xml + rebuilt
     adalib) is recorded as the deferred purist
     upgrade.
-    (b) Akernel_User.CLI — the amiga.lib analog for
+    (b) Aegir_User.CLI — the amiga.lib analog for
     C: commands: Argument/Arg_Count over the args
     page, Get_Env/Set_Env over ENV: files,
     Fail_With/Exit_With, Amiga return codes
@@ -1378,7 +1378,7 @@ Next candidates (order open):
     MILESTONE 41 (scoped, user-confirmed) — the
     base command set (Amiga C: reference, OS 3.x),
     built on the milestone-40 RTS: `make new-crate
-    NAME=x DEST=c` + Akernel_User.CLI per command.
+    NAME=x DEST=c` + Aegir_User.CLI per command.
     SLICES:
     - 41a protocol ops + first commands: Op_Rename
       (VFS forward + fat32 dirent name/LFN-run
@@ -1650,7 +1650,7 @@ Next candidates (order open):
     are cwd-resolved and fully qualified by
     CLI.Resolve_Path before they reach the file
     server, so the default-volume bind was a
-    pre-cwd leftover. Akernel_User.CLI is now
+    pre-cwd leftover. Aegir_User.CLI is now
     the ONLY owner of the boot-volume name
     (Boot_Volume = "BD0:"; Get_Cwd's default,
     and Resolve_Command's built-in tail tries
@@ -2166,9 +2166,9 @@ Next candidates (order open):
     light pool), a-reatim (rdtime CSR
     x100ns), s-textio (debug
     putchar), a-elchha (prints LCH
-    banner), akernel_glue.c
+    banner), aegir_glue.c
     (__gnat_exit, malloc/free shim),
-    akernel_rtclock.c. ZCX via
+    aegir_rtclock.c. ZCX via
     __register_frame: bare-metal ld
     2.46.1 has NO --eh-frame-hdr and
     gcc rejects -fsjlj-exceptions on
@@ -2241,8 +2241,8 @@ Next candidates (order open):
     toolchain already ships prebuilt
     newlib (libc.a/libm.a + headers,
     no libgloss), so: (1) the syscall
-    layer is Akernel_User.Gloss, in
-    ADA inside libakernel_user.a —
+    layer is Aegir_User.Gloss, in
+    ADA inside libaegir_user.a —
     _open/_read/_write/_close/_lseek/
     _fstat/_isatty/_sbrk/_exit/_stat/
     _unlink/_mkdir/_rename/getpid/
@@ -2333,7 +2333,7 @@ Next candidates (order open):
     no test crashes remain to
     chase it with.     53c SHIPPED — standard-library
     environment, command line, and
-    directories over the akernel
+    directories over the aegir
     conventions. Ada.Environment_
     Variables: env.c rewired
     (AKERNEL_ENV_FILES) to gloss
@@ -2345,7 +2345,7 @@ Next candidates (order open):
     no-ops (would delete CWD/Path).
     Ada.Command_Line: vendored
     argv.c (gnat_argc/gnat_argv);
-    crt0 calls akernel_init_args,
+    crt0 calls aegir_init_args,
     which tokenizes the m33a args
     page space-separated exactly
     like CLI.Parse_Args into a
@@ -2366,7 +2366,7 @@ Next candidates (order open):
     dirent/file_attributes buffer
     sizes); adaint's AKERNEL_NO_
     DIRENT stubs now call gloss
-    akernel_opendir/readdir/closedir
+    aegir_opendir/readdir/closedir
     over stateless Op_ReadDir (DIR*
     = slot+1); __gnat_mkdir from
     vendored mkdir.c + a plain
@@ -2404,7 +2404,7 @@ Next candidates (order open):
     tables from Ada.Containers.
     Vectors inside a-direct);
     s-parame gained time_t_bits=64;
-    akernel_nanosleep.c (rdtime +
+    aegir_nanosleep.c (rdtime +
     yield) backs s-osprim
     Timed_Delay (newlib rv64 lacks
     nanosleep). Migration proof:
@@ -2540,7 +2540,7 @@ Next candidates (order open):
     static library (libtrinket.a,
     NOT part of the RTS — GUI
     programs link it on top of
-    akernel_program.gpr). Root
+    aegir_program.gpr). Root
     (palette = Bureau's exact
     constants + Canvas = mapped
     surface + clip rect),
@@ -3130,7 +3130,7 @@ Next candidates (order open):
     Current_Len or partial lines/typing
     echo never render. Tier-1
     shared-library machinery
-    shipped: `Akernel_User.Libs`
+    shipped: `Aegir_User.Libs`
     client API, `Libserv` server
     helper, `Testlib`/`Testlib_Client`
     demo, fuzz lifecycle tests.

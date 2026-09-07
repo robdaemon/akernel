@@ -1,5 +1,5 @@
-name = "akernel_dhcp_test"
-description = "akernel DHCP client test (Net:dhcp start/bound/renew/stop)"
+name = "aegir_dhcp_test"
+description = "aegir DHCP client test (Net:dhcp start/bound/renew/stop)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

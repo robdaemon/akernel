@@ -1,5 +1,5 @@
-name = "akernel_procfs"
-description = "akernel kernel-introspection filesystem (Proc: volume)"
+name = "aegir_procfs"
+description = "aegir kernel-introspection filesystem (Proc: volume)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

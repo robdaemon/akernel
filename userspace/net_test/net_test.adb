@@ -1,6 +1,6 @@
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 
 --  Net_Test (milestone 71b): end-to-end smoke of System/Netserv
 --  through the internal Op_Ping op. Pings the slirp gateway
@@ -15,8 +15,8 @@ procedure Net_Test is
    subtype U64 is Interfaces.Unsigned_64;
    use type U64;
 
-   package Syscalls renames Akernel_User.Syscalls;
-   package Console renames Akernel_User.Console;
+   package Syscalls renames Aegir_User.Syscalls;
+   package Console renames Aegir_User.Console;
 
    Console_EP : constant U64 := 1;
    Net_EP     : constant U64 := 2;

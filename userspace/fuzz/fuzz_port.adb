@@ -2,11 +2,11 @@ with Ada.Real_Time;
 with System;
 with System.Machine_Code;
 with System.Storage_Elements;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 
 package body Fuzz_Port is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
    Port_VA : constant U64 := 16#5070_0000#;  --  free fuzz window
@@ -139,11 +139,11 @@ package body Fuzz_Port is
    procedure Check (Condition : Boolean; Label_Text : String) is
    begin
       if Condition then
-         Akernel_User.Console.Put ("PASS ");
+         Aegir_User.Console.Put ("PASS ");
       else
-         Akernel_User.Console.Put ("FAIL ");
+         Aegir_User.Console.Put ("FAIL ");
       end if;
-      Akernel_User.Console.Put_Line (Label_Text);
+      Aegir_User.Console.Put_Line (Label_Text);
    end Check;
 
    --  Drain once per wake until Want messages collected (or the

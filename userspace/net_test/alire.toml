@@ -1,5 +1,5 @@
-name = "akernel_net_test"
-description = "akernel netserv smoke test (ICMP ping)"
+name = "aegir_net_test"
+description = "aegir netserv smoke test (ICMP ping)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

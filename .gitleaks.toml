@@ -5,7 +5,7 @@
 # keys, test vectors, fixture data) and each needs a `description`
 # pointing at the ledger entry that justifies it.
 
-title = "akernel gitleaks config"
+title = "aegir gitleaks config"
 
 [extend]
 useDefault = true

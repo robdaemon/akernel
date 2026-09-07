@@ -1,5 +1,5 @@
-name = "akernel_fuzz"
-description = "akernel syscall argument fuzzer"
+name = "aegir_fuzz"
+description = "aegir syscall argument fuzzer"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -20,8 +20,8 @@ causes found (in order):
    kstack at its physmap VA; kernel VMA only for the boot trap stack),
    so frames are valid in both roots and no pointer conversion is
    needed. Callers passing PA stack tops were converted
-   (`akernel.adb`, `arch-traps.adb`, kstack mappings in
-   `akernel.adb`/`kernel-processes.adb`).
+   (`aegir.adb`, `arch-traps.adb`, kstack mappings in
+   `aegir.adb`/`kernel-processes.adb`).
 
 ## Historical debug notes (kept for tooling reference)
 
@@ -63,7 +63,7 @@ entering initrd init
 
 ## Evidence / contradiction
 
-- Disasm of the PMM.Initialize call site in _ada_akernel:
+- Disasm of the PMM.Initialize call site in _ada_aegir:
   `auipc a0,0x142; addi -1580` -> a0 = 0xffffffff80142030 (_end VMA, correct)
   `lui a5,0x801; slli a5,0x9` -> a5 = 0x100200000 (= 2^64 - Kernel_Delta)
   `add a0,a0,a5` -> should wrap to 0x80342030 (correct).
@@ -80,7 +80,7 @@ entering initrd init
    print it, pass it to Initialize. Removes dual-evaluation doubt.
 2. If still wrong, inspect at runtime with gdb: breakpoint at
    `kernel__physical_memory__initialize` (symbol; VMA bp address from
-   `nm bin/akernel.elf`, NOT stale disasm), print $a0/$a1.
+   `nm bin/aegir.elf`, NOT stale disasm), print $a0/$a1.
 3. Also verify _end value at runtime vs nm (print
    Kernel_End'Address directly via new Board.UART.Put_Hex).
 4. Once First_Free right, expect: kernel address space online,
@@ -95,7 +95,7 @@ entering initrd init
 
 - `alr build` does NOT notice linker script changes: run `make clean`
   after editing `src/board/qemu_virt_riscv64/linker.ld` (or rm
-  bin/akernel.elf to force relink). Verified active: nm shows VMA
+  bin/aegir.elf to force relink). Verified active: nm shows VMA
   0xffffffff80000000, LMA 0x80200000.
 - riscv gdb via `alr exec -- gdb` (gdb 17). QEMU gdbstub:
   `qemu-system-riscv64 ... -s -S` then `target remote :1234`.
@@ -128,7 +128,7 @@ entering initrd init
   Put_Hex)
 - src/board/qemu_virt_riscv64/board-plic.adb (physmap base)
 - src/board/qemu_virt_riscv64/board-device_tree.adb (DTB phys VA)
-- src/kernel/akernel.adb (PMM init PA conv, smoke block removed,
+- src/kernel/aegir.adb (PMM init PA conv, smoke block removed,
   fallback removed, TEMP debug prints)
 - src/kernel/kernel-physical_memory.adb (physmap link access)
 - src/kernel/kernel-elf.adb (physmap dest writes)

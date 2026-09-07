@@ -1,10 +1,10 @@
 with Interfaces;
 with System.Storage_Elements;
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.IPC;
-with Akernel_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.IPC;
+with Aegir_User.Syscalls;
 
 --  Elevated: the elevation service (milestone 45; the design
 --  locked in the NEXT.md milestone 39 entry). Holds the admin
@@ -33,11 +33,11 @@ with Akernel_User.Syscalls;
 --  (Manage+Transfer).
 
 procedure Elevated is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_8;
 
-   package Proto is new Akernel_User.IPC (U64, U64);
+   package Proto is new Aegir_User.IPC (U64, U64);
 
    Console_EP : constant U64 := 1;
    FS_EP      : constant U64 := 2;
@@ -66,7 +66,7 @@ procedure Elevated is
       --  RD0: and missed — try the cwd-resolved name first,
       --  fall back to the raw RD0-default name.
       Full    : constant String :=
-        Akernel_User.CLI.Resolve_Path (Path);
+        Aegir_User.CLI.Resolve_Path (Path);
       Name    : String (1 .. 160);
       NLen    : Natural;
       Size    : U64 := 0;
@@ -78,10 +78,10 @@ procedure Elevated is
       St      : U64;
       Result  : U64;
    begin
-      St := Akernel_User.Files.Stat (Full, Size);
-      if St /= Akernel_User.Files.Status_Ok then
-         St := Akernel_User.Files.Stat (Path, Size);
-         if St = Akernel_User.Files.Status_Ok then
+      St := Aegir_User.Files.Stat (Full, Size);
+      if St /= Aegir_User.Files.Status_Ok then
+         St := Aegir_User.Files.Stat (Path, Size);
+         if St = Aegir_User.Files.Status_Ok then
             NLen := Natural'Min (Path'Length, Name'Length);
             Name (1 .. NLen) := Path (Path'First .. Path'First + NLen - 1);
          end if;
@@ -89,8 +89,8 @@ procedure Elevated is
          NLen := Natural'Min (Full'Length, Name'Length);
          Name (1 .. NLen) := Full (Full'First .. Full'First + NLen - 1);
       end if;
-      if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
-         Akernel_User.Console.Put_Line
+      if St /= Aegir_User.Files.Status_Ok or else Size = 0 then
+         Aegir_User.Console.Put_Line
            ("elevated: cannot find executable: " & Path);
          return 0;
       end if;
@@ -105,14 +105,14 @@ procedure Elevated is
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;
-      St := Akernel_User.Files.Open (Name (1 .. NLen), Size);
-      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+      St := Aegir_User.Files.Open (Name (1 .. NLen), Size);
+      while St = Aegir_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Name (1 .. NLen), Off,
             To_Address (Integer_Address (Stage_VA + Off)),
             Chunk, Count);
-         if St /= Akernel_User.Files.Status_Ok
+         if St /= Aegir_User.Files.Status_Ok
            or else Count /= Chunk
          then
             exit;
@@ -135,9 +135,9 @@ procedure Elevated is
    St       : U64;
    Result   : U64;
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
-   Akernel_User.Files.Bind (FS_EP);
-   Akernel_User.Console.Put_Line ("elevated: serving");
+   Aegir_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Files.Bind (FS_EP);
+   Aegir_User.Console.Put_Line ("elevated: serving");
 
    loop
       St := Proto.Receive (Svc_EP, Label, Req, Badge, Caps, Reply_H);
@@ -146,7 +146,7 @@ begin
       end if;
 
       declare
-         Reply_Code : U64 := Akernel_User.CLI.RC_Fail;
+         Reply_Code : U64 := Aegir_User.CLI.RC_Fail;
       begin
          if Label = Op_Elevate and then Caps (0) /= 0
            and then Mem_Map (Address_Space_Cap, Caps (0),
@@ -195,11 +195,11 @@ begin
                   end if;
 
                   if W_Len = 0 then
-                     Reply_Code := Akernel_User.CLI.RC_Error;
+                     Reply_Code := Aegir_User.CLI.RC_Error;
                   else
                      declare
                         Resolved : constant String :=
-                          Akernel_User.CLI.Resolve_Command
+                          Aegir_User.CLI.Resolve_Command
                             (Word (1 .. W_Len));
                         Img      : U64 := 0;
                         Args_Cap : U64 := 0;
@@ -256,7 +256,7 @@ begin
                              and then Proc /= 0
                            then
                               Next_Badge := Next_Badge + 1;
-                              Akernel_User.Console.Put_Line
+                              Aegir_User.Console.Put_Line
                                 ("elevated: running "
                                  & Word (1 .. W_Len));
                               loop
@@ -268,7 +268,7 @@ begin
                               end loop;
                               Reply_Code := Code;
                            else
-                              Reply_Code := Akernel_User.CLI.RC_Error;
+                              Reply_Code := Aegir_User.CLI.RC_Error;
                            end if;
                         elsif Img = 0 then
                            --  Distinct from any child exit code:
@@ -278,7 +278,7 @@ begin
                            --  never sees it).
                            Reply_Code := 255;
                         else
-                           Reply_Code := Akernel_User.CLI.RC_Error;
+                           Reply_Code := Aegir_User.CLI.RC_Error;
                         end if;
 
                         if Mint /= 0 then

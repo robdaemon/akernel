@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Text_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  MakeDir: create directories (milestone 41; the Amiga
 --  C:MakeDir analog). "MakeDir <name> [<name> ...]"; each
@@ -14,7 +14,7 @@ with Akernel_User.CLI;
 --  gloss _mkdir -> fs Op_Mkdir), Ada.Text_IO messages.
 
 procedure Makedir is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    Worst : CLI.U64 := CLI.RC_Ok;
 begin
    CLI.Init;

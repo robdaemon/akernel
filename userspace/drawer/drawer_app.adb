@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Files;
-with Akernel_User.Syscalls;
+with Aegir_User.CLI;
+with Aegir_User.Files;
+with Aegir_User.Syscalls;
 with Scripting.Exec;
 with Trinket.Fonts;
 with Trinket.Iconview;
@@ -12,12 +12,12 @@ with Trinket.Widgets.Label;
 with Trinket.Window;
 
 package body Drawer_App is
-   use Akernel_User.Syscalls;
-   use type Akernel_User.Syscalls.U64;
+   use Aegir_User.Syscalls;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
    package IV renames Trinket.Iconview;
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    package Images renames Trinket.Images;
 
    Bureau_EP : constant U64 := 3;  --  uniform ABI handle
@@ -273,8 +273,8 @@ package body Drawer_App is
       elsif Track_Scan then
          Track_Scan := False;
          Debug_Put_Line ("drawer: scan done t="
-                         & Akernel_User.Syscalls.U64'Image
-                           (Akernel_User.Syscalls.Read_Time - Scan_Base));
+                         & Aegir_User.Syscalls.U64'Image
+                           (Aegir_User.Syscalls.Read_Time - Scan_Base));
       end if;
    end Fill_More;
 
@@ -448,13 +448,13 @@ package body Drawer_App is
       Open_W : U64 := 480;
       Open_H : U64 := 320;
       GW, GH : U64;
-      Time0  : constant U64 := Akernel_User.Syscalls.Read_Time;
+      Time0  : constant U64 := Aegir_User.Syscalls.Read_Time;
    begin
       Trinket.Fonts.Init;
       Load_Deficons;
       Debug_Put_Line ("drawer: deficons done t="
-                      & Akernel_User.Syscalls.U64'Image
-                        (Akernel_User.Syscalls.Read_Time - Time0));
+                      & Aegir_User.Syscalls.U64'Image
+                        (Aegir_User.Syscalls.Read_Time - Time0));
 
       declare
          A : constant String :=
@@ -499,8 +499,8 @@ package body Drawer_App is
         (Win_H, Bureau_EP, Open_W, Open_H, "Drawer", Root)
       then
          Debug_Put_Line ("drawer: open done t="
-                         & Akernel_User.Syscalls.U64'Image
-                           (Akernel_User.Syscalls.Read_Time - Time0));
+                         & Aegir_User.Syscalls.U64'Image
+                           (Aegir_User.Syscalls.Read_Time - Time0));
          Trinket.Window.Set_Menus
            (Win_H,
             (1 => Trinket.Menus.M
@@ -522,8 +522,8 @@ package body Drawer_App is
             Track_Scan := True;   --  Fill_More prints completion
          else
             Debug_Put_Line ("drawer: scan done t="
-                            & Akernel_User.Syscalls.U64'Image
-                              (Akernel_User.Syscalls.Read_Time - Time0));
+                            & Aegir_User.Syscalls.U64'Image
+                              (Aegir_User.Syscalls.Read_Time - Time0));
          end if;
          Debug_Put_Line ("drawer online: " & Cur);
          Trinket.Window.Run (Win_H);

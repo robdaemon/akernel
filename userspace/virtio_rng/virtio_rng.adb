@@ -1,8 +1,8 @@
 with System;
 with System.Storage_Elements;
 with Interfaces;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -23,7 +23,7 @@ with Virtio.Queues;
 --  future entropy server.
 
 procedure Virtio_RNG is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U16;
    use type Virtio.U32;
@@ -159,7 +159,7 @@ procedure Virtio_RNG is
    end Map_Region;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -177,7 +177,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-rng msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-rng msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -304,9 +304,9 @@ begin
    end loop;
 
    if Written = Entropy_Len and then not All_Zero and then ISR_Bits /= 0 then
-      Akernel_User.Console.Put_Line ("PASS virtio-rng entropy ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-rng entropy ok");
    else
-      Akernel_User.Console.Put_Line ("FAIL virtio-rng entropy bad data");
+      Aegir_User.Console.Put_Line ("FAIL virtio-rng entropy bad data");
    end if;
 
    Line (1 .. 2) := "  ";
@@ -316,7 +316,7 @@ begin
       Line (4 + I * 2) :=
         Hex (1 + Natural (Data_Page (I) mod 16));
    end loop;
-   Akernel_User.Console.Put_Line ("virtio-rng entropy: " & Line);
+   Aegir_User.Console.Put_Line ("virtio-rng entropy: " & Line);
 
    Virtio.Queues.Free (Q, D);
 

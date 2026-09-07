@@ -4,7 +4,7 @@
 --  terminal is a single-threaded receiver), so poll with
 --  yields between drains — the shell prompt loop's discipline.
 --  Programs with a stdin trailer (C:Execute) use
---  Akernel_User.CLI.Get_Line instead.
+--  Aegir_User.CLI.Get_Line instead.
 package Scripting.Console_IO is
 
    --  Read one CR/LF-terminated line (BS/DEL erase, echo is the

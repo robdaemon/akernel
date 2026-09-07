@@ -2,11 +2,11 @@ with System;
 with System.Storage_Elements;
 with Interfaces;
 with Ada.Streams;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
-with Akernel_User.Display;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
+with Aegir_User.Display;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -33,7 +33,7 @@ with Font8x8;
 --  endpoint as a sink (Op_Attach_Sink).
 --
 --  The same endpoint ALSO serves the display-service protocol
---  (Akernel_User.Display, labels 10+): the compositor (Bureau)
+--  (Aegir_User.Display, labels 10+): the compositor (Bureau)
 --  allocates the compositing buffer and pushes its memory-object
 --  chunk caps here (Op_Set_Buffer x N, caps move caller ->
 --  callee only), Op_Commit_Buffer re-attaches the scanout
@@ -65,7 +65,7 @@ with Font8x8;
 --  screendump of the virtio console shows the rendered text.
 
 procedure Virtio_Gpu is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U8;
    use type Virtio.U16;
@@ -519,10 +519,10 @@ procedure Virtio_Gpu is
    end Flush_Dirty;
 
    ------------------------------------------------------------------
-   --  Display-service protocol (Akernel_User.Display)
+   --  Display-service protocol (Aegir_User.Display)
    ------------------------------------------------------------------
 
-   package DSP renames Akernel_User.Display;
+   package DSP renames Aegir_User.Display;
 
     --  Reply with raw words (the RPC generic marshals stream
     --  payloads; display replies are plain words). Caps are
@@ -778,20 +778,20 @@ procedure Virtio_Gpu is
 
    ------------------------------------------------------------------
 
-   package RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
+   package RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
 
    Status   : U64;
    Label    : U64;
    Badge    : U64;
-   Request  : Akernel_User.Streams.Stream_Request;
-   Response : Akernel_User.Streams.Stream_Response;
+   Request  : Aegir_User.Streams.Stream_Request;
+   Response : Aegir_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
    Reply_H  : U64;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -809,7 +809,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-gpu msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-gpu msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -1009,7 +1009,7 @@ begin
 
          Result := IRQ_Ack (IRQ_Cap);
 
-      elsif Label = Akernel_User.Streams.Op_Write then
+      elsif Label = Aegir_User.Streams.Op_Write then
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop

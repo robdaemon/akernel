@@ -1,5 +1,5 @@
-name = "akernel_testlib_smoke"
-description = "akernel Testlib non-interactive smoke test (milestone 58)"
+name = "aegir_testlib_smoke"
+description = "aegir Testlib non-interactive smoke test (milestone 58)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

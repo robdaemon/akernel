@@ -1,5 +1,5 @@
-name = "akernel_rename"
-description = "akernel rename"
+name = "aegir_rename"
+description = "aegir rename"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

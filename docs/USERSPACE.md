@@ -92,24 +92,24 @@ the endpoint lifecycle: one reference per cap, finalizer returns
 frames to the PMM when the last cap closes (exit/reap). Borrowed
 mappings are marked with PTE RSW bit 0.
 
-Stream protocol (Akernel_User.Streams over endpoints, implemented):
+Stream protocol (Aegir_User.Streams over endpoints, implemented):
 label = op (1 write, 2 read), request/reply records (Count +
 40-byte Data) in the 6-word area; console server is the first
 consumer.
 
 ## RTS scaffold
 
-`userspace/rts/akernel/` — not a full custom GNAT RTS yet; uses
+`userspace/rts/aegir/` — not a full custom GNAT RTS yet; uses
 `light-rv64imafdc` plus syscall wrappers/stubs:
 
 ```text
-akernel_user-syscalls.*   raw syscall wrappers, IPC buffer/message
+aegir_user-syscalls.*   raw syscall wrappers, IPC buffer/message
                           overlays, spawn grant lists, bootinfo page
                           overlay + Boot_Cap/Boot_Cap_Rights lookup
-akernel_user-ipc.*        typed RPC wrappers (generic over request/
+aegir_user-ipc.*        typed RPC wrappers (generic over request/
                           response payload records marshalled into
                           the message's 6-word area, 48-byte limit)
-akernel_user-streams.*    Ada.Streams Root_Stream_Type over endpoint
+aegir_user-streams.*    Ada.Streams Root_Stream_Type over endpoint
                           caps (Endpoint_Stream): Read/Write RPC per
                           40-byte chunk, wire protocol Op_Write=1 /
                           Op_Read=2 / Op_Input=3 (device -> server
@@ -118,7 +118,7 @@ akernel_user-streams.*    Ada.Streams Root_Stream_Type over endpoint
                           Op_Read drains it) with (Count, Data)
                           records both directions; Device_Error on
                           failed calls
-akernel_user-console.*    console output for normal programs: Put /
+aegir_user-console.*    console output for normal programs: Put /
                           Put_Line over an Endpoint_Stream bound to
                           the init-minted console endpoint; falls back
                           to debug_putchar when no console cap granted
@@ -134,13 +134,13 @@ s-memory.adb              custom System.Memory body (overrides the
                           mem_alloc(64)/mem_map page-by-page, max
                           8 chunks (2 MiB); Storage_Error past that.
                           Pulled into every program's closure via a
-                          private with on the Akernel_User root spec.
-akernel_user-files.*      9P-ish file protocol constants + client:
+                          private with on the Aegir_User root spec.
+aegir_user-files.*      9P-ish file protocol constants + client:
                           Bind/Stat/Open/Read over the fs endpoint;
                           client-owned 32 KiB read-buffer memory
                           object mapped at 0x4400_0000, transferred
                           per Read call
-akernel_user-mmio.*       MMIO helpers
+aegir_user-mmio.*       MMIO helpers
 syscalls-riscv64.s        ecall stubs (incl. generic stub for fuzzer)
 start-riscv64.s           entry
 runtime_stubs-riscv64.s   runtime stubs
@@ -227,7 +227,7 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   driver logging is Debug_Put_Line — a console print during init
   would deadlock against the server blocked in the sink RPC.
   The same endpoint ALSO serves the display-service protocol
-  (`akernel_user-display.ads`, labels 10+ — stream labels own
+  (`aegir_user-display.ads`, labels 10+ — stream labels own
   1..4) for the Bureau compositor (milestone 28, slice 1):
   caps move caller -> callee only (replies are words-only), so
   the compositor ALLOCATES the compositing buffer (Mem_Alloc
@@ -279,11 +279,11 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   "fix" produced a real salmon title (user caught it), and
   the buggy decoder re-confirmed. Decode PPM bytes straight
   (R,G,B); trust the user's eyes over the script.
-  font8x8 lives in rts/akernel now (shared client rendering;
+  font8x8 lives in rts/aegir now (shared client rendering;
   bit 0 = leftmost pixel). Client display helpers:
-  akernel_user-display.adb (raw IPC_Call). Slice 3 added the
+  aegir_user-display.adb (raw IPC_Call). Slice 3 added the
   window-service loop on handle 3 (window protocol v1,
-  akernel_user-window.ads, labels 20-24): ONE surface slot
+  aegir_user-window.ads, labels 20-24): ONE surface slot
   bound to the startup window; the client pushes surface
   chunk caps, Bureau maps them read-only and copies
   Op_Surface_Update bands into the compositing buffer at the
@@ -304,7 +304,7 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   focused keys as stream Op_Input bytes, the terminal injects
   them into the console input FIFO (shell reads Op_Read in
   milestone 31).
-- Seat (slice 4, akernel_user-window.ads labels 26/30/31):
+- Seat (slice 4, aegir_user-window.ads labels 26/30/31):
   devmgr records class-18 service EPs at spawn, then after
   Bureau + terminal are up pushes the terminal's stream EP to
   Bureau (Op_Set_Focus, cap slot 0) and Bureau's EP to both

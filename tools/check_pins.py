@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Supply-chain pin enforcement for akernel.
+"""Supply-chain pin enforcement for aegir.
 
 Verifies that the git-visible fetch pins are internally consistent and
 that any on-disk download matches them. Stdlib only, no network.

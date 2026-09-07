@@ -1,5 +1,5 @@
-name = "akernel_desktop"
-description = "akernel desktop"
+name = "aegir_desktop"
+description = "aegir desktop"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

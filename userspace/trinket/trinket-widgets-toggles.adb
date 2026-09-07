@@ -1,5 +1,5 @@
 with Trinket.Paint;
-with Akernel_User.Theme;
+with Aegir_User.Theme;
 
 package body Trinket.Widgets.Toggles is
    use type Trinket.U64;
@@ -45,7 +45,7 @@ package body Trinket.Widgets.Toggles is
       Paint.Fill_Rect (C, BX, BY, BX + Toggle_Box, BY + Toggle_Box,
                        (if W.Hover and then not W.Disabled
                           and then not W.Pressed
-                        then Akernel_User.Theme.Face_Hi
+                        then Aegir_User.Theme.Face_Hi
                         else Face));
       Paint.Bevel2 (C, BX, BY, BX + Toggle_Box, BY + Toggle_Box,
                     Raised => not W.Pressed);
@@ -208,7 +208,7 @@ package body Trinket.Widgets.Toggles is
       Sh : constant U64 := (if W.Pressed then 1 else 0);
       Face_C : constant Pixel :=
         (if W.Hover and then not W.Disabled and then not W.Pressed
-         then Akernel_User.Theme.Face_Hi
+         then Aegir_User.Theme.Face_Hi
          else Face);
       --  Disc test on doubled coordinates: inside when
       --  (2x-13)^2 + (2y-13)^2 <= 13^2 (r = 6.5).

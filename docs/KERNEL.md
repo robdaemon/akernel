@@ -59,7 +59,7 @@ cap (both per docs/IPC.md; 255 implemented, 254 pending IPC work).
   exists; add when one appears).
 - Per-thread IPC buffer page: fixed user VA `0x6FFF0000`
   (`Kernel.Tasks.IPC_Buffer_VA`), kernel-allocated + zeroed at spawn
-  (init thread in akernel.adb, children in `Spawn_Image`), mapped
+  (init thread in aegir.adb, children in `Spawn_Image`), mapped
   User_RW, freed by user-address-space teardown. PA stored in TCB
   (`Set_IPC_Buffer`/`IPC_Buffer_PA`); kernel access via physmap. One
   buffer per address space while processes are single-threaded.

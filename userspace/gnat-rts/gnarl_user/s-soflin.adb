@@ -28,7 +28,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Akernel Ravenscar tasking version of System.Soft_Links. This body is
+--  Aegir Ravenscar tasking version of System.Soft_Links. This body is
 --  selected when the tasking runtime project is built; it relies on the
 --  low-level tasking primitives provided by System.OS_Interface and
 --  System.Task_Primitives.Operations.
@@ -44,10 +44,10 @@ package body System.Soft_Links is
    use type System.Tasking.Termination_Handler;
 
    ----------------------------
-   -- Global lock (Akernel)  --
+   -- Global lock (Aegir)  --
    ----------------------------
 
-   --  Akernel M68: the vendored body relied on the priority ceiling
+   --  Aegir M68: the vendored body relied on the priority ceiling
    --  alone for mutual exclusion, which only works on uniprocessor,
    --  and saved the caller's priority in one global variable, which
    --  races when two threads lock concurrently. The ceiling boost is

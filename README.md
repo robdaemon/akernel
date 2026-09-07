@@ -1,4 +1,4 @@
-# akernel
+# aegir
 
 A small RISC-V 64 bare-metal kernel and Ada/SPARK userspace, built with
 [Alire](https://alire.ada.dev/) and GPRbuild.  The kernel runs under QEMU
@@ -38,9 +38,9 @@ make all
 On a fresh clone this will:
 
 * Resolve and fetch `gnat_riscv64_elf` through Alire (network required).
-* Build the kernel (`alr build` / `akernel.gpr`).
+* Build the kernel (`alr build` / `aegir.gpr`).
 * Build the custom userspace GNAT runtime under `userspace/gnat-rts`.
-* Build all userspace crates and produce `initrd/out/akernel-initrd.img`.
+* Build all userspace crates and produce `initrd/out/aegir-initrd.img`.
 
 `make all` intentionally does **not** build `disk.img`; that is produced by
 `make run` / `make test` because it requires the disk-image host tools above.

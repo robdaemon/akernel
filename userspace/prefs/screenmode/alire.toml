@@ -1,5 +1,5 @@
-name = "akernel_screenmode"
-description = "akernel screenmode"
+name = "aegir_screenmode"
+description = "aegir screenmode"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

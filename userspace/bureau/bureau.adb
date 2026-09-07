@@ -1,11 +1,11 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
-with Akernel_User.Display;
-with Akernel_User.Window;
-with Akernel_User.Tables;
-with Akernel_User.Theme;
+with Aegir_User.Syscalls;
+with Aegir_User.Display;
+with Aegir_User.Window;
+with Aegir_User.Tables;
+with Aegir_User.Theme;
 with Font8x8;
 
 --  Bureau: the compositor / window server. Spawned by the device
@@ -39,7 +39,7 @@ with Font8x8;
 --  on-screen, full repaint. Boot uses the same Build_Buffer.
 
 procedure Bureau is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_8;
 
@@ -96,19 +96,19 @@ procedure Bureau is
    --  title the buggy decoder re-confirmed as blue. Decode PPM
    --  bytes straight (R,G,B) and trust the user's eyes over the
    --  script.)  Milestone 86a: values live in
-   --  Akernel_User.Theme, shared with Trinket's widgets.
-   Desktop    : Pixel renames Akernel_User.Theme.Desktop;
-   Bar_Face   : Pixel renames Akernel_User.Theme.Bar_Face;
-   Win_Face   : Pixel renames Akernel_User.Theme.Win_Face;
-   Bevel_Hi   : Pixel renames Akernel_User.Theme.Bevel_Hi;
-   Bevel_Lo   : Pixel renames Akernel_User.Theme.Bevel_Lo;
-   Border     : Pixel renames Akernel_User.Theme.Border;
-   Title_Blue : Pixel renames Akernel_User.Theme.Title_Blue;
-   Title_Gray : Pixel renames Akernel_User.Theme.Title_Gray;
-   Title_Text : Pixel renames Akernel_User.Theme.Title_Text;
-   Title_Dim  : Pixel renames Akernel_User.Theme.Title_Dim;
-   Pane       : Pixel renames Akernel_User.Theme.Pane;
-   Text_Dark  : Pixel renames Akernel_User.Theme.Text_Dark;
+   --  Aegir_User.Theme, shared with Trinket's widgets.
+   Desktop    : Pixel renames Aegir_User.Theme.Desktop;
+   Bar_Face   : Pixel renames Aegir_User.Theme.Bar_Face;
+   Win_Face   : Pixel renames Aegir_User.Theme.Win_Face;
+   Bevel_Hi   : Pixel renames Aegir_User.Theme.Bevel_Hi;
+   Bevel_Lo   : Pixel renames Aegir_User.Theme.Bevel_Lo;
+   Border     : Pixel renames Aegir_User.Theme.Border;
+   Title_Blue : Pixel renames Aegir_User.Theme.Title_Blue;
+   Title_Gray : Pixel renames Aegir_User.Theme.Title_Gray;
+   Title_Text : Pixel renames Aegir_User.Theme.Title_Text;
+   Title_Dim  : Pixel renames Aegir_User.Theme.Title_Dim;
+   Pane       : Pixel renames Aegir_User.Theme.Pane;
+   Text_Dark  : Pixel renames Aegir_User.Theme.Text_Dark;
 
    Bar_H    : constant := 18;   --  screen bar height
    Title_H  : constant := 20;   --  window title bar height
@@ -120,11 +120,11 @@ procedure Bureau is
    --  Window protocol v2 state: slot table + z-order
    ------------------------------------------------------------------
 
-   package Win renames Akernel_User.Window;
+   package Win renames Aegir_User.Window;
 
     --  m80f: was 4 boot windows (demo/tdemo/fileman/terminal) +
     --  headroom, then 6 — the table is now chunk-appended
-    --  (Akernel_User.Tables) and the cap is the surface-region
+    --  (Aegir_User.Tables) and the cap is the surface-region
     --  capacity below, not an arbitrary count.
     Max_Win_Slots : constant Natural :=
       Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  48
@@ -139,7 +139,7 @@ procedure Bureau is
    --  Milestone 61: per-window menu tree, COPIED out of the
    --  client's serialized page by Op_Set_Menus (Bureau never
    --  re-reads client memory). Wire layout in
-   --  akernel_user-window.ads.
+   --  aegir_user-window.ads.
    Max_Menus : constant := 8;
    Max_Items : constant := 32;  --  total across all menus
 
@@ -216,10 +216,10 @@ procedure Bureau is
         Backdrop       : Boolean := False;
     end record;
 
-   package Win_Tab is new Akernel_User.Tables (Window_Rec);
+   package Win_Tab is new Aegir_User.Tables (Window_Rec);
    function Wins (S : Natural) return Win_Tab.Element_Access
      renames Win_Tab.Ref;
-   package Z_Tab is new Akernel_User.Tables (Natural);
+   package Z_Tab is new Aegir_User.Tables (Natural);
    function Z (I : Natural) return Z_Tab.Element_Access
      renames Z_Tab.Ref;
    Z_N  : Natural := 0;                 --  used entries in Z
@@ -243,7 +243,7 @@ procedure Bureau is
    function Queue_VA (Slot : Natural) return U64 is
      (Queue_VA0 + U64 (Natural'Max (Slot, 1) - 1) * 4096);
 
-   --  v3 input queue word view (layout in akernel_user-window.ads).
+   --  v3 input queue word view (layout in aegir_user-window.ads).
    type Word_Array is array (U64 range 0 .. 511) of U64
      with Volatile_Components;
 
@@ -855,7 +855,7 @@ procedure Bureau is
       if W = 0 or else H = 0 then
          return;
       end if;
-      Result := Akernel_User.Display.Present (Display_EP, X, Y, W, H);
+      Result := Aegir_User.Display.Present (Display_EP, X, Y, W, H);
    end Present_Band;
 
    --  Composite one band: erase the cursor FIRST when the band
@@ -984,8 +984,8 @@ procedure Bureau is
       "##..#OO#..",
       "#....#OO#.",
       ".....##...");
-   Cur_Outline : Pixel renames Akernel_User.Theme.Cur_Outline;
-   Cur_Fill    : Pixel renames Akernel_User.Theme.Cur_Fill;
+   Cur_Outline : Pixel renames Aegir_User.Theme.Cur_Outline;
+   Cur_Fill    : Pixel renames Aegir_User.Theme.Cur_Fill;
 
    Under   : array (U64 range 0 .. Cur_W * Cur_H - 1) of Pixel;
 
@@ -1010,7 +1010,7 @@ procedure Bureau is
          end loop;
       end loop;
       Cur_Vis := True;
-      Result := Akernel_User.Display.Present
+      Result := Aegir_User.Display.Present
         (Display_EP, CX, CY, Cur_W, Cur_H);
    end Cursor_Draw;
 
@@ -1027,7 +1027,7 @@ procedure Bureau is
          end loop;
       end loop;
       Cur_Vis := False;
-      Result := Akernel_User.Display.Present
+      Result := Aegir_User.Display.Present
         (Display_EP, Cur_X, Cur_Y, Cur_W, Cur_H);
    end Cursor_Erase;
 
@@ -1740,21 +1740,21 @@ procedure Bureau is
             end if;
             Send (I) := Minted;
          end loop;
-         St := Akernel_User.Display.Set_Buffer
+         St := Aegir_User.Display.Set_Buffer
            (Display_EP, Base, Send (0), Send (1), Send (2), Send (3));
          for I in 0 .. 3 loop
             if Send (I) /= 0 then
                Result := Cap_Delete (Send (I));
             end if;
          end loop;
-         if St /= Akernel_User.Display.Status_Ok then
+         if St /= Aegir_User.Display.Status_Ok then
             return Win.Status_Device;
          end if;
          Base := Base + 4;
       end loop;
 
-      if Akernel_User.Display.Commit_Buffer (Display_EP) /=
-        Akernel_User.Display.Status_Ok
+      if Aegir_User.Display.Commit_Buffer (Display_EP) /=
+        Aegir_User.Display.Status_Ok
       then
          return Win.Status_Device;
       end if;
@@ -1774,11 +1774,11 @@ procedure Bureau is
    begin
       Cursor_Erase;
       Dismiss_Menu;
-      St := Akernel_User.Display.Set_Mode
+      St := Aegir_User.Display.Set_Mode
         (Display_EP, Req_W, Req_H, NW, NH, NS, NP);
-      if St = Akernel_User.Display.Status_Bad_Mode then
+      if St = Aegir_User.Display.Status_Bad_Mode then
          return Win.Status_Bad_Mode;
-      elsif St /= Akernel_User.Display.Status_Ok then
+      elsif St /= Aegir_User.Display.Status_Ok then
          return Win.Status_Device;
       end if;
       if NW = 0 or else NW > Max_W or else NH = 0
@@ -1829,9 +1829,9 @@ procedure Bureau is
 
 begin
    --  1. Mode geometry from the display service.
-   if Akernel_User.Display.Get_Info
+   if Aegir_User.Display.Get_Info
      (Display_EP, Width, Height, Stride, Pages) /=
-       Akernel_User.Display.Status_Ok
+       Aegir_User.Display.Status_Ok
    then
       Fail ("display info failed");
    end if;
@@ -1852,8 +1852,8 @@ begin
 
    --  5. Compose the bare desktop and present the full frame.
    Paint_Band (0, 0, Width, Height);
-   if Akernel_User.Display.Present (Display_EP, 0, 0, Width, Height)
-     /= Akernel_User.Display.Status_Ok
+   if Aegir_User.Display.Present (Display_EP, 0, 0, Width, Height)
+     /= Aegir_User.Display.Status_Ok
    then
       Fail ("present failed");
    end if;
@@ -2400,7 +2400,7 @@ begin
                         for I in 1 .. N loop
                            declare
                               --  v2 item record: 5 words (see
-                              --  akernel_user-window.ads layout).
+                              --  aegir_user-window.ads layout).
                               WI : constant U64 :=
                                 2 + U64 (M) * 4 + U64 (I - 1) * 5;
                               W3 : constant U64 := Page (WI + 3);

@@ -6,12 +6,12 @@
 --                                                                          --
 --                                   S p e c                                --
 --                                                                          --
---                      Akernel Ravenscar port (M67b)                       --
+--                      Aegir Ravenscar port (M67b)                       --
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Minimal System.OS_Interface for the Akernel userspace Ravenscar runtime.
---  This version sits directly on top of the Akernel syscall layer rather
+--  Minimal System.OS_Interface for the Aegir userspace Ravenscar runtime.
+--  This version sits directly on top of the Aegir syscall layer rather
 --  than System.BB.
 
 pragma Restrictions (No_Elaboration_Code);
@@ -55,7 +55,7 @@ package System.OS_Interface is
    procedure Delay_Until (T : Time);
 
    Thread_Entry_Point : constant System.Address;
-   pragma Import (C, Thread_Entry_Point, "akernel_thread_entry");
+   pragma Import (C, Thread_Entry_Point, "aegir_thread_entry");
 
    -------------
    -- Threads --

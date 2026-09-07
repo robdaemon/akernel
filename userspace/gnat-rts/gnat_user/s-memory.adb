@@ -26,7 +26,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Akernel userspace implementation: a free-list heap backed by memory
+--  Aegir userspace implementation: a free-list heap backed by memory
 --  objects (mem_alloc/mem_map syscalls).  The heap occupies a VA range
 --  below the program text; physical frames are owned by memory objects
 --  allocated on demand and mapped page by page as borrowed user pages.
@@ -44,11 +44,11 @@ package body System.Memory is
    subtype U64 is Interfaces.Unsigned_64;
 
    --  Raw syscall entries (imported directly so this unit does not
-   --  depend on Akernel_User.Syscalls, whose root unit drags this
+   --  depend on Aegir_User.Syscalls, whose root unit drags this
    --  package into every userspace build closure).
    function Raw_Mem_Alloc (Pages : U64) return U64
      with Import, Convention => C,
-          External_Name => "akernel_sys_mem_alloc";
+          External_Name => "aegir_sys_mem_alloc";
    function Raw_Mem_Map
      (Address_Space : U64;
       Cap           : U64;
@@ -57,7 +57,7 @@ package body System.Memory is
       Length        : U64;
       Flags         : U64) return U64
      with Import, Convention => C,
-          External_Name => "akernel_sys_mem_map";
+          External_Name => "aegir_sys_mem_map";
 
    AS_Cap       : constant U64 := 255;
    Syscall_Fail : constant U64 := U64'Last;

@@ -1,13 +1,13 @@
-with Akernel_User;
-with Akernel_User.Syscalls;
+with Aegir_User;
+with Aegir_User.Syscalls;
 with Interfaces;
 with System.Storage_Elements;
 
 package body Clipboard_Lib is
 
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
 
-   package Sys renames Akernel_User.Syscalls;
+   package Sys renames Aegir_User.Syscalls;
    use System.Storage_Elements;
    use type Sys.U64;
 

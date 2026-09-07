@@ -1,5 +1,5 @@
-name = "akernel_unset"
-description = "akernel unset"
+name = "aegir_unset"
+description = "aegir unset"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

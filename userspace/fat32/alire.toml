@@ -1,5 +1,5 @@
-name = "akernel_fat32"
-description = "akernel FAT32 filesystem driver (read-only)"
+name = "aegir_fat32"
+description = "aegir FAT32 filesystem driver (read-only)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -34,7 +34,7 @@ QEMU_9P_FLAGS ?= -fsdev local,id=fs0,path=$(SHARE_DIR),security_model=none -devi
 QEMU_GPU_FLAGS ?=
 INITRD_ADDR ?= 0x84000000
 
-KERNEL_ELF := bin/akernel.elf
+KERNEL_ELF := bin/aegir.elf
 INIT_ELF := bin/userspace/init.elf
 SERIAL_ELF := bin/userspace/serial.elf
 FUZZ_ELF := bin/userspace/fuzz.elf
@@ -72,7 +72,7 @@ DISK_IMG := disk.img
 INITRD_ROOT := initrd/root
 INITRD_OUT := initrd/out
 INITRD_CPIO := $(INITRD_OUT)/initramfs.cpio
-INITRD_IMG := $(INITRD_OUT)/akernel-initrd.img
+INITRD_IMG := $(INITRD_OUT)/aegir-initrd.img
 
 #  Crate inventory (milestone 40c): every userspace crate builds
 #  through the generic $(CRATES) rule; disk-resident crates are
@@ -98,7 +98,7 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  The library must track its SOURCES too: depending on the gpr
 #  alone left adalib/ stale after vendored-runtime edits (the m64
 #  adaint.c __gnat_rename patch silently never linked).
-RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
+RTS_SRCS := $(shell find userspace/rts/aegir userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
 .PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate fetch-pins scan-deps scan-secrets scan-host scan-ada FORCE
 
@@ -208,7 +208,7 @@ scan-deps: fetch-pins
 	python3 tools/check_pins.py
 	python3 tools/gen_sbom.py --check
 	@if command -v osv-scanner >/dev/null 2>&1; then \
-	  osv-scanner scan source -L docs/sbom/akernel.spdx.json --format json \
+	  osv-scanner scan source -L docs/sbom/aegir.spdx.json --format json \
 	    --output-file /tmp/osv.json && python3 tools/osv_gate.py /tmp/osv.json; \
 	else echo "note: osv-scanner not on PATH (CVE watch runs in CI)"; fi
 
@@ -230,7 +230,7 @@ scan-host:
 
 scan-ada:
 	@if command -v gnatprove >/dev/null 2>&1; then \
-	  echo "note: run via 'alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 --timeout=30 --report=all' (see docs/SCANNING.md)"; \
+	  echo "note: run via 'alr exec -- gnatprove -P aegir.gpr -f --mode=prove --level=1 --timeout=30 --report=all' (see docs/SCANNING.md)"; \
 	else echo "note: gnatprove not installed (alr install gnatprove + aligned cross toolchain)"; fi
 
 
@@ -282,7 +282,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	@command -v sgdisk >/dev/null && command -v mkfs.vfat >/dev/null && command -v mcopy >/dev/null \
 	  || { echo "disk image needs host sgdisk + mkfs.vfat + mtools"; exit 1; }; \
 	mkdir -p $(INITRD_OUT); \
-	printf 'Hello from the akernel FAT32 volume.\n' > $(INITRD_OUT)/readme.txt; \
+	printf 'Hello from the aegir FAT32 volume.\n' > $(INITRD_OUT)/readme.txt; \
 	python3 -c "open('$(INITRD_OUT)/big.bin','wb').write(bytes(((i * 7 + 3) & 0xFF) for i in range(65536)))"; \
 	printf 'Subdir hello!\n' > $(INITRD_OUT)/hello.txt; \
 	printf 'A long file name body.\n' > $(INITRD_OUT)/longfile.txt; \
@@ -291,13 +291,13 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	  $(INITRD_OUT)/sysroot/C $(INITRD_OUT)/sysroot/Fonts $(INITRD_OUT)/sysroot/Libs \
 	  $(INITRD_OUT)/sysroot/Tests/Img $(INITRD_OUT)/sysroot/Prefs/Env \
 	  $(INITRD_OUT)/sysroot/SUBDIR; \
-	printf 'Hello from the akernel BeFS volume.\n' > $(INITRD_OUT)/sysroot/README.TXT; \
+	printf 'Hello from the aegir BeFS volume.\n' > $(INITRD_OUT)/sysroot/README.TXT; \
 	: > $(INITRD_OUT)/sysroot/EMPTY.TXT; \
 	python3 -c "open('$(INITRD_OUT)/sysroot/FRAGMENT.BIN','wb').write(bytes(((i * 5 + 1) & 0xFF) for i in range(2560)))"; \
 	printf 'Subdir hello from BeFS!\n' > $(INITRD_OUT)/sysroot/SUBDIR/HELLO.TXT; \
-	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads > $(INITRD_OUT)/font8x8.bdf; \
-	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads --proportional > $(INITRD_OUT)/font8x8p.bdf; \
-	python3 tools/font2bdf.py userspace/rts/akernel/font8x8.ads --tall > $(INITRD_OUT)/font8x8t.bdf; \
+	python3 tools/font2bdf.py userspace/rts/aegir/font8x8.ads > $(INITRD_OUT)/font8x8.bdf; \
+	python3 tools/font2bdf.py userspace/rts/aegir/font8x8.ads --proportional > $(INITRD_OUT)/font8x8p.bdf; \
+	python3 tools/font2bdf.py userspace/rts/aegir/font8x8.ads --tall > $(INITRD_OUT)/font8x8t.bdf; \
 	cp $(INITRD_OUT)/font8x8.bdf $(INITRD_OUT)/sysroot/Fonts/FONT8X8.BDF; \
 	cp $(INITRD_OUT)/font8x8p.bdf $(INITRD_OUT)/sysroot/Fonts/FONT8X8P.BDF; \
 	cp $(INITRD_OUT)/font8x8t.bdf $(INITRD_OUT)/sysroot/Fonts/FONT8X8T.BDF; \
@@ -539,7 +539,7 @@ clean-userspace:
 #  Crate scaffolding (milestone 40c): make new-crate NAME=foo
 #  DEST=c|system generates the crate wired to the RTS and
 #  registers it in this Makefile. The skeleton main is a CLI
-#  command (Akernel_User.CLI); DEST=system installs into
+#  command (Aegir_User.CLI); DEST=system installs into
 #  Sys:System/, DEST=c into Sys:C/.
 new-crate:
 	@test -n "$(NAME)" || { echo "usage: make new-crate NAME=foo DEST=c|system|prefs"; exit 1; }
@@ -551,10 +551,10 @@ new-crate:
 	if [ "$(DEST)" = "prefs" ]; then \
 	  rt='   for Runtime ("Ada") use "../../gnat-rts";\n'; else rt=''; fi; \
 	printf '.PHONY: all clean\n\nall:\n\talr build\n\nclean:\n\talr clean\n' > $$dir/Makefile; \
-	printf 'name = "akernel_$(NAME)"\ndescription = "akernel $(NAME)"\nversion = "0.1.0-dev"\n\nauthors = ["Robert Roland"]\nmaintainers = ["Robert Roland <rob@retronauts.org>"]\nlicenses = "MIT OR Apache-2.0 WITH LLVM-exception"\ntags = []\n\nproject-files = ["$(NAME).gpr"]\nexecutables = ["$(NAME).elf"]\n\n[[depends-on]]\ngnat_riscv64_elf = "15.3.1"\n' > $$dir/alire.toml; \
+	printf 'name = "aegir_$(NAME)"\ndescription = "aegir $(NAME)"\nversion = "0.1.0-dev"\n\nauthors = ["Robert Roland"]\nmaintainers = ["Robert Roland <rob@retronauts.org>"]\nlicenses = "MIT OR Apache-2.0 WITH LLVM-exception"\ntags = []\n\nproject-files = ["$(NAME).gpr"]\nexecutables = ["$(NAME).elf"]\n\n[[depends-on]]\ngnat_riscv64_elf = "15.3.1"\n' > $$dir/alire.toml; \
 	cap=$$(printf '%s' $(NAME) | sed 's/^./\u&/'); \
-	printf 'project %s extends "%s/rts/akernel_program.gpr" is\n%b   for Source_Dirs use (".");\n   for Exec_Dir use "%s/../bin/userspace";\n   for Object_Dir use "%s/../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $$up "$$rt" $$up $$up $(NAME) $(NAME) $(NAME) $(NAME) $$cap > $$dir/$(NAME).gpr; \
-	printf 'with Akernel_User.CLI;\nwith Akernel_User.Console;\n\nprocedure %s is\n   package CLI renames Akernel_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Akernel_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > $$dir/$(NAME).adb
+	printf 'project %s extends "%s/rts/aegir_program.gpr" is\n%b   for Source_Dirs use (".");\n   for Exec_Dir use "%s/../bin/userspace";\n   for Object_Dir use "%s/../obj/userspace/%s";\n   for Main use ("%s.adb");\n\n   package Builder is\n      for Executable ("%s.adb") use "%s.elf";\n   end Builder;\nend %s;\n' $$cap $$up "$$rt" $$up $$up $(NAME) $(NAME) $(NAME) $(NAME) $$cap > $$dir/$(NAME).gpr; \
+	printf 'with Aegir_User.CLI;\nwith Aegir_User.Console;\n\nprocedure %s is\n   package CLI renames Aegir_User.CLI;\nbegin\n   if CLI.Arg_Count = 0 then\n      Aegir_User.Console.Put_Line ("usage: %s <args>");\n      CLI.Exit_With (CLI.RC_Error);\n   end if;\n   CLI.Exit_With (CLI.RC_Ok);\nend %s;\n' $$cap $$cap $$cap > $$dir/$(NAME).adb
 	@if [ "$(DEST)" = "c" ]; then \
 	  sed -i 's/^DISK_CRATES_C := \(.*\)/DISK_CRATES_C := \1 $(NAME)/' Makefile; \
 	  echo "$(NAME) registered: builds via all/disk.img, installs in Sys:C/"; \

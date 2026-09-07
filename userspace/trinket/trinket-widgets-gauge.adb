@@ -1,6 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
-with Akernel_User.Theme;
+with Aegir_User.Theme;
 
 package body Trinket.Widgets.Gauge is
    use type Trinket.U64;
@@ -84,7 +84,7 @@ package body Trinket.Widgets.Gauge is
                       W.X + 2 + FW, W.Y + W.H - 2);
             Fonts.Draw_Text
               (C2, TX, TY, Pct (1 .. PL),
-               Akernel_User.Theme.Title_Text);
+               Aegir_User.Theme.Title_Text);
          end if;
       end if;
    end Draw;

@@ -1,5 +1,5 @@
-name = "akernel_type"
-description = "akernel Type command (milestone 32)"
+name = "aegir_type"
+description = "aegir Type command (milestone 32)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

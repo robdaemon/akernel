@@ -1,6 +1,6 @@
 with Ada.Calendar;
-with Akernel_User.CLI;
-with Akernel_User.Console;
+with Aegir_User.CLI;
+with Aegir_User.Console;
 
 --  Wait: pause the shell (milestone 59; the Amiga C:Wait analog).
 --  "Wait" or "Wait N"      — N seconds (default 1)
@@ -11,7 +11,7 @@ with Akernel_User.Console;
 --  polls the RTC half-secondly via Ada.Calendar.
 
 procedure Wait is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Cal renames Ada.Calendar;
 
    --  Parse "N" or "N:M[:S]" into total seconds. Ok False on
@@ -75,7 +75,7 @@ begin
    if CLI.Arg_Count = 1
      and then Same (CLI.Argument (1), "UNTIL")
    then
-      Akernel_User.Console.Put_Line ("Wait: UNTIL what? (HH:MM)");
+      Aegir_User.Console.Put_Line ("Wait: UNTIL what? (HH:MM)");
       CLI.Exit_With (CLI.RC_Error);
    end if;
 

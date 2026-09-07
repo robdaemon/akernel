@@ -334,7 +334,7 @@ package System.Tasking is
 
       Global_Task_Lock_Priority : System.Any_Priority;
       --  Active priority saved when this task seized the global task
-      --  lock, restored on release. Per-task (Akernel M68 fix: the
+      --  lock, restored on release. Per-task (Aegir M68 fix: the
       --  vendored body used one global variable, which races as soon
       --  as two threads take the lock on different harts).
       --

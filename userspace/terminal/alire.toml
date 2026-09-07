@@ -1,5 +1,5 @@
-name = "akernel_terminal"
-description = "akernel Bureau terminal client"
+name = "aegir_terminal"
+description = "aegir Bureau terminal client"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

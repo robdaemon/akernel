@@ -1,5 +1,5 @@
-name = "akernel_tdemo"
-description = "akernel Trinket widget-tree demo"
+name = "aegir_tdemo"
+description = "aegir Trinket widget-tree demo"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -1,15 +1,15 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.CLI;
 
 --  Extracted unchanged from userspace/shell/shell.adb in
 --  milestone 70 chunk 1 — see Scripting.Exec's spec for the
 --  pipeline/redirection design notes.
 package body Scripting.Exec is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
    Stage_VA      : constant U64 := 16#5400_0000#;
@@ -31,7 +31,7 @@ package body Scripting.Exec is
       --  cwd-resolved name first, fall back to the raw name
       --  (RD0 default) — both worlds stage.
       Full    : constant String :=
-        Akernel_User.CLI.Resolve_Path (Path);
+        Aegir_User.CLI.Resolve_Path (Path);
       Name    : String (1 .. 160);
       NLen    : Natural;
       Size    : U64 := 0;
@@ -43,13 +43,13 @@ package body Scripting.Exec is
       St      : U64;
       Result  : U64;
    begin
-      St := Akernel_User.Files.Stat (Full, Size);
-      if St /= Akernel_User.Files.Status_Ok then
+      St := Aegir_User.Files.Stat (Full, Size);
+      if St /= Aegir_User.Files.Status_Ok then
          --  Fallback: bare Files qualification (RD0: initrd),
          --  the historical behaviour the suite's Tests/ paths
          --  rely on.
-         St := Akernel_User.Files.Stat (Path, Size);
-         if St = Akernel_User.Files.Status_Ok then
+         St := Aegir_User.Files.Stat (Path, Size);
+         if St = Aegir_User.Files.Status_Ok then
             NLen := Natural'Min (Path'Length, Name'Length);
             Name (1 .. NLen) := Path (Path'First .. Path'First + NLen - 1);
          end if;
@@ -57,7 +57,7 @@ package body Scripting.Exec is
          NLen := Natural'Min (Full'Length, Name'Length);
          Name (1 .. NLen) := Full (Full'First .. Full'First + NLen - 1);
       end if;
-      if St /= Akernel_User.Files.Status_Ok or else Size = 0 then
+      if St /= Aegir_User.Files.Status_Ok or else Size = 0 then
          Debug_Put_Line ("stage: stat failed path=<" & Path & ">");
          Debug_Put_Line ("st=" & U64'Image (St) & " size=" &
            U64'Image (Size));
@@ -76,14 +76,14 @@ package body Scripting.Exec is
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;
-      St := Akernel_User.Files.Open (Name (1 .. NLen), Size);
-      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+      St := Aegir_User.Files.Open (Name (1 .. NLen), Size);
+      while St = Aegir_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Name (1 .. NLen), Off,
             System'To_Address (Integer_Address (Stage_VA + Off)),
             Chunk, Count);
-         exit when St /= Akernel_User.Files.Status_Ok
+         exit when St /= Aegir_User.Files.Status_Ok
            or else Count /= Chunk;
          Off := Off + Count;
       end loop;
@@ -116,8 +116,8 @@ package body Scripting.Exec is
         with Address => To_Address
           (Integer_Address
              (Args_Stage_VA
-              + Akernel_User.Syscalls.Args_Trailer_Offset));
-      Resolved : constant String := Akernel_User.CLI.Resolve_Command (Word);
+              + Aegir_User.Syscalls.Args_Trailer_Offset));
+      Resolved : constant String := Aegir_User.CLI.Resolve_Command (Word);
 
       procedure Put_Path (Offset : U64; Path : String) is
       begin
@@ -130,13 +130,13 @@ package body Scripting.Exec is
       end Put_Path;
    begin
       if Resolved'Length = 0 then
-         Akernel_User.Console.Put_Line ("unknown command: " & Word);
+         Aegir_User.Console.Put_Line ("unknown command: " & Word);
          return 0;
       end if;
 
       Mem_Cap := Stage (Resolved);
       if Mem_Cap = 0 then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("cannot find executable: " & Word);
          return 0;
       end if;
@@ -148,7 +148,7 @@ package body Scripting.Exec is
         or else Mem_Map (Address_Space_Cap, Args_Cap,
                          Args_Stage_VA, 0, 4096, 3) /= 0
       then
-         Akernel_User.Console.Put_Line ("args staging failed");
+         Aegir_User.Console.Put_Line ("args staging failed");
          if Args_Cap /= Syscall_Failed then
             Result := Cap_Delete (Args_Cap);
          end if;
@@ -171,7 +171,7 @@ package body Scripting.Exec is
       --  zeroed by Mem_Alloc — clear the trailer first).
       Trailer := (others => 0);
       if Out_Path'Length > 0 or else In_Path'Length > 0 then
-         Trailer (0) := Akernel_User.Syscalls.Args_Trailer_Magic;
+         Trailer (0) := Aegir_User.Syscalls.Args_Trailer_Magic;
          if Out_Path'Length > 0 then
             Put_Path (3800, Out_Path);
             Trailer (1) := 3800;
@@ -195,7 +195,7 @@ package body Scripting.Exec is
       if Spawn (Mem_Cap, 7, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
-         Akernel_User.Console.Put_Line ("spawn failed: " & Word);
+         Aegir_User.Console.Put_Line ("spawn failed: " & Word);
          Result := Cap_Delete (Mem_Cap);
          Result := Mem_Unmap (Address_Space_Cap, Args_Stage_VA, 4096);
          Result := Cap_Delete (Args_Cap);
@@ -226,7 +226,7 @@ package body Scripting.Exec is
       Proc_Cap : constant U64 := Spawn_Cmd (Word, Args, "", "");
    begin
       if Proc_Cap = 0 then
-         return Akernel_User.CLI.RC_Error;
+         return Aegir_User.CLI.RC_Error;
       end if;
       return Reap (Proc_Cap);
    end Exec;
@@ -260,7 +260,7 @@ package body Scripting.Exec is
       NStage  : out Natural;
       Ok      : out Boolean)
    is
-      package Files renames Akernel_User.Files;
+      package Files renames Aegir_User.Files;
       Max_Tok : constant := 32;
       type Tok is record
          F : Natural := 0;
@@ -364,7 +364,7 @@ package body Scripting.Exec is
                   T := T + 1;
                   declare
                      Target : constant String :=
-                       Akernel_User.CLI.Resolve_Path
+                       Aegir_User.CLI.Resolve_Path
                          (Cmd (Toks (T).F .. Toks (T).L));
                   begin
                      if Text = ">" then
@@ -410,7 +410,7 @@ package body Scripting.Exec is
       end if;
 
       if Bad then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("bad pipeline (usage: A | B, > file, < file)");
          return;
       end if;
@@ -440,7 +440,7 @@ package body Scripting.Exec is
                St := Files.Truncate (Name);
             end if;
             if St /= Files.Status_Ok then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("cannot create " & Name);
                return;
             end if;
@@ -457,7 +457,7 @@ package body Scripting.Exec is
             St := Files.Truncate (Stage_Out (NStage)
                             (1 .. Stage_Ol (NStage)));
             if St /= Files.Status_Ok then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("cannot truncate redirect target");
                return;
             end if;
@@ -513,7 +513,7 @@ package body Scripting.Exec is
    begin
       for P in Pipes'Range loop
          if PLens (P) > 0 then
-            St := Akernel_User.Files.Delete
+            St := Aegir_User.Files.Delete
               (Pipes (P)(1 .. PLens (P)));
          end if;
       end loop;
@@ -555,7 +555,7 @@ package body Scripting.Exec is
    begin
       Spawn_Pipeline (Cmd, 0, Procs, Pipes, PLens, NStage, Ok);
       if not Ok then
-         return Akernel_User.CLI.RC_Error;
+         return Aegir_User.CLI.RC_Error;
       end if;
       Reap_Pipeline (Procs, Pipes, PLens, NStage, RC);
       return RC;

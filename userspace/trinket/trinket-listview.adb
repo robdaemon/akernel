@@ -1,8 +1,8 @@
 with Trinket.Paint;
 with Trinket.Widgets.Scrollbar;
 with Trinket.Fonts;
-with Akernel_User.Syscalls;
-with Akernel_User.Theme;
+with Aegir_User.Syscalls;
+with Aegir_User.Theme;
 
 package body Trinket.Listview is
 
@@ -213,7 +213,7 @@ package body Trinket.Listview is
                --  M86c: selected rows invert — dark text on the
                --  blue band was unreadable.
                (if Natural (Idx + 1) = W.Sel
-                then Akernel_User.Theme.Title_Text
+                then Aegir_User.Theme.Title_Text
                 else Text_Dark));
          end;
       end loop;
@@ -298,7 +298,7 @@ package body Trinket.Listview is
          --  M84c: same row again within the threshold = double
          --  click.  Selection updates first, then the callback.
          declare
-            Now    : constant U64 := Akernel_User.Syscalls.Read_Time;
+            Now    : constant U64 := Aegir_User.Syscalls.Read_Time;
             Double : constant Boolean :=
               Idx = W.Last_Press_Row
               and then Now - W.Last_Press_Time < Double_Click_Ticks;

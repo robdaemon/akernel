@@ -1,6 +1,6 @@
 with Ada.Text_IO;
-with Akernel_User.CLI;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Files;
 with Interfaces;
 
 --  Query: one-shot BeFS query (milestone 82f — the Amiga C:
@@ -20,8 +20,8 @@ with Interfaces;
 --  trailing slash.
 
 procedure Query is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type Interfaces.Unsigned_64;
    use type Files.U64;
 

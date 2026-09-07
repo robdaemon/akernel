@@ -31,9 +31,9 @@
 
 --  This is the Ravenscar version of this package
 --
---  Akernel port: the fair lock (which needs per-CPU spinning indices)
+--  Aegir port: the fair lock (which needs per-CPU spinning indices)
 --  is replaced by a plain test-and-set spin lock with a Yield backoff,
---  taken unconditionally — the Akernel kernel is SMP and preemptive,
+--  taken unconditionally — the Aegir kernel is SMP and preemptive,
 --  so priority-ceiling alone cannot provide mutual exclusion.
 
 with System.OS_Interface;

@@ -1,12 +1,12 @@
 with Interfaces;
 with Ada.Streams;
-with Akernel_User.Syscalls;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
-with Akernel_User.Console;
-with Akernel_User.Files;
-with Akernel_User.CLI;
-with Akernel_User.Tables;
+with Aegir_User.Syscalls;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
+with Aegir_User.Console;
+with Aegir_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Tables;
 with Scripting;
 with Scripting.Exec;
 with Scripting.Interp;
@@ -49,7 +49,7 @@ with Scripting.Console_IO;
 --  fuzz end-to-end path). The prompt shows the cwd (ENV:CWD).
 
 procedure Shell is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use Scripting;  --  uniform-ABI handle constants, Split_Cmd
    use type U64;
 
@@ -59,9 +59,9 @@ procedure Shell is
    --  instead of a use clause (the tdemo/Trinket precedent).
    package SE renames Scripting.Exec;
 
-   package RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
+   package RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
 
    Max_Line : constant := 120;
    Line     : String (1 .. Max_Line) := (others => ' ');
@@ -69,12 +69,12 @@ procedure Shell is
 
    Status   : U64;
    Rlbl     : U64;
-   Request  : Akernel_User.Streams.Stream_Request;
-   Response : Akernel_User.Streams.Stream_Response;
+   Request  : Aegir_User.Streams.Stream_Request;
+   Response : Aegir_User.Streams.Stream_Response;
 
    procedure Prompt is
    begin
-      Akernel_User.Console.Put (Akernel_User.CLI.Get_Cwd & "> ");
+      Aegir_User.Console.Put (Aegir_User.CLI.Get_Cwd & "> ");
    end Prompt;
 
    --  Script runner: the milestone-42 linear semantics plus the
@@ -95,7 +95,7 @@ procedure Shell is
      (Prompt : String; Reply : out String; Reply_Len : out Natural)
    is
    begin
-      Akernel_User.Console.Put (Prompt);
+      Aegir_User.Console.Put (Prompt);
       Scripting.Console_IO.Read_Line (Reply, Reply_Len);
    end Ask_Line;
 
@@ -145,7 +145,7 @@ procedure Shell is
    --  Exiting the shell with live jobs warns once; the second
    --  exit abandons them (children are independent processes —
    --  Amiga RUN'd tasks survive the shell).
-   --  m80f: chunk-appended (Akernel_User.Tables); job numbers are
+   --  m80f: chunk-appended (Aegir_User.Tables); job numbers are
    --  user-visible (jobs/wait/kill), chunk-append keeps them
    --  stable. Job_Free slots are all-zero (fresh chunks read as
    --  free). Allocation: free slot, then steal the oldest Done
@@ -161,7 +161,7 @@ procedure Shell is
       Cmd    : String (1 .. 64) := (others => ' ');
       Len    : Natural := 0;
    end record;
-   package Job_Tab is new Akernel_User.Tables (Job_Rec);
+   package Job_Tab is new Aegir_User.Tables (Job_Rec);
    function Jobs (J : Natural) return Job_Tab.Element_Access
      renames Job_Tab.Ref;
    Endcli_Warned : Boolean := False;
@@ -198,11 +198,11 @@ procedure Shell is
          end if;
          if Loud then
             if Jobs (J).State = Job_Active then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("  job" & Natural'Image (J) & " running     " &
                   Jobs (J).Cmd (1 .. Jobs (J).Len));
             elsif Jobs (J).State = Job_Done then
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("  job" & Natural'Image (J) & " done (rc" &
                   U64'Image (Jobs (J).Code) & " )  " &
                   Jobs (J).Cmd (1 .. Jobs (J).Len));
@@ -265,9 +265,9 @@ procedure Shell is
    function Run_Background (Rest : String) return U64 is
    begin
       if Rest'Length = 0 then
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("usage: run <cmd> [args] [| <cmd> ...]");
-         return Akernel_User.CLI.RC_Error;
+         return Aegir_User.CLI.RC_Error;
       end if;
       Harvest (Loud => False);
       declare
@@ -293,9 +293,9 @@ procedure Shell is
             Slot := Job_Tab.Append;   --  grow; 0 = arena OOM
          end if;
          if Slot = 0 then
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("run: job table allocation failed");
-            return Akernel_User.CLI.RC_Error;
+            return Aegir_User.CLI.RC_Error;
          end if;
          --  Spawn into LOCAL stage bookkeeping; the slot is only
          --  committed once every stage is live, so a mid-spawn
@@ -313,7 +313,7 @@ procedure Shell is
                SE.Spawn_Pipeline
                  (Rest, Slot, Procs, Pipes, PLens, NStage, Ok);
                if not Ok then
-                  return Akernel_User.CLI.RC_Error;
+                  return Aegir_User.CLI.RC_Error;
                end if;
             else
                declare
@@ -327,7 +327,7 @@ procedure Shell is
                       else Rest (RA_First .. Rest'Last)), "", "");
                end;
                if Procs (1) = 0 then
-                  return Akernel_User.CLI.RC_Error;
+                  return Aegir_User.CLI.RC_Error;
                end if;
                NStage := 1;
             end if;
@@ -340,7 +340,7 @@ procedure Shell is
             Jobs (Slot).Cmd (1 .. Jobs (Slot).Len) :=
               Rest (Rest'First .. Rest'First + Jobs (Slot).Len - 1);
          end;
-         Akernel_User.Console.Put_Line
+         Aegir_User.Console.Put_Line
            ("started job" & Natural'Image (Slot) & ": " &
             Jobs (Slot).Cmd (1 .. Jobs (Slot).Len));
          return 0;
@@ -423,53 +423,53 @@ procedure Shell is
             Endcli_Warned := False;
          end if;
          if Word = "help" then
-            Akernel_User.Console.Put_Line ("akernel shell — builtins:");
-            Akernel_User.Console.Put_Line ("  help            this text");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line ("aegir shell — builtins:");
+            Aegir_User.Console.Put_Line ("  help            this text");
+            Aegir_User.Console.Put_Line
               ("  endcli          close this console window and exit");
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("  execute <f> [a] run a script; args bind via .key");
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("                  scripts: if/else/endif, lab/skip, quit,");
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("                  failat, echo, ask, <var>, .def/.set");
-             Akernel_User.Console.Put_Line
+             Aegir_User.Console.Put_Line
                ("                  (C:Execute runs scripts for programs)");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  <cmd> [args]    run a C: or Sys: command");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  A | B           pipe A's output into B");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  A > file        redirect output ('<' reads stdin)");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  run <cmd> ...   background a command or pipeline");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  jobs            list/harvest background jobs");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  wait [n]        RC = job n's (or last) exit code;"); 
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("                  no matching job -> C:Wait (sleep)");
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("  pri <job> <n>   set a background job's priority");
             return 0;
          elsif Word = "endcli" then
             if Jobs_Active > 0 and then not Endcli_Warned then
                Endcli_Warned := True;
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  ("there are running jobs (endcli again to abandon)");
-               return Akernel_User.CLI.RC_Warn;
+               return Aegir_User.CLI.RC_Warn;
             end if;
             --  Amiga EndCLI (M85a): ask the console server to
             --  close its window; a window console (the terminal)
             --  answers 0 and closes, taking this channel down —
             --  we exit.  The serial console answers 1 (no
             --  window) and we stay up.
-            if Akernel_User.Streams.Endcli (Console_EP) = 0 then
+            if Aegir_User.Streams.Endcli (Console_EP) = 0 then
                Process_Exit;
             end if;
-            Akernel_User.Console.Put_Line
+            Aegir_User.Console.Put_Line
               ("endcli: console is not a window");
-            return Akernel_User.CLI.RC_Warn;
+            return Aegir_User.CLI.RC_Warn;
          elsif Word = "run" then
             return Run_Background (Rest);
          elsif Word = "jobs" then
@@ -492,24 +492,24 @@ procedure Shell is
             begin
                Split_Cmd (Rest, J_Last, P_First);
                if P_First > Rest'Last then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("usage: pri <job> <priority>");
-                  return Akernel_User.CLI.RC_Error;
+                  return Aegir_User.CLI.RC_Error;
                end if;
                N := Parse_Nat (Rest (Rest'First .. J_Last));
                Pri := Parse_Int (Rest (P_First .. Rest'Last), Ok);
                if not Ok then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("pri: bad priority '" & Rest (P_First .. Rest'Last)
                      & "'");
-                  return Akernel_User.CLI.RC_Error;
+                  return Aegir_User.CLI.RC_Error;
                end if;
                if N < 1 or else N > Job_Tab.Last
                  or else Jobs (N).State /= Job_Active
                then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("pri: no active job " & Rest (Rest'First .. J_Last));
-                  return Akernel_User.CLI.RC_Error;
+                  return Aegir_User.CLI.RC_Error;
                end if;
                for S in 1 .. Jobs (N).NStage loop
                   if Jobs (N).Procs (S) /= 0
@@ -522,8 +522,8 @@ procedure Shell is
                   end if;
                end loop;
                if Bad then
-                  Akernel_User.Console.Put_Line ("pri: set failed");
-                  return Akernel_User.CLI.RC_Error;
+                  Aegir_User.Console.Put_Line ("pri: set failed");
+                  return Aegir_User.CLI.RC_Error;
                end if;
                return 0;
             end;
@@ -531,9 +531,9 @@ procedure Shell is
             return Wait_Job (Rest);
           elsif Word = "execute" then
              if Rest'Length = 0 then
-                Akernel_User.Console.Put_Line
+                Aegir_User.Console.Put_Line
                   ("usage: execute <script> [args]");
-                return Akernel_User.CLI.RC_Error;
+                return Aegir_User.CLI.RC_Error;
              end if;
              return Run_Script (Rest);
          else
@@ -572,15 +572,15 @@ procedure Shell is
    end Input_Byte;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
-   Akernel_User.Files.Bind (FS_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Files.Bind (FS_EP);
 
    --  Allocate the files-package buffer up front: variable
    --  writes (Files.Write) need it even before any staging.
    declare
       Boot_Size : U64 := 0;
    begin
-      Status := Akernel_User.Files.Open ("BD0:System/Startup",
+      Status := Aegir_User.Files.Open ("BD0:System/Startup",
                                          Boot_Size);
    end;
 
@@ -589,20 +589,20 @@ begin
     --  console read loop. The fuzz end-to-end path for scripts.
     --  Milestone 70: further arguments are the script's .key
     --  args ("Shell execute s a b" binds a,b positionally).
-    if Akernel_User.CLI.Arg_Count >= 1
-      and then Akernel_User.CLI.Argument (1) = "execute"
+    if Aegir_User.CLI.Arg_Count >= 1
+      and then Aegir_User.CLI.Argument (1) = "execute"
     then
-       if Akernel_User.CLI.Arg_Count < 2 then
-          Akernel_User.CLI.Fail_With ("usage: Shell execute <script>",
-                                      Akernel_User.CLI.RC_Error);
+       if Aegir_User.CLI.Arg_Count < 2 then
+          Aegir_User.CLI.Fail_With ("usage: Shell execute <script>",
+                                      Aegir_User.CLI.RC_Error);
        end if;
        declare
           Rest : String (1 .. 160);
           RL   : Natural := 0;
        begin
-          for I in 2 .. Akernel_User.CLI.Arg_Count loop
+          for I in 2 .. Aegir_User.CLI.Arg_Count loop
              declare
-                A : constant String := Akernel_User.CLI.Argument (I);
+                A : constant String := Aegir_User.CLI.Argument (I);
              begin
                 exit when RL + A'Length + 1 > Rest'Length;
                 if RL > 0 then
@@ -613,19 +613,19 @@ begin
                 RL := RL + A'Length;
              end;
           end loop;
-          Akernel_User.CLI.Exit_With (Run_Script (Rest (1 .. RL)));
+          Aegir_User.CLI.Exit_With (Run_Script (Rest (1 .. RL)));
        end;
     end if;
 
    Debug_Put_Line ("shell online");
-   Akernel_User.Console.Put_Line ("akernel shell — 'help' for commands");
+   Aegir_User.Console.Put_Line ("aegir shell — 'help' for commands");
    Prompt;
 
    loop
-      Request.Count := Akernel_User.Streams.Max_Chunk;
+      Request.Count := Aegir_User.Streams.Max_Chunk;
       Request.Data := (others => 0);
       Status := RPC.Call
-        (Console_EP, Akernel_User.Streams.Op_Read, Request,
+        (Console_EP, Aegir_User.Streams.Op_Read, Request,
          RPC.No_Caps, Rlbl, Response);
       if Status /= IPC_Ok then
          --  Console channel gone: no point continuing.

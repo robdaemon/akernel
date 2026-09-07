@@ -1,4 +1,4 @@
-with "../rts/akernel_rts.gpr";
+with "../rts/aegir_rts.gpr";
 
 --  Trinket (milestone 56): the opt-in GUI widget library. Programs
 --  that want Bureau windows link libtrinket.a IN ADDITION TO the

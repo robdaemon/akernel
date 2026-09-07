@@ -1,5 +1,5 @@
-name = "akernel_assign"
-description = "akernel assign"
+name = "aegir_assign"
+description = "aegir assign"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

@@ -19,7 +19,7 @@ Direction (user-chosen): **hybrid, growable-first**. Capacity is
 policy; the only bound is RAM. seL4's lesson applies: its kernel
 does no dynamic allocation — userland retypes untyped memory into
 objects, so "table full" is a userland policy decision. We keep
-akernel's PMM-backed kernel allocation but steal the principle:
+aegir's PMM-backed kernel allocation but steal the principle:
 growable slabs at page granularity, exhaustion = plain OOM (already
 a hard error everywhere), no magic numbers.
 
@@ -37,7 +37,7 @@ already do it: `Grow_Pool` allocates one PMM frame, carves
 frames are never returned (high-water slab); objects are referenced
 by raw address from caps with refcount = cap count; all teardown
 happens before slot reuse under the BKL. Boot-order confirmed safe:
-PMM initializes at akernel.adb:472, first table use is init's first
+PMM initializes at aegir.adb:472, first table use is init's first
 spawn; the 3 kernel-started processes live outside all tables.
 
 ## Hard facts from the census (don't rediscover)
@@ -49,7 +49,7 @@ spawn; the 3 kernel-started processes live outside all tables.
 - Only userland pid decode: `fuzz.adb:3211`
   (`Pid1 mod 256 = Slot1 + 4`). procfs treats pids opaque.
 - Introspection: `Process_Table_Slots=128` is a compile-time mirror
-  (akernel_user-syscalls.ads:194); `Slot_Count` returns
+  (aegir_user-syscalls.ads:194); `Slot_Count` returns
   Max_Process_Slots; enumeration probes slots 0..127 and tolerates
   sparseness (`Info_Not_Found` = skip). There is no runtime
   table-size syscall.
@@ -84,8 +84,8 @@ spawn; the 3 kernel-started processes live outside all tables.
   IPC 0x6FFE+); M83 moved the user main stack to
   0x7FF0_0000..0x8000_0000 (64 pages), so the M80d helper arena
   below has 255 MiB, not the whole 256 MiB hole.
-- Crates share `rts/akernel/` as a static library; generics there
-  are precedented (Akernel_User.IPC, Virtio.PCI/MMIO). Constraint:
+- Crates share `rts/aegir/` as a static library; generics there
+  are precedented (Aegir_User.IPC, Virtio.PCI/MMIO). Constraint:
   no library-level elaboration runs in crates — helpers must lazily
   init; s-memory.adb must never `with` the helper (circularity).
 - Client socket rings: 1 MiB stride for 2-page rings is pure
@@ -151,7 +151,7 @@ Risk: touches the scheduler core. Extra boot smoke before the gate.
 
 ### M80d — userspace helper + fileserver
 
-- New `userspace/rts/akernel/akernel_user-tables.ads`: generic over
+- New `userspace/rts/aegir/aegir_user-tables.ads`: generic over
   element type; chunk-append growth over Mem_Alloc (<=64 pages/
   chunk) mapped into a helper arena at **0x7000_0000** (burn-guard
   comment + compile-time window assert per house convention —
@@ -175,7 +175,7 @@ Risk: touches the scheduler core. Extra boot smoke before the gate.
   (MEMP_MEM_MALLOC) so PCB capacity is RAM (sbrk arena), not
   lwipopts.h constants. Subsumes RESUME open candidate 3
   (AKNET_MAX_SOCKS=8 glue listen table — reconcile while there).
-- Akernel_User.Sockets: ring VA stride 1 MiB -> 64 KiB, move
+- Aegir_User.Sockets: ring VA stride 1 MiB -> 64 KiB, move
   Resolve_VA; ~128 socks/process in the same 8 MiB; table via
   helper.
 - s-osinte: replace the three mod-64 parallel arrays with a

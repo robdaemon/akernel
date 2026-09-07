@@ -1,4 +1,4 @@
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 with Libserv;
 
 --  Clipboard_Lib (milestone 9x): request dispatch for the system
@@ -11,14 +11,14 @@ with Libserv;
 --  scratch window, copies, and unmaps. A per-op transferred cap
 --  must not linger — every request deletes it before replying.
 package Clipboard_Lib is
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
 
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
    subtype Words is Libserv.Words;
    subtype Caps is Libserv.Caps;
 
    --  Buffer ceiling (bytes). Must equal the client buffer size
-   --  (Akernel_User.Clipboard). Put of a larger text fails with
+   --  (Aegir_User.Clipboard). Put of a larger text fails with
    --  Status_Too_Big and leaves the old contents intact.
    Clip_Max : constant := 32 * 1024;
 

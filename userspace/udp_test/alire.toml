@@ -1,5 +1,5 @@
-name = "akernel_udp_test"
-description = "akernel netserv socket smoke test (UDP hairpin)"
+name = "aegir_udp_test"
+description = "aegir netserv socket smoke test (UDP hairpin)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

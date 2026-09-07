@@ -64,7 +64,7 @@ package body Ada.Directories is
    --  Running system default directory separator
 
    Dir_Seps : constant Character_Set := Strings.Maps.To_Set ("/\:");
-   --  53c akernel patch: ':' joins the set — a volume label
+   --  53c aegir patch: ':' joins the set — a volume label
    --  ("BD0:") is a path boundary, so Compose ("BD0:", "X") =
    --  "BD0:X" (not "BD0:/X"), and Containing_Directory/Simple_Name
    --  split at the colon. Vendored-source change, keep minimal.

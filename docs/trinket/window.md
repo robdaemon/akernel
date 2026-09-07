@@ -86,7 +86,7 @@ One 4 KiB page mapped at `Queue_VA`, interpreted as `Word_Array`:
 `Input_Queue_Events = 255`. A slot is computed as
 `2 + (tail mod 255) * 2`.
 
-Event kinds (`Akernel_User.Window`):
+Event kinds (`Aegir_User.Window`):
 
 | kind | value | meaning |
 | --- | --- | --- |

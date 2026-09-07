@@ -1,14 +1,14 @@
 with Libserv;
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 
 --  Library-level dispatch logic for the Testlib server. The dispatch
 --  callback must live at library level because Libserv's access type
 --  is a library-level access-to-procedure type (Ada accessibility).
 
 package Testlib_Lib is
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
 
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
    subtype Words is Libserv.Words;
    subtype Caps is Libserv.Caps;
 

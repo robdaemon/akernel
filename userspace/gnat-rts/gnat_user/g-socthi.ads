@@ -38,7 +38,7 @@
 with Interfaces.C;
 
 --  AKERNEL (m73): no GNAT.OS_Lib in this runtime; Socket_Errno is a
---  direct C import below (akernel_gsocket.c serves newlib errno).
+--  direct C import below (aegir_gsocket.c serves newlib errno).
 with GNAT.Sockets.Thin_Common;
 
 with System;
@@ -58,7 +58,7 @@ package GNAT.Sockets.Thin is
 
    function Socket_Errno return Integer;
    --  Returns last socket error number
-   --  AKERNEL (m73): imported from akernel_gsocket.c (newlib errno),
+   --  AKERNEL (m73): imported from aegir_gsocket.c (newlib errno),
    --  replacing the GNAT.OS_Lib.Errno rename.
 
    function Socket_Error_Message (Errno : Integer) return String;
@@ -255,7 +255,7 @@ private
    pragma Import (C, Socket_Errno, "aknet_get_errno");
    pragma Inline (C_Bind);
    --  AKERNEL (m73): newlib's close() must keep owning file fds;
-   --  sockets get their own entry point in akernel_gsocket.c.
+   --  sockets get their own entry point in aegir_gsocket.c.
    pragma Import (C, C_Close, "__gnat_socket_close");
    pragma Import (C, C_Gethostname, "gethostname");
    pragma Inline (C_Getpeername);

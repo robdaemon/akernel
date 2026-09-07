@@ -1,6 +1,6 @@
 with Interfaces;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
 with Device_Manager;
 
 --  Init composes its namespace from the kernel-provided bootinfo
@@ -13,34 +13,34 @@ with Device_Manager;
 --  boot-launch data only; the kernel never sees a name.
 
 procedure Init is
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
 
    Max_Token_Length : constant := 64;
    subtype Token_String is String (1 .. Max_Token_Length);
 
-   Manifest_Cap : Akernel_User.Syscalls.U64 := 0;
+   Manifest_Cap : Aegir_User.Syscalls.U64 := 0;
 
-   Manifest_Size : Akernel_User.Syscalls.U64;
-   Spawned_Count : Akernel_User.Syscalls.U64 := 0;
+   Manifest_Size : Aegir_User.Syscalls.U64;
+   Spawned_Count : Aegir_User.Syscalls.U64 := 0;
 
    --  Endpoint minted at boot and granted (badged) to the fuzzer via
    --  the ipc_test manifest token: exercises the session-manager
    --  badge pattern.
-   IPC_Test_EP    : Akernel_User.Syscalls.U64 := 0;
-   IPC_Test_Badge : constant Akernel_User.Syscalls.U64 := 16#EC40#;
+   IPC_Test_EP    : Aegir_User.Syscalls.U64 := 0;
+   IPC_Test_Badge : constant Aegir_User.Syscalls.U64 := 16#EC40#;
 
    --  Console endpoint minted at boot: Receive side granted to the
    --  console server (Drivers/Serial), Send side to every program
    --  with the console token. Clients print through
-   --  Akernel_User.Console over this endpoint.
-   Console_EP : Akernel_User.Syscalls.U64 := 0;
+   --  Aegir_User.Console over this endpoint.
+   Console_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  File-server endpoint minted at boot: Receive side granted
    --  (fs_server token) to System/Fileserver, Send side (fs token)
    --  to clients. After spawning the file server init pushes the
    --  boot-file name table as Op_Set_Name messages, each
    --  messages (docs/IPC.md file protocol).
-   FS_EP : Akernel_User.Syscalls.U64 := 0;
+   FS_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  FAT32 driver endpoint minted at boot: Receive side granted
    --  (fat32_server token) to System/Fat32, Send side pushed to
@@ -48,7 +48,7 @@ procedure Init is
    --  the driver spawns (M93: FAT32 is the data volume; Sys: is
    --  BeFS). The driver's blk token grants it the virtio-blk
    --  service endpoint (Send) kept by the device manager.
-   FAT32_EP : Akernel_User.Syscalls.U64 := 0;
+   FAT32_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  BeFS driver endpoint (milestone 82c, M93 swap): Receive side
    --  granted (bfs_server token) to System/Bfs, Send side pushed
@@ -56,7 +56,7 @@ procedure Init is
    --  after the driver spawns — the BeFS partition is the system
    --  volume, so hardcoded Sys: paths survive. The driver's part0
    --  token grants it the badged Send cap for GPT partition 1.
-   BFS_EP : Akernel_User.Syscalls.U64 := 0;
+   BFS_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  Partition service endpoint minted at boot: Receive side
    --  granted (part_server token) to System/Partmgr; Send sides
@@ -64,7 +64,7 @@ procedure Init is
    --  select the partition by badge. Partmgr probes GPT on the
    --  blk device and forwards block-protocol ops with sector
    --  offset translation (zero-copy cap forwarding).
-   PARTMGR_EP : Akernel_User.Syscalls.U64 := 0;
+   PARTMGR_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  Procfs endpoint minted at boot: Receive side granted
    --  (procfs_server token) to System/Procfs, Send side pushed
@@ -72,12 +72,12 @@ procedure Init is
    --  the server spawns, so the VFS forwards Proc: paths to it.
    --  Procfs also takes the device_resource token: process_info
    --  introspection authority.
-   PROCFS_EP : Akernel_User.Syscalls.U64 := 0;
+   PROCFS_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  Library manager endpoint (milestone 65).  The Receive side is
    --  granted to System/Libman via the libman_server token; the Send
    --  side is granted to every program via the libman token.
-   LIBMAN_EP : Akernel_User.Syscalls.U64 := 0;
+   LIBMAN_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  Network stack endpoint (milestone 71): Receive side granted
    --  (net_server token) to System/Netserv, Send side (net token)
@@ -85,7 +85,7 @@ procedure Init is
    --  class-1 driver through the netdev token (the device manager's
    --  Net_Service Send side); init mounts its Net: volume on the
    --  VFS via Op_Add_FS after spawn.
-   NETSRV_EP : Akernel_User.Syscalls.U64 := 0;
+   NETSRV_EP : Aegir_User.Syscalls.U64 := 0;
 
    --  True once the manifest granted the part_server token, i.e. a
    --  partition manager will serve the partition endpoint.
@@ -102,8 +102,8 @@ procedure Init is
    Vol_CI     : Boolean := False;
 
    function Shl
-     (Value  : Akernel_User.Syscalls.U64;
-      Amount : Natural) return Akernel_User.Syscalls.U64
+     (Value  : Aegir_User.Syscalls.U64;
+      Amount : Natural) return Aegir_User.Syscalls.U64
      renames Interfaces.Shift_Left;
 
    function Is_Space (C : Character) return Boolean is
@@ -133,9 +133,9 @@ procedure Init is
    function Parse_U64
      (Token  : Token_String;
       Length : Natural;
-      Valid  : out Boolean) return Akernel_User.Syscalls.U64
+      Valid  : out Boolean) return Aegir_User.Syscalls.U64
    is
-      Value : Akernel_User.Syscalls.U64 := 0;
+      Value : Aegir_User.Syscalls.U64 := 0;
       C     : Character;
    begin
       Valid := Length > 0;
@@ -147,7 +147,7 @@ procedure Init is
          end if;
 
          Value := Value * 10
-           + Akernel_User.Syscalls.U64
+           + Aegir_User.Syscalls.U64
              (Character'Pos (C) - Character'Pos ('0'));
       end loop;
 
@@ -155,13 +155,13 @@ procedure Init is
    end Parse_U64;
 
    procedure Next_Token
-     (Line_End  : Akernel_User.Syscalls.U64;
-      Pos       : in out Akernel_User.Syscalls.U64;
+     (Line_End  : Aegir_User.Syscalls.U64;
+      Pos       : in out Aegir_User.Syscalls.U64;
       Token     : out Token_String;
       Length    : out Natural;
       Available : out Boolean)
    is
-      Raw : Akernel_User.Syscalls.U64;
+      Raw : Aegir_User.Syscalls.U64;
       C   : Character;
    begin
       Token := (others => Character'Val (0));
@@ -169,7 +169,7 @@ procedure Init is
       Available := False;
 
       while Pos < Line_End loop
-         Raw := Akernel_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
+         Raw := Aegir_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
          exit when Raw > 255;
          C := Character'Val (Natural (Raw));
          exit when not Is_Space (C);
@@ -182,7 +182,7 @@ procedure Init is
 
       Available := True;
       while Pos < Line_End loop
-         Raw := Akernel_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
+         Raw := Aegir_User.Syscalls.Boot_Read_Byte (Manifest_Cap, Pos);
          exit when Raw > 255;
          C := Character'Val (Natural (Raw));
          exit when Is_Space (C);
@@ -198,7 +198,7 @@ procedure Init is
 
    --  Send Op_Mount with the manifest's volume directive.
    procedure Push_FS_Mount is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
    begin
       Message.Label := 4;  --  Files.Op_Mount
       Message.Words := (others => 0);
@@ -234,9 +234,9 @@ procedure Init is
    procedure Push_Block_Mount_As
      (Dev   : String;
       Lab   : String;
-      EP    : Akernel_User.Syscalls.U64)
+      EP    : Aegir_User.Syscalls.U64)
    is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Chars : constant String := Dev & Lab;
    begin
       Message.Label := 5;  --  Files.Op_Add_Block
@@ -265,7 +265,7 @@ procedure Init is
    --  (raw whole-device volume is WD0; BD0 is the FAT32 partition
    --  filesystem, milestone 29)
    --  driver's service endpoint.
-   procedure Push_Block_Mount (Blk_EP : Akernel_User.Syscalls.U64) is
+   procedure Push_Block_Mount (Blk_EP : Aegir_User.Syscalls.U64) is
    begin
       Push_Block_Mount_As ("WD0", "Disk", Blk_EP);
    end Push_Block_Mount;
@@ -293,7 +293,7 @@ procedure Init is
    --  deletes its own copy of each minted cap after the push;
    --  the file server keeps the volume's.
    procedure Push_Part_Mounts is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Badge_Base : constant U64 := 16#1000#;
       Query_Cap  : U64;
       Part_Cap   : U64;
@@ -349,7 +349,7 @@ procedure Init is
    --  cap slot 0) so the VFS mounts the forwarded volume. The
    --  FAT32 partition is the DATA volume since M93 (Sys: is BeFS).
    procedure Push_Fat32_Mount is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Dev   : constant String := "BD1";
       Lab   : constant String := "Data";
       Chars : constant String := Dev & Lab;
@@ -381,7 +381,7 @@ procedure Init is
    --  so hardcoded Sys: paths survive the swap). Case-sensitive:
    --  BeFS names are. Read-only mount for now.
    procedure Push_Bfs_Mount is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Dev   : constant String := "BD0";
       Lab   : constant String := "Sys";
       Chars : constant String := Dev & Lab;
@@ -412,7 +412,7 @@ procedure Init is
    --  procfs server's service endpoint (Send side, transferred
    --  in cap slot 0) so the VFS mounts the introspection volume.
    procedure Push_Procfs_Mount is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       Dev   : constant String := "Proc";
       Lab   : constant String := "Proc";
       Chars : constant String := Dev & Lab;
@@ -446,8 +446,8 @@ procedure Init is
    --  device is runtime opt-in via qemu args. Deadlock-safe unlike
    --  the removed netserv push: the 9p server makes no blocking fs
    --  calls during bring-up (or ever).
-   procedure Push_Host_Mount (Svc : Akernel_User.Syscalls.U64) is
-      use Akernel_User.Syscalls;
+   procedure Push_Host_Mount (Svc : Aegir_User.Syscalls.U64) is
+      use Aegir_User.Syscalls;
       Dev   : constant String := "9P0";
       Lab   : constant String := "Host";
       Chars : constant String := Dev & Lab;
@@ -490,7 +490,7 @@ procedure Init is
    --  list, but that list caps at 32 entries and 81+ files blew
    --  past it (spawn failed, "fileserver online" never printed).
    procedure Push_FS_Names is
-      use Akernel_User.Syscalls;
+      use Aegir_User.Syscalls;
       J      : U64 := 0;
       Len    : Natural;
       Minted : U64;
@@ -544,19 +544,19 @@ procedure Init is
    end Push_FS_Names;
 
    procedure Parse_Program_Line
-     (Line_Start : Akernel_User.Syscalls.U64;
-      Line_End   : Akernel_User.Syscalls.U64)
+     (Line_Start : Aegir_User.Syscalls.U64;
+      Line_End   : Aegir_User.Syscalls.U64)
    is
-      Pos         : Akernel_User.Syscalls.U64 := Line_Start;
+      Pos         : Aegir_User.Syscalls.U64 := Line_Start;
       Token       : Token_String;
       Length      : Natural;
       Have_Token  : Boolean;
       Valid_Id    : Boolean;
-      Program_Id  : Akernel_User.Syscalls.U64;
-      Grant_Count : Akernel_User.Syscalls.U64 := 0;
-      Image_Cap   : Akernel_User.Syscalls.U64;
-      Process_Cap : Akernel_User.Syscalls.U64;
-      Result      : Akernel_User.Syscalls.U64;
+      Program_Id  : Aegir_User.Syscalls.U64;
+      Grant_Count : Aegir_User.Syscalls.U64 := 0;
+      Image_Cap   : Aegir_User.Syscalls.U64;
+      Process_Cap : Aegir_User.Syscalls.U64;
+      Result      : Aegir_User.Syscalls.U64;
        Is_FS       : Boolean := False;
        Is_Fat32    : Boolean := False;
        Is_Bfs      : Boolean := False;
@@ -565,13 +565,13 @@ procedure Init is
        Wants_Names : Boolean := False;
 
       procedure Grant
-        (Source_Cap  : Akernel_User.Syscalls.U64;
-         Rights_Mask : Akernel_User.Syscalls.U64;
-         Badge       : Akernel_User.Syscalls.U64)
+        (Source_Cap  : Aegir_User.Syscalls.U64;
+         Rights_Mask : Aegir_User.Syscalls.U64;
+         Badge       : Aegir_User.Syscalls.U64)
       is
       begin
          if Source_Cap /= 0 then
-            Akernel_User.Syscalls.Set_Grant
+            Aegir_User.Syscalls.Set_Grant
               (Index       => Grant_Count,
                Source_Cap  => Source_Cap,
                Rights_Mask => Rights_Mask,
@@ -637,9 +637,9 @@ procedure Init is
          return;
       end if;
 
-      Image_Cap := Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length));
+      Image_Cap := Aegir_User.Syscalls.Boot_Cap (Token (1 .. Length));
       if Image_Cap = 0 then
-         Akernel_User.Syscalls.Debug_Put_Line ("program image unknown");
+         Aegir_User.Syscalls.Debug_Put_Line ("program image unknown");
          return;
       end if;
 
@@ -655,41 +655,41 @@ procedure Init is
          --  line-buffer per client (line-atomic writes).
          if Token_Equals (Token, Length, "ipc_test") then
             Grant (IPC_Test_EP,
-                   Akernel_User.Syscalls.Right_Send
-                     + Akernel_User.Syscalls.Right_Receive
-                     + Akernel_User.Syscalls.Right_Transfer
-                     + Akernel_User.Syscalls.Right_Manage,
+                   Aegir_User.Syscalls.Right_Send
+                     + Aegir_User.Syscalls.Right_Receive
+                     + Aegir_User.Syscalls.Right_Transfer
+                     + Aegir_User.Syscalls.Right_Manage,
                    IPC_Test_Badge);
          elsif Token_Equals (Token, Length, "console") then
-            Grant (Console_EP, Akernel_User.Syscalls.Right_Send, Program_Id);
+            Grant (Console_EP, Aegir_User.Syscalls.Right_Send, Program_Id);
          elsif Token_Equals (Token, Length, "fs") then
-            Grant (FS_EP, Akernel_User.Syscalls.Right_Send, 0);
+            Grant (FS_EP, Aegir_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "blk") then
             --  The virtio-blk service endpoint (Send), kept by the
             --  device manager; fs drivers talk block protocol to it.
             Grant (Device_Manager.Block_Service,
-                   Akernel_User.Syscalls.Right_Send, 0);
+                   Aegir_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "fat32_server") then
             Is_Fat32 := True;
-            Grant (FAT32_EP, Akernel_User.Syscalls.Right_Receive, 0);
+            Grant (FAT32_EP, Aegir_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "bfs_server") then
             Is_Bfs := True;
-            Grant (BFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+            Grant (BFS_EP, Aegir_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "part_server") then
             Partmgr_Seen := True;
-            Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Receive, 0);
+            Grant (PARTMGR_EP, Aegir_User.Syscalls.Right_Receive, 0);
           elsif Token_Equals (Token, Length, "procfs_server") then
              Is_Procfs := True;
-             Grant (PROCFS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+             Grant (PROCFS_EP, Aegir_User.Syscalls.Right_Receive, 0);
           elsif Token_Equals (Token, Length, "netdev") then
              --  The virtio-net frame service endpoint (Send), kept
              --  by the device manager; netserv speaks the frame
              --  protocol (Op_Info/Op_Tx/Op_Set_Rx) to it.
              Grant (Device_Manager.Net_Service,
-                    Akernel_User.Syscalls.Right_Send, 0);
+                    Aegir_User.Syscalls.Right_Send, 0);
           elsif Token_Equals (Token, Length, "net_server") then
              Is_Netserv := True;
-             Grant (NETSRV_EP, Akernel_User.Syscalls.Right_Receive, 0);
+             Grant (NETSRV_EP, Aegir_User.Syscalls.Right_Receive, 0);
           elsif Token_Equals (Token, Length, "net_register") then
              --  Netserv self-registers its Net: volume at the end
              --  of bring-up (the fs<->netserv deadlock fix, m72a);
@@ -697,66 +697,66 @@ procedure Init is
              --  on its own endpoint, which its Receive-only server
              --  handle cannot mint — the creator grants it here.
              Grant (NETSRV_EP,
-                    Akernel_User.Syscalls.Right_Send
-                      + Akernel_User.Syscalls.Right_Transfer, 0);
+                    Aegir_User.Syscalls.Right_Send
+                      + Aegir_User.Syscalls.Right_Transfer, 0);
           elsif Token_Equals (Token, Length, "net") then
              --  Network client: Send side of the netserv endpoint.
-             Grant (NETSRV_EP, Akernel_User.Syscalls.Right_Send, 0);
+             Grant (NETSRV_EP, Aegir_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "elevated_svc") then
             --  The elevation service (milestone 45): Send side of
             --  the init-owned Elevated endpoint. Servers that run
             --  elevated children (the fuzz harness) re-grant it at
             --  the uniform ABI handle 5.
             Grant (Device_Manager.Elevated_EP,
-                   Akernel_User.Syscalls.Right_Send, 0);
+                   Aegir_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "libman") then
             --  Shared library manager endpoint (milestone 65):
             --  Send side granted to every program. m75: +
             --  Transfer — Libman_Available probes by minting, and
             --  cap_mint requires the source Transfer right.
-            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Send
-                   + Akernel_User.Syscalls.Right_Transfer, 0);
+            Grant (LIBMAN_EP, Aegir_User.Syscalls.Right_Send
+                   + Aegir_User.Syscalls.Right_Transfer, 0);
          elsif Token_Equals (Token, Length, "libman_server") then
             --  Library manager server: Receive side.
-            Grant (LIBMAN_EP, Akernel_User.Syscalls.Right_Receive, 0);
+            Grant (LIBMAN_EP, Aegir_User.Syscalls.Right_Receive, 0);
          elsif Length = 5
            and then Token (1 .. 4) = "part"
            and then Token (5) in '0' .. '7'
          then
             --  partN: badged Send on the partition service; the
             --  badge selects the GPT slot inside partmgr.
-            Grant (PARTMGR_EP, Akernel_User.Syscalls.Right_Send,
+            Grant (PARTMGR_EP, Aegir_User.Syscalls.Right_Send,
                    16#1000# +
-                     Akernel_User.Syscalls.U64
+                     Aegir_User.Syscalls.U64
                        (Character'Pos (Token (5))
                           - Character'Pos ('0')));
          elsif Token_Equals (Token, Length, "fs_server") then
             Is_FS := True;
-            Grant (FS_EP, Akernel_User.Syscalls.Right_Receive, 0);
+            Grant (FS_EP, Aegir_User.Syscalls.Right_Receive, 0);
          elsif Token_Equals (Token, Length, "boot_files") then
             --  Boot-file caps are no longer spawn-granted (the
             --  grant list caps at 32); Push_FS_Names transfers a
             --  minted copy with each Op_Set_Name after spawn.
             Wants_Names := True;
          else
-            Grant (Akernel_User.Syscalls.Boot_Cap (Token (1 .. Length)),
-                   Akernel_User.Syscalls.Boot_Cap_Rights
+            Grant (Aegir_User.Syscalls.Boot_Cap (Token (1 .. Length)),
+                   Aegir_User.Syscalls.Boot_Cap_Rights
                      (Token (1 .. Length)),
                    0);
          end if;
       end loop;
 
-      Result := Akernel_User.Syscalls.Spawn
+      Result := Aegir_User.Syscalls.Spawn
         (Image_Cap, Grant_Count, Process_Cap);
 
-      if Result = Akernel_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
+      if Result = Aegir_User.Syscalls.Spawn_Ok and then Process_Cap /= 0 then
          Spawned_Count := Spawned_Count + 1;
          if Program_Id = 2 then
-            Akernel_User.Syscalls.Debug_Put_Line ("fileserver spawned");
+            Aegir_User.Syscalls.Debug_Put_Line ("fileserver spawned");
          elsif Program_Id = 3 then
-            Akernel_User.Syscalls.Debug_Put_Line ("fuzz spawned");
+            Aegir_User.Syscalls.Debug_Put_Line ("fuzz spawned");
          else
-            Akernel_User.Syscalls.Debug_Put_Line ("program spawned");
+            Aegir_User.Syscalls.Debug_Put_Line ("program spawned");
          end if;
 
          if Is_FS then
@@ -767,7 +767,7 @@ procedure Init is
 
          if Wants_Names then
             Push_FS_Names;
-            Akernel_User.Syscalls.Debug_Put_Line ("fs name table pushed");
+            Aegir_User.Syscalls.Debug_Put_Line ("fs name table pushed");
          end if;
 
          if Is_Fat32 then
@@ -789,37 +789,37 @@ procedure Init is
          --  M80a placeholder: decode the spawn status loudly so a
          --  full process/thread table (No_Slot) can never again
          --  hide behind a generic failure line.
-         if Result = Akernel_User.Syscalls.Spawn_No_Slot then
-            Akernel_User.Syscalls.Debug_Put_Line
+         if Result = Aegir_User.Syscalls.Spawn_No_Slot then
+            Aegir_User.Syscalls.Debug_Put_Line
               ("program spawn failed: NO SLOT (table full)");
-         elsif Result = Akernel_User.Syscalls.Spawn_Scheduler_Failed then
-            Akernel_User.Syscalls.Debug_Put_Line
+         elsif Result = Aegir_User.Syscalls.Spawn_Scheduler_Failed then
+            Aegir_User.Syscalls.Debug_Put_Line
               ("program spawn failed: scheduler rejected thread");
-         elsif Result = Akernel_User.Syscalls.Spawn_Cap_Failed then
-            Akernel_User.Syscalls.Debug_Put_Line
+         elsif Result = Aegir_User.Syscalls.Spawn_Cap_Failed then
+            Aegir_User.Syscalls.Debug_Put_Line
               ("program spawn failed: cap table/grant error");
-         elsif Result = Akernel_User.Syscalls.Spawn_Load_Failed then
-            Akernel_User.Syscalls.Debug_Put_Line
+         elsif Result = Aegir_User.Syscalls.Spawn_Load_Failed then
+            Aegir_User.Syscalls.Debug_Put_Line
               ("program spawn failed: ELF load/map error");
-         elsif Result = Akernel_User.Syscalls.Spawn_Invalid_Program then
-            Akernel_User.Syscalls.Debug_Put_Line
+         elsif Result = Aegir_User.Syscalls.Spawn_Invalid_Program then
+            Aegir_User.Syscalls.Debug_Put_Line
               ("program spawn failed: invalid program image");
          else
-            Akernel_User.Syscalls.Debug_Put_Line ("program spawn failed");
+            Aegir_User.Syscalls.Debug_Put_Line ("program spawn failed");
          end if;
       end if;
    end Parse_Program_Line;
 
    procedure Parse_Manifest is
-      Line_Start : Akernel_User.Syscalls.U64 := 0;
-      Line_End   : Akernel_User.Syscalls.U64;
-      Raw        : Akernel_User.Syscalls.U64;
+      Line_Start : Aegir_User.Syscalls.U64 := 0;
+      Line_End   : Aegir_User.Syscalls.U64;
+      Raw        : Aegir_User.Syscalls.U64;
       C          : Character;
    begin
       while Line_Start < Manifest_Size loop
          Line_End := Line_Start;
          while Line_End < Manifest_Size loop
-            Raw := Akernel_User.Syscalls.Boot_Read_Byte
+            Raw := Aegir_User.Syscalls.Boot_Read_Byte
               (Manifest_Cap, Line_End);
             exit when Raw > 255;
             C := Character'Val (Natural (Raw));
@@ -831,7 +831,7 @@ procedure Init is
 
          Line_Start := Line_End + 1;
          while Line_Start < Manifest_Size loop
-            Raw := Akernel_User.Syscalls.Boot_Read_Byte
+            Raw := Aegir_User.Syscalls.Boot_Read_Byte
               (Manifest_Cap, Line_Start);
             exit when Raw > 255;
             C := Character'Val (Natural (Raw));
@@ -841,45 +841,45 @@ procedure Init is
       end loop;
    end Parse_Manifest;
 begin
-   Akernel_User.Syscalls.Debug_Put_Line ("init online from Ada");
+   Aegir_User.Syscalls.Debug_Put_Line ("init online from Ada");
 
-   Manifest_Cap := Akernel_User.Syscalls.Boot_Cap ("System/Manifest");
+   Manifest_Cap := Aegir_User.Syscalls.Boot_Cap ("System/Manifest");
 
    if Manifest_Cap = 0 then
-      Akernel_User.Syscalls.Debug_Put_Line
+      Aegir_User.Syscalls.Debug_Put_Line
         ("init fatal: bootinfo has no manifest cap");
       loop
-         Akernel_User.Syscalls.Yield;
+         Aegir_User.Syscalls.Yield;
       end loop;
    end if;
 
-   Manifest_Size := Akernel_User.Syscalls.Boot_File_Size (Manifest_Cap);
-   if Manifest_Size = Akernel_User.Syscalls.Syscall_Failed then
-      Akernel_User.Syscalls.Debug_Put_Line
+   Manifest_Size := Aegir_User.Syscalls.Boot_File_Size (Manifest_Cap);
+   if Manifest_Size = Aegir_User.Syscalls.Syscall_Failed then
+      Aegir_User.Syscalls.Debug_Put_Line
         ("init fatal: boot manifest unavailable");
       loop
-         Akernel_User.Syscalls.Yield;
+         Aegir_User.Syscalls.Yield;
       end loop;
    end if;
 
-   Akernel_User.Syscalls.Debug_Put_Line ("boot manifest visible");
-   Akernel_User.Syscalls.Debug_Put_Line ("launching manifest programs");
+   Aegir_User.Syscalls.Debug_Put_Line ("boot manifest visible");
+   Aegir_User.Syscalls.Debug_Put_Line ("launching manifest programs");
 
-   IPC_Test_EP := Akernel_User.Syscalls.EP_Create;
-   Console_EP := Akernel_User.Syscalls.EP_Create;
-   FS_EP := Akernel_User.Syscalls.EP_Create;
-   if Akernel_User.Syscalls.EP_Set_Stamp_Identity (FS_EP, True) /= 0 then
-      Akernel_User.Syscalls.Debug_Put_Line
+   IPC_Test_EP := Aegir_User.Syscalls.EP_Create;
+   Console_EP := Aegir_User.Syscalls.EP_Create;
+   FS_EP := Aegir_User.Syscalls.EP_Create;
+   if Aegir_User.Syscalls.EP_Set_Stamp_Identity (FS_EP, True) /= 0 then
+      Aegir_User.Syscalls.Debug_Put_Line
         ("init: FS endpoint identity stamp failed");
    end if;
-   FAT32_EP := Akernel_User.Syscalls.EP_Create;
-   BFS_EP := Akernel_User.Syscalls.EP_Create;
-   PARTMGR_EP := Akernel_User.Syscalls.EP_Create;
-    PROCFS_EP := Akernel_User.Syscalls.EP_Create;
-    LIBMAN_EP := Akernel_User.Syscalls.EP_Create;
-    NETSRV_EP := Akernel_User.Syscalls.EP_Create;
+   FAT32_EP := Aegir_User.Syscalls.EP_Create;
+   BFS_EP := Aegir_User.Syscalls.EP_Create;
+   PARTMGR_EP := Aegir_User.Syscalls.EP_Create;
+    PROCFS_EP := Aegir_User.Syscalls.EP_Create;
+    LIBMAN_EP := Aegir_User.Syscalls.EP_Create;
+    NETSRV_EP := Aegir_User.Syscalls.EP_Create;
    Device_Manager.Net_Client_EP := NETSRV_EP;
-   Device_Manager.Elevated_EP := Akernel_User.Syscalls.EP_Create;
+   Device_Manager.Elevated_EP := Aegir_User.Syscalls.EP_Create;
 
    Device_Manager.Libman_EP := LIBMAN_EP;
 
@@ -915,19 +915,19 @@ begin
    --  Display stack launches from the Sys filesystem now that
    --  the FS chain is online (milestone 29): bind the fs client
    --  and let the devmgr run Sys:System/Startup.
-   Akernel_User.Files.Bind (FS_EP);
+   Aegir_User.Files.Bind (FS_EP);
    Device_Manager.Start_Elevated;
    Device_Manager.Start_Display;
 
-   Akernel_User.Syscalls.Yield;
-   Akernel_User.Syscalls.Debug_Put_Line ("init resumed");
+   Aegir_User.Syscalls.Yield;
+   Aegir_User.Syscalls.Debug_Put_Line ("init resumed");
 
    if Spawned_Count = 0 then
-      Akernel_User.Syscalls.Debug_Put_Line
+      Aegir_User.Syscalls.Debug_Put_Line
         ("init fatal: no manifest programs spawned");
    end if;
 
    loop
-      Akernel_User.Syscalls.Yield;
+      Aegir_User.Syscalls.Yield;
    end loop;
 end Init;

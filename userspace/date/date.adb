@@ -1,7 +1,7 @@
 with Ada.Calendar;
 with Ada.Calendar.Formatting;
-with Akernel_User.CLI;
-with Akernel_User.Console;
+with Aegir_User.CLI;
+with Aegir_User.Console;
 
 --  Date: print the wall clock (milestone 59; the Amiga C:Date
 --  analog, read-only — the goldfish RTC cannot be set, so the
@@ -9,7 +9,7 @@ with Akernel_User.Console;
 --  "Sat 15-Aug-2026 19:12:33" (4-digit year — 2026, not 26).
 
 procedure Date is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Cal renames Ada.Calendar;
    package CalF renames Ada.Calendar.Formatting;
 
@@ -29,7 +29,7 @@ begin
    CLI.Init;
 
    if CLI.Arg_Count /= 0 then
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("Date: the RTC is read-only; cannot set the clock");
       CLI.Exit_With (CLI.RC_Error);
    end if;
@@ -46,7 +46,7 @@ begin
       H := Natural (Secs) / 3_600;
       M := (Natural (Secs) / 60) mod 60;
       S := Natural (Secs) mod 60;
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         (Days (CalF.Day_Of_Week (Now)) & " "
          & Two (Day) & "-" & Months (Month) & "-" & Four (Year)
          & " " & Two (H) & ":" & Two (M) & ":" & Two (S));

@@ -1,7 +1,7 @@
 --  Trinket menus (milestone 61): declarative menu-tree specs
 --  for the Bureau screen bar. Menus are CHROME — Bureau renders
 --  and operates them (Amiga screen-bar lineage, RMB opens, see
---  akernel_user-window.ads); a client only declares the tree
+--  aegir_user-window.ads); a client only declares the tree
 --  once (Trinket.Window.Set_Menus) and receives item picks as
 --  Id callbacks (Trinket.Window.Set_Menu_Handler). This package
 --  is pure declaration: serialization lives in Trinket.Window.
@@ -69,11 +69,11 @@ package Trinket.Menus is
    function M (Title : String; Items : Item_Array) return Menu_Spec;
 
    --  Serialize the tree into the 4096-byte page at Page using
-   --  the Op_Set_Menus wire layout (akernel_user-window.ads).
+   --  the Op_Set_Menus wire layout (aegir_user-window.ads).
    --  Trinket.Window.Set_Menus is alloc/map/Serialize/mint/call;
    --  raw-protocol clients (terminal, demo) map their own page,
    --  Serialize, mint Map+Read+Transfer and call
-   --  Akernel_User.Window.Surface_Set_Menus themselves.
+   --  Aegir_User.Window.Surface_Set_Menus themselves.
    procedure Serialize (Menus : Menu_Array; Page : System.Address);
 
 end Trinket.Menus;

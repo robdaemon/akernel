@@ -808,7 +808,7 @@ __gnat_rename (char *from, char *to)
   }
 #else
   {
-     /* akernel (milestone 64): this newlib implements _rename_r as
+     /* aegir (milestone 64): this newlib implements _rename_r as
         link()+unlink() and _link is stubbed (FAT has no hardlinks),
         so plain rename(3) can NEVER succeed here.  Call the Gloss
         _rename hook (fs Op_Rename) directly.  */
@@ -1324,15 +1324,15 @@ __gnat_tmp_name (char *tmp_filename)
 
 #ifdef AKERNEL_NO_DIRENT
 /* 53c: newlib has no <dirent.h>; directories are the fs Op_ReadDir
-   by-index walk in Akernel_User.Gloss. DIR* is the gloss slot + 1. */
-extern int akernel_opendir (const char *name);
-extern int akernel_readdir (int slot, char *buf, int bufsz);
-extern int akernel_closedir (int slot);
+   by-index walk in Aegir_User.Gloss. DIR* is the gloss slot + 1. */
+extern int aegir_opendir (const char *name);
+extern int aegir_readdir (int slot, char *buf, int bufsz);
+extern int aegir_closedir (int slot);
 /* Keep in sync with s-oscons SIZEOF_struct_dirent_alloc. */
 #define AKERNEL_DIRENT_BUFSZ 280
 DIR* __gnat_opendir (char *name)
 {
-   int slot = akernel_opendir (name);
+   int slot = aegir_opendir (name);
    return slot < 0 ? (DIR*) 0 : (DIR*) (long) (slot + 1);
 }
 #else
@@ -1364,7 +1364,7 @@ DIR* __gnat_opendir (char *name)
 char *
 __gnat_readdir (DIR *dirp, char *buffer, int *len)
 {
-   int n = akernel_readdir ((int) (long) dirp - 1, buffer,
+   int n = aegir_readdir ((int) (long) dirp - 1, buffer,
                             AKERNEL_DIRENT_BUFSZ);
    if (n < 0)
      return (char*) 0;
@@ -1420,7 +1420,7 @@ __gnat_readdir (DIR *dirp, char *buffer, int *len)
 #ifdef AKERNEL_NO_DIRENT
 int __gnat_closedir (DIR *dirp)
 {
-   return akernel_closedir ((int) (long) dirp - 1);
+   return aegir_closedir ((int) (long) dirp - 1);
 }
 #else
 int __gnat_closedir (DIR *dirp)
@@ -1852,7 +1852,7 @@ int
 __gnat_is_absolute_path (char *name, int length)
 {
 #if defined (AKERNEL_NO_DIRENT)
-  /* 53c: akernel paths are Amiga-shaped — a ':' before any '/' is
+  /* 53c: aegir paths are Amiga-shaped — a ':' before any '/' is
      the volume label and makes the path absolute ("BD0:System"). */
   int index;
 

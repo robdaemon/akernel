@@ -1,5 +1,5 @@
-name = "akernel_partmgr"
-description = "akernel FAT32 filesystem driver (read-only)"
+name = "aegir_partmgr"
+description = "aegir FAT32 filesystem driver (read-only)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

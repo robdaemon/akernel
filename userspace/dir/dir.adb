@@ -1,8 +1,8 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Text_IO;
-with Akernel_User.CLI;
-with Akernel_User.Glob;
+with Aegir_User.CLI;
+with Aegir_User.Glob;
 
 --  Dir: list a directory (milestone 32; the Amiga C:Dir analog —
 --  lives in Sys:C/Dir). No argument lists the CURRENT DIRECTORY
@@ -10,7 +10,7 @@ with Akernel_User.Glob;
 --  directory, resolved against the cwd. Directories print with
 --  a "(dir)" tag; files with their byte size.
 --
---  Milestone 85c: a wildcard pattern (Akernel_User.Glob syntax)
+--  Milestone 85c: a wildcard pattern (Aegir_User.Glob syntax)
 --  filters by name: "Dir #?.info", "Dir BD0:(a|b).txt". The
 --  pattern is the tail after the last ':' or '/' (no separator:
 --  the whole argument, listed from the cwd); a matchless pattern
@@ -19,14 +19,14 @@ with Akernel_User.Glob;
 --  SUBDIR's contents).
 --
 --  Milestone 54: standard library — Ada.Directories.Start_Search
---  walks the directory (adaint -> gloss akernel_opendir/readdir
+--  walks the directory (adaint -> gloss aegir_opendir/readdir
 --  -> fs Op_ReadDir); the walk raises Name_Error/Use_Error on an
 --  unreadable directory, which maps to the old "can't open".
 --  An empty directory keeps the historical quirk of reporting
 --  failure (zero entries == can't open, milestone 32 semantics).
 
 procedure Dir is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package Dirs renames Ada.Directories;
    use type Dirs.File_Kind;
 begin
@@ -51,7 +51,7 @@ begin
       declare
          Has_Pat : constant Boolean :=
            Arg'Length > 0
-           and then Akernel_User.Glob.Is_Pattern
+           and then Aegir_User.Glob.Is_Pattern
              (Arg (Sep + 1 .. Arg'Last));
          Path : constant String :=
            (if Arg'Length = 0 or else (Has_Pat and Sep = 0)
@@ -66,7 +66,7 @@ begin
          while Dirs.More_Entries (Search) loop
             Dirs.Get_Next_Entry (Search, Ent);
             if Has_Pat
-              and then not Akernel_User.Glob.Match
+              and then not Aegir_User.Glob.Match
                 (Pattern, Dirs.Simple_Name (Ent))
             then
                null;  --  filtered out

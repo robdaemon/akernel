@@ -3,7 +3,7 @@ library manager. Added `userspace/libman` (`System/Libman`),
 a system-wide registry that loads each library once, enforces
 an Amiga-style `Min_Version` floor, mints per-client service
 caps, and expunges the server when the open count reaches zero.
-`Akernel_User.Libs` gained `Bind(Libman_Cap)` so programs opt
+`Aegir_User.Libs` gained `Bind(Libman_Cap)` so programs opt
 into the manager; `Open_Library` falls back to a private spawn
 when no manager is bound. `Libserv` now advertises `Version`/
 `Revision` in the rendezvous reply (words 0/1). The fuzz
@@ -365,7 +365,7 @@ cluster/size/attr-preserving dirent rewrite with
 ".." fixup) and Op_Volume_Info (BPB geometry +
 FSInfo free count), then Sys:C/Copy, Delete,
 Rename, Makedir, Info on make new-crate +
-Akernel_User.CLI. Burns: console-printing child
+Aegir_User.CLI. Burns: console-printing child
 outruns a bare yield-per-try reap poll under
 SMP4 AGAIN (batch yields per try; never pass an
 RC check on the initialized 0); IPC.md's op list
@@ -373,10 +373,10 @@ goes stale silently — new ops land there in the
 same commit. 332 PASS SMP1+SMP4, failures=0,
 fsck clean. Before that: MILESTONE 40 COMPLETE (4570ceb,
 86b80a5, 64b4996) — the userspace RTS. RTS sources are
-a static library (akernel_rts.gpr -> libakernel_user.a,
+a static library (aegir_rts.gpr -> libaegir_user.a,
 built once) + abstract base project
-(akernel_program.gpr); program crates are ~10 lines.
-Akernel_User.CLI is the command layer: args tokens,
+(aegir_program.gpr); program crates are ~10 lines.
+Aegir_User.CLI is the command layer: args tokens,
 ENV: variables, Amiga RC convention 0/5/10/20 made
 REAL by the exit-code channel (exit a0 -> PCB -> reap
 a1; Reap_Process_Code). make new-crate NAME=x DEST=c|
@@ -783,12 +783,12 @@ virt,iommu-sys=on and virtio-pci devices.
 Done this session:
 
 - Added `.tdata`/`.tbss`/`.tls_copy` sections to
-  `userspace/rts/akernel/linker-riscv64.ld`.
+  `userspace/rts/aegir/linker-riscv64.ld`.
 - `start-riscv64.s` now copies the TLS template and zeros `.tbss`;
   secondary threads arrive with `tp` already set by the kernel.
 - Added `userspace/thread_test/` crate and wired it into
   `INITRD_CRATES`/test manifest.
-- Added `akernel_thread_entry` runtime trampoline so secondary
+- Added `aegir_thread_entry` runtime trampoline so secondary
   threads get `gp` before calling the Ada worker.
 - Fixed `Thread_Create` to map the new thread's kernel stack into the
   process address space (missing mapping was causing a kernel page
@@ -800,7 +800,7 @@ Done this session:
   (the real function address) from being overwritten with `0`.
 - `thread_test` itself now passes: worker runs, sets `Worker_Done`,
   exits, and the main thread wakes and prints `PASS thread_test`.
-- Added `Akernel_User.IPC.Send` (one-way Send) to the runtime IPC
+- Added `Aegir_User.IPC.Send` (one-way Send) to the runtime IPC
   wrapper.
 - Fixed a stale `Waiting_Receiver` bug in `Kernel.IPC.Call`/`Send`:
   when the registered receiver is not actually blocked in `Receive`
@@ -874,7 +874,7 @@ Other fixes applied:
 - [x] Waiter cleanup on process exit (`Mark_Exited` removes each
   dying thread from any target's list and wakes any waiters of
   the dying threads).
-- [x] `Akernel_User.Syscalls.Thread_Wait` wrapper and raw asm.
+- [x] `Aegir_User.Syscalls.Thread_Wait` wrapper and raw asm.
 - [x] `userspace/thread_test/thread_test.adb` now also exercises
   `Thread_Wait` on the worker cap.
 - [x] Fuzz skip list updated for syscall 40.
@@ -885,11 +885,11 @@ Other fixes applied:
 - [x] Vendored the `light-tasking-polarfiresoc` GNARL sources into
   `userspace/gnat-rts/gnarl_user/` as the starting point.
 - [x] Wrote a minimal `System.OS_Interface` (`gnarl_user/s-osinte.adb`)
-  that sits directly on Akernel syscalls instead of `System.BB`.
+  that sits directly on Aegir syscalls instead of `System.BB`.
 - [x] Wrote a minimal `System.Task_Primitives.Operations`
   (`gnarl_user/s-taprop.adb`) that creates threads, delays, and
-  exits via the Akernel syscall layer.
-- [x] Provided an Akernel-specific `System.Multiprocessors` that does
+  exits via the Aegir syscall layer.
+- [x] Provided an Aegir-specific `System.Multiprocessors` that does
   not depend on `System.BB`.
 - [x] Added the missing fields to `System.Tasking` records
   (`Global_Task_Lock_Nesting` in `Common_ATCB`, `Current_Excep` in
@@ -899,7 +899,7 @@ Other fixes applied:
   runtime build.
 - [x] Added `pragma Profile (Jorvik)` to the tasking `system.ads`
   so the compiler emits Ravenscar tasking calls.
-- [x] Merged the tasking runtime into the single Akernel GNAT
+- [x] Merged the tasking runtime into the single Aegir GNAT
   runtime: `userspace/gnat-rts/runtime_build.gpr` now uses
   `gnarl_user/` before `gnat_user/` and excludes the
   non-tasking units, and the separate tasking-only project and
@@ -939,7 +939,7 @@ Other fixes applied:
   Makefile moves the GNARL objects (`s-taprop`, `s-taskin`,
   `s-osinte`, `a-reatim`, etc.) into `libgnarl.a` and deletes them
   from `libgnat.a`.
-- [x] Dropped `Asm` from `userspace/rts/akernel_program.gpr`'s
+- [x] Dropped `Asm` from `userspace/rts/aegir_program.gpr`'s
   base language list and added a per-crate `Asm` override in
   `userspace/fuzz/fuzz.gpr` so only crates with assembly sources
   compile `Asm` (eliminates the "no sources of language Asm" warnings).
@@ -956,7 +956,7 @@ Other fixes applied:
   `Kernel.Notifications.Slot_Of`.
 - [x] Fixed every userspace Ada warning diagnostic:
   lower-bound assumptions on string slices, the uninitialized
-  aggregate in `Akernel_User.Gloss.Fill_Stat`, and the incorrect
+  aggregate in `Aegir_User.Gloss.Fill_Stat`, and the incorrect
   `pragma Unreferenced (PX)` in `Trinket.Widgets`.
 - [x] Full `make clean && rm -rf userspace/gnat-rts/adalib
   userspace/gnat-rts/obj && make all` now builds the whole system
@@ -1239,7 +1239,7 @@ Other fixes applied:
 - [x] ICMP ping sockets (SOCK_DGRAM/IPPROTO_ICMP): netserv owns
   type/code/ident/checksum and the IP header; ident = socket id
   makes reply matching trivial; hairpin fabricates the reply.
-- [x] `Akernel_User.Sockets` (Socket/Bind/Connect/Send_To/
+- [x] `Aegir_User.Sockets` (Socket/Bind/Connect/Send_To/
   Recv_From/Poll/Close/Parse_IP/Ip_Image): client VA window
   16#4A00_0000# (16#4600# is the link base, 16#4800# the args
   page); waits poll the rings in 5 ms Sleep_Until slices.
@@ -1281,7 +1281,7 @@ Layering:
 
 ```
 Sys:C/Ping, user programs
-  |  Akernel_User.Sockets  (client lib in rts/akernel)
+  |  Aegir_User.Sockets  (client lib in rts/aegir)
   v  NETSRV_EP: socket ops as message labels; minted per-socket caps
   |  (badge = socket id, partmgr pattern); shared rings + client ntfn
 System/Netserv  — Ethernet demux, ARP, IPv4, ICMP, UDP, Net: volume
@@ -1330,7 +1330,7 @@ Chunks:
   internally — self-contained test). ICMP ping sockets =
   SOCK_DGRAM/IPPROTO_ICMP (Linux ping-socket semantics: netserv owns
   the IP header, assigns ident per socket, matches echo replies).
-  `Akernel_User.Sockets` client lib (Socket/Bind/Connect/Send_To/
+  `Aegir_User.Sockets` client lib (Socket/Bind/Connect/Send_To/
   Recv_From with ntfn+Sleep_Until timeout/Close/Poll). `Sys:C/Ping`:
   `ping [-c N] <ipv4>`, numeric only, Amiga RC 0/5/10. `Net:` volume
   (procfs-clone): status/address/gateway/dns/arp readable, writable
@@ -1346,7 +1346,7 @@ needs a C-library integration path anyway (freetype is the next
 candidate), so M72 doubles as its vanguard. Verified
 2026-08-26: `alr exec -- riscv64-elf-gcc` 15.3.0 compiles+links
 newlib code; the only stubs the link needs are exactly what
-Akernel_User.Gloss (m53b) already exports; runtime_build.gpr is the
+Aegir_User.Gloss (m53b) already exports; runtime_build.gpr is the
 `Languages ("Ada", "C")` precedent with `-Wno-error` per-file hatches.
 
 **Vendor policy (user-locked): no vendored code in git.** `third_party/`
@@ -1364,7 +1364,7 @@ byte-identical** (ring pairs, ops 20–25, badges, Net: files).
 - Port: `lwipopts.h` (NO_SYS=1, MEM_LIBC_MALLOC=1 — lwIP allocs ride
   newlib malloc → gloss _sbrk arena; LWIP_IPV6=0 — lwIP is dual-stack
   capable, our ring ABI is u32-addressed, revisit far later), `cc.h`,
-  minimal `sys_arch` (sys_now off Read_Time), `akernel_netif.c`
+  minimal `sys_arch` (sys_now off Read_Time), `aegir_netif.c`
   (linkoutput → virtio TX ring; RX → ethernet_input; **frame-level
   hairpin**: dst MAC == ours → feed frame back into ethernet_input,
   one loopback mechanism for UDP/ICMP/TCP).
@@ -1409,7 +1409,7 @@ C-only library (`-Wno-error`; port files in `userspace/lwip/port/`
 get `-Werror`): lwipopts.h (NO_SYS, MEM_LIBC_MALLOC → gloss _sbrk
 arena, TCP_MSS/WND 996/3984), arch/cc.h (newlib stdio diagnostics;
 SSIZE_MAX shim so arch.h takes unistd.h's ssize_t), arch/perf.h,
-sys_arch.c (sys_now = akernel_rdtime/10^4). netserv links it and
+sys_arch.c (sys_now = aegir_rdtime/10^4). netserv links it and
 calls lwip_init at bring-up ("netserv lwip 2.2.1 init ok").
 
 **Found while gating: the fs<->netserv bring-up deadlock (latent
@@ -1560,8 +1560,8 @@ SMP4 4m16s, 0 FAIL everywhere.
 including from a secondary Jorvik task.
 - Vendored 17 libgnat socket units into `gnat_user/`; g-socthi
   adapted, g-stseme.adb rewritten onto newlib `strerror`.
-- `akernel_gsocket.c` ports gsocket.c's `__gnat_*` helpers onto
-  `Akernel_User.Sockets` IPC. Notable port semantics: BSD auto-bind
+- `aegir_gsocket.c` ports gsocket.c's `__gnat_*` helpers onto
+  `Aegir_User.Sockets` IPC. Notable port semantics: BSD auto-bind
   on connect/send for unbound sockets (accepted sockets inherit the
   listener's local address); `gethostbyaddr` resolves numerically
   (dotted name via inet_ntop) because GNAT maps
@@ -1569,11 +1569,11 @@ including from a secondary Jorvik task.
   ephemeral port first (netserv requires Bound for UDP send).
 - **Clock-domain trap:** syscall 34 (`read_clock`) is the WALL clock
   (RTC s/ns); sleep deadlines live in the 10 MHz `time` CSR domain.
-  The port reads ticks via `akernel_rdtime` (U-mode `csrr time`).
+  The port reads ticks via `aegir_rdtime` (U-mode `csrr time`).
   Mixing them silently produces ~50 s sleeps / immediate wakeups.
 - **Per-thread IPC buffer:** secondary threads get their own IPC page
   (s-osinte `Next_IPC_VA`); the kernel reads the message from the
-  *calling* thread's page, but `Akernel_User.Syscalls.Message` was
+  *calling* thread's page, but `Aegir_User.Syscalls.Message` was
   fixed at the initial thread's VA — task IPC sent an empty page.
   Fix: new syscall 43 `Sys_Thread_IPC_VA`; `Syscalls.Message` is now
   an access-returning function (implicit dereference keeps every
@@ -1585,7 +1585,7 @@ including from a secondary Jorvik task.
   address read, numeric gethostbyname/getaddrinfo/gethostbyaddr, UDP
   round trip + auto-bind, selector expire/readable/abort, TCP
   listen/connect/accept/echo/EOF, and a deterministic DNS hairpin —
-  a Jorvik task answers an A-record query for "test.akernel" through
+  a Jorvik task answers an A-record query for "test.aegir" through
   the netserv loopback path.
 - `s-oscons.ads` gained the full newlib errno block.
 Gates: SMP1 1471P/0F, SMP4 1471P/0F, zero-warning build.
@@ -1723,12 +1723,12 @@ ABA closed; the libman manager path works for the first time.
   Endpoint_Gone exit could never fire (the server's own cap keeps
   the count above zero; the "last client closed" comment was
   aspirational since M58).
-- Regression hook: `Akernel_User.Libs.Opened_Via_Libman` + fuzz
+- Regression hook: `Aegir_User.Libs.Opened_Via_Libman` + fuzz
   verdict `libs open delivered via libman reply cap` proves the
   reply cap delivers and the shared cache (not a private spawn)
   serves the open.
 - Gates: zero-warning serial build (NOTE: parallel `make -jN`
-  corrupts libakernel_user.a — every crate's gprbuild builds the
+  corrupts libaegir_user.a — every crate's gprbuild builds the
   same library project concurrently and gprlib crashes; build
   serially); SMP1 1475-1476P/0F x2, SMP4 1474-1475P/0F x2.
 
@@ -1746,8 +1746,8 @@ plumbing). Cache hits answer inline (`ERR_OK` fills the address
 WITHOUT calling back — verified in dns_gethostbyname_addrtype).
 `Net:dns` writes (and the boot config) now `dns_setserver` for
 real; lwIP's OpenDNS default is unreachable behind slirp.
-Client side: `Akernel_User.Sockets.Resolve` (+ `aknet_sock_resolve`
-C export); akernel_gsocket.c's m73 hand-rolled resolver (fixed
+Client side: `Aegir_User.Sockets.Resolve` (+ `aknet_sock_resolve`
+C export); aegir_gsocket.c's m73 hand-rolled resolver (fixed
 txid 0x4D37, one ephemeral UDP socket per lookup, client-side
 answer parser, ~160 lines) deleted — `__gnat_gethostbyname`/
 `__gnat_getaddrinfo` keep their numeric short-circuits; a failed
@@ -1808,7 +1808,7 @@ on bound in the glue (lwIP enters RENEWING unconditionally).
 
 - **M73 — GNAT.Sockets (done).** Vendor g-socket/g-socthi/g-soccon/g-stsifd
   from gcc-15.3.1 libgnat into gnat_user/, port gsocket.c's __gnat_*
-  helpers as akernel_gsocket.c over Akernel_User.Sockets, extend
+  helpers as aegir_gsocket.c over Aegir_User.Sockets, extend
   hand-written s-oscons.ads with AF_INET/SOCK_*/SOL_*/MSG_* (AKERNEL
   values, no host ABI). getaddrinfo numeric-only + slirp DNS helper.
 

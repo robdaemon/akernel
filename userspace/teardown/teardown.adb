@@ -1,5 +1,5 @@
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
 
 --  Endpoint-teardown test peer for the fuzzer (milestone 34):
 --  receiver death must fail the callers parked on its endpoint
@@ -52,7 +52,7 @@ with Akernel_User.Files;
 --  must sit at grant index 3 = handle 4, see
 --  Syscalls.Args_Handle), 4 = args page.
 procedure Teardown is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
 
    Service_EP : constant U64 := 1;
@@ -156,8 +156,8 @@ begin
          Cnt : U64;
          W2  : U64 := 0;
       begin
-         Akernel_User.Files.Bind (5);
-         Result := Akernel_User.Files.Read
+         Aegir_User.Files.Bind (5);
+         Result := Aegir_User.Files.Read
            (Arg (3 .. Arg_Ln), 0, Buf'Address, 16, Cnt);
          for I in 1 .. 8 loop
             W2 := W2 * 256 + U64 (Character'Pos (Buf (I)));
@@ -178,8 +178,8 @@ begin
          Buf : constant String := "blocked-write-16";
          Cnt : U64;
       begin
-         Akernel_User.Files.Bind (5);
-         Result := Akernel_User.Files.Write
+         Aegir_User.Files.Bind (5);
+         Result := Aegir_User.Files.Write
            (Arg (3 .. Arg_Ln), 0, Buf'Address, 16, Cnt);
          Message.Label := 16#7D3#;
          Message.Words := (0 => Result, 1 => Cnt, others => 0);

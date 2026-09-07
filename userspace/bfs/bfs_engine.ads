@@ -39,11 +39,11 @@
 --  Status returns mirror the fs wire protocol: 0 ok, 1 not found,
 --  3 bad args, 4 out of range.
 
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 with System;
 
 package Bfs_Engine is
-   subtype U64 is Akernel_User.Syscalls.U64;
+   subtype U64 is Aegir_User.Syscalls.U64;
 
    --  Block service endpoint + bounce buffer cap for block RPCs.
    procedure Init (Blk_EP : U64; Buf_Cap : U64);

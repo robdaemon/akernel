@@ -1,13 +1,13 @@
 with Interfaces;
 with System;
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
-with Akernel_User.Tables;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
+with Aegir_User.Tables;
 with Device_Tree;
 
 package body Device_Manager is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_8;
@@ -37,7 +37,7 @@ package body Device_Manager is
    Driver_Config_Label : constant U64 := U64'Last - 1;
 
    --  Stream-protocol sink registration (shared with the console
-   --  server and Akernel_User.Streams; kept local to avoid the
+   --  server and Aegir_User.Streams; kept local to avoid the
    --  rts dependency here).
    Op_Attach_Sink_Label : constant U64 := 4;
 
@@ -55,15 +55,15 @@ package body Device_Manager is
       Vid        : U32 := 0;
    end record;
 
-   --  m80f: chunk-appended (Akernel_User.Tables); append-only
+   --  m80f: chunk-appended (Aegir_User.Tables); append-only
    --  manifest table, so Last doubles as the old Line_Count.
-   package Line_Tab is new Akernel_User.Tables (Driver_Line);
+   package Line_Tab is new Aegir_User.Tables (Driver_Line);
    function Lines (I : Natural) return Line_Tab.Element_Access
      renames Line_Tab.Ref;
    function Line_Count return Natural is (Line_Tab.Last);
 
    --  m80f: chunk-appended; Last doubles as the old Input_Count.
-   package In_Tab is new Akernel_User.Tables (U64);
+   package In_Tab is new Aegir_User.Tables (U64);
    function Input_Svc (I : Natural) return In_Tab.Element_Access
      renames In_Tab.Ref;
    function Input_Count return Natural is (In_Tab.Last);
@@ -912,8 +912,8 @@ package body Device_Manager is
       St      : U64;
       Result  : U64;
    begin
-      St := Akernel_User.Files.Stat (Full, Size);
-      if St /= Akernel_User.Files.Status_Ok then
+      St := Aegir_User.Files.Stat (Full, Size);
+      if St /= Aegir_User.Files.Status_Ok then
          Log ("devmgr: fs stat failed: " & Path);
          return 0;
       end if;
@@ -930,16 +930,16 @@ package body Device_Manager is
          Result := Cap_Delete (Mem_Cap);
          return 0;
       end if;
-      St := Akernel_User.Files.Open (Full, Size);
-      while St = Akernel_User.Files.Status_Ok and then Off < Size loop
+      St := Aegir_User.Files.Open (Full, Size);
+      while St = Aegir_User.Files.Status_Ok and then Off < Size loop
          Chunk := U64'Min (Size - Off, 32768);
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (Full, Off,
             System.Storage_Elements.To_Address
               (System.Storage_Elements.Integer_Address
                  (Stage_VA + Off)),
             Chunk, Count);
-         if St /= Akernel_User.Files.Status_Ok
+         if St /= Aegir_User.Files.Status_Ok
            or else Count /= Chunk
          then
             exit;
@@ -1041,7 +1041,7 @@ package body Device_Manager is
       --  shared library manager (clipboard) at handle 7.
       Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
       Grant_Count := Grant_Count + 1;             --  child handle 1
-      Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
+      Set_Grant (Grant_Count, Aegir_User.Files.Endpoint,
                  Right_Send, 0);
       Grant_Count := Grant_Count + 1;             --  child handle 2
       Set_Grant (Grant_Count, Bureau_Svc, Right_Send, 0);
@@ -1131,7 +1131,7 @@ package body Device_Manager is
       end if;
       Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
       Grant_Count := Grant_Count + 1;
-      Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
+      Set_Grant (Grant_Count, Aegir_User.Files.Endpoint,
                  Right_Send, 0);
       Grant_Count := Grant_Count + 1;
       Set_Grant (Grant_Count, Elevated_EP, Right_Receive, 0);
@@ -1174,8 +1174,8 @@ package body Device_Manager is
       --  The mount push is a synchronous rendezvous, but tolerate
       --  a scheduling window anyway.
       loop
-         St := Akernel_User.Files.Stat (List, Size);
-         exit when St = Akernel_User.Files.Status_Ok;
+         St := Aegir_User.Files.Stat (List, Size);
+         exit when St = Aegir_User.Files.Status_Ok;
          Tries := Tries + 1;
          if Tries > 200 then
             exit;
@@ -1183,16 +1183,16 @@ package body Device_Manager is
          Yield;
       end loop;
 
-      if St = Akernel_User.Files.Status_Ok
-        and then Akernel_User.Files.Open (List, Size) =
-                  Akernel_User.Files.Status_Ok
+      if St = Aegir_User.Files.Status_Ok
+        and then Aegir_User.Files.Open (List, Size) =
+                  Aegir_User.Files.Status_Ok
       then
          if Size > U64 (Startup_Buf'Length) then
             Size := U64 (Startup_Buf'Length);
          end if;
-         St := Akernel_User.Files.Read
+         St := Aegir_User.Files.Read
            (List, 0, Startup_Buf'Address, Size, Count);
-         if St = Akernel_User.Files.Status_Ok then
+         if St = Aegir_User.Files.Status_Ok then
             Buf_Len := Natural (Count);
          end if;
       end if;

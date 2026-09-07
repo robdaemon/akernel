@@ -212,9 +212,9 @@ package body System.Tasking.Restricted.Stages is
       Next_C  : Task_Id;
       Success : Boolean;
 
-      --  Akernel: the vendored body restored Base_Priority after the
+      --  Aegir: the vendored body restored Base_Priority after the
       --  activation boost, which assumes the environment task was
-      --  already running at Base_Priority. On Akernel threads spawn
+      --  already running at Base_Priority. On Aegir threads spawn
       --  at kernel priority 0 while Base_Priority is 124, so that
       --  "restore" permanently raised the caller's kernel priority
       --  (fuzz's "priority self set from default 0" caught it).

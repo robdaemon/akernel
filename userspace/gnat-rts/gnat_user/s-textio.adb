@@ -26,7 +26,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Akernel body (milestone 53a): the pool ships the PolarFire MMIO-UART
+--  Aegir body (milestone 53a): the pool ships the PolarFire MMIO-UART
 --  body, but a userspace process has no UART — runtime diagnostics
 --  (System.IO, the last-chance handler's exception dump) ride the
 --  kernel debug-putchar syscall, which needs no IPC and works in any
@@ -36,7 +36,7 @@ package body System.Text_IO is
 
    procedure Debug_Putchar (C : Character)
      with Import, Convention => C,
-          External_Name => "akernel_sys_debug_putchar";
+          External_Name => "aegir_sys_debug_putchar";
 
    ----------------
    -- Initialize --

@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Copy: duplicate a file (milestone 41; the Amiga C:Copy
 --  analog). "Copy <from> <to>"; an existing destination is
@@ -13,7 +13,7 @@ with Akernel_User.CLI;
 --  the 12-page process stack clear), args from Ada.Command_Line.
 
 procedure Copy is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package SIO renames Ada.Streams.Stream_IO;
    use type Ada.Streams.Stream_Element_Offset;
 

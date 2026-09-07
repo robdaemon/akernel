@@ -1,5 +1,5 @@
-name = "akernel_wait"
-description = "akernel wait"
+name = "aegir_wait"
+description = "aegir wait"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

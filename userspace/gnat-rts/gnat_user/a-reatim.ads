@@ -26,7 +26,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Akernel version (milestone 53a): the RM interface without the native
+--  Aegir version (milestone 53a): the RM interface without the native
 --  spec's tasking with (System.Task_Primitives.Operations). Clock reads
 --  the riscv time CSR directly (U-mode allowed via scounteren, kernel
 --  milestone-53a init); qemu virt timebase is 10 MHz, so a tick is 100 ns.

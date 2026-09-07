@@ -1,5 +1,5 @@
-name = "akernel_edit"
-description = "akernel text editor (Trinket Text_Edit)"
+name = "aegir_edit"
+description = "aegir text editor (Trinket Text_Edit)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

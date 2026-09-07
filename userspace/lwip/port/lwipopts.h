@@ -1,4 +1,4 @@
-/*  Milestone 72a: lwIP build options for akernel's netserv.
+/*  Milestone 72a: lwIP build options for aegir's netserv.
  *
  *  NO_SYS raw-API single-threaded configuration: every lwIP entry
  *  point runs on netserv's main loop (frame drain, timer tick or
@@ -28,7 +28,7 @@
 #define LWIP_NETCONN                    0
 #define LWIP_SOCKET                     0
 
-/*  Memory: libc malloc/free via Akernel_User.Gloss's _sbrk arena. */
+/*  Memory: libc malloc/free via Aegir_User.Gloss's _sbrk arena. */
 #define MEM_LIBC_MALLOC                 1
 #define MEMP_MEM_MALLOC                 1
 #define MEM_ALIGNMENT                   8

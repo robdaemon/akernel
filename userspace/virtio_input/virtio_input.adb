@@ -2,10 +2,10 @@ with System;
 with System.Storage_Elements;
 with Interfaces;
 with Ada.Streams;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
 with Virtio;
 with Virtio.PCI;
 with Virtio.Queues;
@@ -39,7 +39,7 @@ with Virtio.Queues;
 --  lands; until then the serial log is their home.
 
 procedure Virtio_Input is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
    use type Virtio.U8;
    use type Virtio.U16;
@@ -144,7 +144,7 @@ procedure Virtio_Input is
    Key_Rightalt   : constant := 100;
 
    --  Seat modifier encoding (shared with Bureau; see the Op_Key
-   --  contract in akernel_user-window.ads): message word 1 carries
+   --  contract in aegir_user-window.ads): message word 1 carries
    --  the qualifiers held at keypress. Shift is deliberately NOT
    --  in this mask: it is folded into the character case by the
    --  keymaps, so a shortcut's letter is matched on its shifted or
@@ -231,20 +231,20 @@ procedure Virtio_Input is
    --  server's input FIFO)
    ------------------------------------------------------------------
 
-   package RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
+   package RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
 
    procedure Send_Input_Char (Ch : Character) is
-      Req  : Akernel_User.Streams.Stream_Request;
-      Resp : Akernel_User.Streams.Stream_Response;
+      Req  : Aegir_User.Streams.Stream_Request;
+      Resp : Aegir_User.Streams.Stream_Response;
       Rlbl : U64;
       Res  : U64;
    begin
       Req.Count := 1;
       Req.Data := (others => 0);
       Req.Data (1) := Ada.Streams.Stream_Element (Character'Pos (Ch));
-      Res := RPC.Call (Console_EP, Akernel_User.Streams.Op_Input,
+      Res := RPC.Call (Console_EP, Aegir_User.Streams.Op_Input,
                        Req, RPC.No_Caps, Rlbl, Resp);
       if Res /= 0 then
          Debug_Put_Line ("virtio-input console delivery failed");
@@ -336,7 +336,7 @@ procedure Virtio_Input is
 
    procedure Fail (S : String) is
    begin
-      Akernel_User.Console.Put_Line ("FAIL " & S);
+      Aegir_User.Console.Put_Line ("FAIL " & S);
       Process_Exit;
    end Fail;
 
@@ -542,7 +542,7 @@ procedure Virtio_Input is
    end Handle_Event;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_EP);
+   Aegir_User.Console.Set_Endpoint (Console_EP);
 
    Map_Region (Common_Cap, Common_VA, "common");
    Map_Region (Notify_Cap, Notify_VA, "notify");
@@ -561,7 +561,7 @@ begin
    if Message.Words (3) /= 0 and then Message.Caps (0) /= 0 then
       IRQ_Cap := Message.Caps (0);
       Dev.Enable_MSIX (0);
-      Akernel_User.Console.Put_Line ("PASS virtio-input msix enabled");
+      Aegir_User.Console.Put_Line ("PASS virtio-input msix enabled");
    end if;
 
    Message.Words := (others => 0);
@@ -608,7 +608,7 @@ begin
       then
          Fail ("virtio-input keyboard keymap bits missing");
       end if;
-      Akernel_User.Console.Put_Line ("PASS virtio-input keyboard config ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-input keyboard config ok");
    elsif Is_Pointer then
       if Ident_Has ("Tablet") then
          if Cfg_Read (Sel_Ev_Bits, Virtio.U8 (Ev_Abs), Ident, 16) = 0
@@ -628,7 +628,7 @@ begin
             Fail ("virtio-input mouse rel bits missing");
          end if;
       end if;
-      Akernel_User.Console.Put_Line ("PASS virtio-input pointer config ok");
+      Aegir_User.Console.Put_Line ("PASS virtio-input pointer config ok");
    else
       Fail ("virtio-input unknown device role");
    end if;
@@ -693,7 +693,7 @@ begin
 
    Dev.Add_Status (Virtio.Status_Driver_Ok);
 
-   Akernel_User.Console.Put_Line ("virtio-input service online");
+   Aegir_User.Console.Put_Line ("virtio-input service online");
 
    ------------------------------------------------------------------
    --  IRQ-driven event loop

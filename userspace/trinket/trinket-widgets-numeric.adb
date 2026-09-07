@@ -1,6 +1,6 @@
 with Trinket.Paint;
 with Trinket.Fonts;
-with Akernel_User.Theme;
+with Aegir_User.Theme;
 
 package body Trinket.Widgets.Numeric is
    use type Trinket.U64;
@@ -97,7 +97,7 @@ package body Trinket.Widgets.Numeric is
          Paint.Fill_Rect
            (C, GX, Y0, W.X + W.W, Y1,
             (if W.Hover_Arr = A and then W.Arrow_Dn = 0
-             then Akernel_User.Theme.Face_Hi else Face));
+             then Aegir_User.Theme.Face_Hi else Face));
          Paint.Bevel2 (C, GX, Y0, W.X + W.W, Y1,
                       Raised => W.Arrow_Dn /= A);
          for I in U64'(0) .. 3 loop

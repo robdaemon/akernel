@@ -1,5 +1,5 @@
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
 with Interfaces;
 with System.Storage_Elements;
 
@@ -29,7 +29,7 @@ with System.Storage_Elements;
 --  service EP.
 
 procedure Partmgr is
-   package Syscalls renames Akernel_User.Syscalls;
+   package Syscalls renames Aegir_User.Syscalls;
    subtype U64 is Syscalls.U64;
    use type U64;
    use type Interfaces.Unsigned_8;
@@ -72,7 +72,7 @@ procedure Partmgr is
 
    procedure Fail (Msg : String) is
    begin
-      Akernel_User.Console.Put_Line (Msg);
+      Aegir_User.Console.Put_Line (Msg);
       Syscalls.Process_Exit;
    end Fail;
 
@@ -144,7 +144,7 @@ procedure Partmgr is
             Ent := Ent + 1;
          end loop;
 
-         Akernel_User.Console.Put_Line ("partmgr gpt online");
+         Aegir_User.Console.Put_Line ("partmgr gpt online");
       else
          --  No GPT: try the MBR (0x55AA signature, up to 4
          --  primary entries), else whole device as slot 0
@@ -165,11 +165,11 @@ procedure Partmgr is
                   Slot := Slot + 1;
                end if;
             end loop;
-            Akernel_User.Console.Put_Line ("partmgr mbr online");
+            Aegir_User.Console.Put_Line ("partmgr mbr online");
          else
             First_LBA (0) := 0;
             Part_Size (0) := Capacity;
-            Akernel_User.Console.Put_Line ("partmgr raw online");
+            Aegir_User.Console.Put_Line ("partmgr raw online");
          end if;
 
          if Slot = 0 then
@@ -192,8 +192,8 @@ procedure Partmgr is
    end Reply2;
 
 begin
-   Akernel_User.Console.Set_Endpoint (Console_Cap);
-   Akernel_User.Console.Put_Line ("partmgr starting");
+   Aegir_User.Console.Set_Endpoint (Console_Cap);
+   Aegir_User.Console.Put_Line ("partmgr starting");
 
    Blk_Buf_Cap := Syscalls.Mem_Alloc (1);
    if Blk_Buf_Cap = Syscalls.Syscall_Failed
@@ -270,7 +270,7 @@ begin
             --  buffer cap is deleted, never forwarded.
             if Buf /= 0 then
                if Syscalls.Cap_Delete (Buf) /= 0 then
-                  Akernel_User.Console.Put_Line
+                  Aegir_User.Console.Put_Line
                     ("partmgr buffer cap delete failed");
                end if;
             end if;
@@ -302,7 +302,7 @@ begin
 
                if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok then
                   if Syscalls.Cap_Delete (Buf) /= 0 then
-                     Akernel_User.Console.Put_Line
+                     Aegir_User.Console.Put_Line
                        ("partmgr buffer cap delete failed");
                   end if;
                   Reply2 (1, 0);
@@ -311,7 +311,7 @@ begin
                      Status : constant U64 := Syscalls.Message.Words (0);
                   begin
                      if Syscalls.Cap_Delete (Buf) /= 0 then
-                        Akernel_User.Console.Put_Line
+                        Aegir_User.Console.Put_Line
                           ("partmgr buffer cap delete failed");
                      end if;
                      Reply2 (Status, 0);

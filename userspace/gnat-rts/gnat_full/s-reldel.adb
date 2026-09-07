@@ -1,5 +1,5 @@
 ------------------------------------------------------------------------------
---  Akernel vendored System.Relative_Delays (milestone 59): the
+--  Aegir vendored System.Relative_Delays (milestone 59): the
 --  embedded-runtime s-reldel routes through Ada.Real_Time.Delays,
 --  which is tasking (System.Task_Primitives) — unavailable in this
 --  No_Tasking runtime. The non-tasking delay statement path is

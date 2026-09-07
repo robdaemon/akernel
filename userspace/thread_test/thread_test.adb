@@ -2,7 +2,7 @@ with Interfaces;
 with System;
 with System.Machine_Code;
 with System.Storage_Elements;
-with Akernel_User.Syscalls;
+with Aegir_User.Syscalls;
 with Thread_Test_Sync;
 
 procedure Thread_Test is
@@ -11,7 +11,7 @@ procedure Thread_Test is
    use type Interfaces.Unsigned_32;
    use type System.Storage_Elements.Integer_Address;
 
-   package SYS renames Akernel_User.Syscalls;
+   package SYS renames Aegir_User.Syscalls;
 
    Page_Size : constant U64 := 4096;
 

@@ -2,10 +2,10 @@ with Interfaces;
 with System;
 with System.Machine_Code;
 with System.Storage_Elements;
-with Akernel_User.Console;
-with Akernel_User.Syscalls;
-with Akernel_User.Files;
-with Akernel_User.Tables;
+with Aegir_User.Console;
+with Aegir_User.Syscalls;
+with Aegir_User.Files;
+with Aegir_User.Tables;
 
 --  Netserv (milestones 71b/71c/72): the IPv4 network stack server.
 --  Sits between Drivers/VirtioNet (frame protocol: Op_Info /
@@ -94,7 +94,7 @@ with Akernel_User.Tables;
 --  until the resolver answers off the tick or the frame drain.
 --  The query target is DNS_IP (boot config / writable Net:dns,
 --  both programmed via aknet_dns_setserver). This replaces the
---  m73 per-client hand-rolled resolver in akernel_gsocket.c:
+--  m73 per-client hand-rolled resolver in aegir_gsocket.c:
 --  every GNAT.Sockets lookup now shares lwIP's 4-entry cache and
 --  one UDP pcb here instead of opening an ephemeral socket per
  --  query.
@@ -147,9 +147,9 @@ package body Netserv_Engine is
    use type Int;
    use type System.Address;
 
-   package Syscalls renames Akernel_User.Syscalls;
-   package Console renames Akernel_User.Console;
-   package Files renames Akernel_User.Files;
+   package Syscalls renames Aegir_User.Syscalls;
+   package Console renames Aegir_User.Console;
+   package Files renames Aegir_User.Files;
 
     Console_EP : constant U64 := 1;
     FS_Cap     : constant U64 := 2;
@@ -552,7 +552,7 @@ package body Netserv_Engine is
     --  a duplicate marker when a reset follows an orderly FIN.
     --  m73: 8 -> 16; concurrent GNAT.Sockets programs (gsock_test
     --  alongside tcp/udp/net tests) transiently overflowed 8.
-    --  m80e: the table is now an Akernel_User.Tables chunk chain
+    --  m80e: the table is now an Aegir_User.Tables chunk chain
     --  in the shared arena; sock ids are stable chunk indices
     --  (the badge is the id), so the client-visible numbering is
     --  unchanged. Max_Sock_Ids bounds live ring windows (see the
@@ -581,7 +581,7 @@ package body Netserv_Engine is
        Eof_Done      : Boolean := False;
     end record;
 
-   package Sock_Tab is new Akernel_User.Tables (Sock_State);
+   package Sock_Tab is new Aegir_User.Tables (Sock_State);
 
    --  Live ring windows cap concurrent socks at this many ids;
    --  chunk-append keeps id allocation dense below the cap, so
@@ -624,7 +624,7 @@ package body Netserv_Engine is
        Deadline : U64 := 0;
     end record;
 
-     package Pend_Tab is new Akernel_User.Tables (Pend_Rec);
+     package Pend_Tab is new Aegir_User.Tables (Pend_Rec);
      function Pend (I : Natural) return Pend_Tab.Element_Access
        renames Pend_Tab.Ref;
 
@@ -644,7 +644,7 @@ package body Netserv_Engine is
         Result  : U32 := 0;
      end record;
 
-     package Res_Tab is new Akernel_User.Tables (Resolve_Rec);
+     package Res_Tab is new Aegir_User.Tables (Resolve_Rec);
      function Resolves (I : Natural) return Res_Tab.Element_Access
        renames Res_Tab.Ref;
 

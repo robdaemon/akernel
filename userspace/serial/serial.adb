@@ -1,16 +1,16 @@
 with Ada.Streams;
-with Akernel_User.MMIO;
-with Akernel_User.Syscalls;
-with Akernel_User.IPC;
-with Akernel_User.Streams;
-with Akernel_User.Tables;
+with Aegir_User.MMIO;
+with Aegir_User.Syscalls;
+with Aegir_User.IPC;
+with Aegir_User.Streams;
+with Aegir_User.Tables;
 
 --  Console server, spawned by init's device manager as an ordinary
 --  driver (`driver ns16550a Drivers/Serial none 0`): class 0 gets
 --  the Receive cap on the init-minted console endpoint at handle 1,
 --  the UART MMIO cap at handle 2 and the UART IRQ cap at handle 3
 --  (the generic driver handle ABI). Clients print through
---  Akernel_User.Streams / Akernel_User.Console (write ops arrive as
+--  Aegir_User.Streams / Aegir_User.Console (write ops arrive as
 --  stream-protocol messages). Writes are line-atomic: bytes
 --  accumulate in a per-client buffer (keyed by the console cap
 --  badge, which init sets to the manifest program id) and only hit
@@ -33,39 +33,39 @@ with Akernel_User.Tables;
 --  console. Serial output always continues (debug/logging role).
 
 procedure Serial is
-   use Akernel_User.Syscalls;
+   use Aegir_User.Syscalls;
    use type U64;
-   use type Akernel_User.MMIO.U8;
+   use type Aegir_User.MMIO.U8;
 
    --  Grant order follows the devmgr driver handle ABI.
    Console_EP : constant U64 := 1;
    MMIO_Cap   : constant U64 := 2;
    IRQ_Cap    : constant U64 := 3;
-   MMIO_VA    : constant Akernel_User.MMIO.U64 := 16#5000_0000#;
+   MMIO_VA    : constant Aegir_User.MMIO.U64 := 16#5000_0000#;
    Page_Size  : constant U64 := 4096;
 
-   RBR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
-   THR : constant Akernel_User.MMIO.U64 := MMIO_VA + 0;
-   FCR : constant Akernel_User.MMIO.U64 := MMIO_VA + 2;
-   LSR : constant Akernel_User.MMIO.U64 := MMIO_VA + 5;
+   RBR : constant Aegir_User.MMIO.U64 := MMIO_VA + 0;
+   THR : constant Aegir_User.MMIO.U64 := MMIO_VA + 0;
+   FCR : constant Aegir_User.MMIO.U64 := MMIO_VA + 2;
+   LSR : constant Aegir_User.MMIO.U64 := MMIO_VA + 5;
 
-   LSR_DR   : constant Akernel_User.MMIO.U8 := 16#01#;
-   LSR_THRE : constant Akernel_User.MMIO.U8 := 16#20#;
-   FCR_FIFO : constant Akernel_User.MMIO.U8 := 16#07#;
+   LSR_DR   : constant Aegir_User.MMIO.U8 := 16#01#;
+   LSR_THRE : constant Aegir_User.MMIO.U8 := 16#20#;
+   FCR_FIFO : constant Aegir_User.MMIO.U8 := 16#07#;
 
-   package RPC is new Akernel_User.IPC
-     (Akernel_User.Streams.Stream_Request,
-      Akernel_User.Streams.Stream_Response);
+   package RPC is new Aegir_User.IPC
+     (Aegir_User.Streams.Stream_Request,
+      Aegir_User.Streams.Stream_Response);
 
    Result : U64;
    Status : U64;
    Label  : U64;
    Badge  : U64;
-   Reg    : Akernel_User.MMIO.U8;
+   Reg    : Aegir_User.MMIO.U8;
    Ntfn   : U64;
 
-   Request  : Akernel_User.Streams.Stream_Request;
-   Response : Akernel_User.Streams.Stream_Response;
+   Request  : Aegir_User.Streams.Stream_Request;
+   Response : Aegir_User.Streams.Stream_Response;
    Caps     : RPC.Cap_Array;
    Reply_H  : U64;
 
@@ -77,7 +77,7 @@ procedure Serial is
    --  lock and polls THRE the same way.
    procedure Wait_THRE is
    begin
-     while (Akernel_User.MMIO.Read8 (LSR) and LSR_THRE) = 0 loop
+     while (Aegir_User.MMIO.Read8 (LSR) and LSR_THRE) = 0 loop
         null;
      end loop;
    end Wait_THRE;
@@ -85,7 +85,7 @@ procedure Serial is
    procedure UART_Put_Char (Ch : Character) is
    begin
      Wait_THRE;
-     Akernel_User.MMIO.Write8 (THR, Character'Pos (Ch));
+     Aegir_User.MMIO.Write8 (THR, Character'Pos (Ch));
    end UART_Put_Char;
 
    procedure UART_Put (S : String) is
@@ -138,9 +138,9 @@ procedure Serial is
    procedure Drain_RX is
    begin
       loop
-         Reg := Akernel_User.MMIO.Read8 (LSR);
+         Reg := Aegir_User.MMIO.Read8 (LSR);
          exit when (Reg and LSR_DR) = 0;
-         Reg := Akernel_User.MMIO.Read8 (RBR);
+         Reg := Aegir_User.MMIO.Read8 (RBR);
          Input_Put (Character'Val (Natural (Reg)));
         UART_Put_Char (Character'Val (Natural (Reg)));
       end loop;
@@ -148,7 +148,7 @@ procedure Serial is
 
    --  Per-client line buffers (line-atomic writes): a client's
    --  bytes only reach the UART on newline or a full buffer.
-   --  m80f: chunk-appended table (Akernel_User.Tables); fresh
+   --  m80f: chunk-appended table (Aegir_User.Tables); fresh
    --  chunk slots are zeroed, so appends must stamp the
    --  Badge = U64'Last free marker before use.
    Line_Max    : constant := 160;
@@ -159,7 +159,7 @@ procedure Serial is
       Len   : Natural := 0;
    end record;
 
-   package Line_Tab is new Akernel_User.Tables (Client_Line);
+   package Line_Tab is new Aegir_User.Tables (Client_Line);
    function Lines (I : Natural) return Line_Tab.Element_Access
      renames Line_Tab.Ref;
 
@@ -167,7 +167,7 @@ procedure Serial is
    --  console mirrors every flushed line to. m80f: chunk-appended
    --  (0 = free slot, matching the zeroed default); a failing
    --  sink is dropped and its cap deleted.
-   package Sink_Tab is new Akernel_User.Tables (U64);
+   package Sink_Tab is new Aegir_User.Tables (U64);
    function Sinks (I : Natural) return Sink_Tab.Element_Access
      renames Sink_Tab.Ref;
 
@@ -178,18 +178,18 @@ procedure Serial is
    function Sink_Write (Sink : U64; S : String) return Boolean is
       First  : Natural := S'First;
       Chunk  : Natural;
-      Req    : Akernel_User.Streams.Stream_Request;
+      Req    : Aegir_User.Streams.Stream_Request;
    begin
       while First <= S'Last loop
          Chunk := Natural'Min
-           (S'Last - First + 1, Akernel_User.Streams.Max_Chunk);
+           (S'Last - First + 1, Aegir_User.Streams.Max_Chunk);
          Req.Count := U64 (Chunk);
          Req.Data := (others => 0);
          for I in 1 .. Chunk loop
             Req.Data (Ada.Streams.Stream_Element_Offset (I)) :=
               Ada.Streams.Stream_Element (Character'Pos (S (First + I - 1)));
          end loop;
-         if RPC.Send (Sink, Akernel_User.Streams.Op_Write, Req,
+         if RPC.Send (Sink, Aegir_User.Streams.Op_Write, Req,
                       RPC.No_Caps) /= IPC_Ok
          then
             return False;
@@ -271,7 +271,7 @@ begin
    Result := Map_MMIO
      (Address_Space => Address_Space_Cap,
       Cap           => MMIO_Cap,
-      VA            => Akernel_User.Syscalls.U64 (MMIO_VA),
+      VA            => Aegir_User.Syscalls.U64 (MMIO_VA),
       Offset        => 0,
       Length        => Page_Size,
       Flags         => 3);
@@ -283,7 +283,7 @@ begin
 
    --  Enable the 16550 FIFOs: the 16-byte TX buffer absorbs
    --  flushed-line bursts (Wait_THRE still gates every write).
-   Akernel_User.MMIO.Write8 (FCR, FCR_FIFO);
+   Aegir_User.MMIO.Write8 (FCR, FCR_FIFO);
 
    UART_Put_Line ("console server online");
 
@@ -311,13 +311,13 @@ begin
       else
          Drain_RX;
 
-         if Label = Akernel_User.Streams.Op_Write then
+         if Label = Aegir_User.Streams.Op_Write then
             for I in 1 .. Ada.Streams.Stream_Element_Offset (Request.Count) loop
                Buffer_Write
                  (Badge, Character'Val (Natural (Request.Data (I))));
             end loop;
             Response := (Count => Request.Count, Data => (others => 0));
-         elsif Label = Akernel_User.Streams.Op_Input then
+         elsif Label = Aegir_User.Streams.Op_Input then
             --  Source-driver input injection (virtio-input
             --  keyboard): into the FIFO, not the display.
             Response.Count := 0;
@@ -327,7 +327,7 @@ begin
                Input_Put (Character'Val (Natural (Request.Data (I))));
                Response.Count := Response.Count + 1;
             end loop;
-         elsif Label = Akernel_User.Streams.Op_Read then
+         elsif Label = Aegir_User.Streams.Op_Read then
             --  Drain the input FIFO (Count = 0 when empty).
             Response.Count := 0;
             Response.Data := (others => 0);
@@ -335,10 +335,10 @@ begin
                Ch : Character;
             begin
                while Response.Count <
-                 Akernel_User.Syscalls.U64 (Request.Count)
+                 Aegir_User.Syscalls.U64 (Request.Count)
                  and then Response.Count <
-                   Akernel_User.Syscalls.U64
-                     (Akernel_User.Streams.Max_Chunk)
+                   Aegir_User.Syscalls.U64
+                     (Aegir_User.Streams.Max_Chunk)
                  and then Input_Get (Ch)
                loop
                   Response.Count := Response.Count + 1;
@@ -347,7 +347,7 @@ begin
                     Ada.Streams.Stream_Element (Character'Pos (Ch));
                end loop;
             end;
-         elsif Label = Akernel_User.Streams.Op_Attach_Sink then
+         elsif Label = Aegir_User.Streams.Op_Attach_Sink then
             --  Console-sink registration: any client badge may
             --  attach its own endpoint (milestone 31b: the
             --  terminal self-attaches; console Send caps are
@@ -385,7 +385,7 @@ begin
                Response.Count := 1;
             end if;
             Response.Data := (others => 0);
-         elsif Label = Akernel_User.Streams.Op_Endcli then
+         elsif Label = Aegir_User.Streams.Op_Endcli then
             --  EndCLI (M85a) on the serial console: no window
             --  to close — answer 1 ("not a window console") and
             --  keep serving; the shell stays up.  Without this

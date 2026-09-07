@@ -1,5 +1,5 @@
-name = "akernel_fileserver"
-description = "akernel IPC fileserver server (fuzzer peer)"
+name = "aegir_fileserver"
+description = "aegir IPC fileserver server (fuzzer peer)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

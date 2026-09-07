@@ -1,5 +1,5 @@
-with Akernel_User.CLI;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Files;
 with Trinket.Columns;
 with Trinket.Window;
 with Trinket.Widgets;
@@ -9,7 +9,7 @@ with Trinket.Widgets.Label;
 
 package body Trinket.File_Requester is
 
-   use type Akernel_User.Syscalls.U64;
+   use type Aegir_User.Syscalls.U64;
    package Widgets renames Trinket.Widgets;
 
    Max_Path_Len : constant := 255;
@@ -44,10 +44,10 @@ package body Trinket.File_Requester is
    function Min (A, B : Natural) return Natural is
      (if A < B then A else B);
 
-   function U64_Text (V : Akernel_User.Syscalls.U64) return String is
+   function U64_Text (V : Aegir_User.Syscalls.U64) return String is
       Digs : String (1 .. 20);
       Len  : Natural := 0;
-      X    : Akernel_User.Syscalls.U64 := V;
+      X    : Aegir_User.Syscalls.U64 := V;
    begin
       if X = 0 then
          return "0";
@@ -62,15 +62,15 @@ package body Trinket.File_Requester is
       return Digs (1 .. Len);
    end U64_Text;
 
-   function Two_Digits (V : Akernel_User.Syscalls.U64) return String is
+   function Two_Digits (V : Aegir_User.Syscalls.U64) return String is
      (Character'Val (Character'Pos ('0') + Natural (V / 10))
       & Character'Val (Character'Pos ('0') + Natural (V mod 10)));
 
    --  Epoch seconds -> "YYYY-MM-DD" ("" for 0). Days-from-civil
    --  via Hinnant (U64 arithmetic, 1970..2106 range in practice).
-   function Date_Text (Secs : Akernel_User.Syscalls.U64)
+   function Date_Text (Secs : Aegir_User.Syscalls.U64)
                        return String is
-      Z, Era, Doe, Yoe, Y, Doy, Mp, D, M : Akernel_User.Syscalls.U64;
+      Z, Era, Doe, Yoe, Y, Doy, Mp, D, M : Aegir_User.Syscalls.U64;
    begin
       if Secs < 86_400 then
          return "";
@@ -143,12 +143,12 @@ package body Trinket.File_Requester is
    end Parent_Of;
 
    procedure Reload is
-      Idx    : Akernel_User.Syscalls.U64 := 0;
+      Idx    : Aegir_User.Syscalls.U64 := 0;
       E_Nm   : String (1 .. 32);
       E_L    : Natural;
       E_D    : Boolean;
-      E_S, E_M : Akernel_User.Syscalls.U64;
-      St     : Akernel_User.Syscalls.U64;
+      E_S, E_M : Aegir_User.Syscalls.U64;
+      St     : Aegir_User.Syscalls.U64;
       N      : Natural := 0;
    begin
       Trinket.Columns.Clear (Cols_W.all);
@@ -158,9 +158,9 @@ package body Trinket.File_Requester is
       end if;
       loop
          exit when N >= Max_Rows;
-         St := Akernel_User.Files.Read_Dir_Ex
+         St := Aegir_User.Files.Read_Dir_Ex
            (Cur (1 .. Cur_Len), Idx, E_Nm, E_L, E_D, E_S, E_M);
-         exit when St /= Akernel_User.Files.Status_Ok;
+         exit when St /= Aegir_User.Files.Status_Ok;
          N := N + 1;
          Row_Count := N;
          Leaf_Len (N) := Min (E_L, Leaf_Buf (N)'Length);
@@ -194,13 +194,13 @@ package body Trinket.File_Requester is
       Reload;
    end Go_To;
 
-   function Kind_Tag (Kind : Akernel_User.Syscalls.U64) return String is
+   function Kind_Tag (Kind : Aegir_User.Syscalls.U64) return String is
    begin
-      if Kind = Akernel_User.Files.Vol_Kind_FS then
+      if Kind = Aegir_User.Files.Vol_Kind_FS then
          return "disk";
-      elsif Kind = Akernel_User.Files.Vol_Kind_Boot then
+      elsif Kind = Aegir_User.Files.Vol_Kind_Boot then
          return "boot";
-      elsif Kind = Akernel_User.Files.Vol_Kind_Block then
+      elsif Kind = Aegir_User.Files.Vol_Kind_Block then
          return "block";
       else
          return "";
@@ -213,9 +213,9 @@ package body Trinket.File_Requester is
    procedure List_Volumes is
       VName  : String (1 .. 24);
       V_Len  : Natural;
-      V_Kind : Akernel_User.Syscalls.U64;
-      St     : Akernel_User.Syscalls.U64;
-      Idx    : Akernel_User.Syscalls.U64 := 0;
+      V_Kind : Aegir_User.Syscalls.U64;
+      St     : Aegir_User.Syscalls.U64;
+      Idx    : Aegir_User.Syscalls.U64 := 0;
       N      : Natural := 0;
    begin
       View_Volumes := True;
@@ -225,11 +225,11 @@ package body Trinket.File_Requester is
         ("Volumes");
       loop
          exit when N >= Max_Rows;
-         St := Akernel_User.Files.Volume_List
+         St := Aegir_User.Files.Volume_List
            (Idx, VName, V_Len, V_Kind);
-         exit when St /= Akernel_User.Files.Status_Ok;
+         exit when St /= Aegir_User.Files.Status_Ok;
          Idx := Idx + 1;
-         if V_Kind = Akernel_User.Files.Vol_Kind_Virtual then
+         if V_Kind = Aegir_User.Files.Vol_Kind_Virtual then
             null;   --  NIL:/PIPE: etc. are not browsable
          else
             N := N + 1;
@@ -288,10 +288,10 @@ package body Trinket.File_Requester is
          return;
       end if;
       if Leaf_Dir (Index) then
-         Go_To (Akernel_User.CLI.Join_Path (Cur (1 .. Cur_Len),
+         Go_To (Aegir_User.CLI.Join_Path (Cur (1 .. Cur_Len),
                                             Leaf));
       elsif Req_Mode = Pick_Open then
-         Finish (Akernel_User.CLI.Join_Path (Cur (1 .. Cur_Len),
+         Finish (Aegir_User.CLI.Join_Path (Cur (1 .. Cur_Len),
                                              Leaf));
       else
          --  Save As: offer the name, wait for Save/Return.
@@ -316,7 +316,7 @@ package body Trinket.File_Requester is
          Row_Activated (Trinket.Columns.Selected (Cols_W.all));
       else
          if Name'Length > 0 then
-            Finish (Akernel_User.CLI.Join_Path (Cur (1 .. Cur_Len),
+            Finish (Aegir_User.CLI.Join_Path (Cur (1 .. Cur_Len),
                                                 Name));
          end if;
       end if;

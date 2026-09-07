@@ -67,7 +67,7 @@ tasking that address must become per-thread. Proposal:
   creation, and records the physical address in the TCB.
 - The trap handler reads/writes the **TCB's buffer**, not a fixed VA.
 - Userspace runtime keeps a per-task `Message` record at that VA.
-- `Akernel_User.Syscalls.Message` changes from a fixed-address global
+- `Aegir_User.Syscalls.Message` changes from a fixed-address global
 to a per-thread variable (stored in TLS or accessed via the thread's
 IPC-buffer VA).
 
@@ -117,7 +117,7 @@ The compiler expects a GNAT tasking ABI. We will provide a minimal
 | `Ada.Task_Identification` | provided by GNAT once primitives exist |
 
 `s-taprop.adb` is the main integration point. It maps GNAT primitives
-to Akernel syscalls:
+to Aegir syscalls:
 
 - `Create_Task` → `Thread_Create` (stack allocated by runtime via `Mem_Alloc`).
 - `Self` → `Thread_Self`.
@@ -197,7 +197,7 @@ input or a worker notification.
 4. Add new tasking shadow units under `userspace/gnat-rts/gnat_user/`.
 5. Ensure `runtime_build.gpr` includes them in the override directory.
 6. Add kernel syscalls and bump the syscall table.
-7. Update `Akernel_User.Syscalls` to expose `Thread_Create`, etc., and
+7. Update `Aegir_User.Syscalls` to expose `Thread_Create`, etc., and
 to make `Message` per-thread.
 
 ## Staged implementation plan

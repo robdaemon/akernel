@@ -1,5 +1,5 @@
-name = "akernel_libman"
-description = "akernel shared-library manager (milestone 65)"
+name = "aegir_libman"
+description = "aegir shared-library manager (milestone 65)"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

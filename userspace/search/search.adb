@@ -1,7 +1,7 @@
 with Ada.Command_Line;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Search: print the lines of a file containing a string
 --  (milestone 41c; the Amiga C:Search analog, grep-lite).
@@ -14,7 +14,7 @@ with Akernel_User.CLI;
 --  (redirect composes through the console).
 
 procedure Search is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    Hits : Natural := 0;
 begin
    CLI.Init;

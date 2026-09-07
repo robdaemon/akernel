@@ -1,6 +1,6 @@
-with Akernel_User.CLI;
-with Akernel_User.Console;
-with Akernel_User.Files;
+with Aegir_User.CLI;
+with Aegir_User.Console;
+with Aegir_User.Files;
 
 --  Set: set or list environment variables (milestone 41b; the
 --  Amiga C:Set analog). Variables are files in ENV: (resolved to
@@ -9,8 +9,8 @@ with Akernel_User.Files;
 --  one. The directory is created on demand.
 
 procedure Set is
-   package CLI renames Akernel_User.CLI;
-   package Files renames Akernel_User.Files;
+   package CLI renames Aegir_User.CLI;
+   package Files renames Aegir_User.Files;
    use type CLI.U64;
 
    Env_Dir : constant String := "ENV:";
@@ -19,9 +19,9 @@ procedure Set is
       St1 : constant CLI.U64 := Files.Mkdir ("BD0:Prefs");
       St2 : constant CLI.U64 := Files.Mkdir ("BD0:Prefs/Env");
    begin
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("Set: ensure Prefs status " & CLI.U64'Image (St1));
-      Akernel_User.Console.Put_Line
+      Aegir_User.Console.Put_Line
         ("Set: ensure Prefs/Env status " & CLI.U64'Image (St2));
    end Ensure;
 
@@ -51,7 +51,7 @@ procedure Set is
             declare
                V : constant String := CLI.Get_Env (Name (1 .. Name_Len));
             begin
-               Akernel_User.Console.Put_Line
+               Aegir_User.Console.Put_Line
                  (Name (1 .. Name_Len) & "=" & V);
             end;
          end if;
@@ -60,7 +60,7 @@ procedure Set is
    end List_All;
 
 begin
-   Akernel_User.Console.Set_Endpoint (1);
+   Aegir_User.Console.Set_Endpoint (1);
    Files.Bind (2);
 
    if CLI.Arg_Count = 0 then

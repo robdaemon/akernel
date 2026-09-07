@@ -1,6 +1,6 @@
 with Ada.Command_Line;
 with Ada.Text_IO;
-with Akernel_User.CLI;
+with Aegir_User.CLI;
 
 --  Echo: print arguments (milestone 41b; the Amiga C:Echo analog).
 --  "Echo [args...]" prints all arguments separated by a single
@@ -15,7 +15,7 @@ with Akernel_User.CLI;
 --  touch CLI.Arg_Count), CLI.Exit_With closes redirects.
 
 procedure Echo is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    package ACL renames Ada.Command_Line;
 begin
    CLI.Init;

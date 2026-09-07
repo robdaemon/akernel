@@ -1,5 +1,5 @@
-name = "akernel_bureau"
-description = "akernel Bureau compositor / window server"
+name = "aegir_bureau"
+description = "aegir Bureau compositor / window server"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]

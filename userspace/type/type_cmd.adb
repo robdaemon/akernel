@@ -1,6 +1,6 @@
 with Ada.Text_IO;
-with Akernel_User.Syscalls;
-with Akernel_User.CLI;
+with Aegir_User.Syscalls;
+with Aegir_User.CLI;
 
 --  Type: print a file to the console (milestone 33a; the Amiga
 --  C:Type analog — lives in Sys:C/Type). Uniform program ABI
@@ -17,7 +17,7 @@ with Akernel_User.CLI;
 --  scrollback to page against).
 
 procedure Type_Cmd is
-   package CLI renames Akernel_User.CLI;
+   package CLI renames Aegir_User.CLI;
    use type CLI.U64;
 
    Arg_Buf : String (1 .. 240);
@@ -27,7 +27,7 @@ begin
    --  the args-page redirection trailer.
    CLI.Init;
 
-   Akernel_User.Syscalls.Read_Args (Arg_Buf, Arg_Len);
+   Aegir_User.Syscalls.Read_Args (Arg_Buf, Arg_Len);
    if Arg_Len = 0 then
       Ada.Text_IO.Put_Line ("usage: Type <file>");
       CLI.Exit_With (CLI.RC_Error);

@@ -1,5 +1,5 @@
-name = "akernel_path"
-description = "akernel path"
+name = "aegir_path"
+description = "aegir path"
 version = "0.1.0-dev"
 
 authors = ["Robert Roland"]
