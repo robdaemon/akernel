@@ -22,6 +22,9 @@ with Trinket.Widgets;
 with Trinket.Text_Edit;
 with Trinket.Images;
 with Fuzz_Port;
+with Terminal_Buffer;
+with Terminal_Clip;
+with Trinket.Fonts;
 
 --  Syscall argument fuzzer.  Exercises every syscall with edge-case and
 --  pseudo-random argument values and verifies the kernel stays alive and
@@ -7783,6 +7786,110 @@ begin
          Check (Trinket.Text_Edit.Line_Count (Ed.all) = 1
                 and then Trinket.Text_Edit.Get_Line (Ed.all, 1) = "",
                 "tedit delete all empties the doc");
+      end;
+
+      --  Terminal mouse selection -> clipboard copy (M9x): the
+      --  Terminal_Clip package the terminal uses. A drag copies
+      --  whole rows LF-joined (trailing blanks are never stored,
+      --  so they cannot leak), interior blank rows keep their LF,
+      --  and a selection larger than the 32 KiB store is trimmed
+      --  at row boundaries. Pointer pixels are the fixed 8 px
+      --  grid rows (Trinket.Fonts.Line_Height tall); a click
+      --  clears and Copy is a no-op without a selection.
+      declare
+         Clip : U64;
+         St   : U64;
+         Buf  : String (1 .. 128);
+         BLen : Natural;
+         LH   : constant Natural :=
+           Natural (Trinket.Fonts.Line_Height);
+         Col8 : constant := 8;
+
+         procedure Type_Line (S : String) is
+         begin
+            for C of S loop
+               Terminal_Buffer.Put_Char (C);
+            end loop;
+            Terminal_Buffer.Put_Char (ASCII.LF);
+         end Type_Line;
+
+         procedure Drag (X0, Y0, X1, Y1 : Natural) is
+         begin
+            Terminal_Clip.Pointer_Text
+              (Trinket.Widgets.Press, X0, Y0);
+            Terminal_Clip.Pointer_Text
+              (Trinket.Widgets.Release, X1, Y1);
+         end Drag;
+      begin
+         Clip := Aegir_User.Libs.Open_Library
+           ("Sys:Libs/Clipboard", Console_Cap, FS_Cap, Bureau_Cap,
+            Min_Version => 1);
+         Check (Clip /= Aegir_User.Libs.Invalid_Handle,
+                "tclip open ok");
+         Terminal_Clip.Set_Service (Clip);
+
+         --  Two rows; the drag ends past the second row's text, so
+         --  the copy must trim to the stored text and join with LF.
+         Terminal_Buffer.Init (40, 10);
+         Type_Line ("hello world");
+         Type_Line ("bar");
+         Drag (0, 0, 39 * Col8, LH);
+         Check (Terminal_Clip.Active,
+                "tclip drag leaves the selection active");
+         Buf := (others => ' ');
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
+                and then BLen = 15
+                and then Buf (1 .. 15) =
+                  "hello world" & ASCII.LF & "bar",
+                "tclip two-row copy trims the row end");
+
+         --  Interior blank row keeps its LF: pasted text lines up.
+         Terminal_Buffer.Init (40, 10);
+         Type_Line ("a");
+         Terminal_Buffer.Put_Char (ASCII.LF);   --  blank row 1
+         Type_Line ("b");
+         Drag (0, 0, 39 * Col8, 2 * LH);
+         Buf := (others => ' ');
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
+                and then BLen = 5
+                and then Buf (1 .. 5) =
+                  "a" & ASCII.LF & ASCII.LF & "b",
+                "tclip interior blank row kept");
+
+         --  Partial single-row copy; a click clears the selection.
+         Terminal_Buffer.Init (40, 10);
+         Type_Line ("hello");
+         Drag (0, 0, 1 * Col8, 0);
+         Buf := (others => ' ');
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
+                and then BLen = 2 and then Buf (1 .. 2) = "he",
+                "tclip single-row partial copy");
+         Terminal_Clip.Pointer_Text
+           (Trinket.Widgets.Press, 5 * Col8, 0);
+         Terminal_Clip.Pointer_Text
+           (Trinket.Widgets.Release, 5 * Col8, 0);
+         Check (not Terminal_Clip.Active,
+                "tclip click clears the selection");
+         Terminal_Clip.Copy;   --  no selection: must be a no-op
+         Buf := (others => ' ');
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
+                and then BLen = 2 and then Buf (1 .. 2) = "he",
+                "tclip copy no-op without a selection");
+
+         --  Menu Copy re-copies the live selection (band still up).
+         Drag (0, 0, 39 * Col8, 0);
+         Terminal_Clip.Copy;
+         Buf := (others => ' ');
+         St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
+         Check (St = Aegir_User.Clipboard.Status_Ok
+                and then BLen = 5 and then Buf (1 .. 5) = "hello",
+                "tclip menu copy re-copies the selection");
+
+         Aegir_User.Libs.Close_Library (Clip);
       end;
 
       --  Multiple clients can open the same library concurrently.

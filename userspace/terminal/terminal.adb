@@ -14,6 +14,7 @@ with Trinket.Paint;
 with Trinket.Fonts;
 with Trinket.Widgets;
 with Terminal_Buffer;
+with Terminal_Clip;
 with Terminal_Scroll;
 
 --  Terminal: a console device (the CON: analog) living in a
@@ -39,6 +40,7 @@ procedure Terminal is
    use Aegir_User.Syscalls;
    use type U64;
    use type Interfaces.Unsigned_8;
+   use type Trinket.Widgets.Pointer_Kind;
 
    Console_EP : constant U64 := 1;
    --  Uniform program ABI (milestone 31b): 2 = file server Send
@@ -137,6 +139,11 @@ procedure Terminal is
    --  Last button state for synthesizing Press/Release from
    --  v3 pointer events.
    Prev_Buttons : U64 := 0;
+
+   --  M9x: pointer grab while a drag is live. 0 = none, 1 = text
+   --  selection (routed to Terminal_Clip even over the gutter),
+   --  2 = scrollbar thumb.
+   Pointer_Grab : Natural := 0;
 
    --  Opened-once clipboard service handle (M9x); the terminal
    --  keeps it for its lifetime.
@@ -282,6 +289,20 @@ procedure Terminal is
       end if;
    end Input_Char;
 
+   --  Open the clipboard service on first use and hand the handle
+   --  to Terminal_Clip so drag-release and menu copies can Put.
+   procedure Ensure_Clipboard is
+   begin
+      if Clipboard_Svc = 0 then
+         Clipboard_Svc := Aegir_User.Clipboard.Open;
+         if Clipboard_Svc = 0 then
+            Debug_Put_Line ("terminal: clipboard open failed");
+            return;
+         end if;
+      end if;
+      Terminal_Clip.Set_Service (Clipboard_Svc);
+   end Ensure_Clipboard;
+
    --  M9x: paste the system clipboard into the input FIFO as if
    --  typed. Every byte goes through Input_Char so the line
    --  discipline (echo, Edit_Buf extent, history push on newline)
@@ -293,12 +314,9 @@ procedure Terminal is
       Off   : U64 := 0;
       Got   : U64;
    begin
+      Ensure_Clipboard;
       if Clipboard_Svc = 0 then
-         Clipboard_Svc := Aegir_User.Clipboard.Open;
-         if Clipboard_Svc = 0 then
-            Debug_Put_Line ("terminal: clipboard open failed");
-            return;
-         end if;
+         return;
       end if;
       loop
          St := Aegir_User.Clipboard.Read
@@ -333,11 +351,38 @@ procedure Terminal is
          begin
             exit when Line_I >= Terminal_Buffer.Line_Count;
             Terminal_Buffer.Get_Line (Line_I, Line, Len);
+            --  M9x: selection band under the row's glyphs; glyphs
+            --  on the band flip to the light Pane color (dark
+            --  text on Sel_Blue is unreadable), like Text_Edit.
+            Terminal_Clip.Draw_Row_Band
+              (Canvas, Line_I, Natural (Y));
             if Len > 0 then
-               --  Grid device: fixed 8px cells regardless of the
-               --  proportional UI font (M86f).
-               Trinket.Fonts.Draw_Text_Mono
-                 (Canvas, 0, Y, Line (1 .. Len), Trinket.Text_Dark);
+               declare
+                  SA, SB : Natural;
+               begin
+                  Terminal_Clip.Row_Extent (Line_I, SA, SB);
+                  if SA <= SB and then SA < Len then
+                     if SA > 0 then
+                        Trinket.Fonts.Draw_Text_Mono
+                          (Canvas, 0, Y, Line (1 .. SA),
+                           Trinket.Text_Dark);
+                     end if;
+                     Trinket.Fonts.Draw_Text_Mono
+                       (Canvas, U64 (SA) * 8, Y,
+                        Line (SA + 1
+                              .. Natural'Min (SB, Len - 1) + 1),
+                        Trinket.Pane);
+                     if SB + 1 < Len then
+                        Trinket.Fonts.Draw_Text_Mono
+                          (Canvas, U64 (SB + 1) * 8, Y,
+                           Line (SB + 2 .. Len), Trinket.Text_Dark);
+                     end if;
+                  else
+                     Trinket.Fonts.Draw_Text_Mono
+                       (Canvas, 0, Y, Line (1 .. Len),
+                        Trinket.Text_Dark);
+                  end if;
+               end;
             end if;
          end;
       end loop;
@@ -345,7 +390,9 @@ procedure Terminal is
 
       --  Solid block cursor at the current input position. Drawn
       --  after the text so it overwrites the cell; full-surface
-      --  redraws erase the previous cursor position.
+      --  redraws erase the previous cursor position. On a cell the
+      --  selection band already colors Sel_Blue, so the block
+      --  flips to Pane to stay visible.
       declare
          Cur_Line : constant Natural := Terminal_Buffer.Current_Line;
          Cur_Col  : constant Natural := Terminal_Buffer.Current_Col;
@@ -360,8 +407,15 @@ procedure Terminal is
                Y : constant U64 := R * LH;
             begin
                if X + Char_W <= Surf_W - Terminal_Scroll.Scrollbar_W then
-                  Trinket.Paint.Fill_Rect
-                    (Canvas, X, Y, X + Char_W, Y + LH, Trinket.Sel_Blue);
+                  if Terminal_Clip.Covers (Cur_Line, Cur_Col) then
+                     Trinket.Paint.Fill_Rect
+                       (Canvas, X, Y, X + Char_W, Y + LH,
+                        Trinket.Pane);
+                  else
+                     Trinket.Paint.Fill_Rect
+                       (Canvas, X, Y, X + Char_W, Y + LH,
+                        Trinket.Sel_Blue);
+                  end if;
                end if;
             end;
          end if;
@@ -458,6 +512,9 @@ procedure Terminal is
                Btn : constant U64 :=
                  Aegir_User.Window.Pointer_Buttons (Val);
                K   : Trinket.Widgets.Pointer_Kind;
+               --  M9x: text area (left of the scrollbar gutter).
+               Text_W : constant U64 :=
+                 Surf_W - Terminal_Scroll.Scrollbar_W;
                Consumed : Boolean;
                pragma Unreferenced (Consumed);
             begin
@@ -473,7 +530,36 @@ procedure Terminal is
                   K := Trinket.Widgets.Move;
                end if;
                Prev_Buttons := Btn;
-               Consumed := Terminal_Scroll.Handle_Pointer (K, X, Y);
+               --  M9x: a left press picks the grab — text area
+               --  starts a selection drag (every following event
+               --  goes to Terminal_Clip, even over the gutter),
+               --  the gutter drags the scrollbar. With no grab a
+               --  release/move is idle; the scrollbar only needs
+               --  the events of its own drag.
+               if K = Trinket.Widgets.Press then
+                  if X < Text_W then
+                     Pointer_Grab := 1;
+                     Ensure_Clipboard;   --  lazy open: release copies
+                     Terminal_Clip.Pointer_Text
+                       (K, Natural (X), Natural (Y));
+                  else
+                     Pointer_Grab := 2;
+                     Consumed := Terminal_Scroll.Handle_Pointer
+                       (K, X, Y);
+                  end if;
+               elsif Pointer_Grab = 1 then
+                  Terminal_Clip.Pointer_Text (K, Natural (X),
+                                              Natural (Y));
+                  if K = Trinket.Widgets.Release then
+                     Pointer_Grab := 0;
+                  end if;
+               elsif Pointer_Grab = 2 then
+                  Consumed := Terminal_Scroll.Handle_Pointer
+                    (K, X, Y);
+                  if K = Trinket.Widgets.Release then
+                     Pointer_Grab := 0;
+                  end if;
+               end if;
             end;
          elsif Queue (Slot) = Aegir_User.Window.Input_Event_Close
          then
@@ -494,6 +580,11 @@ procedure Terminal is
                Process_Exit;
             elsif (Queue (Slot + 1) and 16#FFFF_FFFF#) = 2 then
                Paste_Clipboard;
+            elsif (Queue (Slot + 1) and 16#FFFF_FFFF#) = 3 then
+               --  Terminal > Copy (Alt+C): re-copy the last text
+               --  selection.
+               Ensure_Clipboard;
+               Terminal_Clip.Copy;
             end if;
          end if;
          Tail := Tail + 1;
@@ -621,7 +712,11 @@ procedure Terminal is
               --  M9x: paste the system clipboard into the input
               --  line as if typed (Alt+V, matched by Bureau from
               --  the registered menu even when no menu is open).
-              Trinket.Menus.It (2, "Paste", 'v', Alt => True)))),
+              Trinket.Menus.It (2, "Paste", 'v', Alt => True),
+              --  M9x: copy the mouse text selection to the system
+              --  clipboard (Alt+C). A drag already auto-copies on
+              --  release; this re-copies while the band is up.
+              Trinket.Menus.It (3, "Copy", 'c', Alt => True)))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);

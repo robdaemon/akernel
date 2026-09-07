@@ -2,7 +2,7 @@ with "../trinket/trinket.gpr";
 
 project Fuzz extends "../rts/aegir_program.gpr" is
    for Languages use ("Ada", "Asm");
-   for Source_Dirs use (".");
+   for Source_Dirs use (".", "../terminal");
    for Exec_Dir use "../../bin/userspace";
    for Object_Dir use "../../obj/userspace/fuzz";
    for Main use ("fuzz.adb");
