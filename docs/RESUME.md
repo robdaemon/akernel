@@ -34,11 +34,11 @@ repository.
   static buffer — too large for the stack). Fuzz: `tclip` cases
   drive Terminal_Clip against the real clipboard server (row-end
   trim, blank-row LF, partial row, click-clear, no-op copy, menu
-  re-copy). Gates: make test 1894 PASS / 0 FAIL at SMP4. (The
-  C:Execute scripting cluster — 86 FAILs when this landed — was
-  closed in `a41675f`: fuzz's Run_Command grants C:Execute its
-  libman cap with Send+Transfer like terminal.adb:674, so Execute
-  can re-grant libman to its own command children.)
+  re-copy). Gates: make test 1894 PASS / 0 FAIL at SMP4, 1889 at
+  SMP1. (The C:Execute scripting cluster — 86 FAILs when this
+  landed — was closed in `a41675f`: fuzz's Run_Command grants
+  C:Execute its libman cap with Send+Transfer like terminal.adb:
+  674, so Execute can re-grant libman to its own command children.)
 
 - **System clipboard (Amiga clipboard.device flavor)** — a resident
   shared library, `Sys:Libs/Clipboard` v1.0 (`961777d`): libman
