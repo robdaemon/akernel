@@ -13,6 +13,21 @@ repository.
 
 ## Recently shipped
 
+- **Edit unsaved-buffer quit prompts + generic Message_Box** (M9z,
+  `73ce7de`): Text_Edit exposes a modified-change callback, and
+  Edit tracks per-doc dirty state live — dirty tabs carry a '*'
+  prefix. New `Trinket.Message_Box` (File_Requester's overlay-modal
+  lineage) shows a titled, word-wrapped prompt with a '|'-separated
+  button row and delivers the 1-based choice after the dialog
+  exits. Trinket.Window gained modal CHAINING (a button handler may
+  queue the successor dialog — it starts as the current one exits)
+  and a `Set_Quit_Handler` close-gadget hook. Edit's Quit (menu and
+  close gadget) walks the dirty docs: Save writes the named doc and
+  prompts the next dirty one, Save All writes every dirty doc then
+  quits, Cancel stays; an untitled or failed write stops the quit
+  and takes focus (it needs Save As). Gates: make test 1894 PASS /
+  0 FAIL at SMP4.
+
 - **Edit/terminal cursor + navigation keys** (M9y, `d887832` +
   `e302d6d` + `f0c98bf`): key events now carry the Ctrl/Alt
   qualifier to focused apps — Bureau packs the seat modifiers above
