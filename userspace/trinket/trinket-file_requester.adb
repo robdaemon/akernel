@@ -15,7 +15,6 @@ package body Trinket.File_Requester is
    Max_Path_Len : constant := 255;
    Max_Rows     : constant := 512;
 
-   Req_Win   : Trinket.Window.Window;
    Req_Mode  : Mode_Kind := Pick_Open;
    Cur       : String (1 .. Max_Path_Len);
    Cur_Len   : Natural := 0;
@@ -30,6 +29,10 @@ package body Trinket.File_Requester is
    Leaf_Len  : array (1 .. Max_Rows) of Natural := (others => 0);
    Leaf_Dir  : array (1 .. Max_Rows) of Boolean := (others => False);
    Row_Count : Natural := 0;
+
+   --  Host window for the modal (assigned per Run).
+   type Win_Acc is access all Trinket.Window.Window;
+   Host      : Win_Acc := null;
 
    Result    : access String := null;
    Result_Len : Natural := 0;
@@ -97,14 +100,18 @@ package body Trinket.File_Requester is
          Result (Result'First .. Result'First + Result_Len - 1) :=
            Path (Path'First .. Path'First + Result_Len - 1);
       end if;
-      Trinket.Window.Request_Quit (Req_Win);
+      if Host /= null then
+         Trinket.Window.Request_Modal_Exit (Host.all);
+      end if;
    end Finish;
 
    procedure Canceled is
    begin
       Picked := False;
       Result_Len := 0;
-      Trinket.Window.Request_Quit (Req_Win);
+      if Host /= null then
+         Trinket.Window.Request_Modal_Exit (Host.all);
+      end if;
    end Canceled;
 
    function Parent_Of return String is
@@ -230,14 +237,14 @@ package body Trinket.File_Requester is
    end Name_Committed;
 
    function Run
-     (Bureau_EP   : Akernel_User.Syscalls.U64;
+     (Win         : in out Trinket.Window.Window;
       Mode        : Mode_Kind;
       Initial_Dir : String;
       Chosen      : out String;
       Chosen_Len  : out Natural) return Boolean
    is
       Root : constant Widgets.Any_Widget :=
-        Widgets.New_Group (Widgets.Vertical, "Files");
+        Widgets.New_Group (Widgets.Vertical);
       Row1 : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Horizontal);
       Row3 : constant Widgets.Any_Widget :=
@@ -249,12 +256,15 @@ package body Trinket.File_Requester is
       Picked := False;
       Result_Len := 0;
       Result := Chosen'Unrestricted_Access;
+      Host := Win'Unrestricted_Access;
       Cur_Len := Min (Initial_Dir'Length, Cur'Length);
       if Cur_Len > 0 then
          Cur (1 .. Cur_Len) :=
            Initial_Dir (Initial_Dir'First
                         .. Initial_Dir'First + Cur_Len - 1);
       end if;
+      Path_Inp := null;
+      Name_Inp := null;
 
       Lbl := Widgets.Label.New_Label
         ((if Mode = Pick_Open then "Open" else "Save As"),
@@ -288,17 +298,10 @@ package body Trinket.File_Requester is
       Widgets.Group (Root.all).Add (Row3);
 
       Go_To (Cur (1 .. Cur_Len));
-
-      if Trinket.Window.Open
-        (Req_Win, Bureau_EP, 460, 320,
-         (if Mode = Pick_Open then "Open File" else "Save As"),
-         Root)
-      then
-         Trinket.Window.Run (Req_Win);
-         Trinket.Window.Close (Req_Win);
-      end if;
+      Trinket.Window.Run_Modal (Win, Root);
 
       Chosen_Len := Result_Len;
+      Host := null;
       return Picked;
    end Run;
 

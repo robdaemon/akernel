@@ -140,14 +140,12 @@ package body Edit_App is
       PLen : Natural;
    begin
       if Trinket.File_Requester.Run
-        (Bureau_EP => 3,
-         Mode      => Trinket.File_Requester.Pick_Open,
-         Initial_Dir =>
-           (if Docs (Current).Path = null
-            then "Sys:"
-            else Dir_Of (Docs (Current).Path.all)),
-         Chosen     => PBuf,
-         Chosen_Len => PLen)
+        (Win,
+         Trinket.File_Requester.Pick_Open,
+         (if Docs (Current).Path = null
+          then "Sys:"
+          else Dir_Of (Docs (Current).Path.all)),
+         PBuf, PLen)
       then
          if PLen > 0 then
             Add_Doc (new String'(PBuf (1 .. PLen)));
@@ -163,14 +161,12 @@ package body Edit_App is
          return;
       end if;
       if Trinket.File_Requester.Run
-        (Bureau_EP => 3,
-         Mode      => Trinket.File_Requester.Pick_Save_As,
-         Initial_Dir =>
-           (if Docs (Current).Path = null
-            then "Sys:"
-            else Dir_Of (Docs (Current).Path.all)),
-         Chosen     => PBuf,
-         Chosen_Len => PLen)
+        (Win,
+         Trinket.File_Requester.Pick_Save_As,
+         (if Docs (Current).Path = null
+          then "Sys:"
+          else Dir_Of (Docs (Current).Path.all)),
+         PBuf, PLen)
       then
          if PLen > 0 then
             Write_Doc_To (PBuf (1 .. PLen));

@@ -58,6 +58,19 @@ package Trinket.Window is
    --  event OR the app calls Request_Quit (e.g. a Quit button).
    --  Draws pending damage before each blocking receive.
 
+   --  M9x content-swap modal: temporarily replace the window's
+   --  root with Panel and run the event loop until Panel's
+   --  callbacks call Request_Modal_Exit (or the close gadget is
+   --  pressed), then restore the previous root. The single
+   --  thread-bound notification per kernel thread makes a second
+   --  LIVE window in one process impossible, so dialogs (the
+   --  File_Requester) swap content inside the host window
+   --  instead. Run_Modal must run on the same thread as Run.
+   procedure Run_Modal
+     (W : in out Window; Panel : Widgets.Any_Widget);
+   procedure Request_Modal_Exit (W : in out Window);
+   --  Ends the active Run_Modal; safe from its callbacks.
+
    procedure Request_Quit (W : in out Window);
    --  Posts the reserved quit message; safe from any thread.
 
@@ -140,6 +153,7 @@ private
        Cnv          : Canvas;
        Opened       : Boolean := False;
        Quit_Wanted  : Boolean := False;
+       Modal_Wanted : Boolean := False;  --  M9x: Run_Modal exit
        Prev_Buttons : U64 := 0;
         On_Menu      : Menu_Callback := null;
         On_App       : App_Port.Msg_Callback := null;
