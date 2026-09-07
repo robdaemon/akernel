@@ -6,6 +6,7 @@ with Akernel_User.Syscalls;
 with Akernel_User.IPC;
 with Akernel_User.Streams;
 with Akernel_User.Files;
+with Akernel_User.Clipboard;
 with Akernel_User.Window;
 with Trinket;
 with Trinket.Menus;
@@ -47,6 +48,7 @@ procedure Terminal is
    Win_EP     : constant U64 := 3;
    Elevated_Svc : constant U64 := 5;  --  elevation svc (from devmgr)
    Net_Svc      : constant U64 := 6;  --  netserv client (from devmgr, m71c)
+   Libman_Svc   : constant U64 := 7;  --  libman Send (from devmgr, M9x)
    --  Runtime-created stream sink endpoint (full rights: mints
    --  the console-server sink attach AND the shell's console
    --  cap). Filled in before the service loop starts.
@@ -135,6 +137,10 @@ procedure Terminal is
    --  Last button state for synthesizing Press/Release from
    --  v3 pointer events.
    Prev_Buttons : U64 := 0;
+
+   --  Opened-once clipboard service handle (M9x); the terminal
+   --  keeps it for its lifetime.
+   Clipboard_Svc : U64 := 0;
 
    Result : U64;
 
@@ -275,6 +281,37 @@ procedure Terminal is
          end if;
       end if;
    end Input_Char;
+
+   --  M9x: paste the system clipboard into the input FIFO as if
+   --  typed. Every byte goes through Input_Char so the line
+   --  discipline (echo, Edit_Buf extent, history push on newline)
+   --  stays in sync; an empty clipboard is a no-op. Reads are
+   --  chunked to avoid big stack buffers.
+   procedure Paste_Clipboard is
+      Chunk : String (1 .. 128);
+      St    : U64;
+      Off   : U64 := 0;
+      Got   : U64;
+   begin
+      if Clipboard_Svc = 0 then
+         Clipboard_Svc := Akernel_User.Clipboard.Open;
+         if Clipboard_Svc = 0 then
+            Debug_Put_Line ("terminal: clipboard open failed");
+            return;
+         end if;
+      end if;
+      loop
+         St := Akernel_User.Clipboard.Read
+           (Clipboard_Svc, Off, Chunk'Address, Chunk'Length, Got);
+         exit when St /= Akernel_User.Clipboard.Status_Ok
+           or else Got = 0;
+         for I in 1 .. Natural (Got) loop
+            Input_Char (Chunk (I));
+         end loop;
+         Off := Off + Got;
+         exit when Got < Chunk'Length;   --  end of buffer
+      end loop;
+   end Paste_Clipboard;
 
    --  Repaint the visible window into the surface buffer and mark
    --  the whole pane dirty (Bureau flushes after the reply).
@@ -455,6 +492,8 @@ procedure Terminal is
                Result := Akernel_User.Window.Surface_Destroy
                  (Win_EP, Surf_Id);
                Process_Exit;
+            elsif (Queue (Slot + 1) and 16#FFFF_FFFF#) = 2 then
+               Paste_Clipboard;
             end if;
          end if;
          Tail := Tail + 1;
@@ -539,7 +578,10 @@ procedure Terminal is
       Set_Grant (3, Args_Cap, Right_Map + Right_Read, 0);
       Set_Grant (4, Elevated_Svc, Right_Send, 0);
       Set_Grant (5, Net_Svc, Right_Send, 0);
-      if Spawn (Mem_Cap, 6, Proc_Cap) /= Spawn_Ok
+      --  Handle 7: libman Send (the shell passes it on to its own
+      --  children so command-line GUI apps share the clipboard).
+      Set_Grant (6, Libman_Svc, Right_Send + Right_Transfer, 0);
+      if Spawn (Mem_Cap, 7, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Debug_Put_Line ("terminal shell spawn failed");
@@ -573,8 +615,13 @@ procedure Terminal is
       end if;
       Trinket.Menus.Serialize
         ((1 => Trinket.Menus.M
-            ("Terminal", (1 => Trinket.Menus.It (1, "Quit", 'q',
-                                                 Alt => True)))),
+            ("Terminal",
+             (Trinket.Menus.It (1, "Quit", 'q', Alt => True),
+              Trinket.Menus.Sep,
+              --  M9x: paste the system clipboard into the input
+              --  line as if typed (Ctrl+V, matched by Bureau from
+              --  the registered menu even when no menu is open).
+              Trinket.Menus.It (2, "Paste", 'v', Ctrl => True)))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);

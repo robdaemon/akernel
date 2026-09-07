@@ -19,10 +19,11 @@ procedure Libman is
    Console_Cap : constant U64 := 1;
    FS_Cap      : constant U64 := 2;
    Service_EP  : constant U64 := 3;  --  3rd manifest token
-   --  (console fs libman_server). Was 6 ("uniform ABI") — handle 6
-   --  is the CLIENT-side libman handle; the server's own Receive
-   --  side landed at 3, so libman's first IPC_Recv failed and the
-   --  manager never served a request (m75 found this).
+   --  (console fs libman_server). The CLIENT-side libman handle
+   --  in the uniform ABI is 7 (M9x; was 6 before netserv took it);
+   --  the server's own Receive side landed at 3, so libman's first
+   --  IPC_Recv failed and the manager never served a request
+   --  (m75 found this).
 
    Max_Name      : constant := 64;
 

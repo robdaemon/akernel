@@ -14,7 +14,10 @@ package body Akernel_User.Libs is
 
    Stage_VA : constant U64 := 16#5A00_0000#;
    Args_VA  : constant U64 := 16#5A40_0000#;
-   Libman_Handle : constant U64 := 6;
+   --  M9x: the uniform ABI's libman slot moved to handle 7 (6 was
+   --  the netserv client endpoint). Processes without a manager
+   --  cap (plain CLI crates) fall back to a private spawn.
+   Libman_Handle : constant U64 := 7;
 
    Bound_Libman : U64 := 0;
 

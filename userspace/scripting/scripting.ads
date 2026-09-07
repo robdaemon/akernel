@@ -27,6 +27,11 @@ package Scripting is
    --  and Scripting.Exec itself were extended in the same
    --  commit.
    Net_EP     : constant Akernel_User.Syscalls.U64 := 6;
+   --  Handle 7 (M9x): the library-manager Send cap (Send+Transfer).
+   --  Granted by every uniform spawner so shell-spawned commands
+   --  reach the one resident library instance (the clipboard)
+   --  just like Startup programs do.
+   Libman_EP  : constant Akernel_User.Syscalls.U64 := 7;
 
    --  Split a command line into its first word and the trimmed
    --  remainder: Word = Cmd (Cmd'First .. W_Last), the rest is

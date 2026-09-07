@@ -1033,13 +1033,12 @@ package body Device_Manager is
          Log ("devmgr: program needs bureau first");
          return;
       end if;
-      --  Uniform command ABI (M94): grant slots 0..5 so the child
-      --  holds handles 1..6 = console, fs, bureau/window, args,
-      --  elevation, netserv — the same layout shell-spawned
-      --  commands get, so any Startup program can call
-      --  Scripting.Exec.Spawn_Cmd in turn (previously the Startup
-      --  ABI stopped at handles 1..5, and the spawn failed on the
-      --  missing handle-6 source).
+      --  Uniform command ABI (M94/M9x): grant slots 0..6 so the
+      --  child holds handles 1..7 = console, fs, bureau/window,
+      --  args, elevation, netserv, libman — the same layout
+      --  shell-spawned commands get, so any Startup program can
+      --  call Scripting.Exec.Spawn_Cmd in turn and reach the
+      --  shared library manager (clipboard) at handle 7.
       Set_Grant (Grant_Count, Console_Handle, Right_Send, Next_Id);
       Grant_Count := Grant_Count + 1;             --  child handle 1
       Set_Grant (Grant_Count, Akernel_User.Files.Endpoint,
@@ -1081,6 +1080,16 @@ package body Device_Manager is
       if Net_Client_EP /= 0 then
          Set_Grant (Grant_Count, Net_Client_EP, Right_Send, 0);
          Grant_Count := Grant_Count + 1;          --  child handle 6
+      end if;
+      --  Handle 7: the library-manager Send cap (Send+Transfer so
+      --  Libman_Available's probe mint works). Every uniform
+      --  spawner grants it, so Startup and shell-spawned programs
+      --  reach the ONE resident library instance (the clipboard)
+      --  instead of silently private-spawning a per-client copy.
+      if Libman_EP /= 0 then
+         Set_Grant (Grant_Count, Libman_EP,
+                    Right_Send + Right_Transfer, 0);
+         Grant_Count := Grant_Count + 1;          --  child handle 7
       end if;
       if Spawn (Image_Cap, Grant_Count, Process_Cap) = Spawn_Ok
         and then Process_Cap /= 0

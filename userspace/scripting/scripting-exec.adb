@@ -189,7 +189,10 @@ package body Scripting.Exec is
       Set_Grant (4, Svc_EP, Right_Send, 0);
       --  Handle 6 = the netserv client endpoint (m71c).
       Set_Grant (5, Net_EP, Right_Send, 0);
-      if Spawn (Mem_Cap, 6, Proc_Cap) /= Spawn_Ok
+      --  Handle 7 = the libman Send cap (M9x): children spawned
+      --  from the shell share the resident clipboard.
+      Set_Grant (6, Libman_EP, Right_Send + Right_Transfer, 0);
+      if Spawn (Mem_Cap, 7, Proc_Cap) /= Spawn_Ok
         or else Proc_Cap = 0
       then
          Akernel_User.Console.Put_Line ("spawn failed: " & Word);
