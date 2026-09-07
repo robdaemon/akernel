@@ -95,7 +95,49 @@ Re-run on every push/PR in CI and locally via `make scan-secrets`.
 
 ## Baseline: Ada/SPARK proof status
 
-(pending — GNATprove)
+_Recorded 2026-09-07. GNATprove 16.1.0 + gnat_riscv64_elf 16.1.0
+installed via `alr install` (analysis toolchain only — the build stays
+on the pinned 15.3.1 crates). Run through `alr exec` so gprconfig
+resolves the cross `light-rv64imafdc` runtime._
+
+**Feasibility determination (first real proof):** GNATprove can analyze
+the kernel project. Required setup: `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR`
+pointing at the alr config that holds the toolchain selection; invoke
+as `alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1
+--timeout=30 --report=all`; a package body defaults to `SPARK_Mode =>
+Off` even when its spec is On, so the body must declare On explicitly.
+
+**Scope of the v1 proof subset — `Kernel.Capabilities`:** spec declares
+`pragma SPARK_Mode (On)`; `To_Rights` carries a component-by-component
+bit↔rights postcondition and `To_Mask` a no-bits-outside-valid-mask
+postcondition. The body is On, and every physmap/PMM/pointer path
+(`Page_At`, `Get`, `Put`, `Zero_Page`, `Ensure_Page`, `Release_Page`,
+`Insert`, `Insert_At`, `Lookup`, `Duplicate`, `Close`, `Reset`) is
+explicitly `SPARK_Mode (Off)` — those are exercised by the in-guest
+capability fuzz suite instead of proof.
+
+**Result (level 1, timeout 30 s): all checks proved — 17/17, 0
+unproved, 0 justified.**
+
+| Check class | Count | Notes |
+|---|---|---|
+| Functional contracts | 2 | `To_Rights` and `To_Mask` postconditions, CVC5 |
+| Run-time checks | 8 | incl. `Page_No`/`Slot_No` range bounds |
+| Initialization (flow) | 1 | plus termination proved on analyzed units |
+| Flow errors | 0 | across all 34 analyzed units (whole project) |
+
+Full per-unit report: `obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out`.
+Kernel build after the annotation: warning-free (`make kernel`).
+
+**Audit-checklist entries (unproved-by-design, not proof failures):**
+the SPARK_Mode-Off body paths above; each is covered by the directed
+`Tests/Fuzz` capability cases and the cap-accounting rules in AGENTS.md.
+
+**Roadmap (follow-up milestones):** annotate the grant-list validation
+in the spawn syscall path next (pure logic, same pattern), then model
+`Cap_Table` state invariants (count/root coherence) to lift
+`Insert`/`Lookup`/`Close` out of Off — the PMM frame model is the long
+pole. Re-run this baseline on each change to `kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 

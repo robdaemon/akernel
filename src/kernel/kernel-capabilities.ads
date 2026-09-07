@@ -2,6 +2,10 @@ with Interfaces;
 with System;
 
 package Kernel.Capabilities is
+   pragma SPARK_Mode (On);
+
+   use type Interfaces.Unsigned_64;
+
    subtype U64 is Interfaces.Unsigned_64;
 
    --  16K handles per process. The table is PAGED (milestone 38):
@@ -78,8 +82,26 @@ package Kernel.Capabilities is
    --  rejected by the kernel.
    Valid_Rights_Mask : constant U64 := 16#3FF#;
 
-   function To_Rights (Mask : U64) return Rights;
-   function To_Mask (R : Rights) return U64;
+   function To_Rights (Mask : U64) return Rights
+     with
+       --  Bit i of the mask maps to component i of Rights
+       --  (Rights declaration order, bit 0 = Read .. bit 9 = Manage).
+       Post =>
+         (To_Rights'Result.Read     = ((Mask and 1) /= 0))    and then
+         (To_Rights'Result.Write    = ((Mask and 2) /= 0))    and then
+         (To_Rights'Result.Execute  = ((Mask and 4) /= 0))    and then
+         (To_Rights'Result.Map      = ((Mask and 8) /= 0))    and then
+         (To_Rights'Result.Send     = ((Mask and 16) /= 0))   and then
+         (To_Rights'Result.Receive  = ((Mask and 32) /= 0))   and then
+         (To_Rights'Result.Wait     = ((Mask and 64) /= 0))   and then
+         (To_Rights'Result.Ack      = ((Mask and 128) /= 0))  and then
+         (To_Rights'Result.Transfer = ((Mask and 256) /= 0))  and then
+         (To_Rights'Result.Manage   = ((Mask and 512) /= 0));
+   function To_Mask (R : Rights) return U64
+     with
+       --  The encoding never sets bits outside the valid mask.
+       Post => (if R = No_Rights then To_Mask'Result = 0)
+         and then (To_Mask'Result and (not Valid_Rights_Mask)) = 0;
 
    --  Layout is FORCED to exactly 32 bytes by the rep clause:
    --  128 entries then fill a 4 KiB cap page precisely, and the

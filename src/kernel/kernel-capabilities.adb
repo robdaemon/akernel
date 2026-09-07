@@ -5,8 +5,9 @@ with System.Address_To_Access_Conversions;
 with System.Storage_Elements;
 
 package body Kernel.Capabilities is
+   pragma SPARK_Mode (On);
+
    use System.Storage_Elements;
-   use type Interfaces.Unsigned_64;
    use type System.Address;
    use type Kernel.Physical_Memory.Status;
 
@@ -21,8 +22,12 @@ package body Kernel.Capabilities is
    package Word_Conv is
      new System.Address_To_Access_Conversions (U64);
 
-   function Page_At (PA : U64) return Page_Conv.Object_Pointer is
-     (Page_Conv.To_Pointer (To_Addr (Arch.Phys_To_Virt (PA))));
+   function Page_At (PA : U64) return Page_Conv.Object_Pointer
+   is
+      pragma SPARK_Mode (Off);
+   begin
+      return Page_Conv.To_Pointer (To_Addr (Arch.Phys_To_Virt (PA)));
+   end Page_At;
 
    function Page_No (Cap : Handle) return Page_Index is
      (Page_Index (Cap / Caps_Per_Page));
@@ -33,6 +38,7 @@ package body Kernel.Capabilities is
    --  A zeroed frame is a page of Null_Cap entries: Valid = False,
    --  Kind = Null_Object (first literal), Object/Rights/Badge all 0.
    procedure Zero_Page (PA : U64) is
+      pragma SPARK_Mode (Off);
       Addr : System.Address := To_Addr (Arch.Phys_To_Virt (PA));
    begin
       for I in 1 .. 4096 / 8 loop
@@ -42,6 +48,7 @@ package body Kernel.Capabilities is
    end Zero_Page;
 
    function Get (Table : Cap_Table; Cap : Handle) return Cap_Entry is
+      pragma SPARK_Mode (Off);
       P : constant Page_Index := Page_No (Cap);
    begin
       if Table.Root (P) = 0 then
@@ -53,6 +60,7 @@ package body Kernel.Capabilities is
    procedure Put
      (Table : Cap_Table; Cap : Handle; New_Entry : Cap_Entry)
    is
+      pragma SPARK_Mode (Off);
    begin
       Page_At (Table.Root (Page_No (Cap))) (Slot_No (Cap)) := New_Entry;
    end Put;
@@ -62,6 +70,7 @@ package body Kernel.Capabilities is
       Page   : Page_Index;
       Result : out Status)
    is
+      pragma SPARK_Mode (Off);
       Frame      : U64;
       PMM_Result : Kernel.Physical_Memory.Status;
    begin
@@ -84,6 +93,7 @@ package body Kernel.Capabilities is
    procedure Release_Page
      (Table : in out Cap_Table; Page : Page_Index)
    is
+      pragma SPARK_Mode (Off);
       PMM_Result : Kernel.Physical_Memory.Status;
    begin
       Kernel.Physical_Memory.Deallocate_Frame
@@ -173,6 +183,7 @@ package body Kernel.Capabilities is
       Result : out Status;
       Cap    : out Handle)
    is
+      pragma SPARK_Mode (Off);
    begin
       Cap := Invalid_Handle;
 
@@ -221,6 +232,7 @@ package body Kernel.Capabilities is
       Badge  : U64;
       Result : out Status)
    is
+      pragma SPARK_Mode (Off);
       P : Page_Index;
    begin
       if Cap = Invalid_Handle then
@@ -262,6 +274,7 @@ package body Kernel.Capabilities is
       Result    : out Status;
       Out_Entry : out Cap_Entry)
    is
+      pragma SPARK_Mode (Off);
    begin
       Out_Entry := Get (Table, Cap);
       if Cap = Invalid_Handle or else not Out_Entry.Valid then
@@ -281,6 +294,7 @@ package body Kernel.Capabilities is
       Result    : out Status;
       New_Cap   : out Handle)
    is
+      pragma SPARK_Mode (Off);
       Source_Entry : Cap_Entry;
    begin
       Lookup (Table, Source, Result, Source_Entry);
@@ -312,6 +326,7 @@ package body Kernel.Capabilities is
       Cap    : Handle;
       Result : out Status)
    is
+      pragma SPARK_Mode (Off);
       P : Page_Index;
    begin
       if Cap = Invalid_Handle
@@ -335,6 +350,7 @@ package body Kernel.Capabilities is
    end Close;
 
    procedure Reset (Table : out Cap_Table) is
+      pragma SPARK_Mode (Off);
    begin
       for P in Page_Index loop
          if Table.Root (P) /= 0 then
