@@ -13,6 +13,37 @@ repository.
 
 ## Recently shipped
 
+- **Terminal mouse copy + Alt clipboard shortcuts** (this line +
+  `cf388ad`): clipboard cut/copy/paste moved Ctrl → Alt across
+  apps — Edit's Edit menu (items 11-14) and Terminal Paste are now
+  Alt+X/C/V/A, matching the Alt+N/O/S/Q norm and freeing the whole
+  Ctrl row for shell control bytes (^C terminate lands next).
+  Terminal gains mouse text selection over the scrollback (new
+  `Terminal_Clip` package): a left drag in the text area selects
+  whole grid cells (buffer-coordinate anchor/extent, clamped to
+  the visible window), release of a real drag auto-copies the text
+  to the system clipboard and keeps the band up, Terminal > Copy
+  (Alt+C) re-copies, and a click clears. Render paints the band
+  under the glyphs and flips band text to Pane (Text_Edit parity);
+  the block cursor flips to Pane on a selected cell. Pointer
+  routing gained a grab owner: a text drag keeps its events even
+  over the scrollbar gutter, while the gutter itself still drags
+  the thumb. Copies are whole rows LF-joined (trailing blanks are
+  never stored, interior blank rows keep their LF), capped at the
+  clipboard's 32 KiB store on whole-row boundaries (staging is a
+  static buffer — too large for the stack). Fuzz: `tclip` cases
+  drive Terminal_Clip against the real clipboard server (row-end
+  trim, blank-row LF, partial row, click-clear, no-op copy, menu
+  re-copy). Gates: make test 1806 PASS incl. the `tclip` cases and
+  the README size/content checks; the 86 FAILs are the PRE-EXISTING
+  C:Execute scripting cluster (it reproduces on the pristine HEAD
+  before this work: fuzz's Run_Command still grants the pre-M9x
+  six-cap ABI, so Execute's nested command spawns fail with "spawn
+  failed: <cmd>") — unrelated to this milestone and tracked
+  separately (commit 2db8b38 adds the missing libman handle-7
+  grant on the M9x policy; the cluster persists, so the mismatch
+  runs deeper).
+
 - **System clipboard (Amiga clipboard.device flavor)** — a resident
   shared library, `Sys:Libs/Clipboard` v1.0 (`961777d`): libman
   entries gained a `Resident` flag so the one loaded instance is
