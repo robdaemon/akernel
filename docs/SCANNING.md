@@ -143,12 +143,24 @@ The body is On, and every physmap/PMM/pointer path
 explicitly `SPARK_Mode (Off)` — those are exercised by the in-guest
 capability fuzz suite instead of proof.
 
-**Result (level 1, timeout 30 s): all checks proved — 19/19, 0
-unproved, 0 justified.**
+**Cap_Table field-coherence slice:** a Ghost predicate
+`Table_Coherent` (private part) captures the sound, field-level
+invariant of the paged table — an emptied page holds no frame
+(`Root(P) = 0` iff `Count(P) = 0` for every page) and `Total` never
+exceeds the handle space. `Initialize`'s body ends with
+`pragma Assert (Table_Coherent (Table))`, proving a fresh table starts
+coherent. Entry contents themselves stay out of scope: they live in
+PMM frames behind the physmap, invisible to SPARK (no `Ghost`
+components in GNAT 15, and a memory↔model bridge would need unproved
+axioms — declined to keep the 0-assume record).
+
+**Result (level 1, timeout 30 s): all checks proved — 21/21, 0
+unproved, 0 justified, 0 pragma Assume.**
 
 | Check class | Count | Notes |
 |---|---|---|
 | Functional contracts | 5 | `To_Rights`, `To_Mask`, `Has_Rights` specs + both grant lemmas, CVC5 |
+| Assertions | 1 | `Initialize` establishes `Table_Coherent`, CVC5 |
 | Run-time checks | 7 | incl. `Page_No`/`Slot_No` range bounds |
 | Initialization (flow) | 1 | plus termination proved on analyzed units |
 | Flow errors | 0 | across all 34 analyzed units (whole project) |
@@ -163,12 +175,14 @@ the SPARK_Mode-Off body paths above; each is covered by the directed
 **Roadmap (follow-up milestones):** both grant-list *encoding* lemmas
 (unknown-bits rejection + subset check) are proved, so the pure
 decision logic of `Grant_List_Caps` is fully characterized in raw-mask
-terms. The procedure itself becomes provable once `Lookup_Cap` /
-IPC-buffer contracts exist (the syscall path stays Off until then — it
-dereferences the parent's physmap IPC buffer and the cap table). Next:
-model `Cap_Table` state invariants (count/root coherence) to lift
-`Insert`/`Lookup`/`Close` out of Off — the PMM frame model is the long
-pole. Re-run this baseline on each change to `kernel-capabilities.*`.
+terms, and `Initialize` is proved to establish the field-level
+`Table_Coherent` invariant. Proving `Insert`/`Lookup`/`Close` content
+semantics needs a physmap memory model — GNAT 15 has no `Ghost`
+components, and an unproved memory↔model bridge (`pragma Assume`) was
+declined to keep the 0-assume record; that is a dedicated
+representation-refactor milestone. Meanwhile the Off bodies stay
+fuzz-covered. Re-run this baseline on each change to
+`kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 

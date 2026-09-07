@@ -106,6 +106,7 @@ package body Kernel.Capabilities is
       Table.Root  := (others => 0);
       Table.Count := (others => 0);
       Table.Total := 0;
+      pragma Assert (Table_Coherent (Table));
    end Initialize;
 
    function Has_Rights (Have : Rights; Need : Rights) return Boolean is

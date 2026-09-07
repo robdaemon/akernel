@@ -255,4 +255,22 @@ private
       Count : Count_Array := (others => 0);
       Total : Natural := 0;
    end record;
+
+   --  Field-level well-formedness of the paged table. This is the
+   --  sound, provable subset of the Cap_Table invariants: the entry
+   --  contents themselves live in PMM frames reached through the
+   --  physmap and are invisible to SPARK (see the Off bodies and the
+   --  ledger roadmap). What IS visible in the record fields:
+   --    * an emptied page holds no frame — Close/Reset return pages
+   --      with zero live entries to the PMM — so Root(P) = 0 iff
+   --      Count(P) = 0;
+   --    * Total never exceeds the handle space.
+   --  Proved for Initialize below; preservation across Insert/Lookup/
+   --  Close lives in the Off bodies (fuzz-covered) until the physmap
+   --  layer gets a model.
+   function Table_Coherent (Table : Cap_Table) return Boolean is
+     (Table.Total <= Max_Caps
+      and (for all P in Page_Index =>
+             (Table.Count (P) = 0) = (Table.Root (P) = 0)))
+   with Ghost;
 end Kernel.Capabilities;
