@@ -25,6 +25,8 @@ print(f"FAIL  gitleaks reported {len(findings)} finding(s):")
 for x in findings:
     rule = x.get("RuleID", "?")
     file_ = x.get("File", "?")
-    start = (x.get("StartLine") or {}).get("LineNumber", "?")
+    start = x.get("StartLine", "?")
+    if isinstance(start, dict):
+        start = start.get("LineNumber", "?")
     print(f"  [{rule}] {file_}:{start} — {x.get('Description', '')[:120]}")
 sys.exit(1)
