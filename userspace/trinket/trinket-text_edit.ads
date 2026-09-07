@@ -31,6 +31,19 @@ package Trinket.Text_Edit is
    function Modified (W : Text_Edit) return Boolean;
    procedure Clear_Modified (W : in out Text_Edit);
 
+   --  Selection/editing API (clipboard milestone): exposes the
+   --  widget's drag selection for Cut/Copy/Paste and Select All.
+   --  Key events carry no Shift modifier, so keyboard selection
+   --  is the Select-All menu item rather than Shift+arrow extend.
+   function Has_Selection (W : Text_Edit) return Boolean;
+   --  Selected text with newlines between lines ("" when none).
+   function Selected_Text (W : Text_Edit) return String;
+   procedure Select_All (W : in out Text_Edit);
+   procedure Delete_Selected (W : in out Text_Edit);
+   --  Replace any selection with S (newlines split lines; CRLF
+   --  pairs make one break), leaving the cursor after the text.
+   procedure Insert_Text (W : in out Text_Edit; S : String);
+
     --  Scroll coupling for the app's scrollbar.
     procedure Set_Top (W : in out Text_Edit; T : U64);
     function Top_Line (W : Text_Edit) return U64;

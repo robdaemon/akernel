@@ -350,6 +350,106 @@ package body Trinket.Text_Edit is
       W.Dirty := True;
    end Collapse;
 
+   function Has_Selection (W : Text_Edit) return Boolean is
+      (W.Sel);
+
+   function Selected_Text (W : Text_Edit) return String is
+      L1, C1, L2, C2 : Natural;
+      Len : Natural := 0;
+      Pos : Natural := 0;
+   begin
+      if not W.Sel then
+         return "";
+      end if;
+      Sel_Bounds (W, L1, C1, L2, C2);
+      if L1 = L2 then
+         return W.Lines (L1).Buf (C1 + 1 .. C2);
+      end if;
+      for L in L1 .. L2 loop
+         if L = L1 then
+            Len := Len + (W.Lines (L).Len - C1) + 1;
+         elsif L = L2 then
+            Len := Len + C2;
+         else
+            Len := Len + W.Lines (L).Len + 1;
+         end if;
+      end loop;
+      declare
+         Buf : String (1 .. Len);
+      begin
+         for L in L1 .. L2 loop
+            if L = L1 then
+               declare
+                  S : constant String :=
+                    W.Lines (L).Buf (C1 + 1 .. W.Lines (L).Len);
+               begin
+                  Buf (Pos + 1 .. Pos + S'Length) := S;
+                  Pos := Pos + S'Length;
+               end;
+               Pos := Pos + 1;
+               Buf (Pos) := ASCII.LF;
+            elsif L = L2 then
+               Buf (Pos + 1 .. Pos + C2) :=
+                 W.Lines (L).Buf (1 .. C2);
+               Pos := Pos + C2;
+            else
+               declare
+                  S : constant String :=
+                    W.Lines (L).Buf (1 .. W.Lines (L).Len);
+               begin
+                  Buf (Pos + 1 .. Pos + S'Length) := S;
+                  Pos := Pos + S'Length;
+               end;
+               Pos := Pos + 1;
+               Buf (Pos) := ASCII.LF;
+            end if;
+         end loop;
+         return Buf (1 .. Pos);
+      end;
+   end Selected_Text;
+
+   procedure Select_All (W : in out Text_Edit) is
+   begin
+      if W.N = 0 then
+         Ensure_Line (W);
+      end if;
+      W.Anch_L := 1;
+      W.Anch_C := 0;
+      W.Cur_L := W.N;
+      W.Cur_C := W.Lines (W.N).Len;
+      W.Sel := True;
+      W.Dirty := True;
+      Ensure_Cursor_Visible (W);
+   end Select_All;
+
+   procedure Delete_Selected (W : in out Text_Edit) is
+   begin
+      if W.Sel then
+         Delete_Selection (W);
+         Ensure_Cursor_Visible (W);
+      end if;
+   end Delete_Selected;
+
+   procedure Insert_Text (W : in out Text_Edit; S : String) is
+   begin
+      for I in S'Range loop
+         if S (I) = ASCII.CR or else S (I) = ASCII.LF then
+            --  CRLF counts as one break (the LF after a CR is
+            --  skipped); lone CR or LF splits the line.
+            if not (S (I) = ASCII.LF
+                    and then I > S'First
+                    and then S (I - 1) = ASCII.CR)
+            then
+               Split_Line (W);
+            end if;
+         else
+            Insert_Char (W, S (I));
+         end if;
+      end loop;
+      W.Dirty := True;
+      Ensure_Cursor_Visible (W);
+   end Insert_Text;
+
    function On_Key (W : access Text_Edit; Code : U64) return Boolean is
    begin
       Ensure_Line (W.all);

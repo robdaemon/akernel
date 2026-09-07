@@ -18,6 +18,8 @@ with Akernel_User.Glob;
 with Akernel_User.Clipboard;
 with Akernel_User.Libs;
 with Trinket;
+with Trinket.Widgets;
+with Trinket.Text_Edit;
 with Trinket.Images;
 with Fuzz_Port;
 
@@ -7744,6 +7746,43 @@ begin
                 and then Buf (1 .. 14) = "clip fuzz text",
                 "clip resident across close");
          Akernel_User.Libs.Close_Library (Clip);
+      end;
+
+      --  Text_Edit editing API (clipboard milestone): a fresh
+      --  editor's Select All / Selected_Text / CRLF-aware
+      --  Insert_Text / Delete_Selected round-trip (content ops,
+      --  no canvas needed).
+      declare
+         Ed  : Trinket.Text_Edit.Any_Text_Edit;
+         Disc : constant Trinket.Widgets.Any_Widget :=
+           Trinket.Text_Edit.New_Scrolled_Editor (Ed);
+      begin
+         Trinket.Text_Edit.Clear (Ed.all);
+         Trinket.Text_Edit.Append_Line (Ed.all, "alpha");
+         Trinket.Text_Edit.Append_Line (Ed.all, "beta");
+         Check (not Trinket.Text_Edit.Has_Selection (Ed.all),
+                "tedit starts unselected");
+         Trinket.Text_Edit.Select_All (Ed.all);
+         Check (Trinket.Text_Edit.Has_Selection (Ed.all),
+                "tedit select all");
+         declare
+            Sel : constant String :=
+              Trinket.Text_Edit.Selected_Text (Ed.all);
+         begin
+            Check (Sel = "alpha" & ASCII.LF & "beta",
+                   "tedit selected text spans lines");
+         end;
+         Trinket.Text_Edit.Insert_Text
+           (Ed.all, "one" & ASCII.CR & ASCII.LF & "two");
+         Check (Trinket.Text_Edit.Line_Count (Ed.all) = 2
+                and then Trinket.Text_Edit.Get_Line (Ed.all, 1) = "one"
+                and then Trinket.Text_Edit.Get_Line (Ed.all, 2) = "two",
+                "tedit insert replaces selection, crlf is one break");
+         Trinket.Text_Edit.Select_All (Ed.all);
+         Trinket.Text_Edit.Delete_Selected (Ed.all);
+         Check (Trinket.Text_Edit.Line_Count (Ed.all) = 1
+                and then Trinket.Text_Edit.Get_Line (Ed.all, 1) = "",
+                "tedit delete all empties the doc");
       end;
 
       --  Multiple clients can open the same library concurrently.
