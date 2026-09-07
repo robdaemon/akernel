@@ -241,6 +241,10 @@ Then run the proof with the alr bin dir on `PATH`:
 
 ```bash
 # ALR_BIN = dir containing the alr-installed riscv64-elf-gcc / gnatprove
+# --warnings=off: analysis compiles re-enable the .x warning class
+# (CE may call Last_Chance_Handler) that the kernel build suppresses via
+# -gnatw.X — expected noise from syscall-dispatcher range conversions in
+# arch-traps.adb, not proof failures.
 PATH="$ALR_BIN:$PATH" gnatprove -P akernel.gpr -f --mode=prove --level=1 \
-  --timeout=30 --report=all
+  --timeout=30 --report=all --warnings=off
 ```

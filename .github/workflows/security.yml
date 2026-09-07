@@ -141,13 +141,17 @@ jobs:
       # errors/failed checks exit non-zero and fail the job. The alr bin
       # dir is put on PATH so gprconfig finds the cross compiler; no
       # crate solve is needed (that is why this is not `alr exec`).
+      # --warnings=off: gnatprove re-enables the .x warning class its
+      # analysis compiles (CE may call Last_Chance_Handler) that the
+      # kernel build suppresses via -gnatw.X — expected noise from the
+      # syscall dispatcher's range conversions, not proof failures.
       - name: GNATprove proof baseline
         run: |
           ALR_BIN="$(dirname "$(find "$HOME/.alire" -name riscv64-elf-gcc -path '*/bin/*' 2>/dev/null | head -1)")"
           test -n "$ALR_BIN" || { echo "alr toolchain bin not found"; exit 1; }
           export PATH="$ALR_BIN:$PATH"
           gnatprove -P akernel.gpr -f --mode=prove --level=1 \
-            --timeout=30 --report=all
+            --timeout=30 --report=all --warnings=off
           tail -40 obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out
 
   host:
