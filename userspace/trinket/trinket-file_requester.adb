@@ -110,7 +110,10 @@ package body Trinket.File_Requester is
            Path (Path'First .. Path'First + Path_Len - 1);
       end if;
       Deliver;
-      Trinket.Window.Request_Modal_Exit (Modal_Host.all);
+      if Modal_Host /= null then
+         Trinket.Window.Request_Modal_Exit (Modal_Host.all);
+         Modal_Host := null;
+      end if;
    end Finish;
 
    procedure Canceled is
@@ -118,7 +121,10 @@ package body Trinket.File_Requester is
       Picked := False;
       Path_Len := 0;
       Deliver;
-      Trinket.Window.Request_Modal_Exit (Modal_Host.all);
+      if Modal_Host /= null then
+         Trinket.Window.Request_Modal_Exit (Modal_Host.all);
+         Modal_Host := null;
+      end if;
    end Canceled;
 
    function Parent_Of return String is
@@ -308,7 +314,6 @@ package body Trinket.File_Requester is
 
       Go_To (Cur (1 .. Cur_Len));
       Trinket.Window.Start_Modal (Win, Root);
-      Modal_Host := null;   --  window lives on; callbacks use Cb
    end Request;
 
 end Trinket.File_Requester;
