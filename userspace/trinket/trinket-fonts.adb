@@ -1,5 +1,8 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces;
+with Interfaces.C;
+with Interfaces.C.Strings;
+with System;
 with System.Storage_Elements;
 with Aegir_User.CLI;
 with Aegir_User.Files;
@@ -9,6 +12,7 @@ with Font8x8;
 package body Trinket.Fonts is
    use Interfaces;
    use type Trinket.U64;
+   use type System.Address;
 
    subtype U8 is Interfaces.Unsigned_8;
    subtype U16 is Interfaces.Unsigned_16;
@@ -46,6 +50,16 @@ package body Trinket.Fonts is
    end record;
    type Ext_Array is array (1 .. Max_Ext) of Ext_Rec;
 
+   --  M9A TrueType/OpenType: a Ttf_Access hooks a Font_Rec to a
+   --  FreeType face. Data (the font file bytes) must outlive the
+   --  face, which references it.
+   type Str_Access is access String;
+   type TTF_Rec is record
+      Face : System.Address := System.Null_Address;
+      Data : Str_Access := null;
+   end record;
+   type Ttf_Access is access TTF_Rec;
+
    type Font_Rec is record
       T         : Glyph_Table;
       Ext       : Ext_Array;
@@ -53,13 +67,48 @@ package body Trinket.Fonts is
       Ascent    : U64 := 6;
       Descent   : U64 := 2;
       From_Disk : Boolean := False;
+      --  M9A: a non-null Ttf makes this a TrueType/OpenType face
+      --  (rasterized by FreeType); the BDF tables above are then
+      --  unused. Data holds the font bytes the face references.
+      Ttf       : Ttf_Access := null;
    end record;
 
-   type Str_Access is access String;
    procedure Free is new Ada.Unchecked_Deallocation
      (String, Str_Access);
    procedure Free_Font is new Ada.Unchecked_Deallocation
      (Font_Rec, Handle);
+   procedure Free_Ttf is new Ada.Unchecked_Deallocation
+     (TTF_Rec, Ttf_Access);
+
+   --  M9A FreeType shim bindings (userspace/freetype/port/
+   --  ftaegir.c); NULL face = failure, 0 returns = ok.
+   subtype CInt is Interfaces.Integer_32;
+   type CInt_Ptr is access all CInt;
+   type Byte_Array is array (Natural range <>) of Unsigned_8
+     with Volatile_Components;
+   function FT_Open
+     (Data : System.Address; Len : Unsigned_64;
+      Px   : Unsigned_32) return System.Address
+   with Import, Convention => C, External_Name => "aegir_ft_open";
+   procedure FT_Close (V : System.Address)
+   with Import, Convention => C, External_Name => "aegir_ft_close";
+   function FT_Family (V : System.Address)
+     return Interfaces.C.Strings.chars_ptr
+   with Import, Convention => C, External_Name => "aegir_ft_family";
+   function FT_Ascent (V : System.Address) return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_ascent";
+   function FT_Descent (V : System.Address) return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_descent";
+   function FT_Advance (V : System.Address; CP : Unsigned_64)
+     return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_advance_x";
+   function FT_Glyph
+     (V : System.Address; CP : Unsigned_64;
+      Left, Top, W, H, Pitch : CInt_Ptr;
+      Bits : access System.Address) return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_glyph";
+   --  Fixed pixel size for TTF faces this milestone.
+   TTF_Px : constant := 16;
 
    Global      : Font_Rec;         --  the UI font (latched)
    Mono        : Font_Rec;         --  compiled-in 8x8, advance 8
@@ -149,7 +198,8 @@ package body Trinket.Fonts is
             N_Ext     => 0,
             Ascent    => 6,
             Descent   => 2,
-            From_Disk => False);
+            From_Disk => False,
+            Ttf       => null);
       while I <= Buf'Last loop
          Line_End := I;
          while Line_End <= Buf'Last
@@ -300,44 +350,111 @@ package body Trinket.Fonts is
       end if;
    end Ensure_FS;
 
-   --  Shared open/read/parse for Init (global font) and Load
-   --  (private instances); the buffer is a transient heap read.
-   procedure Try_Load (Path : String; F : out Font_Rec;
-                       OK : out Boolean) is
+   --  M9A: TrueType/OpenType detection (".ttf"/".otf", case-
+   --  insensitive) — Init/Load/Probe branch on it.
+   function Has_TTF_Suffix (Path : String) return Boolean is
+      L : constant Natural := Path'Length;
+   begin
+      if L >= 4 then
+         declare
+            P : constant Natural := Path'Last - 3;
+         begin
+            return Path (P) = '.'
+              and then (Path (P + 1) in 'T' | 't')
+              and then (Path (P + 2) in 'T' | 't')
+              and then (Path (P + 3) in 'F' | 'f'
+                        or else Path (P + 3) in 'O' | 'o');
+         end;
+      end if;
+      return False;
+   end Has_TTF_Suffix;
+
+   --  Read a whole file into a heap string (null on any failure).
+   function Read_All (Path : String) return Str_Access is
       use Aegir_User;
       use System.Storage_Elements;
+      Max   : constant U64 := 16 * 1024 * 1024;
       Size  : U64;
       Count : U64;
-      Pos   : U64;
+      Pos   : U64 := 0;
       St    : U64;
+      Buf   : Str_Access := null;
    begin
-      OK := False;
       Ensure_FS;
       St := Files.Open (Path, Size);
       if St = Files.Status_Ok and then Size > 0
-        and then Size <= Max_BDF
+        and then Size <= Max
       then
-         declare
-            Buf : Str_Access := new String (1 .. Natural (Size));
-         begin
-            Pos := 0;
-            while Pos < Size loop
-               St := Files.Read
-                 (Path, Pos,
-                  Buf.all'Address + Storage_Offset (Pos),
-                  Size - Pos, Count);
-               exit when St /= Files.Status_Ok or else Count = 0;
-               Pos := Pos + Count;
-            end loop;
-            if Pos = Size then
-               Parse_BDF (Buf.all, F);
-               F.From_Disk := True;
-               OK := True;
-            end if;
+         Buf := new String (1 .. Natural (Size));
+         while Pos < Size loop
+            St := Files.Read
+              (Path, Pos,
+               Buf.all'Address + Storage_Offset (Pos),
+               Size - Pos, Count);
+            exit when St /= Files.Status_Ok or else Count = 0;
+            Pos := Pos + Count;
+         end loop;
+         if Pos /= Size then
             Free (Buf);
-            St := Files.Close (Path);
-         end;
+            Buf := null;
+         end if;
+         St := Files.Close (Path);
       end if;
+      return Buf;
+   end Read_All;
+
+   --  Open the font bytes as a FreeType face at the fixed pixel
+   --  size; F.Ascent/Descent take the face metrics.
+   procedure Try_Load_TTF (Path : String; F : out Font_Rec;
+                           OK : out Boolean) is
+      Buf : Str_Access;
+      Px  : constant Unsigned_32 := Unsigned_32 (TTF_Px);
+   begin
+      OK := False;
+      F.Ttf := null;
+      Buf := Read_All (Path);
+      if Buf = null then
+         return;
+      end if;
+      declare
+         Face : constant System.Address :=
+           FT_Open (Buf.all'Address,
+                    Unsigned_64 (Buf.all'Length), Px);
+      begin
+         if Face = System.Null_Address then
+            Free (Buf);
+            return;
+         end if;
+         F.Ttf := new TTF_Rec'(Face => Face, Data => Buf);
+         F.Ascent := U64 (FT_Ascent (Face));
+         F.Descent := U64 (FT_Descent (Face));
+         F.From_Disk := True;
+         OK := True;
+      end;
+   end Try_Load_TTF;
+
+   --  Shared open/read/parse for Init (global font) and Load
+   --  (private instances); a transient heap read. .TTF/.OTF
+   --  routes to the FreeType path, everything else is BDF.
+   procedure Try_Load (Path : String; F : out Font_Rec;
+                       OK : out Boolean) is
+      Buf : Str_Access;
+   begin
+      OK := False;
+      if Has_TTF_Suffix (Path) then
+         Try_Load_TTF (Path, F, OK);
+         return;
+      end if;
+      Buf := Read_All (Path);
+      if Buf = null then
+         return;
+      end if;
+      if Buf.all'Length <= Max_BDF then
+         Parse_BDF (Buf.all, F);
+         F.From_Disk := True;
+         OK := True;
+      end if;
+      Free (Buf);
    end Try_Load;
 
    procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf") is
@@ -371,6 +488,123 @@ package body Trinket.Fonts is
    function Loaded_From_Disk return Boolean is (Global.From_Disk);
 
    function Line_Height return U64 is (Global.Ascent + Global.Descent);
+
+   ------------------------------------------------------------------
+   --  M9A TrueType drawing (FreeType grayscale rasters, alpha-
+   --  blended over the background; BDF stays 1-bit).
+
+   function Chan (V : Pixel; Shift : Natural) return Natural is
+     (Natural (Interfaces.Shift_Right (V, Shift) and 16#FF#));
+
+   --  Blend FG over the pixel at Pix (I) with coverage A (0..255);
+   --  the result is opaque.
+   procedure Blend_Pixel
+     (Pix : in out Pixel_Array; I : U64; FG : Pixel; A : Natural)
+   is
+      Inv : constant Natural := 255 - A;
+      R   : constant Natural :=
+        (Chan (FG, 16) * A + Chan (Pix (I), 16) * Inv + 127) / 255;
+      G   : constant Natural :=
+        (Chan (FG, 8) * A + Chan (Pix (I), 8) * Inv + 127) / 255;
+      B   : constant Natural :=
+        (Chan (FG, 0) * A + Chan (Pix (I), 0) * Inv + 127) / 255;
+   begin
+      Pix (I) := 16#FF00_0000#
+        or Pixel (R) * 2**16 or Pixel (G) * 2**8 or Pixel (B);
+   end Blend_Pixel;
+
+   --  Rasterize CP from the face and blend it at pen (X, Y) with
+   --  the line top at Y. No-op when the face is null / the
+   --  codepoint has no glyph.
+   procedure Draw_TTF_CP
+     (C : Canvas; F : Font_Rec; CP : Natural; X, Y : U64; FG : Pixel)
+   is
+      Pix : Pixel_Array (0 .. C.W * C.H - 1)
+        with Address => C.Base;
+      Left, Top, W, H, Pitch : aliased CInt := 0;
+      Bits : aliased System.Address := System.Null_Address;
+   begin
+      if F.Ttf = null
+        or else FT_Glyph (F.Ttf.Face, Unsigned_64 (CP),
+                          Left'Unrestricted_Access,
+                          Top'Unrestricted_Access,
+                          W'Unrestricted_Access,
+                          H'Unrestricted_Access,
+                          Pitch'Unrestricted_Access,
+                          Bits'Unrestricted_Access) /= 0
+        or else Pitch <= 0 or else Bits = System.Null_Address
+      then
+         return;
+      end if;
+      declare
+         Bytes : Byte_Array (0 .. Natural (Pitch) * Natural (H) - 1)
+           with Address => Bits;
+         GX : constant Integer := Integer (X) + Integer (Left);
+         GY : constant Integer := Integer (Y) + Integer (F.Ascent)
+           - Integer (Top);
+      begin
+         for R in 0 .. Integer (H) - 1 loop
+            for Col in 0 .. Integer (W) - 1 loop
+               if Col < Natural (Pitch) then
+                  declare
+                     A  : constant Natural :=
+                       Natural (Bytes (R * Natural (Pitch) + Col));
+                     PX : constant Integer := GX + Col;
+                     PY : constant Integer := GY + R;
+                  begin
+                     if A > 0
+                       and then PX >= Integer (C.CX0)
+                       and then PX < Integer (C.CX1)
+                       and then PY >= Integer (C.CY0)
+                       and then PY < Integer (C.CY1)
+                       and then PX >= 0 and then PX < Integer (C.W)
+                       and then PY >= 0 and then PY < Integer (C.H)
+                     then
+                        Blend_Pixel
+                          (Pix, U64 (PY) * C.W + U64 (PX), FG, A);
+                     end if;
+                  end;
+               end if;
+            end loop;
+         end loop;
+      end;
+   end Draw_TTF_CP;
+
+   procedure Draw_TTF_From
+     (C : Canvas; X, Y : U64; S : String; FG : Pixel; F : Font_Rec)
+   is
+      Pen : Integer := Integer (X);
+   begin
+      if F.Ttf /= null then
+         for Ch of S loop
+            declare
+               CP : constant Natural := Character'Pos (Ch);
+            begin
+               Draw_TTF_CP (C, F, CP, U64 (Pen), Y, FG);
+               Pen := Pen
+                 + Integer (FT_Advance (F.Ttf.Face,
+                                        Unsigned_64 (CP)));
+            end;
+         end loop;
+      end if;
+   end Draw_TTF_From;
+
+   function Width_TTF (S : String; F : Font_Rec) return U64 is
+      W : U64 := 0;
+   begin
+      if F.Ttf /= null then
+         for Ch of S loop
+            W := W + U64
+              (FT_Advance (F.Ttf.Face, Unsigned_64
+                 (Character'Pos (Ch))));
+         end loop;
+      end if;
+      return W;
+   end Width_TTF;
+
+   function Present_TTF (F : Font_Rec; CP : Natural) return Boolean is
+     (F.Ttf /= null
+      and then FT_Advance (F.Ttf.Face, Unsigned_64 (CP)) > 0);
 
    procedure Draw_One
      (C : Canvas; G : Glyph_Rec; Pen : Integer; Baseline : Integer;
@@ -411,6 +645,10 @@ package body Trinket.Fonts is
       Pen      : Integer := Integer (X);
       E        : Natural;
    begin
+      if F.Ttf /= null then
+         Draw_TTF_From (C, X, Y, S, FG, F);
+         return;
+      end if;
       for Ch of S loop
          declare
             Code : constant Natural := Character'Pos (Ch);
@@ -435,6 +673,9 @@ package body Trinket.Fonts is
       W : U64 := 0;
       E : Natural;
    begin
+      if F.Ttf /= null then
+         return Width_TTF (S, F);
+      end if;
       for Ch of S loop
          declare
             Code : constant Natural := Character'Pos (Ch);
@@ -461,6 +702,10 @@ package body Trinket.Fonts is
       Baseline : constant Integer := Integer (Y) + Integer (F.Ascent);
       E        : Natural;
    begin
+      if F.Ttf /= null then
+         Draw_TTF_CP (C, F, CP, X, Y, FG);
+         return;
+      end if;
       if CP <= 127 and then F.T (CP).Valid then
          Draw_One (C, F.T (CP), Integer (X), Baseline, FG);
       else
@@ -472,8 +717,13 @@ package body Trinket.Fonts is
    end Draw_CP;
 
    function Present (F : Font_Rec; CP : Natural) return Boolean is
-     ((CP <= 127 and then F.T (CP).Valid)
-      or else (CP > 127 and then Ext_Find (F, CP) /= 0));
+   begin
+      if F.Ttf /= null then
+         return Present_TTF (F, CP);
+      end if;
+      return (CP <= 127 and then F.T (CP).Valid)
+        or else (CP > 127 and then Ext_Find (F, CP) /= 0);
+   end Present;
 
    function Text_Width (S : String) return U64 is
      (Width_From (S, Global));
@@ -518,6 +768,11 @@ package body Trinket.Fonts is
 
    procedure Unload (H : in out Handle) is
    begin
+      if H /= null and then H.Ttf /= null then
+         FT_Close (H.Ttf.Face);
+         Free (H.Ttf.Data);
+         Free_Ttf (H.Ttf);
+      end if;
       Free_Font (H);
    end Unload;
 
@@ -565,6 +820,44 @@ package body Trinket.Fonts is
       Family_Len := 0;
       Pixel_Size := 0;
       Ensure_FS;
+      if Has_TTF_Suffix (Path) then
+         --  M9A: family comes from the face's PostScript name.
+         declare
+            Buf : Str_Access := Read_All (Path);
+         begin
+            if Buf /= null then
+               declare
+                  Px   : constant Unsigned_32 := Unsigned_32 (TTF_Px);
+                  Face : constant System.Address :=
+                    FT_Open (Buf.all'Address,
+                             Unsigned_64 (Buf.all'Length), Px);
+               begin
+                  if Face /= System.Null_Address then
+                     declare
+                        use Interfaces.C.Strings;
+                        Nm : constant String :=
+                          Value (FT_Family (Face));
+                     begin
+                        Family_Len :=
+                          Natural'Min (Nm'Length, Max_Family);
+                        Family_Len :=
+                          Natural'Min (Family_Len, Family'Length);
+                        if Family_Len > 0 then
+                           Family (Family'First ..
+                                   Family'First + Family_Len - 1) :=
+                             Nm (Nm'First .. Nm'First + Family_Len - 1);
+                        end if;
+                     end;
+                     Pixel_Size := TTF_Px;
+                     OK := True;
+                     FT_Close (Face);
+                  end if;
+               end;
+               Free (Buf);
+            end if;
+         end;
+         return;
+      end if;
       St := Files.Open (Path, Size);
       if St /= Files.Status_Ok or else Size = 0 then
          return;

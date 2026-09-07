@@ -1,8 +1,11 @@
 with "../rts/aegir_rts.gpr";
+with "../freetype/freetype.gpr";
 
 --  Trinket (milestone 56): the opt-in GUI widget library. Programs
 --  that want Bureau windows link libtrinket.a IN ADDITION TO the
 --  RTS; the runtime itself never touches it (GUI stays opt-in).
+--  M9A: libfreetype.a comes in via the FreeType library project —
+--  Trinket.Fonts' TTF/OTF path drives it (BDF needs no FreeType).
 library project Trinket is
    for Source_Dirs use (".");
    for Object_Dir use "../../obj/userspace/trinket";

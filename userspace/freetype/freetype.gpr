@@ -1,0 +1,68 @@
+--  M9A: FreeType 2.13.3 as a static C library. The sources are NOT
+--  tracked: the top-level Makefile downloads, checksum-verifies and
+--  extracts the release tarball into ../../third_party/freetype on
+--  demand (FREETYPE_* rules), so this project only builds after
+--  `make` has stamped that tree (same rule as userspace/lwip).
+--  Trinket.Fonts links this library and drives it through the small
+--  C shim in port/ftaegir.c (a narrow, face-level API); the vendored
+--  tree compiles with -Wno-error, the shim keeps the house -Werror.
+--
+--  Module set (port/ftmodule_aegir.h): truetype + sfnt + cff/OTF
+--  drivers, psaux/psnames/pshinter, smooth + mono rasterizers.
+library project Freetype is
+
+   for Languages use ("C");
+   for Target use "riscv64-elf";
+
+   for Library_Name use "freetype";
+   for Library_Kind use "static";
+   for Library_Auto_Init use "False";
+
+   Ft_Root := Project'Project_Dir & "/../../third_party/freetype";
+   Port    := Project'Project_Dir & "/port";
+
+   for Source_Dirs use
+     (Ft_Root & "/src/base",
+      Ft_Root & "/src/truetype",
+      Ft_Root & "/src/sfnt",
+      Ft_Root & "/src/cff",
+      Ft_Root & "/src/psaux",
+      Ft_Root & "/src/psnames",
+      Ft_Root & "/src/pshinter",
+      Ft_Root & "/src/smooth",
+      Ft_Root & "/src/raster",
+      Ft_Root & "/src/gzip",
+      Port);
+
+   --  Base components (INSTALL.ANY) + the per-module single-object
+   --  components; the shim is our own port code. ftmm.c provides
+   --  FT_Set_Named_Instance (variation support the sfnt/truetype/
+   --  cff drivers call); ftgzip.c self-includes the zlib sources
+   --  and provides FT_Gzip_Uncompress (embedded compressed tables).
+   for Source_Files use
+     ("ftsystem.c", "ftinit.c", "ftdebug.c", "ftbase.c",
+      "ftglyph.c", "ftbitmap.c", "ftmm.c",
+      "truetype.c", "sfnt.c", "cff.c", "psaux.c", "psnames.c",
+      "pshinter.c", "smooth.c", "raster.c",
+      "ftgzip.c",
+      "ftaegir.c");
+
+   for Object_Dir use "../../obj/userspace/freetype";
+   for Library_Dir use "../../obj/userspace/freetype/lib";
+   for Create_Missing_Dirs use "True";
+
+   Cflags := ("-O2", "-ffunction-sections", "-fdata-sections",
+              "-Wall", "-Wno-error",
+              "-DFT2_BUILD_LIBRARY",
+              "-DFT_CONFIG_MODULES_H=<ftmodule_aegir.h>",
+              "-I" & Port,
+              "-I" & Ft_Root & "/include");
+
+   package Compiler is
+      for Default_Switches ("C") use Cflags;
+
+      --  Our own port code keeps the house standard.
+      for Switches ("ftaegir.c") use Cflags & ("-Werror");
+   end Compiler;
+
+end Freetype;
