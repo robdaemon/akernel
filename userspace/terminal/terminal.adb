@@ -619,9 +619,9 @@ procedure Terminal is
              (Trinket.Menus.It (1, "Quit", 'q', Alt => True),
               Trinket.Menus.Sep,
               --  M9x: paste the system clipboard into the input
-              --  line as if typed (Ctrl+V, matched by Bureau from
+              --  line as if typed (Alt+V, matched by Bureau from
               --  the registered menu even when no menu is open).
-              Trinket.Menus.It (2, "Paste", 'v', Ctrl => True)))),
+              Trinket.Menus.It (2, "Paste", 'v', Alt => True)))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);

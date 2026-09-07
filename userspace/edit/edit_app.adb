@@ -367,14 +367,14 @@ package body Edit_App is
                                            Alt => True))),
              2 => Trinket.Menus.M
                ("Edit", (Trinket.Menus.It (11, "Cut", 'x',
-                                            Ctrl => True),
+                                            Alt => True),
                          Trinket.Menus.It (12, "Copy", 'c',
-                                            Ctrl => True),
+                                            Alt => True),
                          Trinket.Menus.It (13, "Paste", 'v',
-                                            Ctrl => True),
+                                            Alt => True),
                          Trinket.Menus.Sep,
                          Trinket.Menus.It (14, "Select All", 'a',
-                                            Ctrl => True)))));
+                                            Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win, Menu_Picked'Access);
          Debug_Put_Line ("edit online");
          Trinket.Window.Run (Win);
