@@ -1,11 +1,15 @@
 --  M9A: FreeType 2.13.3 as a static C library. The sources are NOT
 --  tracked: the top-level Makefile downloads, checksum-verifies and
 --  extracts the release tarball into ../../third_party/freetype on
---  demand (FREETYPE_* rules), so this project only builds after
---  `make` has stamped that tree (same rule as userspace/lwip).
---  Trinket.Fonts links this library and drives it through the small
---  C shim in port/ftaegir.c (a narrow, face-level API); the vendored
---  tree compiles with -Wno-error, the shim keeps the house -Werror.
+--  demand (FREETYPE_* rules), so this project only builds through
+--  the top-level `make` (all/test/disk.img — the sentinel file
+--  third_party/freetype/include/freetype/freetype.h is what make
+--  waits for). Building a crate directly with `alr build` on a
+--  fresh checkout fails exactly like this until `make fetch-pins`
+--  has run (same rule as userspace/lwip). Trinket.Fonts links this
+--  library and drives it through the small C shim in port/ftaegir.c
+--  (a narrow, face-level API); the vendored tree compiles with
+--  -Wno-error, the shim keeps the house -Werror.
 --
 --  Module set (port/ftmodule_aegir.h): truetype + sfnt + cff/OTF
 --  drivers, psaux/psnames/pshinter, smooth + mono rasterizers.

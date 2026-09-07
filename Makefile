@@ -200,7 +200,7 @@ FREETYPE_VER := 2.13.3
 FREETYPE_TAG := VER-2-13-3
 FREETYPE_TARBALL := third_party/download/freetype-$(FREETYPE_VER).tar.gz
 FREETYPE_SHA256 := bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103
-FREETYPE_STAMP := third_party/freetype/.stamp-$(FREETYPE_VER)
+FREETYPE_STAMP := third_party/freetype/include/freetype/freetype.h
 
 $(FREETYPE_TARBALL):
 	mkdir -p third_party/download
@@ -228,7 +228,7 @@ DEJAVU_VER := 2.37
 DEJAVU_TAG := version_2_37
 DEJAVU_TARBALL := third_party/download/dejavu-fonts-ttf-$(DEJAVU_VER).tar.bz2
 DEJAVU_SHA256 := fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7
-DEJAVU_STAMP := third_party/dejavu/.stamp-$(DEJAVU_VER)
+DEJAVU_STAMP := third_party/dejavu/ttf/DejaVuSans.ttf
 
 $(DEJAVU_TARBALL):
 	mkdir -p third_party/download
