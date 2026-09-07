@@ -132,7 +132,7 @@ $(RTS_LIB): $(RTS_GPR) $(RTS_SRCS)
 #  dependencies of a crate's .elf, so an order-only prereq leaves
 #  stale binaries linked against the previous RTS (the m80e
 #  debugging trap: rebuilt s-osinte.o, untouched fuzz.elf).
-$(CRATES): $(RTS_LIB)
+$(CRATES): $(RTS_LIB) $(FREETYPE_STAMP)
 	$(MAKE) -C userspace/$@
 
 #  Third-party fetch-at-build (milestone 72): vendored C libraries
@@ -325,7 +325,7 @@ scan-ada:
 #  tools/befs_get.py (the old mcopy/mtype FAT reads are gone).
 #  Phony crate deps (not the ELF files: those have no rule) so
 #  the images actually rebuild before being staged.
-$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS) $(TERMINUS_STAMP)
+$(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS) $(TERMINUS_STAMP) $(FREETYPE_STAMP) $(DEJAVU_STAMP)
 	@if [ -f $@ ]; then \
 	  rm -rf /tmp/ak-prefs-env; \
 	  mkdir -p /tmp/ak-prefs-env; \
@@ -359,6 +359,9 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	  up=$$(printf '%s' $$f | tr a-z A-Z); \
 	  cp third_party/terminus/$$f.bdf "$(INITRD_OUT)/sysroot/Fonts/$$up.BDF"; done; \
 	cp third_party/terminus/OFL.TXT $(INITRD_OUT)/sysroot/Fonts/OFL.TXT; \
+	cp third_party/dejavu/ttf/DejaVuSans.ttf $(INITRD_OUT)/sysroot/Fonts/DEJAVUSANS.TTF; \
+	cp third_party/dejavu/ttf/DejaVuSansMono.ttf $(INITRD_OUT)/sysroot/Fonts/DEJAVUSANSMONO.TTF; \
+	cp third_party/dejavu/LICENSE $(INITRD_OUT)/sysroot/Fonts/DEJAVU.LICENSE; \
 	python3 tools/gen_images.py $(INITRD_OUT)/img; \
 	for f in bars keyed grad32 trunc; do \
 	  cp $(INITRD_OUT)/img/$$f.bmp "$(INITRD_OUT)/sysroot/Tests/Img/$$(printf '%s' $$f | tr a-z A-Z).BMP"; done; \

@@ -120,10 +120,14 @@ package body Font_App is
       return True;
    end Eq_IC;
 
-   function Is_BDF (N : String) return Boolean is
+   function Is_Font (N : String) return Boolean is
      (N'Length > 4
       and then (N (N'Last - 3 .. N'Last) = ".BDF"
-                or else N (N'Last - 3 .. N'Last) = ".bdf"));
+                or else N (N'Last - 3 .. N'Last) = ".bdf"
+                or else N (N'Last - 3 .. N'Last) = ".TTF"
+                or else N (N'Last - 3 .. N'Last) = ".ttf"
+                or else N (N'Last - 3 .. N'Last) = ".OTF"
+                or else N (N'Last - 3 .. N'Last) = ".otf"));
 
    procedure Scan_Fonts is
       package Dirs renames Ada.Directories;
@@ -137,7 +141,7 @@ package body Font_App is
          begin
             Dirs.Get_Next_Entry (Search, Ent);
             N_Raw := N_Raw + 1;
-            if Is_BDF (Dirs.Simple_Name (Ent))
+            if Is_Font (Dirs.Simple_Name (Ent))
               and then N_Entries < Max_Fonts
             then
                declare
