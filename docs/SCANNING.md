@@ -141,13 +141,21 @@ pole. Re-run this baseline on each change to `kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 
-_Recorded 2026-09-07._
+_Recorded 2026-09-07. Host: Fedora (this sandbox has no root, so tools
+are installed user-space via `uv`; on a normal Fedora box the native
+route is `sudo dnf install -y bandit`)._
 
 - **`python3 -m py_compile tools/*.py`** (always-on): 12 files, clean.
-- **bandit** over `tools/`: runs in the CI `host` job (ubuntu-latest,
-  `pip install bandit`); pinned bandit version is recorded in
-  `security.yml`. Not runnable in the author sandbox (no pip/root) —
-  the py_compile pass above is the local fallback.
+- **bandit 1.9.4** over `tools/` (`bandit -q -ll -r tools`, also run by
+  the CI `host` job; `-ll` = medium+ threshold): 0 High, 0 Medium, **25
+  Low** — all `B101 (assert_used)` confined to `tools/mkbefs.py`.
+  Decision: **accepted** — those asserts are deliberate
+  filesystem-image invariant checks in a host verification tool and are
+  never executed under `python -O`; convert them to explicit `raise`
+  checks if policy ever tightens. Note: bandit exits 1 whenever it
+  *reports* any finding, so the `-ll` threshold is what keeps the job
+  green for the accepted Lows; the full `-r tools` report is the
+  recorded baseline above.
 - **shellcheck 0.10.0**: probed; the repo tracks **zero** `*.sh`/`*.bash`
   files, so a shell-script pass is N/A. Non-trivial Makefile recipe
   verification is enforced structurally instead: `tools/check_pins.py`

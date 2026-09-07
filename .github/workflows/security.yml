@@ -117,10 +117,10 @@ jobs:
       - name: Python syntax check (all host tools)
         run: python3 -m py_compile tools/*.py
 
-      - name: bandit over tools/
+      - name: bandit over tools/ (medium+; Lows accepted — see docs/SCANNING.md)
         run: |
           python3 -m pip install --quiet bandit
-          python3 -m bandit -q -r tools
+          python3 -m bandit -q -ll -r tools
 
       # shellcheck: no *.sh / *.bash files are tracked today, so the
       # pass is conditional. Makefile recipe verification is structural

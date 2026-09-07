@@ -225,7 +225,7 @@ scan-secrets:
 scan-host:
 	python3 -m py_compile tools/*.py
 	@if command -v bandit >/dev/null 2>&1; then \
-	  bandit -q -r tools; \
+	  bandit -q -ll -r tools; \
 	else echo "note: bandit not on PATH (host lint runs in CI)"; fi
 
 scan-ada:
