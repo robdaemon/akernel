@@ -2990,7 +2990,8 @@ package body Bfs_Engine is
 
    function Read_Dir (Path : String; Index : U64;
                       Name : out String; Name_Len : out Natural;
-                      Size : out U64; Is_Dir : out Boolean)
+                      Size : out U64; Is_Dir : out Boolean;
+                      Modified : out U64)
                       return U64
    is
       Info   : Inode_Info;
@@ -3006,6 +3007,7 @@ package body Bfs_Engine is
       Name_Len := 0;
       Size := 0;
       Is_Dir := False;
+      Modified := 0;
       if not Is_Mounted or else not Lookup (Path, Info, Root) then
          return Status_Not_Found;
       end if;
@@ -3029,6 +3031,9 @@ package body Bfs_Engine is
                if not Is_Dir then
                   Size := E_Info.Size;
                end if;
+               --  BeFS mtime is stored secs << 16 (microseconds
+               --  in the low bits); the wire wants epoch seconds.
+               Modified := E_Info.Mtime / 2 ** 16;
                Name_Len := Natural'Min (E_Len, Name'Length);
                Name (Name'First .. Name'First + Name_Len - 1) :=
                  E_Name (1 .. Name_Len);

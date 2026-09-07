@@ -225,6 +225,21 @@ package body Akernel_User.Files is
       Is_Dir     : out Boolean;
       Size         : out U64) return U64
    is
+      Modified : U64;
+   begin
+      return Read_Dir_Ex (Name, Index, Out_Name, Out_Name_Len,
+                          Is_Dir, Size, Modified);
+   end Read_Dir;
+
+   function Read_Dir_Ex
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Is_Dir     : out Boolean;
+      Size         : out U64;
+      Modified     : out U64) return U64
+   is
       Q   : String (1 .. Max_Path);
       Len : Natural;
       Ch  : Character;
@@ -232,6 +247,7 @@ package body Akernel_User.Files is
       Out_Name_Len := 0;
       Is_Dir := False;
       Size := 0;
+      Modified := 0;
       Qualified (Name, Q, Len);
       if FS_Cap = 0 or else Len = 0 then
          return Status_Bad_Args;
@@ -251,7 +267,10 @@ package body Akernel_User.Files is
 
       if Syscalls.Message.Words (0) = Status_Ok then
          Size := Syscalls.Message.Words (1);
-         Is_Dir := Syscalls.Message.Words (2) /= 0;
+         --  w2 bit 0 = is_dir; bits 1..32 = mtime epoch seconds.
+         Is_Dir := (Syscalls.Message.Words (2) and 1) = 1;
+         Modified :=
+           (Syscalls.Message.Words (2) / 2) and 16#FFFF_FFFF#;
          for P in 0 .. 23 loop
             exit when P >= Out_Name'Length;
             Ch := Character'Val (Natural
@@ -264,7 +283,7 @@ package body Akernel_User.Files is
       end if;
 
       return Syscalls.Message.Words (0);
-   end Read_Dir;
+   end Read_Dir_Ex;
 
    --  Allocate + map the shared client buffer on first use.
    function Ensure_Buffer return Boolean is

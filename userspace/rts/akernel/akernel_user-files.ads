@@ -242,10 +242,12 @@ package Akernel_User.Files is
    --                      Status_Not_Found ends the enumeration.
    --    Op_ReadDir = 13  words 0..3 = path (32 chars, "" = volume
    --                      root), word 4 = entry index -> (status,
-   --                      size, is_dir, entry name[24] in words
-   --                      3..5). Stateless: index N returns the
-   --                      N-th live entry; Status_Not_Found ends
-   --                      the enumeration. FS-driver volumes only.
+   --                      size, w2 = is_dir (bit 0) | modified
+   --                      epoch seconds (bits 1..32), entry
+   --                      name[24] in words 3..5). Stateless:
+   --                      index N returns the N-th live entry;
+   --                      Status_Not_Found ends the enumeration.
+   --                      FS-driver volumes only.
 
    --  Block protocol (file server -> block driver).
    Blk_Info  : constant U64 := 0;
@@ -325,6 +327,8 @@ package Akernel_User.Files is
    --  qualified; "" after the volume = its root). Returns a
    --  protocol status; Status_Not_Found = no more entries.
    --  Entry name comes back in Out_Name (caller buffer >= 24).
+   --  ReadDir reply layout: w2 = is_dir (bit 0) | mtime epoch
+   --  seconds (bits 1..32), w3..5 = name.
    function Read_Dir
      (Name         : String;
       Index        : U64;
@@ -332,6 +336,17 @@ package Akernel_User.Files is
       Out_Name_Len : out Natural;
       Is_Dir       : out Boolean;
       Size         : out U64) return U64;
+
+   --  Same enumeration plus the entry's modification time in
+   --  seconds since the Unix epoch (0 when the driver has none).
+   function Read_Dir_Ex
+     (Name         : String;
+      Index        : U64;
+      Out_Name     : out String;
+      Out_Name_Len : out Natural;
+      Is_Dir       : out Boolean;
+      Size         : out U64;
+      Modified     : out U64) return U64;
 
    --  Read Length bytes at Offset into Dest; Count returns the
    --  bytes actually read (clamped at EOF and buffer capacity).

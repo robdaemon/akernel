@@ -251,20 +251,22 @@ procedure Bfs is
    end Handle_Read;
 
    --  Op_ReadDir: words 0..3 = path ("" = root), word 4 = index.
-   --  Reply: w0 = status, w1 = size, w2 = is_dir, w3..5 = name.
+   --  Reply: w0 = status, w1 = size, w2 = is_dir (bit 0) |
+   --  modified-epoch-seconds (bits 1..32, 32-bit), w3..5 = name.
    procedure Handle_Read_Dir is
       Idx      : constant U64 := Syscalls.Message.Words (4);
       Name     : String (1 .. 24) := (others => Character'Val (0));
       Name_Len : Natural;
       Size     : U64;
       Is_Dir   : Boolean;
+      Modified : U64;
       RC       : U64;
    begin
       declare
          Path : constant String := Path_Of (0, 0);
       begin
          RC := Bfs_Engine.Read_Dir (Path, Idx, Name, Name_Len,
-                                    Size, Is_Dir);
+                                    Size, Is_Dir, Modified);
       end;
       if RC /= Status_Ok then
          Reply2 (Status_Not_Found, 0);
@@ -273,7 +275,9 @@ procedure Bfs is
 
       Syscalls.Message.Words (0) := Status_Ok;
       Syscalls.Message.Words (1) := Size;
-      Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+      Syscalls.Message.Words (2) :=
+        (if Is_Dir then 1 else 0)
+        or Shl (Modified and 16#FFFF_FFFF#, 1);
       for W in 3 .. 5 loop
          Syscalls.Message.Words (W) := 0;
       end loop;

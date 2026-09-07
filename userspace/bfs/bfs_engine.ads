@@ -92,10 +92,13 @@ package Bfs_Engine is
                          Len : U64) return U64;
 
     --  Index-th visible entry ("." and ".." skipped). Name is NUL
-    --  padding aside, up to 24 chars (wire limit).
+    --  padding aside, up to 24 chars (wire limit). Modified is the
+    --  entry's mtime in seconds since the Unix epoch (0 when the
+    --  driver has no clock/record for it).
     function Read_Dir (Path : String; Index : U64;
                        Name : out String; Name_Len : out Natural;
-                       Size : out U64; Is_Dir : out Boolean)
+                       Size : out U64; Is_Dir : out Boolean;
+                       Modified : out U64)
                        return U64;
 
     --  M82e write path. All ops are journaled (see header).

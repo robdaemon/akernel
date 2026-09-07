@@ -111,6 +111,40 @@ procedure Fat32 is
              + (Sod mod 60) / 2;
    end Now_Time;
 
+   --  Inverse of Now_Date/Now_Time: FAT dirent date/time
+   --  (16-bit DOS fields) -> seconds since the Unix epoch.
+   --  FAT timestamps are local 2-second-resolution; we treat them
+   --  as UTC (the board RTC sets UTC) — documented approximation.
+   function Dos_Epoch (Date16, Time16 : U64) return U64 is
+      Y, M, D, H, Mi, S : U64;
+      Yy, Era, Yoe, Doy, Doe : U64;
+   begin
+      Y := 1_980 + Date16 / 512;
+      M := (Date16 / 32) mod 16;
+      D := Date16 mod 32;
+      H := Time16 / 2_048;
+      Mi := (Time16 / 32) mod 64;
+      S := (Time16 mod 32) * 2;
+      if M = 0 or else M > 12 or else D = 0 or else D > 31
+        or else Y < 1_980 or else Y > 2_107
+        or else H > 23 or else Mi > 59
+      then
+         return 0;   --  zeroed/unset dirent stamp
+      end if;
+      --  days_from_civil (Hinnant), U64-safe for 1980..2107.
+      declare
+         Mp : constant U64 := (if M > 2 then M - 3 else M + 9);
+      begin
+         Yy := Y - (if M <= 2 then 1 else 0);
+         Era := Yy / 400;
+         Yoe := Yy - Era * 400;
+         Doy := (153 * Mp + 2) / 5 + D - 1;
+         Doe := Yoe * 365 + Yoe / 4 - Yoe / 100 + Doy;
+         return (Era * 146_097 + Doe - 719_468) * 86_400
+                + H * 3_600 + Mi * 60 + S;
+      end;
+   end Dos_Epoch;
+
    Buf_Win_VA : constant U64 := 16#5400_0000#;
    Blk_Buf_VA : constant U64 := 16#5000_0000#;
 
@@ -657,7 +691,8 @@ procedure Fat32 is
       Name       : out String;
       Name_Len   : out Natural;
       Entry_Size : out U64;
-      Is_Dir     : out Boolean) return Boolean
+      Is_Dir     : out Boolean;
+      Modified   : out U64) return Boolean
    is
       C    : U64 := Dir_Clus;
       B0   : Interfaces.Unsigned_8;
@@ -668,6 +703,7 @@ procedure Fat32 is
       Name_Len := 0;
       Entry_Size := 0;
       Is_Dir := False;
+      Modified := 0;
       LFN_Len := 0;
 
       for Guard in 0 .. 512 loop
@@ -717,6 +753,8 @@ procedure Fat32 is
                   end if;
                   Entry_Size := LE32 (Base + 28);
                   Is_Dir := (Attr and 16#10#) /= 0;
+                  Modified := Dos_Epoch (LE16 (Base + 24),
+                                         LE16 (Base + 22));
                   return True;
                end if;
                N := N + 1;
@@ -1606,7 +1644,8 @@ procedure Fat32 is
    ------------------------------------------------------------------
    --  Op_ReadDir (milestone 32): words 0..3 = path ("" = root),
    --  word 4 = entry index. Reply: w0 = status, w1 = size,
-   --  w2 = is_dir, words 3..5 = entry name (24 chars, NUL-padded).
+   --  w2 = is_dir (bit 0) | modified epoch seconds (bits 1..32),
+   --  words 3..5 = entry name (24 chars, NUL-padded).
    ------------------------------------------------------------------
 
    procedure Handle_Read_Dir is
@@ -1624,6 +1663,7 @@ procedure Fat32 is
       Name        : String (1 .. 24) :=
         (others => Character'Val (0));
       Name_Len    : Natural;
+      Modified    : U64;
    begin
       if not Fat_Ok then
          Reply2 (Status_Not_Found, 0);
@@ -1648,7 +1688,7 @@ procedure Fat32 is
       end;
 
       if not Dir_Entry_At (Clus, Idx, Name, Name_Len,
-                           Entry_Size, Is_Dir)
+                           Entry_Size, Is_Dir, Modified)
       then
          Reply2 (Status_Not_Found, 0);
          return;
@@ -1656,7 +1696,9 @@ procedure Fat32 is
 
       Syscalls.Message.Words (0) := Status_Ok;
       Syscalls.Message.Words (1) := Entry_Size;
-      Syscalls.Message.Words (2) := (if Is_Dir then 1 else 0);
+      Syscalls.Message.Words (2) :=
+        (if Is_Dir then 1 else 0)
+        or Shl (Modified and 16#FFFF_FFFF#, 1);
       for W in 3 .. 5 loop
          Syscalls.Message.Words (W) := 0;
       end loop;

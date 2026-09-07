@@ -1293,7 +1293,8 @@ procedure Fileserver is
    --  volume-wide), word 4 = match index, cap slot 0 = the
    --  client's buffer holding the NUL-terminated predicate,
    --  forwarded like Op_Attr_Read. The reply rides through
-   --  unchanged: w0 = status, w1 = size, w2 = is_dir, words 3..5
+   --  unchanged: w0 = status, w1 = size, w2 = is_dir (bit 0) |
+   --  mtime epoch seconds (bits 1..32), words 3..5
    --  = volume-relative path. Volumes without query support
    --  answer Bad_Args.
    procedure Handle_Query is
