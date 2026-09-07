@@ -5,16 +5,18 @@ with Akernel_User.Sockets;
 with Akernel_User.Syscalls;
 
 --  Ping (milestone 71c): ICMP echo over a netserv ping socket —
---  the Amiga C:Ping analog, numeric only:
+--  the Amiga C:Ping analog:
 --
---    ping [-c N] <dotted-ipv4>
+--    ping [-c N] <ipv4|hostname>
 --
---  Each probe is a 16-byte ICMP echo request (seq + an 8-byte
---  big-endian send timestamp the reply echoes back; RTT is
---  computed from that payload). Default count is 4, interval
---  1 s, per-probe timeout 1 s. Amiga return codes: RC_Ok when
---  every probe was answered, RC_Warn on partial loss, RC_Error
---  on total loss or a usage/socket failure.
+--  A non-dotted target is resolved to an IPv4 address through the
+--  netserv-resident resolver (Op_Resolve / lwIP dns.c) before the
+--  echo probes start. Each probe is a 16-byte ICMP echo request
+--  (seq + an 8-byte big-endian send timestamp the reply echoes
+--  back; RTT is computed from that payload). Default count is 4,
+--  interval 1 s, per-probe timeout 1 s. Amiga return codes:
+--  RC_Ok when every probe was answered, RC_Warn on partial loss,
+--  RC_Error on total loss or a usage/socket/resolution failure.
 
 procedure Ping is
    subtype U64 is Interfaces.Unsigned_64;
@@ -94,17 +96,46 @@ begin
 
    if CLI.Argument (1) = "-c" then
       if not Parse_Count (CLI.Argument (2), Count) then
-         Console.Put_Line ("usage: ping [-c N] <ipv4>");
+         Console.Put_Line ("usage: ping [-c N] <ipv4|hostname>");
          CLI.Exit_With (CLI.RC_Error);
       end if;
       Ip_Arg := 3;
    end if;
-   if not Sock.Parse_IP (CLI.Argument (Ip_Arg), Target) then
-      Console.Put_Line ("usage: ping [-c N] <ipv4>");
-      CLI.Exit_With (CLI.RC_Error);
-   end if;
 
-   Sock.Attach (Net_EP);
+   declare
+      Raw    : constant String := CLI.Argument (Ip_Arg);
+      Is_Name : constant Boolean := not Sock.Parse_IP (Raw, Target);
+   begin
+      if Raw'Length = 0 then
+         Console.Put_Line ("usage: ping [-c N] <ipv4|hostname>");
+         CLI.Exit_With (CLI.RC_Error);
+      end if;
+
+      Sock.Attach (Net_EP);
+
+      if Is_Name then
+         --  Hostname target: ask the netserv-resident resolver
+         --  (Op_Resolve / lwIP dns.c) for the address first. The
+         --  numeric path above never reaches this branch.
+         St := Sock.Resolve (Raw, Target);
+         if St /= Sock.Status_Ok then
+            declare
+               Why : constant String :=
+                 (if St = Sock.Status_Timeout
+                  then "name not found"
+                  elsif St = Sock.Status_Not_Ready
+                  then "resolver busy"
+                  elsif St = Sock.Status_Bad_Args
+                  then "malformed name"
+                  else "resolver error");
+            begin
+               Console.Put_Line ("ping: " & Raw & ": " & Why);
+            end;
+            CLI.Exit_With (CLI.RC_Error);
+         end if;
+      end if;
+   end;
+
    St := Sock.Socket (Sock.IPPROTO_ICMP, S);
    if St /= Sock.Status_Ok then
       Console.Put_Line ("ping: socket failed (" & Dec (St) & ")");
