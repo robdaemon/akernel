@@ -141,9 +141,12 @@ pole. Re-run this baseline on each change to `kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 
-_Recorded 2026-09-07. Host: Fedora (this sandbox has no root, so tools
-are installed user-space via `uv`; on a normal Fedora box the native
-route is `sudo dnf install -y bandit`)._
+_Recorded 2026-09-07. Host: Fedora. Native package is
+`sudo dnf install -y bandit`; the portable route is `pip install
+bandit` (`python3 -m pip install --user bandit` on a normal box — this
+rootless sandbox has a read-only `~/.local`, so here it is
+`python3 -m pip install --prefix /tmp/pipuser bandit`, run with
+`PYTHONPATH=/tmp/pipuser/lib/python3.14/site-packages`). bandit 1.9.4._
 
 - **`python3 -m py_compile tools/*.py`** (always-on): 12 files, clean.
 - **bandit 1.9.4** over `tools/` (`bandit -q -ll -r tools`, also run by
