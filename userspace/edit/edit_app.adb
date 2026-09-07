@@ -25,9 +25,16 @@ package body Edit_App is
 
    Max_Docs : constant := 8;
 
+   --  Named access type: anonymous-access parameters would fail the
+   --  runtime accessibility check when Docs (library level) stores a
+   --  'new' from a nested subprogram (PROGRAM_ERROR: accessibility
+   --  check failed). Named access allocates on the heap at the type's
+   --  level, no checks.
+   type String_Acc is access String;
+
    type Doc is record
       Box  : TE.Any_Text_Edit;        --  per-tab editor
-      Path : access String := null;   --  full path (null = untitled)
+      Path : String_Acc;               --  full path (null = untitled)
    end record;
 
    Docs      : array (1 .. Max_Docs) of Doc;
@@ -35,7 +42,7 @@ package body Edit_App is
    Current   : Natural := 1;   --  1-based active tab
 
    --  Filename for a tab: the basename after the last '/'.
-   function Tab_Name (P : access String) return String is
+   function Tab_Name (P : String_Acc) return String is
    begin
       if P = null then
          return "(new file)";
@@ -118,7 +125,7 @@ package body Edit_App is
          TE.Clear (D.Box.all);
    end Load;
 
-   procedure Add_Doc (P : access String) is
+   procedure Add_Doc (P : String_Acc) is
       Frame : Widgets.Any_Widget;
    begin
       if Doc_Count = Max_Docs then
