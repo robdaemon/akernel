@@ -26,6 +26,18 @@ package Trinket.Menus is
       Label    : String (1 .. Max_Label) := (others => ' ');
       Label_Len : Natural := 0;
       Disabled : Boolean := False;  --  ghosted, unpickable
+      --  Keyboard shortcut (milestone 9x): Shortcut = NUL means
+      --  none. The character is matched against the seat key
+      --  stream's translated character (case as typed — Shift is
+      --  folded into it), optionally qualified by Ctrl and/or
+      --  Alt. No-qualifier shortcuts fire on the bare key, so
+      --  typing clients should prefer a qualified key.
+      Shortcut      : Character := Character'Val (0);
+      Shortcut_Ctrl : Boolean := False;
+      Shortcut_Alt  : Boolean := False;
+      --  A separator is a divider row: it has no Id and is never
+      --  hovered, picked or accelerated.
+      Is_Separator  : Boolean := False;
    end record;
 
    type Item_Array is array (Positive range <>) of Item_Spec;
@@ -42,6 +54,17 @@ package Trinket.Menus is
    function It
      (Id : U64; Label : String; Disabled : Boolean := False)
       return Item_Spec;
+
+   --  Item with a keyboard shortcut (Id, Label, Shortcut
+   --  character; qualifiers default off).
+   function It
+     (Id : U64; Label : String; Shortcut : Character;
+      Ctrl : Boolean := False; Alt : Boolean := False;
+      Disabled : Boolean := False)
+      return Item_Spec;
+
+   --  A divider row between items.
+   function Sep return Item_Spec;
 
    function M (Title : String; Items : Item_Array) return Menu_Spec;
 

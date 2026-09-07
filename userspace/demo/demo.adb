@@ -112,7 +112,11 @@ procedure Demo is
       end if;
       Trinket.Menus.Serialize
         ((1 => Trinket.Menus.M
-            ("Demo", (1 => Trinket.Menus.It (1, "Quit")))),
+            ("Demo",
+             (1 => Trinket.Menus.It (2, "Paint bar", 'P',
+                                     Ctrl => True),
+              2 => Trinket.Menus.Sep,
+              3 => Trinket.Menus.It (1, "Quit")))),
          To_Address (Integer_Address (Menu_VA)));
       Minted := Cap_Mint
         (Cap, Right_Map + Right_Read + Right_Transfer, 0);
@@ -357,9 +361,14 @@ begin
                   Process_Exit;
                elsif Queue (Slot) = Win.Input_Event_Menu then
                   --  Screen-bar menu pick (kind 4; value = item
-                  --  Id). Demo > Quit takes the close-gadget
-                  --  path.
-                  if (Queue (Slot + 1) and 16#FFFF_FFFF#) = 1 then
+                  --  Id). Demo > Paint bar repaints the color
+                  --  bars (also reachable via Ctrl+P — the
+                  --  accelerator dispatch is Bureau's); Demo >
+                  --  Quit takes the close-gadget path.
+                  if (Queue (Slot + 1) and 16#FFFF_FFFF#) = 2 then
+                     Debug_Put_Line ("demo: menu pick Paint bar");
+                     Draw_Bars;
+                  elsif (Queue (Slot + 1) and 16#FFFF_FFFF#) = 1 then
                      Result := Win.Surface_Destroy (Win_EP, Surf_Id);
                      Process_Exit;
                   end if;

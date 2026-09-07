@@ -17,6 +17,27 @@ package body Trinket.Menus is
       return R;
    end It;
 
+   function It
+     (Id : U64; Label : String; Shortcut : Character;
+      Ctrl : Boolean := False; Alt : Boolean := False;
+      Disabled : Boolean := False)
+      return Item_Spec
+   is
+      R : Item_Spec := It (Id, Label, Disabled);
+   begin
+      R.Shortcut := Shortcut;
+      R.Shortcut_Ctrl := Ctrl;
+      R.Shortcut_Alt := Alt;
+      return R;
+   end It;
+
+   function Sep return Item_Spec is
+      R : Item_Spec;
+   begin
+      R.Is_Separator := True;
+      return R;
+   end Sep;
+
    function M (Title : String; Items : Item_Array) return Menu_Spec is
       R : Menu_Spec;
    begin
@@ -83,7 +104,11 @@ package body Trinket.Menus is
             for I in 1 .. M_Count loop
                for J in 1 .. Menus (Menus'First + I - 1).Count loop
                   exit when It_Idx >= N;
-                  W_Idx := 2 + U64 (M_Count) * 4 + U64 (It_Idx) * 4;
+                  --  v2 item record: 5 words = label (24 B) +
+                  --  word 3 (Id | bit 32 disabled | bit 33
+                  --  separator) + word 4 (shortcut char |
+                  --  bit 8 Ctrl | bit 9 Alt).
+                  W_Idx := 2 + U64 (M_Count) * 4 + U64 (It_Idx) * 5;
                   declare
                      It : Item_Spec renames
                        Menus (Menus'First + I - 1).Items (J);
@@ -91,7 +116,12 @@ package body Trinket.Menus is
                      Put_Bytes (W_Idx, It.Label, It.Label_Len);
                      P (W_Idx + 3) :=
                        (It.Id and 16#FFFF_FFFF#)
-                       or (if It.Disabled then 2 ** 32 else 0);
+                       or (if It.Disabled then 2 ** 32 else 0)
+                       or (if It.Is_Separator then 2 ** 33 else 0);
+                     P (W_Idx + 4) :=
+                       U64 (Character'Pos (It.Shortcut))
+                       or (if It.Shortcut_Ctrl then 2 ** 8 else 0)
+                       or (if It.Shortcut_Alt then 2 ** 9 else 0);
                   end;
                   It_Idx := It_Idx + 1;
                end loop;

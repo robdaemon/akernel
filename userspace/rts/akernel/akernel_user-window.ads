@@ -104,9 +104,13 @@ use type Akernel_User.Syscalls.U64;
 --        (1..32). Then M menu records of 4 words: w0..w1 =
 --        title (16 bytes), w2 = first item index (0-based
 --        into the item records), w3 = item count. Then N item
---        records of 4 words: w0..w2 = label (24 bytes), w3 =
+--        records of 5 words: w0..w2 = label (24 bytes), w3 =
 --        item Id (bits 0..31, echoed in the kind-4 event) |
---        flags (bit 32 = disabled/ghosted).
+--        flags (bit 32 = disabled/ghosted, bit 33 =
+--        separator row), w4 = shortcut (bits 0..7 = character
+--        code to match, bit 8 = Ctrl, bit 9 = Alt; 0 = no
+--        shortcut). Separators have no Id and are never
+--        hovered, picked or accelerated.
 --
 --  Up to 6 windows. Bureau owns stacking, focus
 --  (click-to-focus/raise), title dragging and per-window
@@ -146,8 +150,11 @@ use type Akernel_User.Syscalls.U64;
 --  answered.
 --    Op_Set_Focus (26): caps 0 = focused client's stream
 --      endpoint (Send+Transfer). Reply w0 = status.
---    Op_Key (30): w0 = character code (translated by the
---      keyboard driver's keymap). Reply w0 = status.
+--    Op_Key (30): w0 = character code (translated by the keyboard
+--      driver's keymap); w1 = qualifier bits held at keypress
+--      (bit 0 = Ctrl, bit 1 = Alt — Shift is folded into the
+--      character by the keymaps and never appears here). Reply
+--      w0 = status.
 --    Op_Pointer (31): w0 = x, w1 = y (raw absolute tablet
 --      coords, 0..32767 — Bureau scales to the mode), w2 =
 --      button bits (0 = left). Reply w0 = status.

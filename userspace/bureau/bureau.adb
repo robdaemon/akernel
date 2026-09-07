@@ -151,6 +151,12 @@ procedure Bureau is
       Label_Len : Natural := 0;
       Id        : U64 := 0;
       Disabled  : Boolean := False;
+      --  v2 (shortcuts + separators): qualifiers come from the
+      --  seat driver (Mod_Ctrl/Mod_Alt); Shortcut = 0 means none.
+      Shortcut     : Natural := 0;
+      Shortcut_Ctrl : Boolean := False;
+      Shortcut_Alt  : Boolean := False;
+      Is_Separator  : Boolean := False;
    end record;
 
    type Menu_Table is array (1 .. Max_Menus) of Menu_Rec;
@@ -324,6 +330,13 @@ procedure Bureau is
    Hot_Item    : Natural := 0;   --  1-based into Items, 0 = none
    Title_X     : array (1 .. Max_Menus) of U64 := (others => 0);
    Title_W     : array (1 .. Max_Menus) of U64 := (others => 0);
+
+   --  Qualifiers of the most recent Op_Key (word 1 from the seat
+   --  driver): bit0 = Ctrl, bit1 = Alt. Shift is folded into the
+   --  character by the driver keymaps, so it never appears here.
+   Mod_Ctrl : constant U64 := 1;
+   Mod_Alt  : constant U64 := 2;
+   Key_Mods : U64 := 0;
    --  Scratch map for the client's serialized menu page.
    Menu_VA : constant U64 := 16#6E10_0000#;
 
@@ -576,16 +589,79 @@ procedure Bureau is
    Item_H : constant := 12;      --  dropdown row height
    Panel_Top : constant := Bar_H + 2;
 
+   --  Shortcut hint text helpers (bodies below Panel_W).
+   function Shortcut_Key_Name (C : Natural) return String;
+   function Shortcut_Mods (It : Item_Rec) return String;
+   function Shortcut_Hint (It : Item_Rec) return String;
+
    function Panel_W return U64 is
       W : Window_Rec renames Wins (Menu_Slot).all;
       M : Menu_Rec renames W.Menus (Active_Menu);
       Max_L : Natural := 0;
+      Max_H : Natural := 0;
    begin
       for K in M.First + 1 .. M.First + M.Count loop
          Max_L := Natural'Max (Max_L, W.Items (K).Label_Len);
+         if not W.Items (K).Is_Separator
+           and then W.Items (K).Shortcut /= 0
+         then
+            Max_H := Natural'Max
+              (Max_H, Shortcut_Hint (W.Items (K))'Length);
+         end if;
       end loop;
-      return U64 (Max_L) * 8 + 28;
+      return 14
+        + U64 (Max_L) * 8
+        + (if Max_H > 0 then 10 + U64 (Max_H) * 8 + 10 else 0)
+        + 14;
    end Panel_W;
+
+   --  Shortcut key display name for the hint gutter: printable
+   --  ASCII shows itself, the nav codes 0x80..0x88 get short
+   --  names, anything else is "?" (should not happen).
+   function Shortcut_Key_Name (C : Natural) return String is
+   begin
+      if C in 32 .. 126 then
+         return (1 => Character'Val (C));
+      end if;
+      case C is
+         when 16#80# => return "Up";
+         when 16#81# => return "Down";
+         when 16#82# => return "Left";
+         when 16#83# => return "Right";
+         when 16#84# => return "Home";
+         when 16#85# => return "End";
+         when 16#86# => return "PgUp";
+         when 16#87# => return "PgDn";
+         when 16#88# => return "Del";
+         when others => return "?";
+      end case;
+   end Shortcut_Key_Name;
+
+   --  Modifier prefix for the hint gutter ("Ctrl+", "Alt+",
+   --  "Ctrl+Alt+", or "").
+   function Shortcut_Mods
+     (It : Item_Rec) return String
+   is
+   begin
+      if It.Shortcut_Ctrl and then It.Shortcut_Alt then
+         return "Ctrl+Alt+";
+      elsif It.Shortcut_Ctrl then
+         return "Ctrl+";
+      elsif It.Shortcut_Alt then
+         return "Alt+";
+      else
+         return "";
+      end if;
+   end Shortcut_Mods;
+
+   --  The whole hint ("Ctrl+F"); "" when the item has no shortcut.
+   function Shortcut_Hint (It : Item_Rec) return String is
+   begin
+      if It.Shortcut = 0 or else It.Is_Separator then
+         return "";
+      end if;
+      return Shortcut_Mods (It) & Shortcut_Key_Name (It.Shortcut);
+   end Shortcut_Hint;
 
    function Panel_X return U64 is
       Raw : constant U64 :=
@@ -637,24 +713,50 @@ procedure Bureau is
             for K in 0 .. M.Count - 1 loop
                Idx := M.First + K + 1;
                RY := Panel_Top + 3 + U64 (K) * Item_H;
-               if Idx = Hot_Item and then not W.Items (Idx).Disabled
-               then
-                  Fill_Rect (PX0 + 2, RY, PX0 + PW - 2, RY + Item_H,
-                             Title_Blue);
-                  Draw_Text (PX0 + 14, RY + 2,
-                             W.Items (Idx).Label
-                               (1 .. W.Items (Idx).Label_Len),
-                             Title_Text, Title_Blue, Stretch => 1);
-               elsif W.Items (Idx).Disabled then
-                  Draw_Text (PX0 + 14, RY + 2,
-                             W.Items (Idx).Label
-                               (1 .. W.Items (Idx).Label_Len),
-                             Title_Gray, Bar_Face, Stretch => 1);
+               if W.Items (Idx).Is_Separator then
+                  --  Divider row: a recessed line across the
+                  --  panel (never hot, never picked).
+                  Fill_Rect (PX0 + 12, RY + Item_H / 2 - 1,
+                             PX0 + PW - 12, RY + Item_H / 2,
+                             Bevel_Lo);
+                  Fill_Rect (PX0 + 12, RY + Item_H / 2,
+                             PX0 + PW - 12, RY + Item_H / 2 + 1,
+                             Bevel_Hi);
                else
-                  Draw_Text (PX0 + 14, RY + 2,
-                             W.Items (Idx).Label
-                               (1 .. W.Items (Idx).Label_Len),
-                             Text_Dark, Bar_Face, Stretch => 1);
+                  declare
+                     Hot : constant Boolean :=
+                       Idx = Hot_Item and then not W.Items (Idx).Disabled;
+                     Hint : constant String := Shortcut_Hint (W.Items (Idx));
+                  begin
+                     if Hot then
+                        Fill_Rect (PX0 + 2, RY, PX0 + PW - 2,
+                                   RY + Item_H, Title_Blue);
+                        Draw_Text (PX0 + 14, RY + 2,
+                                   W.Items (Idx).Label
+                                     (1 .. W.Items (Idx).Label_Len),
+                                   Title_Text, Title_Blue, Stretch => 1);
+                     elsif W.Items (Idx).Disabled then
+                        Draw_Text (PX0 + 14, RY + 2,
+                                   W.Items (Idx).Label
+                                     (1 .. W.Items (Idx).Label_Len),
+                                   Title_Gray, Bar_Face, Stretch => 1);
+                     else
+                        Draw_Text (PX0 + 14, RY + 2,
+                                   W.Items (Idx).Label
+                                     (1 .. W.Items (Idx).Label_Len),
+                                   Text_Dark, Bar_Face, Stretch => 1);
+                     end if;
+                     --  Right-justified shortcut hint, same color
+                     --  family as the label's state.
+                     if Hint'Length > 0 then
+                        Draw_Text
+                          (PX0 + PW - 10 - U64 (Hint'Length) * 8,
+                           RY + 2, Hint,
+                           (if Hot then Title_Text else Title_Gray),
+                           (if Hot then Title_Blue else Bar_Face),
+                           Stretch => 1);
+                     end if;
+                  end;
                end if;
             end loop;
          end;
@@ -1237,6 +1339,44 @@ procedure Bureau is
       end if;
    end Forward_Menu;
 
+   --  Keyboard shortcut dispatch. While the FOCUSED window has
+   --  menus, an Op_Key whose translated character + qualifiers
+   --  match a declared item shortcut is consumed here: the pick
+   --  is delivered as a normal kind-4 event (open menus are
+   --  dismissed first). Disabled and separator items never
+   --  match; plain unqualified shortcuts match the bare key, so
+   --  clients that also take text input should qualify theirs.
+   function Try_Accelerator (Ch : U64) return Boolean is
+   begin
+      if Focus = 0 or else Wins (Focus).Menu_Count = 0 then
+         return False;
+      end if;
+      for Mi in 1 .. Wins (Focus).Menu_Count loop
+         for R in 1 .. Wins (Focus).Menus (Mi).Count loop
+            declare
+               Idx : constant Natural :=
+                 Wins (Focus).Menus (Mi).First + R;
+               It : Item_Rec renames Wins (Focus).Items (Idx);
+            begin
+               if not It.Is_Separator
+                 and then not It.Disabled
+                 and then It.Shortcut /= 0
+                 and then Natural (Ch) = It.Shortcut
+                 and then It.Shortcut_Ctrl
+                   = ((Key_Mods and Mod_Ctrl) /= 0)
+                 and then It.Shortcut_Alt
+                   = ((Key_Mods and Mod_Alt) /= 0)
+               then
+                  Dismiss_Menu;
+                  Forward_Menu (Focus, It.Id);
+                  return True;
+               end if;
+            end;
+         end loop;
+      end loop;
+      return False;
+   end Try_Accelerator;
+
    --  Lay out the bar title cells (fixed while a menu is open:
    --  focus cannot change — every pointer event is consumed).
     procedure Menu_Layout is
@@ -1311,6 +1451,9 @@ procedure Bureau is
                  and then not W.Items
                    (W.Menus (Active_Menu).First + Natural (Row) + 1)
                    .Disabled
+                 and then not W.Items
+                   (W.Menus (Active_Menu).First + Natural (Row) + 1)
+                   .Is_Separator
                then
                   New_Hot := W.Menus (Active_Menu).First
                     + Natural (Row) + 1;
@@ -2224,9 +2367,12 @@ begin
                         end loop;
                         for I in 1 .. N loop
                            declare
+                              --  v2 item record: 5 words (see
+                              --  akernel_user-window.ads layout).
                               WI : constant U64 :=
-                                2 + U64 (M) * 4 + U64 (I - 1) * 4;
+                                2 + U64 (M) * 4 + U64 (I - 1) * 5;
                               W3 : constant U64 := Page (WI + 3);
+                              W4 : constant U64 := Page (WI + 4);
                            begin
                               Get_Chars
                                 (Page, WI,
@@ -2236,6 +2382,14 @@ begin
                                 W3 and 16#FFFF_FFFF#;
                               Wins (S).Items (I).Disabled :=
                                 ((W3 / 2 ** 32) and 1) = 1;
+                              Wins (S).Items (I).Is_Separator :=
+                                ((W3 / 2 ** 33) and 1) = 1;
+                              Wins (S).Items (I).Shortcut :=
+                                Natural (W4 and 16#FF#);
+                              Wins (S).Items (I).Shortcut_Ctrl :=
+                                ((W4 / 2 ** 8) and 1) = 1;
+                              Wins (S).Items (I).Shortcut_Alt :=
+                                ((W4 / 2 ** 9) and 1) = 1;
                            end;
                         end loop;
                         if S = Focus then
@@ -2277,12 +2431,17 @@ begin
          end;
 
       elsif Label = Win.Op_Key then
-         --  While a menu is open, Esc dismisses it and is eaten;
-         --  everything else still flows to the focused window.
+         --  Word 1 (seat driver) carries the qualifiers held at
+         --  keypress (Mod_Ctrl / Mod_Alt). While a menu is open,
+         --  Esc dismisses it and is eaten; a key matching a
+         --  declared shortcut of the focused window is consumed
+         --  as an accelerator pick; everything else still flows
+         --  to the focused window.
+         Key_Mods := Message.Words (1);
          if Menu_Mode /= M_Hidden and then Message.Words (0) = 27
          then
             Dismiss_Menu;
-         else
+         elsif not Try_Accelerator (Message.Words (0)) then
             Forward_Key (Message.Words (0));
          end if;
          Win_Reply (Reply_H, Label, Win.Status_Ok, 0, 0, 0, 0);

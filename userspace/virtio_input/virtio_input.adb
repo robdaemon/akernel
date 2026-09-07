@@ -83,6 +83,11 @@ procedure Virtio_Input is
    Op_Pointer_Label : constant U64 := 31;
    Seat_EP : U64 := 0;
 
+   --  Qualifier state for the seat key stream (Send_Seat_Key packs
+   --  these into Op_Key word 1).
+   Ctrl_Down : Boolean := False;
+   Alt_Down  : Boolean := False;
+
    --  Pointer state (Last_X/Last_Y unset until the first ABS event).
    Last_X : U64 := U64'Last;
    Last_Y : U64 := U64'Last;
@@ -113,8 +118,10 @@ procedure Virtio_Input is
    Key_Enter      : constant := 28;
    Key_Backspace  : constant := 14;
    Key_Tab        : constant := 15;
+   Key_Leftctrl   : constant := 29;
    Key_Leftshift  : constant := 42;
    Key_Rightshift : constant := 54;
+   Key_Leftalt    : constant := 56;
    Key_Capslock   : constant := 58;
    --  Navigation keys (milestone 57): forwarded as codes
    --  16#80#+ (Trinket.Key_*); text-only consumers (terminal
@@ -133,6 +140,17 @@ procedure Virtio_Input is
    Key_Down       : constant := 108;
    Key_Pagedown   : constant := 109;
    Key_Delete     : constant := 111;
+   Key_Rightctrl  : constant := 97;
+   Key_Rightalt   : constant := 100;
+
+   --  Seat modifier encoding (shared with Bureau; see the Op_Key
+   --  contract in akernel_user-window.ads): message word 1 carries
+   --  the qualifiers held at keypress. Shift is deliberately NOT
+   --  in this mask: it is folded into the character case by the
+   --  keymaps, so a shortcut's letter is matched on its shifted or
+   --  unshifted form as typed.
+   Mod_Ctrl : constant U64 := 1;
+   Mod_Alt  : constant U64 := 2;
 
    ------------------------------------------------------------------
    --  Region register access
@@ -233,13 +251,18 @@ procedure Virtio_Input is
       end if;
    end Send_Input_Char;
 
-   --  Seat channel (raw word messages to Bureau).
+   --  Seat channel (raw word messages to Bureau). Word 0 = the
+   --  translated character, word 1 = qualifiers held at keypress
+   --  (Mod_Ctrl / Mod_Alt); Shift is folded into the character.
    procedure Send_Seat_Key (Ch : Character) is
       Res : U64;
    begin
       Message.Label := Op_Key_Label;
       Message.Words := (others => 0);
       Message.Words (0) := U64 (Character'Pos (Ch));
+      Message.Words (1) :=
+        (if Ctrl_Down then Mod_Ctrl else 0)
+        or (if Alt_Down then Mod_Alt else 0);
       Message.Caps := (others => 0);
       Res := IPC_Call (Seat_EP);
       if Res /= IPC_Ok then
@@ -408,6 +431,16 @@ procedure Virtio_Input is
    begin
       if Code = Key_Leftshift or else Code = Key_Rightshift then
          Shift_Down := Pressed;
+         return;
+      end if;
+
+      if Code = Key_Leftctrl or else Code = Key_Rightctrl then
+         Ctrl_Down := Pressed;
+         return;
+      end if;
+
+      if Code = Key_Leftalt or else Code = Key_Rightalt then
+         Alt_Down := Pressed;
          return;
       end if;
 
