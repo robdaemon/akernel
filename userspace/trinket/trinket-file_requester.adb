@@ -183,6 +183,7 @@ package body Trinket.File_Requester is
 
    procedure Go_To (Path : String) is
    begin
+      View_Volumes := False;   --  any navigation is a file listing
       Cur_Len := Min (Path'Length, Cur'Length);
       if Cur_Len > 0 then
          Cur (1 .. Cur_Len) := Path (Path'First
@@ -201,8 +202,6 @@ package body Trinket.File_Requester is
          return "boot";
       elsif Kind = Akernel_User.Files.Vol_Kind_Block then
          return "block";
-      elsif Kind = Akernel_User.Files.Vol_Kind_Virtual then
-         return "virt";
       else
          return "";
       end if;
@@ -229,19 +228,23 @@ package body Trinket.File_Requester is
          St := Akernel_User.Files.Volume_List
            (Idx, VName, V_Len, V_Kind);
          exit when St /= Akernel_User.Files.Status_Ok;
-         N := N + 1;
-         Row_Count := N;
-         Leaf_Len (N) := Min (V_Len, Leaf_Buf (N)'Length);
-         if Leaf_Len (N) > 0 then
-            Leaf_Buf (N) (1 .. Leaf_Len (N)) :=
-              VName (VName'First .. VName'First + Leaf_Len (N) - 1);
-         end if;
-         Leaf_Dir (N) := True;
-         Trinket.Columns.Add_Row
-           (Cols_W.all,
-            VName (VName'First .. VName'First + V_Len - 1),
-            Kind_Tag (V_Kind), "", True);
          Idx := Idx + 1;
+         if V_Kind = Akernel_User.Files.Vol_Kind_Virtual then
+            null;   --  NIL:/PIPE: etc. are not browsable
+         else
+            N := N + 1;
+            Row_Count := N;
+            Leaf_Len (N) := Min (V_Len, Leaf_Buf (N)'Length);
+            if Leaf_Len (N) > 0 then
+               Leaf_Buf (N) (1 .. Leaf_Len (N)) :=
+                 VName (VName'First .. VName'First + Leaf_Len (N) - 1);
+            end if;
+            Leaf_Dir (N) := True;
+            Trinket.Columns.Add_Row
+              (Cols_W.all,
+               VName (VName'First .. VName'First + V_Len - 1),
+               Kind_Tag (V_Kind), "", True);
+         end if;
       end loop;
       if Row_Count > 0 then
          Trinket.Columns.Set_Selected (Cols_W.all, 1);
