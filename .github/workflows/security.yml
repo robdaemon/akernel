@@ -122,6 +122,13 @@ jobs:
           # gnatprove's knowledge base resolves riscv64-elf/light-rv64imafdc.
           alr toolchain --select gnat_riscv64_elf
 
+      # config/akernel_config.{ads,gpr,h} are Alire-generated and
+      # gitignored, so a fresh checkout has none and akernel.gpr cannot
+      # compile. `alr update` (solve only — no compiler download, no
+      # build) regenerates them; this is why gnatprove needs no make.
+      - name: Generate Alire config artifacts
+        run: alr --non-interactive update
+
       # Whole-project analysis; the SPARK surface today is the
       # Kernel.Capabilities pure-logic subset. gnatprove exits 0 with
       # unproved checks (recorded as audit entries, not failures);

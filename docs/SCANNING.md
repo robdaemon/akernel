@@ -218,7 +218,17 @@ Then install a version-aligned pair with
 the build keeps its pinned 15.3.1 crates), register the cross compiler
 with `alr toolchain --select gnat_riscv64_elf`, and run with the alr
 bin dir on `PATH` so gprconfig resolves the cross `light-rv64imafdc`
-runtime (no crate solve is involved):
+runtime (no crate solve is involved). On a **fresh checkout** the
+`config/akernel_config.{ads,gpr,h}` files are absent (Alire-generated,
+gitignored) and gnatprove fails at `akernel.gpr: imported project file
+"config/akernel_config.gpr" not found` — regenerate them first
+(solve only, no build):
+
+```bash
+alr --non-interactive update     # regenerates config/; no make needed
+```
+
+Then run the proof with the alr bin dir on `PATH`:
 
 ```bash
 # ALR_BIN = dir containing the alr-installed riscv64-elf-gcc / gnatprove
