@@ -202,8 +202,14 @@ repository.
   rewritten on befs_dump's AG/depth-aware walker for test-replay.
   Gates: 1873 PASS / 0 FAIL SMP4 and SMP1; test-replay ok. Payoff
   per the M93 plan: per-app ICON attrs + drawer geometry persistence
-  work with zero icon-code changes (drawer/dir QMP smoke still to
-  re-run by hand).
+  work with zero icon-code changes. The deferred drawer/dir QMP
+  smoke pass has now been re-run by hand and is green: the Drawer
+  opens populated on Sys:, a directory-icon double-click navigates
+  into a subdirectory, Parent returns, an ELF-tool double-click
+  spawns the tool (its console output appeared), and a file double-
+  click opens Edit with the path argument ("edit: loaded
+  Sys:README.TXT", "edit online") — all QMP-driven with the
+  0..0x7FFF virtio-tablet pointer scaling applied to the clicks.
 
 - **M92** (`6239675`): Desktop backdrop launcher (userspace/desktop,
   DEST=system; Startup line right after Bureau). One
