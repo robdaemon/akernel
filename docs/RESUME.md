@@ -29,7 +29,10 @@ repository.
   Backspace and typing act at the caret — any edit left of the end
   retypes the whole line (BS x length + text, the history-recall
   byte stream) so the shell's append-only buffer stays in sync, and
-  the block cursor renders at the caret. The old Home/End
+  the block cursor renders at the caret with the covered glyph
+  inverted (light on the blue block, dark on a selection-band cell)
+  so the character under it stays readable, like Edit. The old
+  Home/End
   scroll-to-top/bottom moved to Ctrl+Home / Ctrl+End; PgUp/PgDn
   still page the view and Up/Down still recall history. Gates: make
   test 1894 PASS / 0 FAIL at SMP4.

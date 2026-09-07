@@ -499,15 +499,30 @@ procedure Terminal is
                Y : constant U64 := R * LH;
             begin
                if X + Char_W <= Surf_W - Terminal_Scroll.Scrollbar_W then
-                  if Terminal_Clip.Covers (Cur_Line, Cur_Col) then
+                  declare
+                     --  M9y: the block cursor covers one cell; the
+                     --  glyph under it is redrawn in the inverse
+                     --  color so the covered character stays
+                     --  readable (same as Edit). Pane block (on a
+                     --  mouse-selection band cell) gets a dark
+                     --  glyph; a Sel_Blue block gets a light one.
+                     On_Band : constant Boolean :=
+                       Terminal_Clip.Covers (Cur_Line, Cur_Col);
+                     Len     : Natural;
+                  begin
                      Trinket.Paint.Fill_Rect
                        (Canvas, X, Y, X + Char_W, Y + LH,
-                        Trinket.Pane);
-                  else
-                     Trinket.Paint.Fill_Rect
-                       (Canvas, X, Y, X + Char_W, Y + LH,
-                        Trinket.Sel_Blue);
-                  end if;
+                        (if On_Band then Trinket.Pane
+                         else Trinket.Sel_Blue));
+                     Terminal_Buffer.Get_Line (Cur_Line, Line, Len);
+                     if Cur_Col < Len then
+                        Trinket.Fonts.Draw_Text_Mono
+                          (Canvas, X, Y,
+                           Line (Cur_Col + 1 .. Cur_Col + 1),
+                           (if On_Band then Trinket.Text_Dark
+                            else Trinket.Pane));
+                     end if;
+                  end;
                end if;
             end;
          end if;
