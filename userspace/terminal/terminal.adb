@@ -120,6 +120,11 @@ procedure Terminal is
    Edit_Cap : constant := 120;  --  = the shell's Max_Line
    Edit_Buf : String (1 .. Edit_Cap);
    Edit_Len : Natural := 0;
+   --  M9y: line-edit caret (0-based column inside the typed text,
+   --  0 .. Edit_Len). The shell's buffer is append-only, so a
+   --  caret left of the end makes every edit retype the whole line
+   --  (Recall_Replace); moving the caret alone sends no bytes.
+   Edit_Caret : Natural := 0;
 
    --  Static by policy: 32 lines x 120 chars of recall is a
    --  user-visible UX choice, not a resource limit; deeper
@@ -203,6 +208,8 @@ procedure Terminal is
    --  Replace the current input line with S: erase what the
    --  shell holds (BS per character, mirrored into the
    --  scrollback echo) and inject the replacement as if typed.
+   --  The caret lands at the end of the new line (history and
+   --  whole-line retypes all end at the end).
    procedure Recall_Replace (S : String) is
    begin
       for I in 1 .. Edit_Len loop
@@ -211,6 +218,7 @@ procedure Terminal is
       end loop;
       Edit_Len := S'Length;
       Edit_Buf (1 .. Edit_Len) := S;
+      Edit_Caret := Edit_Len;
       for C of S loop
          Input_Put (C);
          Terminal_Buffer.Put_Char (C);
@@ -258,6 +266,88 @@ procedure Terminal is
       end if;
    end Recall_Newer;
 
+   --  M9y line editing. The shell's buffer only appends and
+   --  backspaces, so any edit left of the caret's end is applied
+   --  by retyping the whole line (BS x length, then the new text)
+   --  — the same byte stream history recall uses, keeping the
+   --  shell's buffer and the echoed line lockstep with Edit_Buf.
+   procedure Retype_To (Text : String; Column : Natural) is
+   begin
+      Recall_Replace (Text);
+      Edit_Caret := Column;
+   end Retype_To;
+
+   --  Insert Ch at the caret; at end-of-line this is the plain
+   --  append byte + echo (fast path, unchanged from M60).
+   procedure Caret_Insert (Ch : Character) is
+      T : String (1 .. Edit_Cap);
+      K : Natural := 0;
+   begin
+      if Edit_Caret = Edit_Len then
+         Edit_Len := Edit_Len + 1;
+         Edit_Buf (Edit_Len) := Ch;
+         Edit_Caret := Edit_Len;
+         Input_Put (Ch);
+         Terminal_Buffer.Put_Char (Ch);
+         return;
+      end if;
+      for I in 1 .. Edit_Len loop
+         if I = Edit_Caret + 1 then
+            K := K + 1;
+            T (K) := Ch;
+         end if;
+         K := K + 1;
+         T (K) := Edit_Buf (I);
+      end loop;
+      Retype_To (T (1 .. K), Edit_Caret + 1);
+   end Caret_Insert;
+
+   --  Backspace deletes the character before the caret.
+   procedure Caret_Backspace is
+      T : String (1 .. Edit_Cap);
+      K : Natural := 0;
+   begin
+      if Edit_Caret = 0 then
+         return;
+      end if;
+      if Edit_Caret = Edit_Len then
+         --  End of line: the cheap tail delete (one BS byte).
+         Edit_Len := Edit_Len - 1;
+         Edit_Caret := Edit_Caret - 1;
+         Input_Put (Character'Val (8));
+         Terminal_Buffer.Put_Char (Character'Val (8));
+         return;
+      end if;
+      for I in 1 .. Edit_Len loop
+         exit when I = Edit_Caret;
+         K := K + 1;
+         T (K) := Edit_Buf (I);
+      end loop;
+      for I in Edit_Caret + 1 .. Edit_Len loop
+         K := K + 1;
+         T (K) := Edit_Buf (I);
+      end loop;
+      Retype_To (T (1 .. K), Edit_Caret - 1);
+   end Caret_Backspace;
+
+   --  Key_Delete drops the character under the caret (forward
+   --  delete, M9y).
+   procedure Delete_Forward is
+      T : String (1 .. Edit_Cap);
+      K : Natural := 0;
+   begin
+      if Edit_Caret >= Edit_Len then
+         return;
+      end if;
+      for I in 1 .. Edit_Len loop
+         if I /= Edit_Caret + 1 then
+            K := K + 1;
+            T (K) := Edit_Buf (I);
+         end if;
+      end loop;
+      Retype_To (T (1 .. K), Edit_Caret);
+   end Delete_Forward;
+
    --  One input character through the line discipline: queue it
    --  for Op_Read, echo it into the scrollback, and track the
    --  input extent in Edit_Buf. Backspace at an empty input is
@@ -270,21 +360,15 @@ procedure Terminal is
       if Code = 10 or else Code = 13 then
          Hist_Push;
          Edit_Len := 0;
+         Edit_Caret := 0;
          Recalling := False;
          Input_Put (Ch);
          Terminal_Buffer.Put_Char (Ch);
       elsif Code = 8 or else Code = 127 then
-         if Edit_Len > 0 then
-            Edit_Len := Edit_Len - 1;
-            Input_Put (Ch);
-            Terminal_Buffer.Put_Char (Ch);
-         end if;
+         Caret_Backspace;
       elsif Code >= 32 and then Code < 127 then
          if Edit_Len < Edit_Cap then
-            Edit_Len := Edit_Len + 1;
-            Edit_Buf (Edit_Len) := Ch;
-            Input_Put (Ch);
-            Terminal_Buffer.Put_Char (Ch);
+            Caret_Insert (Ch);
          end if;
       end if;
    end Input_Char;
@@ -395,10 +479,18 @@ procedure Terminal is
       --  flips to Pane to stay visible.
       declare
          Cur_Line : constant Natural := Terminal_Buffer.Current_Line;
-         Cur_Col  : constant Natural := Terminal_Buffer.Current_Col;
          Top      : constant Natural := Terminal_Buffer.View_Top;
          Rows     : constant Natural := Terminal_Buffer.Rows;
          Char_W   : constant U64 := 8;
+         --  M9y: with the caret left of the line's end the block
+         --  cursor draws at the caret instead of the tail: the
+         --  echoed line holds prompt + typed text, so the prompt
+         --  base is the line length minus the typed length.
+         Cur_Col  : constant Natural :=
+           (if Edit_Caret < Edit_Len
+              and then Terminal_Buffer.Current_Col >= Edit_Len
+            then Terminal_Buffer.Current_Col - Edit_Len + Edit_Caret
+            else Terminal_Buffer.Current_Col);
       begin
          if Cur_Line >= Top and then Cur_Line < Top + Rows then
             declare
@@ -455,22 +547,47 @@ procedure Terminal is
    end Scroll_Page;
 
    --  Milestone 60: cursor Up/Down are command history (Amiga
-   --  CON: semantics); scrollback scrolling moved to Page Up/
-   --  Page Down/Home/End (and the scrollbar pointer, unchanged).
-   procedure Handle_Nav (Code : U64) is
+   --  CON: semantics); Page Up/Page Down scroll the view. M9y:
+   --  Home/End/Left/Right move the input-line caret (the visible
+   --  block cursor follows it); Ctrl+Home / Ctrl+End take over
+   --  the old Home/End scroll-to-top/bottom roles; Key_Delete
+   --  deletes forward at the caret.
+   procedure Handle_Nav (Code : Natural; Ctrl : Boolean) is
    begin
-      if Code = Trinket.Key_Up then
+      if Code = Natural (Trinket.Key_Up) then
          Recall_Older;
-      elsif Code = Trinket.Key_Down then
+      elsif Code = Natural (Trinket.Key_Down) then
          Recall_Newer;
-      elsif Code = Trinket.Key_Pageup then
+      elsif Code = Natural (Trinket.Key_Pageup) then
          Scroll_Page (Up => True);
-      elsif Code = Trinket.Key_Pagedown then
+      elsif Code = Natural (Trinket.Key_Pagedown) then
          Scroll_Page (Up => False);
-      elsif Code = Trinket.Key_Home then
-         Terminal_Buffer.Set_Top (0);
-      elsif Code = Trinket.Key_End then
-         Terminal_Buffer.Set_Top (Terminal_Buffer.Max_Top);
+      elsif Code = Natural (Trinket.Key_Home) then
+         if Ctrl then
+            Terminal_Buffer.Set_Top (0);
+         elsif Edit_Caret > 0 then
+            Edit_Caret := 0;
+            Terminal_Buffer.Set_Dirty;
+         end if;
+      elsif Code = Natural (Trinket.Key_End) then
+         if Ctrl then
+            Terminal_Buffer.Set_Top (Terminal_Buffer.Max_Top);
+         elsif Edit_Caret < Edit_Len then
+            Edit_Caret := Edit_Len;
+            Terminal_Buffer.Set_Dirty;
+         end if;
+      elsif Code = Natural (Trinket.Key_Left) then
+         if Edit_Caret > 0 then
+            Edit_Caret := Edit_Caret - 1;
+            Terminal_Buffer.Set_Dirty;
+         end if;
+      elsif Code = Natural (Trinket.Key_Right) then
+         if Edit_Caret < Edit_Len then
+            Edit_Caret := Edit_Caret + 1;
+            Terminal_Buffer.Set_Dirty;
+         end if;
+      elsif Code = Natural (Trinket.Key_Delete) then
+         Delete_Forward;
       end if;
    end Handle_Nav;
 
@@ -487,18 +604,27 @@ procedure Terminal is
            + (Tail mod Aegir_User.Window.Input_Queue_Events) * 2;
          if Queue (Slot) = Aegir_User.Window.Input_Event_Key then
             declare
+               Val  : constant U64 := Queue (Slot + 1);
                Code : constant Natural :=
-                 Natural (Queue (Slot + 1) and 16#FF#);
+                 Natural (Val and 16#FF#);
+               --  M9y: Bureau packs the Ctrl qualifier above the
+               --  code (aegir_user-window Key_Mod_Ctrl) so
+               --  Ctrl+Home / Ctrl+End can keep their scroll roles
+               --  while bare Home/End edit the input line.
+               Ctrl : constant Boolean :=
+                 (Val and Aegir_User.Window.Key_Mod_Ctrl) /= 0;
             begin
                --  Milestone 57: navigation keys arrive as codes
                --  >= 16#80# (Trinket.Key_*). Milestone 60: ASCII
                --  goes through the line discipline (history
-               --  tracking); nav keys recall history (Up/Down)
-               --  or scroll the view (Page/Home/End).
+               --  tracking); nav keys recall history (Up/Down),
+               --  move the input caret (Home/End/Left/Right/
+               --  Delete, M9y) or scroll the view (Page, and
+               --  Home/End with Ctrl).
                if Code < 16#80# then
                   Input_Char (Character'Val (Code));
                else
-                  Handle_Nav (U64 (Code));
+                  Handle_Nav (Code, Ctrl);
                end if;
             end;
          elsif Queue (Slot) = Aegir_User.Window.Input_Event_Pointer
@@ -947,6 +1073,10 @@ begin
          Drain_Input_Queue;
 
       elsif Label = Aegir_User.Streams.Op_Write then
+         --  M9y: output means the shell is past the prompt; drop
+         --  any mid-line caret back to the end (the shell's line
+         --  is unchanged, so no retype is needed).
+         Edit_Caret := Edit_Len;
          for I in 1 .. Ada.Streams.Stream_Element_Offset
            (Request.Count)
          loop
