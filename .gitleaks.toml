@@ -1,0 +1,21 @@
+# gitleaks repo config (docs/SCANNING.md -> Baseline: secret scan).
+#
+# Extends the default rule set; the allowlist below must stay empty of
+# real credentials. Entries are only for documented non-secrets (example
+# keys, test vectors, fixture data) and each needs a `description`
+# pointing at the ledger entry that justifies it.
+
+title = "akernel gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+# third_party/ is fetched, sha256-verified, gitignored upstream code
+# (Makefile rule: "no vendored code in git"; only third_party/patches/
+# is tracked). lwIP's tree contains its own dummy SNMPv3 auth keys in
+# contrib/examples + src/include/lwip/apps — upstream fixtures, not
+# repo credentials. See docs/SCANNING.md -> Baseline: secret scan.
+paths = [
+  '''third_party/''',
+]

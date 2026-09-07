@@ -50,3 +50,34 @@ jobs:
           /tmp/osv-scanner scan source -L docs/sbom/akernel.spdx.json \
             --format json --output-file /tmp/osv.json
           python3 tools/osv_gate.py /tmp/osv.json
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history — the repo is small (332 commits)
+
+      - name: Install gitleaks (pinned 8.30.1)
+        run: |
+          curl -sL --fail --max-time 120 -o /tmp/gl.tgz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar xzf /tmp/gl.tgz -C /tmp gitleaks
+          chmod +x /tmp/gitleaks
+
+      # Full-history scan (covers every push/PR commit; a diff-only scan
+      # can replace this if the repo outgrows the ~18 MB full pass) plus
+      # a working-tree scan for uncommitted additions in PR runs.
+      - name: Scan full history
+        run: |
+          /tmp/gitleaks git --log-opts=--all --config .gitleaks.toml \
+            --redact=100 --report-format json --report-path /tmp/gl_git.json
+          python3 tools/gl_gate.py /tmp/gl_git.json
+
+      - name: Scan working tree
+        run: |
+          /tmp/gitleaks dir --config .gitleaks.toml \
+            --redact=100 --report-format json --report-path /tmp/gl_dir.json .
+          python3 tools/gl_gate.py /tmp/gl_dir.json
