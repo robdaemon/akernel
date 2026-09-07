@@ -100,7 +100,7 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  adaint.c __gnat_rename patch silently never linked).
 RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
-.PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate fetch-pins FORCE
+.PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate fetch-pins scan-deps scan-secrets scan-host scan-ada FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
@@ -197,6 +197,41 @@ $(TERMINUS_STAMP): $(TERMINUS_TARBALL)
 #  re-verify them (CI deps job) and the SBOM stays current.
 fetch-pins: $(LWIP_TARBALL) $(TERMINUS_TARBALL)
 	@echo "pins fetched: lwip $(LWIP_VER), terminus-font $(TERMINUS_VER)"
+
+#  Local scanning conveniences (docs/SCANNING.md). Each is the same
+#  check the CI security.yml job of the same name runs; CI additionally
+#  fetches the pinned osv-scanner/gitleaks/bandit binaries. Here the
+#  tools are used only if already installed (found on PATH or at the
+#  documented spot), so the targets degrade to the stdlib checks with a
+#  note instead of failing on a bare checkout.
+scan-deps: fetch-pins
+	python3 tools/check_pins.py
+	python3 tools/gen_sbom.py --check
+	@if command -v osv-scanner >/dev/null 2>&1; then \
+	  osv-scanner scan source -L docs/sbom/akernel.spdx.json --format json \
+	    --output-file /tmp/osv.json && python3 tools/osv_gate.py /tmp/osv.json; \
+	else echo "note: osv-scanner not on PATH (CVE watch runs in CI)"; fi
+
+scan-secrets:
+	@if command -v gitleaks >/dev/null 2>&1; then \
+	  gitleaks git --log-opts=--all --config .gitleaks.toml --redact=100 \
+	    --report-format json --report-path /tmp/gl_git.json && \
+	    python3 tools/gl_gate.py /tmp/gl_git.json; \
+	  gitleaks dir --config .gitleaks.toml --redact=100 \
+	    --report-format json --report-path /tmp/gl_dir.json . && \
+	    python3 tools/gl_gate.py /tmp/gl_dir.json; \
+	else echo "note: gitleaks not on PATH (secret scan runs in CI)"; fi
+
+scan-host:
+	python3 -m py_compile tools/*.py
+	@if command -v bandit >/dev/null 2>&1; then \
+	  bandit -q -r tools; \
+	else echo "note: bandit not on PATH (host lint runs in CI)"; fi
+
+scan-ada:
+	@if command -v gnatprove >/dev/null 2>&1; then \
+	  echo "note: run via 'alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 --timeout=30 --report=all' (see docs/SCANNING.md)"; \
+	else echo "note: gnatprove not installed (alr install gnatprove + aligned cross toolchain)"; fi
 
 
 

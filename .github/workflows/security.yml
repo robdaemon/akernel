@@ -81,3 +81,54 @@ jobs:
           /tmp/gitleaks dir --config .gitleaks.toml \
             --redact=100 --report-format json --report-path /tmp/gl_dir.json .
           python3 tools/gl_gate.py /tmp/gl_dir.json
+
+  ada-sast:
+    name: Ada/SPARK proof (GNATprove)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Analysis toolchain only — the kernel itself keeps building with
+      # its pinned 15.3.1 crates (see docs/SCANNING.md). 16.1.0 is the
+      # matching pair in the community index.
+      - name: Install GNATprove + aligned cross toolchain (alr)
+        run: |
+          alr install gnatprove
+          alr install gnat_riscv64_elf
+
+      # Whole-project analysis; the SPARK surface today is the
+      # Kernel.Capabilities pure-logic subset. gnatprove exits 0 with
+      # unproved checks (recorded as audit entries, not failures);
+      # errors/failed checks exit non-zero and fail the job.
+      - name: GNATprove proof baseline
+        run: |
+          alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+            --timeout=30 --report=all
+          tail -40 obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out
+
+  host:
+    name: Host tooling lint (bandit + py_compile)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Python syntax check (all host tools)
+        run: python3 -m py_compile tools/*.py
+
+      - name: bandit over tools/
+        run: |
+          python3 -m pip install --quiet bandit
+          python3 -m bandit -q -r tools
+
+      # shellcheck: no *.sh / *.bash files are tracked today, so the
+      # pass is conditional. Makefile recipe verification is structural
+      # (tools/check_pins.py). Re-enable when real shell scripts land.
+      - name: shellcheck (conditional)
+        run: |
+          if git ls-files '*.sh' '*.bash' | grep -q .; then
+            echo "shell scripts found — add a pinned shellcheck step here"
+            exit 1
+          fi
+          echo "no tracked shell scripts — shellcheck pass N/A"

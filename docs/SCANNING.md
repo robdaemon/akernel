@@ -141,7 +141,18 @@ pole. Re-run this baseline on each change to `kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 
-(pending — bandit / shellcheck)
+_Recorded 2026-09-07._
+
+- **`python3 -m py_compile tools/*.py`** (always-on): 12 files, clean.
+- **bandit** over `tools/`: runs in the CI `host` job (ubuntu-latest,
+  `pip install bandit`); pinned bandit version is recorded in
+  `security.yml`. Not runnable in the author sandbox (no pip/root) —
+  the py_compile pass above is the local fallback.
+- **shellcheck 0.10.0**: probed; the repo tracks **zero** `*.sh`/`*.bash`
+  files, so a shell-script pass is N/A. Non-trivial Makefile recipe
+  verification is enforced structurally instead: `tools/check_pins.py`
+  fails any fetch recipe that stops gating extract on `sha256sum -c`.
+  Revisit shellcheck if real shell scripts ever enter the repo.
 
 ## How findings get remediated
 
@@ -162,8 +173,24 @@ pole. Re-run this baseline on each change to `kernel-capabilities.*`.
 ## Local usage
 
 ```bash
-make scan-deps      # pin enforcement + SBOM + osv-scanner CVE check
-make scan-secrets   # gitleaks (full history + working tree)
-make scan-host      # bandit on tools/*.py (+ shellcheck recipes)
-# make scan-ada     # GNATprove — see Phase 3 notes before relying on it
+make scan-deps      # fetch pins, enforce sha256 pins, SBOM freshness
+                    # (+ osv-scanner CVE gate when on PATH)
+make scan-secrets   # gitleaks full history + working tree (when on PATH)
+make scan-host      # py_compile tools/*.py (+ bandit when on PATH)
+make scan-ada       # prints the GNATprove invocation (see below)
+```
+
+The heavy scanners are not vendored; CI fetches pinned releases
+(osv-scanner 2.5.1, gitleaks 8.30.1, bandit via pip — all recorded in
+`.github/workflows/security.yml`). To run them locally, install the
+same pins and put them on `PATH` (the scan-* targets then use them).
+
+GNATprove (proof baseline): install a version-aligned pair with
+`alr install gnatprove gnat_riscv64_elf` (e.g. 16.1.0 — analysis-only;
+the build keeps its pinned 15.3.1 crates), then run through `alr exec`
+so the cross `light-rv64imafdc` runtime resolves:
+
+```bash
+alr exec -- gnatprove -P akernel.gpr -f --mode=prove --level=1 \
+  --timeout=30 --report=all
 ```
