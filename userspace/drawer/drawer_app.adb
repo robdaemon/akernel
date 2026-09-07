@@ -435,6 +435,8 @@ package body Drawer_App is
          Reload;               --  Refresh
       elsif Id = 2 then
          Parent_Clicked;
+      elsif Id = 3 then
+         Trinket.Window.Request_Quit (Win_H);   --  Close (Alt+W)
       end if;
    end Menu_Picked;
 
@@ -503,7 +505,10 @@ package body Drawer_App is
            (Win_H,
             (1 => Trinket.Menus.M
                ("Drawer", (Trinket.Menus.It (1, "Refresh"),
-                           Trinket.Menus.It (2, "Parent")))));
+                           Trinket.Menus.It (2, "Parent"),
+                           Trinket.Menus.Sep,
+                           Trinket.Menus.It (3, "Close", 'w',
+                                             Alt => True)))));
          Trinket.Window.Set_Menu_Handler (Win_H, Menu_Picked'Access);
          Trinket.Window.Set_Resize_Handler (Win_H, On_Resize'Access);
          IV.Set_On_Double_Click (Icons.all, Entry_Opened'Access);
