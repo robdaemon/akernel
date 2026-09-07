@@ -49,19 +49,20 @@ procedure Bureau is
 
    Buf_VA   : constant U64 := 16#6000_0000#;
    --  Per-slot client surface maps: one stride per slot from
-   --  Surf_VA0. Region plan (m9x): 0x6400..0x6E00 = 160 MiB,
-   --  queues at 0x6E00 (1 MiB of one-page maps), menus at
-   --  0x6E10. At the 8 MiB stride 1080p needs, that is 20
-   --  slots (was 12 from 0x6800; raised so real desktops —
-   --  fileman panes, drawers, editors + a requester — don't
-   --  collide). The composite buffer at Buf_VA (<= ~8.5 MiB)
-   --  ends well below the new region start.
+   --  Surf_VA0. Region plan (m9x): 0x6400..0x7C00 = 384 MiB,
+   --  queues at 0x7C00 (1 MiB of one-page maps), menu scratch at
+   --  0x7C10. The queue/menu bases were moved up from 0x6E00/
+   --  0x6E10 so the surface region could grow past 20 slots (the
+   --  composite buffer at Buf_VA blocks downward growth); nothing
+   --  sits in 0x6E10..0x7C00 and the program stack at 0x7FF0 is
+   --  far above 0x7C10. At the 8 MiB stride 1080p needs that is
+   --  48 slots.
    --  Max_Win_Slots derives from the region so the table cap
    --  can never outrun the VA window.
    Surf_VA0 : constant U64 := 16#6400_0000#;
    Surf_Slot_Stride : constant U64 := 16#80_0000#;  --  m80g: 8 MiB
    --  Per-slot client input-queue maps (v3): one page each.
-   Queue_VA0 : constant U64 := 16#6E00_0000#;
+   Queue_VA0 : constant U64 := 16#7C00_0000#;
 
    Max_W : constant := 1920;  --  m80g: was 1024x768
    Max_H : constant := 1080;
@@ -126,7 +127,7 @@ procedure Bureau is
     --  (Akernel_User.Tables) and the cap is the surface-region
     --  capacity below, not an arbitrary count.
     Max_Win_Slots : constant Natural :=
-      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  20
+      Natural ((Queue_VA0 - Surf_VA0) / Surf_Slot_Stride);  --  48
     --  32 chunks = 8 MiB = exactly the Surf_Slot_Stride window.
     --  (m80g: 16 -> 32; a 1920x1080 pane is 2025 pages.)
     --  Headroom added WITH the v5 zoom consumer: a zoomed pane
@@ -341,7 +342,7 @@ procedure Bureau is
    Mod_Alt  : constant U64 := 2;
    Key_Mods : U64 := 0;
    --  Scratch map for the client's serialized menu page.
-   Menu_VA : constant U64 := 16#6E10_0000#;
+   Menu_VA : constant U64 := 16#7C10_0000#;
 
    procedure Open_Menu;
    procedure Dismiss_Menu;
