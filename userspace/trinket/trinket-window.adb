@@ -610,6 +610,7 @@ package body Trinket.Window is
       W.In_Modal := True;
       W.Modal_Overlay := True;
       W.Modal_Wanted := False;
+      W.Prev_Buttons := 0;   --  stale press state eats the first click
       W.Overlay := Panel;
       W.Overlay.X := (W.Cnv.W - DW) / 2;
       W.Overlay.Y := (W.Cnv.H - DH) / 2;

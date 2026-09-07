@@ -474,15 +474,16 @@ package body Trinket.Widgets is
               Fonts.Text_Width (W.Title (1 .. W.Title_Len));
             TX : constant U64 :=
               W.X + (if W.W > TW + 16 then (W.W - TW) / 2 else 8);
-            --  Root groups sit at Y=0: never wrap the title band
-            --  negative (the tdemo CONSTRAINT_ERROR).
-            TY : constant U64 := (if W.Y >= 2 then W.Y - 2 else 0);
          begin
             --  Window-bg band breaks the frame behind the title.
+            --  Glyphs start AT the group's top edge: the band
+            --  (which hides the border line beneath the text)
+            --  keeps the row fully inside the frame, so a title
+            --  on a floating dialog is never clipped above it.
             Paint.Fill_Rect (C, TX - 6, W.Y, TX + TW + 6,
                              W.Y + Fonts.Line_Height, Win_Face);
             Fonts.Draw_Text
-              (C, TX, TY, W.Title (1 .. W.Title_Len), Text_Dark);
+              (C, TX, W.Y, W.Title (1 .. W.Title_Len), Text_Dark);
          end;
       end if;
       for I in 1 .. W.N loop
