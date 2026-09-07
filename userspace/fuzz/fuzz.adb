@@ -328,11 +328,15 @@ procedure Fuzz is
       --  Handle 7: the shared-library manager (M9x uniform ABI;
       --  fuzz's own copy rides the "libman" token, handle 6).
       --  C:Execute needs it to spawn ITS commands — Scripting.Exec
-      --  grants libman at index 6 of its 7-cap child layout, so a
-      --  manager-less Execute fails every nested spawn ("spawn
-      --  failed: <cmd>").
+      --  grants libman at index 6 of its 7-cap child layout AND
+      --  with Right_Send + Right_Transfer (so the child can
+      --  re-grant it one level down), exactly like the terminal's
+      --  shell spawn. Send-only here made every nested Execute
+      --  spawn fail ("spawn failed: <cmd>").
       Aegir_User.Syscalls.Set_Grant
-        (6, Libman_Cap, Aegir_User.Syscalls.Right_Send, 0);
+        (6, Libman_Cap,
+         Aegir_User.Syscalls.Right_Send +
+           Aegir_User.Syscalls.Right_Transfer, 0);
       Status := Aegir_User.Syscalls.Spawn (Mem_Cap, 7, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
