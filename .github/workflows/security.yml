@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Fetch pinned third-party tarballs
         run: make fetch-pins
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0  # full history — the repo is small (332 commits)
 
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # GitHub runners do not ship Alire. Pin the v2.1.1 release binary
       # (sha256-checked like every other fetched artifact in this repo).
@@ -107,7 +107,7 @@ jobs:
       - name: Cache Alire toolchains
         env:
           ALR_CACHE_SLOT: alr-2.1.1-gnatprove-16.1.0
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.alire
@@ -149,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Python syntax check (all host tools)
         run: python3 -m py_compile tools/*.py
