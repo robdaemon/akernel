@@ -493,7 +493,7 @@ test:
 	BEFS_START=$$(sgdisk -i 1 $(DISK_IMG) | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
 	python3 tools/befs_dump.py $(DISK_IMG) $$((BEFS_START * 512)) > $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs post-test dump unparsable"; ST=1; }; \
 	grep -q "(empty)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs log not checkpointed after test"; ST=1; }; \
-	grep -q "README.TXT  (36 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs README missing after test"; ST=1; }; \
+	grep -q "README.TXT  (34 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs README missing after test"; ST=1; }; \
 	grep -q "HELLO.TXT  (24 bytes)" $(INITRD_OUT)/befs_after.txt || { echo "FAIL befs HELLO missing after test"; ST=1; }; \
 	NM=$$(grep -a "  name: " $(INITRD_OUT)/befs_after.txt | sed 's/.*: \([0-9]*\) entries.*/\1/'); \
 	if [ -z "$$NM" ] || [ $$NM -le 0 ] || [ $$NM -gt 64 ]; then echo "FAIL befs name index out of sync after test ($$NM entries)"; ST=1; fi; \

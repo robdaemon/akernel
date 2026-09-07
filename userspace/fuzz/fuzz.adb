@@ -227,6 +227,7 @@ procedure Fuzz is
    Console_EP   : constant U64 := 2;
    Elevated_Cap : constant U64 := 10;
    Net_Cap      : constant U64 := 11;
+   Libman_Cap   : constant U64 := 6;  --  shared-library manager
 
    --  Helper: stage a C: command from disk and spawn it under the
    --  uniform ABI, exactly as the shell does.  Args is the
@@ -324,7 +325,15 @@ procedure Fuzz is
       --  manifest token (handle 11).
       Aegir_User.Syscalls.Set_Grant
         (5, Net_Cap, Aegir_User.Syscalls.Right_Send, 0);
-      Status := Aegir_User.Syscalls.Spawn (Mem_Cap, 6, Proc);
+      --  Handle 7: the shared-library manager (M9x uniform ABI;
+      --  fuzz's own copy rides the "libman" token, handle 6).
+      --  C:Execute needs it to spawn ITS commands — Scripting.Exec
+      --  grants libman at index 6 of its 7-cap child layout, so a
+      --  manager-less Execute fails every nested spawn ("spawn
+      --  failed: <cmd>").
+      Aegir_User.Syscalls.Set_Grant
+        (6, Libman_Cap, Aegir_User.Syscalls.Right_Send, 0);
+      Status := Aegir_User.Syscalls.Spawn (Mem_Cap, 7, Proc);
       Check (Status = 0 and then Proc /= 0,
              Prefix & " spawned");
 
@@ -638,7 +647,7 @@ begin
                 "bfs volume appears");
          Status := Aegir_User.Files.Stat ("BD0:README.TXT", Size);
          Check (Status = Aegir_User.Files.Status_Ok
-                and then Size = 36,
+                and then Size = 34,
                 "bfs stat readme size");
 
          Status := Aegir_User.Files.Stat ("Sys:README.TXT", Size);
@@ -648,17 +657,17 @@ begin
          Status := Aegir_User.Files.Read
            ("BD0:README.TXT", 0, Buf'Address, 64, Count);
          Match := Status = Aegir_User.Files.Status_Ok
-           and then Count = 36;
+           and then Count = 34;
          declare
             Text : constant String :=
               "Hello from the aegir BeFS volume.";
          begin
-            for I in 0 .. 34 loop
+            for I in 0 .. 32 loop
                Match := Match
                  and then Buf (I) =
                    Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
             end loop;
-            Match := Match and then Buf (35) = 10;
+            Match := Match and then Buf (33) = 10;
          end;
          Check (Match, "bfs readme content ok");
 
@@ -765,7 +774,7 @@ begin
                  ("BD0:", U64 (Index), Ent, Ent_L, Ent_Dir, Ent_Sz);
                exit when Status /= Aegir_User.Files.Status_Ok;
                if Ent_L = 10 and then Ent (1 .. 10) = "README.TXT" then
-                  Check (not Ent_Dir and then Ent_Sz = 36,
+                  Check (not Ent_Dir and then Ent_Sz = 34,
                          "bfs readdir readme entry ok");
                   Seen := Seen + 1;
                elsif Ent_L = 6 and then Ent (1 .. 6) = "SUBDIR" then
@@ -1126,7 +1135,7 @@ begin
                       "Subdir hello from BeFS!" & ASCII.LF);
 
             --  Exact name.
-            Q_Check ("name==""QREADME.TXT""", 0, "QREADME.TXT", 36,
+            Q_Check ("name==""QREADME.TXT""", 0, "QREADME.TXT", 34,
                      "bfs query exact name");
             Q_None ("name==""QREADME.TXT""", 1,
                     "bfs query exact name single match");
@@ -1138,7 +1147,7 @@ begin
                      "bfs query glob first");
             Q_Check ("name==""*.TXT""", 1, "QZDIR/QHELLO.TXT", 24,
                      "bfs query glob crosses dirs");
-            Q_Check ("name==""*.TXT""", 2, "QREADME.TXT", 36,
+            Q_Check ("name==""*.TXT""", 2, "QREADME.TXT", 34,
                      "bfs query glob third");
             Q_None ("name==""*.TXT""", 3,
                     "bfs query glob exhausted");
@@ -1147,7 +1156,7 @@ begin
             Q_Check ("size>0 && name==""*.TXT""", 0,
                      "QZDIR/QHELLO.TXT", 24,
                      "bfs query size+glob first");
-            Q_Check ("size>0 && name==""*.TXT""", 1, "QREADME.TXT", 36,
+            Q_Check ("size>0 && name==""*.TXT""", 1, "QREADME.TXT", 34,
                      "bfs query size+glob second");
             Q_None ("size>0 && name==""*.TXT""", 2,
                     "bfs query size+glob exhausted");
@@ -2357,7 +2366,7 @@ begin
       Check (Await_Volume ("BD1:README.TXT"), "fat32 volume appears");
       Status := Aegir_User.Files.Stat ("BD1:README.TXT", Size);
       Check (Status = Aegir_User.Files.Status_Ok
-             and then Size = 37,
+             and then Size = 35,
              "fat stat readme size");
 
       Status := Aegir_User.Files.Stat ("Data:README.TXT", Size);
@@ -2367,16 +2376,16 @@ begin
       Status := Aegir_User.Files.Read
         ("BD1:README.TXT", 0, Buf'Address, 64, Count);
       Match := Status = Aegir_User.Files.Status_Ok
-        and then Count = 37;
+        and then Count = 35;
       declare
          Text : constant String := "Hello from the aegir FAT32 volume.";
       begin
-         for I in 0 .. 35 loop
+         for I in 0 .. 33 loop
             Match := Match
               and then Buf (I) =
                 Interfaces.Unsigned_8 (Character'Pos (Text (I + 1)));
          end loop;
-         Match := Match and then Buf (36) = 10;
+         Match := Match and then Buf (34) = 10;
       end;
       Check (Match, "fat readme content ok");
 
@@ -7853,8 +7862,8 @@ begin
          Buf := (others => ' ');
          St := Aegir_User.Clipboard.Get (Clip, Buf, BLen);
          Check (St = Aegir_User.Clipboard.Status_Ok
-                and then BLen = 5
-                and then Buf (1 .. 5) =
+                and then BLen = 4
+                and then Buf (1 .. 4) =
                   "a" & ASCII.LF & ASCII.LF & "b",
                 "tclip interior blank row kept");
 
