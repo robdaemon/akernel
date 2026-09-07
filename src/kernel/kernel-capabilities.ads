@@ -125,6 +125,19 @@ package Kernel.Capabilities is
      Pre  => (Mask and (not Valid_Rights_Mask)) = 0,
      Post => To_Mask (To_Rights (Mask)) = Mask;
 
+   --  Grant-list subset check (Grant_List_Caps): after the
+   --  unknown-bits rejection above, the validator requires the
+   --  requested rights (decoded from the raw mask) to be a subset of
+   --  the parent entry's rights. Raw-mask characterization of that
+   --  check: every requested bit must already be set in the grantor's
+   --  mask. Call both lemmas (from Ghost/SPARK context) wherever a
+   --  grant list is validated against a parent's rights.
+   procedure Lemma_Subset_Decode (Have : Rights; Mask : U64) with
+     Ghost,
+     Pre  => (Mask and (not Valid_Rights_Mask)) = 0,
+     Post => Has_Rights (Have, To_Rights (Mask))
+               = ((To_Mask (Have) and Mask) = Mask);
+
    --  Layout is FORCED to exactly 32 bytes by the rep clause:
    --  128 entries then fill a 4 KiB cap page precisely, and the
    --  compiler rejects any drift (a plain pragma Assert is no
@@ -169,7 +182,22 @@ package Kernel.Capabilities is
 
    procedure Initialize (Table : out Cap_Table);
 
-   function Has_Rights (Have : Rights; Need : Rights) return Boolean;
+   function Has_Rights (Have : Rights; Need : Rights) return Boolean
+     with
+       --  Subset semantics, component by component: Have satisfies Need
+       --  iff every right Need demands is present in Have.
+       Post =>
+         Has_Rights'Result =
+           ((not Need.Read     or else Have.Read)     and then
+            (not Need.Write    or else Have.Write)    and then
+            (not Need.Execute  or else Have.Execute)  and then
+            (not Need.Map      or else Have.Map)      and then
+            (not Need.Send     or else Have.Send)     and then
+            (not Need.Receive  or else Have.Receive)  and then
+            (not Need.Wait     or else Have.Wait)     and then
+            (not Need.Ack      or else Have.Ack)      and then
+            (not Need.Transfer or else Have.Transfer) and then
+            (not Need.Manage   or else Have.Manage));
 
    procedure Insert
      (Table  : in out Cap_Table;

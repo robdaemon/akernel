@@ -179,6 +179,11 @@ package body Kernel.Capabilities is
       null;
    end Lemma_Mask_Round_Trip;
 
+   procedure Lemma_Subset_Decode (Have : Rights; Mask : U64) is
+   begin
+      null;
+   end Lemma_Subset_Decode;
+
    procedure Insert
      (Table  : in out Cap_Table;
       Kind   : Object_Kind;
