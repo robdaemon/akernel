@@ -174,6 +174,11 @@ package body Kernel.Capabilities is
       return Mask;
    end To_Mask;
 
+   procedure Lemma_Mask_Round_Trip (Mask : U64) is
+   begin
+      null;
+   end Lemma_Mask_Round_Trip;
+
    procedure Insert
      (Table  : in out Cap_Table;
       Kind   : Object_Kind;

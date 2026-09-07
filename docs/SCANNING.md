@@ -125,8 +125,13 @@ Off` even when its spec is On, so the body must declare On explicitly.
 
 **Scope of the v1 proof subset — `Kernel.Capabilities`:** spec declares
 `pragma SPARK_Mode (On)`; `To_Rights` carries a component-by-component
-bit↔rights postcondition and `To_Mask` a no-bits-outside-valid-mask
-postcondition. The body is On, and every physmap/PMM/pointer path
+bit↔rights postcondition and `To_Mask` the mirror-image encoding spec
+(component ↔ bit, no bits outside the valid mask). A **Ghost
+grant-validation lemma** (`Lemma_Mask_Round_Trip`) characterizes the
+spawn validator's unknown-bits check in `Grant_List_Caps`
+(`kernel-processes.adb`): for any mask with no bits outside
+`Valid_Rights_Mask`, `To_Mask (To_Rights (Mask)) = Mask`. The body is
+On, and every physmap/PMM/pointer path
 (`Page_At`, `Get`, `Put`, `Zero_Page`, `Ensure_Page`, `Release_Page`,
 `Insert`, `Insert_At`, `Lookup`, `Duplicate`, `Close`, `Reset`) is
 explicitly `SPARK_Mode (Off)` — those are exercised by the in-guest
@@ -137,8 +142,8 @@ unproved, 0 justified.**
 
 | Check class | Count | Notes |
 |---|---|---|
-| Functional contracts | 2 | `To_Rights` and `To_Mask` postconditions, CVC5 |
-| Run-time checks | 8 | incl. `Page_No`/`Slot_No` range bounds |
+| Functional contracts | 3 | `To_Rights`, `To_Mask` encoding specs and `Lemma_Mask_Round_Trip`, CVC5 |
+| Run-time checks | 7 | incl. `Page_No`/`Slot_No` range bounds |
 | Initialization (flow) | 1 | plus termination proved on analyzed units |
 | Flow errors | 0 | across all 34 analyzed units (whole project) |
 
@@ -149,11 +154,16 @@ Kernel build after the annotation: warning-free (`make kernel`).
 the SPARK_Mode-Off body paths above; each is covered by the directed
 `Tests/Fuzz` capability cases and the cap-accounting rules in AGENTS.md.
 
-**Roadmap (follow-up milestones):** annotate the grant-list validation
-in the spawn syscall path next (pure logic, same pattern), then model
-`Cap_Table` state invariants (count/root coherence) to lift
-`Insert`/`Lookup`/`Close` out of Off — the PMM frame model is the long
-pole. Re-run this baseline on each change to `kernel-capabilities.*`.
+**Roadmap (follow-up milestones):** the grant-list *encoding* lemma is
+proved; the full `Grant_List_Caps` validation becomes provable once
+`Lookup_Cap` / IPC-buffer contracts exist (the syscall path stays Off
+until then — it dereferences the parent's physmap IPC buffer and the
+cap table). Next: a subset-decode lemma so the validator's
+`Has_Rights (Cap_Info.Rights, To_Rights (Mask))` check is provable in
+terms of raw masks, then model `Cap_Table` state invariants
+(count/root coherence) to lift `Insert`/`Lookup`/`Close` out of Off —
+the PMM frame model is the long pole. Re-run this baseline on each
+change to `kernel-capabilities.*`.
 
 ## Baseline: host tooling lint
 

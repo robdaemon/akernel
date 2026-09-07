@@ -99,9 +99,31 @@ package Kernel.Capabilities is
          (To_Rights'Result.Manage   = ((Mask and 512) /= 0));
    function To_Mask (R : Rights) return U64
      with
-       --  The encoding never sets bits outside the valid mask.
-       Post => (if R = No_Rights then To_Mask'Result = 0)
-         and then (To_Mask'Result and (not Valid_Rights_Mask)) = 0;
+       --  Full encoding spec, mirroring To_Rights: component i maps to
+       --  bit i, and no bits outside Valid_Rights_Mask are ever set.
+       Post =>
+         (To_Mask'Result and (not Valid_Rights_Mask)) = 0          and then
+         (R.Read     = ((To_Mask'Result and 1) /= 0))              and then
+         (R.Write    = ((To_Mask'Result and 2) /= 0))              and then
+         (R.Execute  = ((To_Mask'Result and 4) /= 0))              and then
+         (R.Map      = ((To_Mask'Result and 8) /= 0))              and then
+         (R.Send     = ((To_Mask'Result and 16) /= 0))             and then
+         (R.Receive  = ((To_Mask'Result and 32) /= 0))             and then
+         (R.Wait     = ((To_Mask'Result and 64) /= 0))             and then
+         (R.Ack      = ((To_Mask'Result and 128) /= 0))            and then
+         (R.Transfer = ((To_Mask'Result and 256) /= 0))            and then
+         (R.Manage   = ((To_Mask'Result and 512) /= 0));
+
+   --  Grant-list validation lemma (kernel-processes Grant_List_Caps):
+   --  the spawn validator rejects a rights mask iff it carries bits
+   --  outside Valid_Rights_Mask — "Mask and not Valid_Rights_Mask = 0"
+   --  (kernel-processes.adb:261). This lemma is that check expressed
+   --  on the encoding: such a mask round-trips exactly. Call it (from
+   --  Ghost/SPARK context) wherever a decoded mask is trusted.
+   procedure Lemma_Mask_Round_Trip (Mask : U64) with
+     Ghost,
+     Pre  => (Mask and (not Valid_Rights_Mask)) = 0,
+     Post => To_Mask (To_Rights (Mask)) = Mask;
 
    --  Layout is FORCED to exactly 32 bytes by the rep clause:
    --  128 entries then fill a 4 KiB cap page precisely, and the
