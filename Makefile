@@ -331,7 +331,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	  cp /tmp/ak-prefs-env/* $(INITRD_OUT)/sysroot/Prefs/Env/; \
 	fi; \
 	rm -rf /tmp/ak-prefs-env; \
-	printf 'System/Bureau\nSystem/Desktop\nSystem/Demo\nSystem/Tdemo\nSystem/Fileman\nSystem/Terminal\n' > $(INITRD_OUT)/sysroot/System/Startup; \
+	printf 'System/Bureau\nSystem/Desktop\nSystem/Terminal\n' > $(INITRD_OUT)/sysroot/System/Startup; \
 	printf '%s\n' 'README.TXT	MIMS	BEOS:TYPE	text/plain' \
 	  'README.TXT	CSTR	META:comment	fixture comment' \
 	  'System/Fileman	CSTR	ICON	Sys:System/Icons32/FILEMAN.XPM' \
