@@ -1,0 +1,113 @@
+# akernel — security scanning ledger
+
+This file is the single record for akernel's vulnerability-scanning
+program: what surfaces are covered, which tools back each scan, the
+current baseline of findings, and how results are remediated.
+
+All scans are meant to run both locally (`make scan-*`) and in
+GitHub Actions (`.github/workflows/security.yml`). The CI jobs are
+the gate; the local targets are the same checks without a push.
+
+## Surfaces under scan
+
+| Surface | Content | Origin / trust | Scan |
+|---|---|---|---|
+| Third-party C/library code | lwIP 2.2.1 (network stack, linked into `netserv`) | fetched tarball, sha256-pinned (`Makefile`) | CVE watch (`osv-scanner`) |
+| Third-party data | Terminus font 4.49.1 (BDFs into `Sys:Fonts`) | fetched tarball, sha256-pinned (`Makefile`) | CVE watch (`osv-scanner`) |
+| Toolchain | `gnat_riscv64_elf` 15.3.1 | Alire, pinned in root + every crate `alire.toml` / `alire.lock` | pin drift check + CVE watch |
+| Own code — kernel | Ada/SPARK kernel (`src/`) | in-repo | GNATprove flow/proof on capability/IPC core |
+| Own code — userspace | Ada/SPARK apps + custom RTS | in-repo | (proof scope: see below) |
+| Own code — host tooling | `tools/*.py`, `Makefile` recipes | in-repo | bandit; shellcheck where feasible |
+| Repository secrets | git history + future pushes | in-repo | gitleaks |
+
+### Fetch inventory (pins live in the Makefile — nothing vendored in git)
+
+`git ls-files third_party` is **empty by design**: all third-party
+code is downloaded at build time, sha256-verified, and stamped.
+`third_party/` is gitignored. The git-visible source of truth for
+supply-chain identity is the fetch recipes and pin constants.
+
+| Artifact | Version | Fetch source | Pin site (git) | sha256 |
+|---|---|---|---|---|
+| lwIP | 2.2.1 (`STABLE-2_2_1_RELEASE`) | github.com/lwip-tcpip/lwip tarball | `Makefile` `LWIP_VER`/`LWIP_TAG`/`LWIP_SHA256` | `ce0b7461...c539` |
+| Terminus font | 4.49.1 | sourceforge terminus-font release tarball | `Makefile` `TERMINUS_VER`/`TERMINUS_SHA256` | `d961c1b7...ef79` |
+| GNAT cross toolchain | 15.3.1 | Alire (community index) | `alire.toml` `[[pins]]` + `alire/alire.lock`; same pin in all 69 userspace crate `alire.toml`s | Alire-lockfile enforced (`versions = "=15.3.1"`) |
+| lwIP patch set | — | none currently tracked | `third_party/patches/` (per AGENTS.md, patches are the one tracked exception; none exist today) | — |
+
+Alire dependency universe is a single node: `gnat_riscv64_elf` 15.3.1
+(root `alire/alire.lock` and every crate's lockfile contain no other
+third-party dependency). Host Python tools import only the stdlib
+(`argparse os pathlib re socket struct sys threading`) plus sibling
+repo modules — no PyPI dependency surface.
+
+<!-- Result sections below are filled in by the scan steps as their
+     baselines are established. Each records date + tool version. -->
+
+## Baseline: dependency CVEs
+
+_Recorded 2026-09-07. Tool: osv-scanner 2.5.1 (built 2026-08-17) over the
+committed SBOM (`docs/sbom/akernel.spdx.json`)._
+
+**osv-scanner result:** 0 vulnerabilities; the SBOM parses and all 3
+packages are enumerated. Caveat recorded as a tool limitation: all
+three purls are `pkg:generic`, which has no OSV ecosystem, so
+osv-scanner filters them as "unscannable" — it validates the SBOM but
+cannot itself attest to lwIP CVE status. Upstream lwIP releases are
+not indexed by OSV; CVE status therefore comes from the manual
+advisory review below (re-run on each pin bump or toolchain change).
+
+**Manual advisory review — lwIP 2.2.1 (the real C surface):**
+
+| Advisory | Affects | In-tree exposure | Verdict |
+|---|---|---|---|
+| CVE-2026-8836 — SNMPv3 USM stack overflow in `snmp_parse_inbound_frame()` (`src/apps/snmp/snmp_msg.c`), CVSS 9.8, published 2026-05 | lwIP ≤ 2.2.1 | **Not compiled.** `userspace/lwip/lwip.gpr` builds only `src/core`, `src/core/ipv4`, `src/netif` + the committed `port/`; the entire `src/apps` tree is outside `Source_Dirs`. Fix commit `0c957ec03054eb6c8205e9c9d1d05d90ada3898c`. | Not reachable |
+| xchglabs audit (2026-05, disclosure from 2026-08-05): 13 findings in SMTP client, mDNS, MQTT client, IPv6 ND6, PPP/PPPoE/MS-CHAP, SNMP/SNMPv3, `makefsdata` | lwIP 2.2.1 | All findings live in `src/apps/*` or `src/netif/ppp` or the host `makefsdata` tool — none in the compiled `core`+`netif` subset (IPv4 only, no IPv6/PPP dirs listed). | Not reachable |
+| CVE-2024-7490 (Microchip ASF tinydhcp), CVE-2026-45160 (ESP-IDF DHCP) | downstream forks, not upstream | n/a | n/a |
+
+**Terminus 4.49.1:** font data (BDF) — no CVE surface. **gnat_riscv64_elf
+15.3.1:** cross compiler; no published advisories affecting the pinned
+release (re-check Alire index metadata on any toolchain bump).
+
+**Remediation decision (recorded):** keep the lwIP pin at 2.2.1 — the
+build subset excludes every known 2026 advisory's code path. Revisit on
+any change that compiles `src/apps` (especially before enabling any
+SNMP/SMTP/mDNS/MQTT client) and bump to the next lwIP release once one
+ships with the 2026 fixes, re-running this whole baseline.
+
+
+## Baseline: secret scan
+
+(pending — `gitleaks`)
+
+## Baseline: Ada/SPARK proof status
+
+(pending — GNATprove)
+
+## Baseline: host tooling lint
+
+(pending — bandit / shellcheck)
+
+## How findings get remediated
+
+- **lwIP or Terminus CVE** → bump the pinned version in the Makefile
+  (or add a `third_party/patches/lwip-*.patch` if no release fixes it)
+  and record the decision here. Version bumps are ordinary commits;
+  the fetch recipe re-verifies the new sha256.
+- **Toolchain advisory** → bump the `[[pins]]`/lockfile pin uniformly
+  across root + crates (append-only rules do not constrain toolchain
+  versions).
+- **Own-code finding** → fix in the owning subsystem per project rules
+  (zero warnings, cap-accounting invariants); GNATprove "check failed"
+  items become audit-checklist entries tracked here.
+- **Secret in history** → rotate the credential if real, purge history,
+  and extend `.gitleaks.toml` allowlist only for documented
+  non-secrets.
+
+## Local usage
+
+```bash
+make scan-deps      # pin enforcement + SBOM + osv-scanner CVE check
+make scan-secrets   # gitleaks (full history + working tree)
+make scan-host      # bandit on tools/*.py (+ shellcheck recipes)
+# make scan-ada     # GNATprove — see Phase 3 notes before relying on it
+```

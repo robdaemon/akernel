@@ -1,0 +1,52 @@
+# akernel security scanning (docs/SCANNING.md is the ledger).
+#
+# Jobs:
+#   deps     — supply chain: sha256 pin enforcement, SBOM freshness,
+#              osv-scanner CVE watch over the committed SBOM.
+#   secrets  — gitleaks over full history + the working tree.
+#   ada-sast — GNATprove flow/proof on the capability/IPC core (Phase 3).
+#   host     — bandit on tools/*.py, shellcheck on shell recipes (Phase 4).
+#
+# Run on every push / pull request, plus a weekly scheduled run so the
+# CVE watch and the GNATprove baselines refresh on their own.
+
+name: security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly Monday 03:17 UTC CVE/advisory watch.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  deps:
+    name: Supply chain (pins, SBOM, CVE watch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned third-party tarballs
+        run: make fetch-pins
+
+      - name: Pin enforcement (tools/check_pins.py)
+        run: python3 tools/check_pins.py
+
+      - name: SBOM is current (tools/gen_sbom.py --check)
+        run: python3 tools/gen_sbom.py --check
+
+      - name: Install osv-scanner (pinned v2.5.1)
+        run: |
+          curl -sL --fail --max-time 120 -o /tmp/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64
+          chmod +x /tmp/osv-scanner
+
+      - name: CVE scan over committed SBOM
+        run: |
+          /tmp/osv-scanner scan source -L docs/sbom/akernel.spdx.json \
+            --format json --output-file /tmp/osv.json
+          python3 tools/osv_gate.py /tmp/osv.json

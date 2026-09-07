@@ -1,0 +1,103 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-09-07T01:38:50Z",
+    "creators": [
+      "Tool: akernel tools/gen_sbom.py"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-Package-LWIP",
+    "SPDXRef-Package-TERMINUS",
+    "SPDXRef-Package-gnat_riscv64_elf"
+  ],
+  "documentNamespace": "https://github.com/robdaemon/akernel/spdx/ff54997b58f1f6b7",
+  "name": "akernel",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-LWIP",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ce0b7461c0ad9602c376f0bf07c5eb7253b48c7bf66f011c6bf3e2a96731c539"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/lwip-tcpip/lwip/archive/refs/tags/STABLE-2_2_1_RELEASE.tar.gz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/LWIP@2.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "lwip",
+      "supplier": "NOASSERTION",
+      "versionInfo": "2.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-TERMINUS",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d961c1b781627bf417f9b340693d64fc219e0113ad3a3af1a3424c7aa373ef79"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://sourceforge.net/projects/terminus-font/files/terminus-font-4.49/terminus-font-4.49.1.tar.gz/download",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/TERMINUS@4.49.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "terminus-font",
+      "supplier": "NOASSERTION",
+      "versionInfo": "4.49.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-gnat_riscv64_elf",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://alire.ada.dev",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/gnat_riscv64_elf@15.3.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "GPL-3.0-or-later AND GPL-3.0-or-later WITH GCC-exception-3.1",
+      "licenseDeclared": "GPL-3.0-or-later AND GPL-3.0-or-later WITH GCC-exception-3.1",
+      "name": "gnat_riscv64_elf",
+      "supplier": "Organization: AdaCore",
+      "versionInfo": "15.3.1"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-LWIP",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-TERMINUS",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-gnat_riscv64_elf",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

@@ -100,7 +100,7 @@ RTS_LIB := userspace/gnat-rts/adalib/libgnat.a
 #  adaint.c __gnat_rename patch silently never linked).
 RTS_SRCS := $(shell find userspace/rts/akernel userspace/gnat-rts/gnarl_user userspace/gnat-rts/gnat_full userspace/gnat-rts/gnat_user userspace/gnat-rts/gnat -type f)
 
-.PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate FORCE
+.PHONY: all kernel rts userspace $(CRATES) initrd run test test-replay clean clean-kernel clean-rts clean-userspace clean-initrd new-crate fetch-pins FORCE
 
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
@@ -191,6 +191,12 @@ $(TERMINUS_STAMP): $(TERMINUS_TARBALL)
 	mv third_party/.terminus-extract/terminus-font-$(TERMINUS_VER) third_party/terminus
 	rmdir third_party/.terminus-extract
 	touch $@
+
+#  Supply-chain scanning support (docs/SCANNING.md): fetch the pinned
+#  tarballs without building anything, so tools/check_pins.py can
+#  re-verify them (CI deps job) and the SBOM stays current.
+fetch-pins: $(LWIP_TARBALL) $(TERMINUS_TARBALL)
+	@echo "pins fetched: lwip $(LWIP_VER), terminus-font $(TERMINUS_VER)"
 
 
 
