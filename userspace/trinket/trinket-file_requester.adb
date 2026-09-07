@@ -29,6 +29,7 @@ package body Trinket.File_Requester is
    Leaf_Len  : array (1 .. Max_Rows) of Natural := (others => 0);
    Leaf_Dir  : array (1 .. Max_Rows) of Boolean := (others => False);
    Row_Count : Natural := 0;
+   View_Volumes : Boolean := False;  --  Columns shows mounted volumes
 
    --  Host window for the modal (assigned per Request).
    type Win_Acc is access all Trinket.Window.Window;
@@ -192,10 +193,78 @@ package body Trinket.File_Requester is
       Reload;
    end Go_To;
 
-   procedure Up_Clicked is
+   function Kind_Tag (Kind : Akernel_User.Syscalls.U64) return String is
    begin
-      Go_To (Parent_Of);
-   end Up_Clicked;
+      if Kind = Akernel_User.Files.Vol_Kind_FS then
+         return "disk";
+      elsif Kind = Akernel_User.Files.Vol_Kind_Boot then
+         return "boot";
+      elsif Kind = Akernel_User.Files.Vol_Kind_Block then
+         return "block";
+      elsif Kind = Akernel_User.Files.Vol_Kind_Virtual then
+         return "virt";
+      else
+         return "";
+      end if;
+   end Kind_Tag;
+
+   --  Fill the Columns with the mounted-volume list (Volumes
+   --  button). Cur is left alone so toggling back restores the
+   --  directory listing; the path field reads as an indicator.
+   procedure List_Volumes is
+      VName  : String (1 .. 24);
+      V_Len  : Natural;
+      V_Kind : Akernel_User.Syscalls.U64;
+      St     : Akernel_User.Syscalls.U64;
+      Idx    : Akernel_User.Syscalls.U64 := 0;
+      N      : Natural := 0;
+   begin
+      View_Volumes := True;
+      Trinket.Columns.Clear (Cols_W.all);
+      Row_Count := 0;
+      Trinket.Widgets.Input.Input (Path_Inp.all).Set_Text
+        ("Volumes");
+      loop
+         exit when N >= Max_Rows;
+         St := Akernel_User.Files.Volume_List
+           (Idx, VName, V_Len, V_Kind);
+         exit when St /= Akernel_User.Files.Status_Ok;
+         N := N + 1;
+         Row_Count := N;
+         Leaf_Len (N) := Min (V_Len, Leaf_Buf (N)'Length);
+         if Leaf_Len (N) > 0 then
+            Leaf_Buf (N) (1 .. Leaf_Len (N)) :=
+              VName (VName'First .. VName'First + Leaf_Len (N) - 1);
+         end if;
+         Leaf_Dir (N) := True;
+         Trinket.Columns.Add_Row
+           (Cols_W.all,
+            VName (VName'First .. VName'First + V_Len - 1),
+            Kind_Tag (V_Kind), "", True);
+         Idx := Idx + 1;
+      end loop;
+      if Row_Count > 0 then
+         Trinket.Columns.Set_Selected (Cols_W.all, 1);
+      end if;
+   end List_Volumes;
+
+   procedure Volumes_Clicked is
+   begin
+      if View_Volumes then
+         Go_To (Cur (1 .. Cur_Len));   --  back to the file listing
+      else
+         List_Volumes;
+      end if;
+   end Volumes_Clicked;
+
+   procedure Parent_Clicked is
+   begin
+      if View_Volumes then
+         Volumes_Clicked;   --  the volume list sits above the dir
+      else
+         Go_To (Parent_Of);
+      end if;
+   end Parent_Clicked;
 
    procedure Path_Committed is
    begin
@@ -209,6 +278,10 @@ package body Trinket.File_Requester is
          then Leaf_Buf (Index) (1 .. Leaf_Len (Index)) else "");
    begin
       if Index not in 1 .. Row_Count or else Leaf'Length = 0 then
+         return;
+      end if;
+      if View_Volumes then
+         Go_To (Leaf & ":");   --  volume label -> its root listing
          return;
       end if;
       if Leaf_Dir (Index) then
@@ -232,6 +305,10 @@ package body Trinket.File_Requester is
       Name : constant String := Trinket.Widgets.Input.Get_Text
         (Trinket.Widgets.Input.Input (Name_Inp.all));
    begin
+      if View_Volumes then
+         Row_Activated (Trinket.Columns.Selected (Cols_W.all));
+         return;
+      end if;
       if Req_Mode = Pick_Open then
          Row_Activated (Trinket.Columns.Selected (Cols_W.all));
       else
@@ -259,8 +336,9 @@ package body Trinket.File_Requester is
         Widgets.New_Group (Widgets.Vertical);
       Row1 : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Horizontal);
-      Row3 : constant Widgets.Any_Widget :=
+      RowB : constant Widgets.Any_Widget :=
         Widgets.New_Group (Widgets.Horizontal);
+      Name_Row : Widgets.Any_Widget := null;
       Lbl  : Widgets.Any_Widget;
       Cols_Frame : Widgets.Any_Widget;
    begin
@@ -271,6 +349,7 @@ package body Trinket.File_Requester is
       Cb := On_Result;
       Picked := False;
       Path_Len := 0;
+      View_Volumes := False;
       Modal_Host := Win'Unrestricted_Access;
       Cur_Len := Min (Initial_Dir'Length, Cur'Length);
       if Cur_Len > 0 then
@@ -281,12 +360,12 @@ package body Trinket.File_Requester is
       Path_Inp := null;
       Name_Inp := null;
 
+      --  Title only across the top; every button lives on the
+      --  bottom bar.
       Lbl := Widgets.Label.New_Label
         ((if Mode = Pick_Open then "Open" else "Save As"),
-         Inset => True);
+         Align => Widgets.Label.Center, Inset => True);
       Widgets.Group (Row1.all).Add (Lbl);
-      Widgets.Group (Row1.all).Add
-        (Widgets.Button.New_Button ("Up", Up_Clicked'Access));
       Widgets.Group (Root.all).Add (Row1);
 
       Path_Inp := Widgets.Input.New_Input;
@@ -299,18 +378,27 @@ package body Trinket.File_Requester is
       Widgets.Group (Root.all).Add (Cols_Frame, Weight => 5);
 
       if Mode = Pick_Save_As then
+         --  Target-name row between the listing and the buttons.
+         Name_Row := Widgets.New_Group (Widgets.Horizontal);
+         Widgets.Group (Name_Row.all).Add
+           (Widgets.Label.New_Label ("Name:"));
          Name_Inp := Widgets.Input.New_Input;
          Widgets.Input.Input (Name_Inp.all).On_Commit :=
            Name_Committed'Access;
-         Widgets.Group (Row3.all).Add (Name_Inp, Weight => 2);
+         Widgets.Group (Name_Row.all).Add (Name_Inp, Weight => 2);
+         Widgets.Group (Root.all).Add (Name_Row);
       end if;
-      Widgets.Group (Row3.all).Add
+      Widgets.Group (RowB.all).Add
         (Widgets.Button.New_Button
            ((if Mode = Pick_Open then "Open" else "Save"),
             Open_Save_Clicked'Access));
-      Widgets.Group (Row3.all).Add
+      Widgets.Group (RowB.all).Add
+        (Widgets.Button.New_Button ("Volumes", Volumes_Clicked'Access));
+      Widgets.Group (RowB.all).Add
+        (Widgets.Button.New_Button ("Parent", Parent_Clicked'Access));
+      Widgets.Group (RowB.all).Add
         (Widgets.Button.New_Button ("Cancel", Canceled'Access));
-      Widgets.Group (Root.all).Add (Row3);
+      Widgets.Group (Root.all).Add (RowB);
 
       Go_To (Cur (1 .. Cur_Len));
       Trinket.Window.Start_Modal (Win, Root);
