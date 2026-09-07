@@ -105,10 +105,11 @@ jobs:
       # gnatprove must version-match its compiler. The index has no
       # gnatprove 15.3.1, so use gnatprove 15.1.0 — verified compatible
       # with gnat_riscv64_elf 15.3.1 (16/16 checks proved, see ledger).
-      # Cache the install so weekly runs don't re-download ~1 GB.
+      # gprbuild is also a toolchain component a fresh runner lacks.
+      # Cache the installs so weekly runs don't re-download ~1 GB.
       - name: Cache Alire toolchains
         env:
-          ALR_CACHE_SLOT: alr-2.1.1-gnat-15.3.1-gnatprove-15.1.0
+          ALR_CACHE_SLOT: alr-2.1.1-gnat-15.3.1-gnatprove-15.1.0-gprbuild-26.0.1
         uses: actions/cache@v5
         with:
           path: |
@@ -116,13 +117,16 @@ jobs:
             ~/.config/alire
           key: ${{ env.ALR_CACHE_SLOT }}
 
-      - name: Install GNATprove + aligned cross toolchain (alr)
+      - name: Install GNATprove + toolchain components (alr)
         run: |
           alr install gnatprove=15.1.0
           alr install gnat_riscv64_elf=15.3.1
-          # Register the cross compiler as the default toolchain so
-          # gnatprove's knowledge base resolves riscv64-elf/light-rv64imafdc.
+          alr install gprbuild=26.0.1
+          # Register both components as the default toolchain so
+          # gnatprove's knowledge base resolves riscv64-elf/light-rv64imafdc
+          # and gprbuild drives the compile phase.
           alr toolchain --select gnat_riscv64_elf=15.3.1
+          alr toolchain --select gprbuild=26.0.1
 
       # config/akernel_config.{ads,gpr,h} are Alire-generated and
       # gitignored, so a fresh checkout has none and akernel.gpr cannot

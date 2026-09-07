@@ -221,9 +221,11 @@ Then install the pinned pair with
 project's own 15.3.1 line because the custom RTS does not compile on
 GNAT 16 (no upgrade yet); the index has no gnatprove 15.3.1, and
 gnatprove 15.1.0 is verified compatible with the 15.3.1 compiler
-(16/16 checks proved). Register the cross compiler
-with `alr toolchain --select gnat_riscv64_elf=15.3.1`, and run with the
-alr
+(16/16 checks proved). Register both toolchain components with
+`alr toolchain --select gnat_riscv64_elf=15.3.1` and
+`alr toolchain --select gprbuild=26.0.1` (a fresh runner/box lacks
+gprbuild; gnatprove's compile phase needs it registered), and run with
+the alr
 bin dir on `PATH` so gprconfig resolves the cross `light-rv64imafdc`
 runtime (no crate solve is involved). On a **fresh checkout** the
 `config/akernel_config.{ads,gpr,h}` files are absent (Alire-generated,
