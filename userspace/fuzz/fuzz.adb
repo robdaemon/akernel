@@ -1269,7 +1269,7 @@ begin
               ("BD0:", Total, Free, Block);
             Check (Status = Akernel_User.Files.Status_Ok
                    and then Total = 262144 * 1024
-                   and then Block = 1024
+                   and then Block = 4096
                    and then Free < Total,
                    "bfs volume info ok");
          end;

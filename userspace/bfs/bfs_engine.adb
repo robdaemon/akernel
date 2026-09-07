@@ -3,8 +3,8 @@
 --  tools/befs_dump.py (which reads it back); field offsets are the
 --  Haiku BFS on-disk format:
 --
---    superblock at byte 512 of the partition (second half of
---    block 0); block_run = int32 ag + u16 start + u16 len, mapped
+--    superblock at byte 512 of block 0 (a fixed 512-byte header
+--    area regardless of block size); block_run = int32 ag + u16 start + u16 len, mapped
 --    by block = ag << ag_shift + start; inode = one block, magic
 --    0x3BBE0AD9, bfs_inode header 232 bytes, data_stream at 72
 --    (12 direct runs, max ranges, indirect runs, size at 208);
@@ -74,7 +74,12 @@ package body Bfs_Engine is
     S_IFREG     : constant U32 := 8#100000#;
     S_STR_INDEX : constant U32 := 8#1000000000#;
 
-    Block_Size : constant U64 := 1024;  --  mount gate (fixture geometry)
+    --  4 KiB blocks (M9x: on-disk block size matches the OS page
+    --  and modern 4Kn disks; the superblock's block_size field must
+    --  equal this at mount). Block runs, btree nodes and inodes are
+    --  whole blocks; the block endpoint addresses SECTORS.
+    Block_Size    : constant U64 := 4096;
+    Sec_Per_Block : constant U64 := Block_Size / 512;
 
     Status_Ok           : constant U64 := 0;
     Status_Not_Found    : constant U64 := 1;
@@ -128,7 +133,7 @@ package body Bfs_Engine is
     Used_Pending : U64 := 0;
     Alloc_Hint   : U64 := 514;
 
-    --  Block cache: 16 slots of one block each. Writes always go
+    --  Block cache: slots of one block each. Writes always go
     --  through the journal transaction below: modify the slot,
     --  Trans_Add snapshots it, Trans_Commit does the WAL dance.
     Cache_Slots : constant := 24;
@@ -222,10 +227,11 @@ package body Bfs_Engine is
             end loop;
          end Fail;
       end if;
-      --  One block = two sectors through the bounce buffer.
+      --  One block through the bounce buffer (Sec_Per_Block
+      --  sectors at the block endpoint).
       Syscalls.Message.Label := Blk_Read;
-      Syscalls.Message.Words (0) := Num * 2;
-      Syscalls.Message.Words (1) := 2;
+      Syscalls.Message.Words (0) := Num * Sec_Per_Block;
+      Syscalls.Message.Words (1) := Sec_Per_Block;
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
       if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
         or else Syscalls.Message.Words (0) /= 0
@@ -305,8 +311,8 @@ package body Bfs_Engine is
           Dst (I) := Data (I);
        end loop;
        Syscalls.Message.Label := Blk_Write;
-       Syscalls.Message.Words (0) := Num * 2;
-       Syscalls.Message.Words (1) := 2;
+       Syscalls.Message.Words (0) := Num * Sec_Per_Block;
+       Syscalls.Message.Words (1) := Sec_Per_Block;
        Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
        if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
          or else Syscalls.Message.Words (0) /= 0
@@ -857,9 +863,10 @@ package body Bfs_Engine is
    --  Data stream read (file contents AND btree streams)
    ------------------------------------------------------------------
 
-   --  Batched fetch bound (M94): up to 32 blocks / 64 sectors /
-   --  32 KiB per block-endpoint request (the protocol ceiling).
-   Batch_Max : constant := 32;
+   --  Batched fetch bound (M94): up to 8 blocks / 64 sectors /
+   --  32 KiB per block-endpoint request (the protocol ceiling) —
+   --  32 KiB divided by the 4 KiB block size.
+   Batch_Max : constant := 8;
 
    --  M94 batched copy: fetch the SpanB blocks covering [Skip into
    --  Block, Sub bytes onward) in ONE block-endpoint request (up to
@@ -879,8 +886,8 @@ package body Bfs_Engine is
         with Address => Buf + Storage_Offset (Done);
    begin
       Syscalls.Message.Label := Blk_Read;
-      Syscalls.Message.Words (0) := Block * 2;
-      Syscalls.Message.Words (1) := U64 (SpanB) * 2;
+      Syscalls.Message.Words (0) := Block * Sec_Per_Block;
+      Syscalls.Message.Words (1) := U64 (SpanB) * Sec_Per_Block;
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
       if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
         or else Syscalls.Message.Words (0) /= 0
@@ -1357,10 +1364,16 @@ package body Bfs_Engine is
 
     --  Decoded node: keys as raw bytes, sorted; duplicate keys
     --  allowed (the name index has one entry per same-named file).
-    --  Leaf_Max caps entries per node (covers a physically full
-    --  1024-byte node of int64 keys = 55 entries); scratch rows
-    --  hold one extra entry for the split combine step.
-    Leaf_Max     : constant := 64;
+    --  Leaf_Max caps entries per node and must COVER a physically
+    --  full node: the cheapest entry is a 1-byte key + 2-byte
+    --  length + 8-byte value = 11 bytes, so Block_Size/8 is a safe
+    --  upper bound at any block size (a full 4 KiB node holds at
+    --  most ~370; at the old 1 KiB blocks ~90). A cap below the
+    --  physical fill would truncate decode/encode and, worse,
+    --  split trees far more often than the larger blocks need —
+    --  a big directory then outgrew the 12-run tree stream.
+    --  Scratch rows hold one extra entry for the split combine.
+    Leaf_Max     : constant := Natural (Block_Size / 8);
     Leaf_Key_Max : constant := 64;
     Scratch_Cap  : constant := Leaf_Max + 1;
     type Leaf_KL_Array   is array (0 .. Scratch_Cap - 1) of Natural;
@@ -1834,7 +1847,12 @@ package body Bfs_Engine is
           else
              Free (St, 1);
              Akernel_User.Console.Put_Line
-               ("bfs: tree stream out of runs");
+               ("bfs: tree stream out of runs (dir inode "
+                & Akernel_User.Syscalls.U64'Image (Ctx.Dir.Block)
+                & " total " & Akernel_User.Syscalls.U64'Image (Ctx.Total)
+                & " runs "
+                & Akernel_User.Syscalls.U64'Image
+                  (U64 (Ctx.Dir.Direct'Length)));
              return False;
           end if;
           Slot := Get_Block (Ctx.Dir.Block);
@@ -2399,8 +2417,11 @@ package body Bfs_Engine is
        Buf (49) := U8 (Interfaces.Shift_Right
                          (Parent mod Group_Size, 8) and 16#FF#);
        Buf (50) := 1;  Buf (51) := 0;
-       --  inode_size at 64
-       Buf (64) := 0;  Buf (65) := 4;  --  1024 LE
+       --  inode_size at 64: whole-block inodes (LE32; block size
+       --  fits 16 bits for both the old and the 4 KiB geometry).
+       Buf (64) := U8 (Block_Size and 16#FF#);
+       Buf (65) := U8 (Interfaces.Shift_Right (Block_Size, 8)
+                         and 16#FF#);
        --  data stream at 72: direct[0] (ag from Stream_Run)
        Buf (72) := U8 (U64 (Stream_Run.AG) and 16#FF#);
        Buf (73) := U8 (Interfaces.Shift_Right
@@ -2488,6 +2509,26 @@ package body Bfs_Engine is
        end if;
     end Index_Remove;
 
+    --  M9x 4 KiB milestone: a file that exists but is absent from
+    --  the name index (staged files are deliberately unindexed,
+    --  M93) gets its name entry the first time the engine MODIFIES
+    --  it at runtime — the documented "keep indices in sync for
+    --  files it creates/modifies" contract. Without it, runtime
+    --  rewrites of staged env/config files left the name index
+    --  empty at rest while size/last_modified gained entries.
+    procedure Index_Ensure (Name : String; Inode_Block : U64) is
+       NI    : Inode_Info;
+       Found : U64;
+    begin
+       if Name_Index /= 0
+         and then Read_Inode (Name_Index, NI)
+       then
+          if not Tree_Find_Str (NI, Name, Found) then
+             Index_Add (Name, Inode_Block);
+          end if;
+       end if;
+    end Index_Ensure;
+
     --  Numeric index maintenance (m82g): Index_Blk is the
     --  size/last_modified index inode (0 = absent). Same
     --  best-effort policy as the name index.
@@ -2548,21 +2589,38 @@ package body Bfs_Engine is
        end if;
        if Is_Dir then
           --  btree header (mkbefs btree_stream): magic, node_size,
-          --  max_depth 1, BTREE_STRING, root at offset 1024.
+          --  max_depth 1, BTREE_STRING, root at offset Block_Size.
+          --  All byte counts derive from Block_Size (the 4 KiB
+          --  milestone: a header stamped for 1024-byte nodes made
+          --  the root pointer map back onto the header block and
+          --  every walk of a freshly created directory read its
+          --  header as a leaf — count 0xFFFF).
           Hdr := (others => 0);
           for B in 0 .. 3 loop
              Hdr (U64 (B)) :=
                U8 (Interfaces.Shift_Right (Btree_Magic, 8 * B)
                      and 16#FF#);
           end loop;
-          Hdr (4) := 0;  Hdr (5) := 4;   --  node_size 1024
+          for B in 0 .. 3 loop
+             Hdr (4 + U64 (B)) :=
+               U8 (Interfaces.Shift_Right (Block_Size, 8 * B)
+                     and 16#FF#);           --  node_size
+          end loop;
           Hdr (8) := 1;                  --  max_depth 1
           --  data_type 0 = BTREE_STRING (already zero)
-          Hdr (16) := 0;  Hdr (17) := 4;  --  root node ptr 1024
+          for B in 0 .. 7 loop
+             Hdr (16 + U64 (B)) :=
+               U8 (Interfaces.Shift_Right (Block_Size, 8 * B)
+                     and 16#FF#);           --  root node ptr
+          end loop;
           for B in 0 .. 7 loop
              Hdr (24 + U64 (B)) := 16#FF#;  --  free list -1
           end loop;
-          Hdr (32) := 0;  Hdr (33) := 8;  --  total size 2048
+          for B in 0 .. 7 loop
+             Hdr (32 + U64 (B)) :=
+               U8 (Interfaces.Shift_Right (2 * Block_Size, 8 * B)
+                     and 16#FF#);           --  total size
+          end loop;
           E.N := 2;
           E.KL (0) := 1;  E.Keys (0) := (others => 0);
           E.Keys (0)(0) := U8 (Character'Pos ('.'));
@@ -3238,6 +3296,11 @@ package body Bfs_Engine is
           end if;
           Index_Remove_Num (Mtime_Index, Old_Mtime, Info.Block);
           Index_Add_Num (Mtime_Index, W_Time, Info.Block);
+          --  Runtime modification of an (unindexed staged) file:
+          --  bring its name into the index (M93 contract).
+          if N_Len /= 0 then
+             Index_Ensure (P_Name (1 .. N_Len), Info.Block);
+          end if;
        end;
 
        --  m82g: diff against the post-write state (the overlay
@@ -3373,6 +3436,10 @@ package body Bfs_Engine is
           end if;
           Index_Remove_Num (Mtime_Index, Old_Mtime, Info.Block);
           Index_Add_Num (Mtime_Index, T_Time, Info.Block);
+          --  Runtime truncate of an unindexed staged file: index it.
+          if N_Len /= 0 then
+             Index_Ensure (P_Name (1 .. N_Len), Info.Block);
+          end if;
        end;
        --  m82g: diff against the post-truncate state (the overlay
        --  shows the zeroed size and fresh mtime).
@@ -4757,8 +4824,11 @@ package body Bfs_Engine is
    procedure Volume_Info (Total, Free, Block : out U64) is
    begin
       if Is_Mounted then
-         Total := Interfaces.Shift_Left (Num_Blocks, 10);
-         Free  := Interfaces.Shift_Left (Num_Blocks - Used_Blocks, 10);
+         --  Byte capacities: blocks x block size (Shift_Left by
+         --  an assumed 10 was a 1 KiB leftover — under-reported
+         --  the 4 KiB volume by 4x).
+         Total := Num_Blocks * Block_Size;
+         Free  := (Num_Blocks - Used_Blocks) * Block_Size;
        Block := Block_Size;
        else
           Total := 0;

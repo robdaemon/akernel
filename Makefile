@@ -305,7 +305,7 @@ $(DISK_IMG): $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_C
 	BEFS_START=$$(sgdisk -i 1 $@ | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
 	FAT_START=$$(sgdisk -i 2 $@ | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); \
 	FAT_BYTES=$$((FAT_START * 512)); \
-	python3 tools/mkbefs.py --stage $(INITRD_OUT)/sysroot $(INITRD_OUT)/befs.img 256 $(INITRD_OUT)/attrs.tsv; \
+	MK_BEFS_BLK=4096 python3 tools/mkbefs.py --stage $(INITRD_OUT)/sysroot $(INITRD_OUT)/befs.img 256 $(INITRD_OUT)/attrs.tsv; \
 	dd if=$(INITRD_OUT)/befs.img of=$@ bs=512 seek=$$BEFS_START conv=notrunc status=none; \
 	mkfs.vfat -F 32 -S 512 -s 8 -n Data --offset $$FAT_START $@ 261103 >/dev/null; \
 	mcopy -i $@@@$$FAT_BYTES $(INITRD_OUT)/readme.txt ::README.TXT; \
