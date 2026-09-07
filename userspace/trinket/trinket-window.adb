@@ -544,6 +544,7 @@ package body Trinket.Window is
          return;
       end if;
       W.Modal_Wanted := False;
+      W.Prev_Buttons := 0;   --  stale press state would eat the first click
       W.Root := Panel;
       W.Root.X := 0;
       W.Root.Y := 0;
