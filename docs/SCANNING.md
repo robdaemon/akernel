@@ -108,10 +108,13 @@ Re-run on every push/PR in CI and locally via `make scan-secrets`.
 
 ## Baseline: Ada/SPARK proof status
 
-_Recorded 2026-09-07. GNATprove 16.1.0 + gnat_riscv64_elf 16.1.0
-installed via `alr install` (analysis toolchain only — the build stays
-on the pinned 15.3.1 crates). Run through `alr exec` so gprconfig
-resolves the cross `light-rv64imafdc` runtime._
+_Recorded 2026-09-07. GNATprove 15.1.0 + gnat_riscv64_elf 15.3.1
+installed via `alr install` (analysis toolchain pinned to the project's
+own 15.3.1 line — the custom RTS does not compile on GNAT 16, and no
+upgrade is planned yet; gnatprove 15.3.1 does not exist in the index,
+and 15.1.0 is verified compatible with the 15.3.1 compiler). Run with
+the alr bin dir on `PATH` so gprconfig resolves the cross
+`light-rv64imafdc` runtime._
 
 **Feasibility determination (first real proof):** GNATprove can analyze
 the kernel project. Required setup: `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR`
@@ -213,10 +216,14 @@ GNATprove (proof baseline): **prerequisite — Alire 2.1.1** (GitHub
 runners don't ship it; CI installs the pinned release binary
 `alr-2.1.1-bin-x86_64-linux.zip`, sha256
 `09c66bcd8c35dd4b97b72c3d9b76e44caa6964a2db35aba069f396f00f1f64c7`).
-Then install a version-aligned pair with
-`alr install gnatprove gnat_riscv64_elf` (e.g. 16.1.0 — analysis-only;
-the build keeps its pinned 15.3.1 crates), register the cross compiler
-with `alr toolchain --select gnat_riscv64_elf`, and run with the alr
+Then install the pinned pair with
+`alr install gnatprove=15.1.0 gnat_riscv64_elf=15.3.1` — pinned to the
+project's own 15.3.1 line because the custom RTS does not compile on
+GNAT 16 (no upgrade yet); the index has no gnatprove 15.3.1, and
+gnatprove 15.1.0 is verified compatible with the 15.3.1 compiler
+(16/16 checks proved). Register the cross compiler
+with `alr toolchain --select gnat_riscv64_elf=15.3.1`, and run with the
+alr
 bin dir on `PATH` so gprconfig resolves the cross `light-rv64imafdc`
 runtime (no crate solve is involved). On a **fresh checkout** the
 `config/akernel_config.{ads,gpr,h}` files are absent (Alire-generated,

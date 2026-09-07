@@ -100,13 +100,15 @@ jobs:
           sudo install -m 0755 /tmp/alr-bin/bin/alr /usr/local/bin/alr
           alr version
 
-      # Analysis toolchain only — the kernel itself keeps building with
-      # its pinned 15.3.1 crates (see docs/SCANNING.md). 16.1.0 is the
-      # matching pair in the community index. Cache the install so the
-      # weekly runs don't re-download ~1 GB of toolchain.
+      # Analysis toolchain pinned to the project's own 15.3.1 line: the
+      # custom RTS does not compile on GNAT 16 (no upgrade yet), and
+      # gnatprove must version-match its compiler. The index has no
+      # gnatprove 15.3.1, so use gnatprove 15.1.0 — verified compatible
+      # with gnat_riscv64_elf 15.3.1 (16/16 checks proved, see ledger).
+      # Cache the install so weekly runs don't re-download ~1 GB.
       - name: Cache Alire toolchains
         env:
-          ALR_CACHE_SLOT: alr-2.1.1-gnatprove-16.1.0
+          ALR_CACHE_SLOT: alr-2.1.1-gnat-15.3.1-gnatprove-15.1.0
         uses: actions/cache@v5
         with:
           path: |
@@ -116,11 +118,11 @@ jobs:
 
       - name: Install GNATprove + aligned cross toolchain (alr)
         run: |
-          alr install gnatprove
-          alr install gnat_riscv64_elf
+          alr install gnatprove=15.1.0
+          alr install gnat_riscv64_elf=15.3.1
           # Register the cross compiler as the default toolchain so
           # gnatprove's knowledge base resolves riscv64-elf/light-rv64imafdc.
-          alr toolchain --select gnat_riscv64_elf
+          alr toolchain --select gnat_riscv64_elf=15.3.1
 
       # config/akernel_config.{ads,gpr,h} are Alire-generated and
       # gitignored, so a fresh checkout has none and akernel.gpr cannot
