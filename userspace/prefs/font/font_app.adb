@@ -275,11 +275,20 @@ package body Font_App is
    Step2     : constant U64 := 2;
 
    procedure Queue_Font (E : Natural) is
+      Pv_W  : Preview renames Preview (Pv.all);
       Ignore : constant Boolean :=
         Trinket.Window.Post (Win, Step1, 0, 0, 0);
       pragma Unreferenced (Ignore);
    begin
       Pending_E := E;
+      --  Empty the preview while the new font loads: showing the
+      --  previously selected font for the load's ~1-2 s reads as
+      --  the wrong font being live.
+      if Pv_W.F /= Fonts.Null_Handle then
+         Fonts.Unload (Pv_W.F);
+         Pv_W.F := Fonts.Null_Handle;
+      end if;
+      Pv.Dirty := True;
    end Queue_Font;
 
    procedure On_App (Code, A0, A1, A2 : U64) is
