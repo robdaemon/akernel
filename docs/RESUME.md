@@ -29,6 +29,24 @@ repository.
   unreachable by any stack. Repeated boots reach `shell online` with
   zero underflow/exception events.
 
+- **Kernel stack canaries** (`d5a71ff`, `2fedab8`): every kernel
+  stack now carries a canary word at its lowest address — per-task
+  4 KiB stacks (planted at both spawn sites and the init task,
+  checked at every trap entry and before each stack free) and the
+  per-CPU idle main/trap stacks (boot-hart linker 64 KiB blocks and
+  secondary-hart PMM stacks, checked every Idle_Loop pass). A stack
+  that overflows clobbers the marker first and the next checkpoint
+  reports `kernel stack overflow` through the Last_Chance handler
+  (visible panic, halts that hart) instead of silently corrupting
+  memory. Validated end-to-end by smashing a canary at boot: init's
+  first trap panicked with the expected dump; two clean SMP4 boot
+  loops afterwards. Deferred follow-up: unmapped guard pages below
+  each stack would fault at the moment of overflow instead of at the
+  next checkpoint. Separately, a full kernel rebuild under the
+  release profile (`615dedd`) surfaces ~196 pre-existing `-gnatw.x`
+  warnings in arch-traps and friends (`No_Exception_Propagation` +
+  Last-Chance warn) — untouched here, tracked as follow-up noise.
+
 - **Kernel last-chance handler reports instead of silently halting**
   (`Kernel.Last_Chance`): `__gnat_last_chance_handler` used to be a
   bare assembly WFI loop, so every kernel Ada exception died with no
@@ -37,6 +55,8 @@ repository.
   line, and the message text over the UART (lock-free `Put_Unsafe`
   path, per-hart re-entry guard) before halting the hart. Kernel
   exceptions are now visible on the console.
+
+- **Terminal on a scalable mono TTF grid** (`04aca0a`): ENV:Term.Font
   (+ ENV:Term.Font.Size) selects a .TTF/.OTF mono face for the
   terminal — Cell_W is the digit advance, Row_H the line height, and
   every grid geometry (column/row counts, wrap width, mouse
