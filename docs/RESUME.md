@@ -13,6 +13,23 @@ repository.
 
 ## Recently shipped
 
+- **FreeType follow-ups: sizes, autofit, kerning, fallback** (M9A,
+  `e737876` + `a87449e` + `80897c4` + `a28c9e7`): TTF/OTF faces are
+  no longer stuck at 16 px — `Fonts.Load`/`Init` take a pixel size
+  (8–72, clamped) and `Init` reads `ENV:Font.Size`, while Prefs/Font
+  expands each TTF into a size list (10/12/16/20/24) and persists
+  path + size on Okay. The FreeType library compiles and registers
+  the autofit module (TrueType bytecode stays the primary hinter).
+  Proportional TTF text applies pair kerning (`FT_Get_Kerning`) in
+  both width and draw, accumulating signed so negative kerns never
+  wrap. Missing glyphs now render a fallback ("?" or U+FFFD when the
+  face has one) instead of blank, uniformly in draw/width/
+  single-glyph/Has_Glyph. Fuzz gained a headless FreeType case
+  (load staged DejaVu at 16/24, metrics, rasterize "Ag" onto a
+  scratch memobj canvas to prove the grayscale blend path, and paint
+  a PUA codepoint to prove the fallback renders). Gates: make test
+  1899 PASS / 0 FAIL at SMP4.
+
 - **FreeType TrueType/OpenType rendering** (M9A, `1a96ef2` +
   `6b1b400`): FreeType 2.13.3 and DejaVu 2.37 (Sans + Sans Mono)
   are fetched as sha256-pinned third_party trees (fetch/stamp rules,
