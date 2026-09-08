@@ -88,6 +88,14 @@ DISK_CRATES_LIBS := testlib clipboard
 DISK_CRATES_PREFS :=  prefs/font prefs/screenmode
 CRATES := $(INITRD_CRATES) $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS) $(DISK_CRATES_PREFS)
 
+#  M9A third-party fetch markers — defined here, BEFORE the generic
+#  $(CRATES) rule below: make expands a rule's prerequisite list
+#  when the rule is read, so a marker defined later expands to
+#  empty there (the fetch silently never ran — the fuzz build then
+#  failed on the missing FreeType tree).
+FREETYPE_STAMP := third_party/freetype/include/freetype/freetype.h
+DEJAVU_STAMP := third_party/dejavu/ttf/DejaVuSans.ttf
+
 #  The userspace crates link against a custom GNAT runtime that is
 #  vendored under userspace/gnat-rts.  It is not part of Alire's
 #  dependency resolution, so a fresh clone has an empty adalib/ and
@@ -200,7 +208,6 @@ FREETYPE_VER := 2.13.3
 FREETYPE_TAG := VER-2-13-3
 FREETYPE_TARBALL := third_party/download/freetype-$(FREETYPE_VER).tar.gz
 FREETYPE_SHA256 := bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103
-FREETYPE_STAMP := third_party/freetype/include/freetype/freetype.h
 
 $(FREETYPE_TARBALL):
 	mkdir -p third_party/download
@@ -228,7 +235,6 @@ DEJAVU_VER := 2.37
 DEJAVU_TAG := version_2_37
 DEJAVU_TARBALL := third_party/download/dejavu-fonts-ttf-$(DEJAVU_VER).tar.bz2
 DEJAVU_SHA256 := fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7
-DEJAVU_STAMP := third_party/dejavu/ttf/DejaVuSans.ttf
 
 $(DEJAVU_TARBALL):
 	mkdir -p third_party/download
