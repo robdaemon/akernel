@@ -35,6 +35,7 @@ library project Freetype is
       Ft_Root & "/src/pshinter",
       Ft_Root & "/src/smooth",
       Ft_Root & "/src/raster",
+      Ft_Root & "/src/autofit",
       Ft_Root & "/src/gzip",
       Port);
 
@@ -47,7 +48,7 @@ library project Freetype is
      ("ftsystem.c", "ftinit.c", "ftdebug.c", "ftbase.c",
       "ftglyph.c", "ftbitmap.c", "ftmm.c",
       "truetype.c", "sfnt.c", "cff.c", "psaux.c", "psnames.c",
-      "pshinter.c", "smooth.c", "raster.c",
+      "pshinter.c", "smooth.c", "raster.c", "autofit.c",
       "ftgzip.c",
       "ftaegir.c");
 
