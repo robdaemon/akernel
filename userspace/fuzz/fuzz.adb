@@ -22,6 +22,7 @@ with Trinket.Widgets;
 with Trinket.Text_Edit;
 with Trinket.Images;
 with Fuzz_Port;
+with Trinket.Fonts;
 with Terminal_Buffer;
 with Terminal_Clip;
 with Trinket.Fonts;
@@ -4031,6 +4032,96 @@ begin
       Check (not Trinket.Images.Loaded (Bars),
              "images free clears the record");
       Status := Aegir_User.Syscalls.Cap_Delete (Img_Mem);
+   end;
+
+   --  FreeType TTF backend (M9A followup): load the staged DejaVu
+   --  face, check metrics/fallback, and rasterize grayscale text
+   --  onto a scratch memobj canvas (no Bureau needed).
+   declare
+      use type Trinket.Fonts.Handle;
+      use type Interfaces.Unsigned_32;
+      TTF_VA  : constant U64 := 16#5072_0000#;
+      BG      : constant Interfaces.Unsigned_32 := 16#FF20_2020#;
+      FG      : constant Interfaces.Unsigned_32 := 16#FFFF_FFFF#;
+      type TTF_Page is array (0 .. 2047) of Interfaces.Unsigned_32;
+      TPage : TTF_Page with Volatile, Address =>
+        System'To_Address
+          (System.Storage_Elements.Integer_Address (TTF_VA));
+      FMem : U64;
+      H16  : Trinket.Fonts.Handle;
+      H24  : Trinket.Fonts.Handle;
+      TC   : Trinket.Canvas;
+      N    : Natural := 0;
+      Done : Boolean := False;
+   begin
+      FMem := Raw_Ecall (Number => Sys_Mem_Alloc, A0 => 2);
+      Check (FMem /= U64'Last
+             and then Raw_Ecall
+               (Number => Sys_Mem_Map,
+                A0 => Aegir_User.Syscalls.Address_Space_Cap,
+                A1 => FMem, A2 => TTF_VA,
+                A3 => 0, A4 => 8192, A5 => 3) = 0,
+             "ttf canvas pages mapped");
+      TC := (Base =>
+               System'To_Address
+                 (System.Storage_Elements.Integer_Address (TTF_VA)),
+             W => 64, H => 32, CX0 => 0, CY0 => 0,
+             CX1 => 64, CY1 => 32);
+
+      H16 := Trinket.Fonts.Load ("BD0:Fonts/DEJAVUSANS.TTF", 16);
+      Check (H16 /= Trinket.Fonts.Null_Handle,
+             "ttf dejavu loads at 16px");
+      if H16 = Trinket.Fonts.Null_Handle then
+         return;
+      end if;
+
+      Check (Trinket.Fonts.Line_Height (H16) in 14 .. 40,
+             "ttf line height sane");
+      Check (Trinket.Fonts.Text_Width (H16, "Hello")
+               > Trinket.Fonts.Text_Width (H16, "Hell"),
+             "ttf widths accumulate");
+      Check (Trinket.Fonts.Has_Glyph (H16, Character'Pos ('A')),
+             "ttf has 'A'");
+      Check (Trinket.Fonts.Has_Glyph (H16, 16#E000#),
+             "ttf missing cp falls back (renderable)");
+
+      --  A 24 px face must measure taller than the 16 px one.
+      H24 := Trinket.Fonts.Load ("BD0:Fonts/DEJAVUSANS.TTF", 24);
+      Check (H24 /= Trinket.Fonts.Null_Handle
+             and then Trinket.Fonts.Line_Height (H24)
+               > Trinket.Fonts.Line_Height (H16),
+             "ttf 24px face is taller");
+
+      --  Rasterize "Ag" (grayscale blend must change pixels).
+      for I in TPage'Range loop
+         TPage (I) := BG;
+      end loop;
+      Trinket.Fonts.Draw_Text (TC, H16, 2, 2, "Ag", FG);
+      N := 0;
+      for I in TPage'Range loop
+         if TPage (I) /= BG then
+            N := N + 1;
+         end if;
+      end loop;
+      Check (N > 40, "ttf draw changes pixels (grayscale blend)");
+
+      --  A codepoint the face lacks still paints (the fallback).
+      for I in TPage'Range loop
+         TPage (I) := BG;
+      end loop;
+      Trinket.Fonts.Draw_Glyph (TC, H16, 16#E000#, 2, 2, FG);
+      Done := False;
+      for I in TPage'Range loop
+         if TPage (I) /= BG then
+            Done := True;
+            exit;
+         end if;
+      end loop;
+      Check (Done, "ttf missing glyph renders the fallback");
+
+      Trinket.Fonts.Unload (H24);
+      Trinket.Fonts.Unload (H16);
+      Status := Aegir_User.Syscalls.Cap_Delete (FMem);
    end;
 
    --  XPM decoder (milestone 64): the text sibling slots behind

@@ -132,6 +132,8 @@ package body Trinket.Fonts is
    function FT_Kern (V : System.Address; L, R : Unsigned_64)
      return CInt
    with Import, Convention => C, External_Name => "aegir_ft_kerning";
+   function FT_Has (V : System.Address; CP : Unsigned_64) return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_has";
    function FT_Glyph
      (V : System.Address; CP : Unsigned_64;
       Left, Top, W, H, Pitch : CInt_Ptr;
@@ -690,6 +692,26 @@ package body Trinket.Fonts is
          Integer (W), Integer (H), Integer (Pitch), Bits);
    end Draw_TTF_CP;
 
+   --  Map a codepoint for rendering: the face's own glyph when it
+   --  has one, else a visible replacement ('?' or U+FFFD when the
+   --  face has either) so a missing character never draws blank;
+   --  0 = nothing renderable at all.
+   function TTF_Use (F : Font_Rec; CP : Natural) return Natural is
+   begin
+      if F.Ttf = null then
+         return CP;
+      end if;
+      if FT_Has (F.Ttf.Face, Unsigned_64 (CP)) /= 0 then
+         return CP;
+      end if;
+      if FT_Has (F.Ttf.Face, Unsigned_64 (63)) /= 0 then
+         return 63;
+      elsif FT_Has (F.Ttf.Face, Unsigned_64 (16#FFFD#)) /= 0 then
+         return 16#FFFD#;
+      end if;
+      return 0;
+   end TTF_Use;
+
    procedure Draw_TTF_From
      (C : Canvas; X, Y : U64; S : String; FG : Pixel;
       F : in out Font_Rec)
@@ -700,21 +722,24 @@ package body Trinket.Fonts is
       if F.Ttf /= null then
          for Ch of S loop
             declare
-               CP : constant Natural := Character'Pos (Ch);
+               U : constant Natural :=
+                 TTF_Use (F, Character'Pos (Ch));
             begin
-               --  Pair kerning with the previous glyph tightens
-               --  the gap (e.g. "AV") before this one draws.
-               if Prev >= 0 then
+               if U /= 0 then
+                  --  Pair kerning with the previous glyph tightens
+                  --  the gap (e.g. "AV") before this one draws.
+                  if Prev >= 0 then
+                     Pen := Pen
+                       + Integer (FT_Kern (F.Ttf.Face,
+                                           Unsigned_64 (Prev),
+                                           Unsigned_64 (U)));
+                  end if;
+                  Draw_TTF_CP (C, F, U, U64 (Pen), Y, FG);
                   Pen := Pen
-                    + Integer (FT_Kern (F.Ttf.Face,
-                                        Unsigned_64 (Prev),
-                                        Unsigned_64 (CP)));
+                    + Integer (FT_Advance (F.Ttf.Face,
+                                           Unsigned_64 (U)));
+                  Prev := U;
                end if;
-               Draw_TTF_CP (C, F, CP, U64 (Pen), Y, FG);
-               Pen := Pen
-                 + Integer (FT_Advance (F.Ttf.Face,
-                                        Unsigned_64 (CP)));
-               Prev := CP;
             end;
          end loop;
       end if;
@@ -727,18 +752,20 @@ package body Trinket.Fonts is
       if F.Ttf /= null then
          for Ch of S loop
             declare
-               CP : constant Natural := Character'Pos (Ch);
+               U : constant Natural := TTF_Use (F, Character'Pos (Ch));
             begin
-               if Prev >= 0 then
+               if U /= 0 then
+                  if Prev >= 0 then
+                     Tot := Tot
+                       + Integer (FT_Kern (F.Ttf.Face,
+                                           Unsigned_64 (Prev),
+                                           Unsigned_64 (U)));
+                  end if;
                   Tot := Tot
-                    + Integer (FT_Kern (F.Ttf.Face,
-                                        Unsigned_64 (Prev),
-                                        Unsigned_64 (CP)));
+                    + Integer (FT_Advance (F.Ttf.Face,
+                                           Unsigned_64 (U)));
+                  Prev := U;
                end if;
-               Tot := Tot
-                 + Integer (FT_Advance (F.Ttf.Face,
-                                        Unsigned_64 (CP)));
-               Prev := CP;
             end;
          end loop;
       end if;
@@ -746,8 +773,7 @@ package body Trinket.Fonts is
    end Width_TTF;
 
    function Present_TTF (F : Font_Rec; CP : Natural) return Boolean is
-     (F.Ttf /= null
-      and then FT_Advance (F.Ttf.Face, Unsigned_64 (CP)) > 0);
+     (F.Ttf /= null and then TTF_Use (F, CP) /= 0);
 
    procedure Draw_One
      (C : Canvas; G : Glyph_Rec; Pen : Integer; Baseline : Integer;
@@ -847,7 +873,13 @@ package body Trinket.Fonts is
       E        : Natural;
    begin
       if F.Ttf /= null then
-         Draw_TTF_CP (C, F, CP, X, Y, FG);
+         declare
+            U : constant Natural := TTF_Use (F, CP);
+         begin
+            if U /= 0 then
+               Draw_TTF_CP (C, F, U, X, Y, FG);
+            end if;
+         end;
          return;
       end if;
       if CP <= 127 and then F.T (CP).Valid then
