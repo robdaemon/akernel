@@ -46,8 +46,8 @@ package body Font_App is
                 or else P (P'Last - 3 .. P'Last) = ".ttf"
                 or else P (P'Last - 3 .. P'Last) = ".OTF"
                 or else P (P'Last - 3 .. P'Last) = ".otf"));
-   TTF_Sizes : constant array (1 .. 5) of Natural :=
-     (10, 12, 16, 20, 24);
+   TTF_Sizes : constant array (1 .. 7) of Natural :=
+     (8, 9, 10, 12, 16, 20, 24);
 
    function Trim_Image (N : Natural) return String is
       I : constant String := Natural'Image (N);
