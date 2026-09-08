@@ -13,7 +13,23 @@ repository.
 
 ## Recently shipped
 
-- **Terminal on a scalable mono TTF grid** (`04aca0a`): ENV:Term.Font
+- **Kernel: bootstrap records off the boot stack — fixes the SMP
+  startup wedge** (`057db77`): the kernel-started process/thread
+  records (init/devmgr and friends) were aliased locals of the Aegir
+  main procedure, i.e. a few KB below `__stack_top` on the boot CPU's
+  main stack. The post-boot idle path re-uses that stack from the top;
+  deep nesting (IPC wakeups during MSI-X device bring-up) descended
+  into init's own PCB/TCB and corrupted the cap table. The next
+  `Cap_Delete` of a valid cap underflowed `Caps.Total`
+  (`Constraint_Error` at `kernel-capabilities.adb:353`) inside a held
+  spinlock, wedging every hart. Mode-independent and race-dependent —
+  the wedge point moved run to run, and it surfaced as a "release
+  build regression" (a clean full-debug build reproduced it). Fix: new
+  `Kernel.Bootstrap` package homes the six records in static BSS,
+  unreachable by any stack. Repeated boots reach `shell online` with
+  zero underflow/exception events. Note: `__gnat_last_chance_handler`
+  is still a silent WFI loop (kernel exceptions print nothing) — a
+  follow-up should dump msg+line+hart there.
   (+ ENV:Term.Font.Size) selects a .TTF/.OTF mono face for the
   terminal — Cell_W is the digit advance, Row_H the line height, and
   every grid geometry (column/row counts, wrap width, mouse
