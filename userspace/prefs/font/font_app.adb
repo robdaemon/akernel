@@ -87,7 +87,7 @@ package body Font_App is
             C2 : Trinket.Canvas := C;
          begin
             C2.CX0 := Trinket.U64'Max (C2.CX0, W.X + 4);
-            C2.CX1 := Trinket.U64'Min (C2.CX1, W.X + W.W - 4);
+            C2.CX1 := Trinket.U64'Min (C2.CX1, W.X + W.W - 6);
             C2.CY0 := Trinket.U64'Max (C2.CY0, W.Y + 3);
             C2.CY1 := Trinket.U64'Min (C2.CY1, W.Y + W.H - 3);
             Fonts.Draw_Text
@@ -262,6 +262,49 @@ package body Font_App is
       end if;
    end Family_Picked;
 
+   --  Deferred preview loading. A .TTF load reads the whole file
+   --  and the first paint rasterizes the samples, which blocks the
+   --  event loop; done synchronously in the row-click handler it
+   --  delayed the list's selection repaint, so the UI felt dead
+   --  after a click. Picks are queued and the load runs only after
+   --  the next flush has painted the new selection (a two-step
+   --  app-port handshake: Step1 re-posts so the loop wakes once
+   --  more AFTER the flush; Step2 does the load).
+   Pending_E : Natural := 0;
+   Step1     : constant U64 := 1;
+   Step2     : constant U64 := 2;
+
+   procedure Queue_Font (E : Natural) is
+      Ignore : constant Boolean :=
+        Trinket.Window.Post (Win, Step1, 0, 0, 0);
+      pragma Unreferenced (Ignore);
+   begin
+      Pending_E := E;
+   end Queue_Font;
+
+   procedure On_App (Code, A0, A1, A2 : U64) is
+      pragma Unreferenced (A0, A1, A2);
+      Ignore : Boolean;
+   begin
+      if Code = Step1 then
+         Ignore := Trinket.Window.Post (Win, Step2, 0, 0, 0);
+      elsif Code = Step2 and then Pending_E in 1 .. N_Entries then
+         declare
+            E : constant Natural := Pending_E;
+         begin
+            Pending_E := 0;
+            Show_Font (E);
+         end;
+      end if;
+   end On_App;
+
+   procedure Size_Picked (Index : Natural) is
+   begin
+      if Index /= 0 then
+         Queue_Font (Size_Map (Index));
+      end if;
+   end Size_Picked;
+
    procedure Show_Font (E : Natural) is
       Pv_W : Preview renames Preview (Pv.all);
    begin
@@ -284,13 +327,6 @@ package body Font_App is
       Pv_W.F := Fonts.Load (Cur_Path (1 .. Cur_Len));
       Pv.Dirty := True;
    end Show_Font;
-
-   procedure Size_Picked (Index : Natural) is
-   begin
-      if Index /= 0 then
-         Show_Font (Size_Map (Index));
-      end if;
-   end Size_Picked;
 
    procedure Okay_Clicked is
    begin
@@ -374,6 +410,7 @@ package body Font_App is
       end if;
 
       if Trinket.Window.Open (Win, 3, 320, 260, "Font", Root) then
+         Trinket.Window.Set_App_Handler (Win, On_App'Access);
          --  Preselect AFTER layout: Set_Selected scrolls to make
          --  the row visible, and a zero-height listview (pre-open)
          --  reports Visible_Rows = 1 — selecting then parks Top at
