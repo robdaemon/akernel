@@ -33,6 +33,8 @@ QEMU_9P_FLAGS ?= -fsdev local,id=fs0,path=$(SHARE_DIR),security_model=none -devi
 #  QEMU's default (1280x800) applies.
 QEMU_GPU_FLAGS ?=
 INITRD_ADDR ?= 0x84000000
+# Alire build args - used to specify if we're in release or development mode
+ALR_BUILD_ARGS ?= --release
 
 KERNEL_ELF := bin/aegir.elf
 INIT_ELF := bin/userspace/init.elf
@@ -113,7 +115,7 @@ RTS_SRCS := $(shell find userspace/rts/aegir userspace/gnat-rts/gnarl_user users
 all: kernel initrd $(DISK_CRATES_SYSTEM) $(DISK_CRATES_C) $(DISK_CRATES_LIBS)
 
 kernel:
-	alr build
+	alr build $(ALR_BUILD_ARGS)
 
 userspace: $(CRATES)
 
@@ -292,28 +294,6 @@ scan-ada:
 	@if command -v gnatprove >/dev/null 2>&1; then \
 	  echo "note: run via 'alr exec -- gnatprove -P aegir.gpr -f --mode=prove --level=1 --timeout=30 --report=all' (see docs/SCANNING.md)"; \
 	else echo "note: gnatprove not installed (alr install gnatprove + aligned cross toolchain)"; fi
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #  512 MiB GPT data disk, split 50/50 (M93): partition 1 at sector
 #  2048, 256 MiB BeFS labeled Sys (BD0, Haiku's registered BeFS GPT
