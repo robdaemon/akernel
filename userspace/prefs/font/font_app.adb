@@ -37,7 +37,47 @@ package body Font_App is
       Size     : Natural := 0;
    end record;
 
-   Entries   : array (1 .. Max_Fonts) of Font_Entry;
+   --  TrueType/OpenType files are offered at several pixel sizes;
+   --  each becomes its own entry (same path, different Size) so the
+   --  existing family -> size UI works unchanged.
+   function Is_TTF (P : String) return Boolean is
+     (P'Length > 4
+      and then (P (P'Last - 3 .. P'Last) = ".TTF"
+                or else P (P'Last - 3 .. P'Last) = ".ttf"
+                or else P (P'Last - 3 .. P'Last) = ".OTF"
+                or else P (P'Last - 3 .. P'Last) = ".otf"));
+   TTF_Sizes : constant array (1 .. 5) of Natural :=
+     (10, 12, 16, 20, 24);
+
+   function Trim_Image (N : Natural) return String is
+      I : constant String := Natural'Image (N);
+   begin
+      return I (I'First + 1 .. I'Last);   --  drop Image's lead space
+   end Trim_Image;
+
+   --  ENV:Font.Size (pixels) for a .TTF/.OTF choice; malformed or
+   --  absent falls back to Default.
+   function Env_Size (Default : Natural) return Natural is
+      V : constant String := CLI.Get_Env ("Font.Size");
+      N : Natural := 0;
+   begin
+      if V'Length = 0 then
+         return Default;
+      end if;
+      for C of V loop
+         if C not in '0' .. '9' or else N > 1000 then
+            return Default;
+         end if;
+         N := N * 10 + (Character'Pos (C) - Character'Pos ('0'));
+      end loop;
+      if N = 0 then
+         return Default;
+      end if;
+      return N;
+   end Env_Size;
+
+   type Font_Entry_Array is array (1 .. Max_Fonts) of Font_Entry;
+   Entries   : Font_Entry_Array;
    N_Entries : Natural := 0;
    N_Raw     : Natural := 0;   --  every directory entry seen
 
@@ -54,6 +94,12 @@ package body Font_App is
    Cur       : Natural := 0;   --  entry index of the previewed font
    Cur_Path  : String (1 .. Max_Path) := (others => ' ');
    Cur_Len   : Natural := 0;
+   Cur_Size  : Natural := 0;   --  pixel size of the previewed font
+   --  The font the user last picked (pending or loaded): Okay saves
+   --  this, not whatever was loaded before the pick.
+   Last_Path : String (1 .. Max_Path) := (others => ' ');
+   Last_Len  : Natural := 0;
+   Last_Size : Natural := 0;
 
    --  Live preview: a sunken panel drawing two sample lines in
    --  the loaded preview font (a private Fonts.Handle — the
@@ -183,6 +229,32 @@ package body Font_App is
          & " fonts," & Natural'Image (N_Raw) & " raw");
    end Scan_Fonts;
 
+   --  Expand every .TTF/.OTF entry (probed once, at the nominal
+   --  size, for its family name) into one entry per offered pixel
+   --  size, so the family -> size list lets you pick the render
+   --  size. BDF entries pass through unchanged.
+   procedure Expand_TTF_Sizes is
+      TmpE : Font_Entry_Array := Entries;
+      TN   : constant Natural := N_Entries;
+   begin
+      N_Entries := 0;
+      Worst_LH := 16;
+      for E in 1 .. TN loop
+         if Is_TTF (TmpE (E).Path (1 .. TmpE (E).Path_Len)) then
+            for S of TTF_Sizes loop
+               N_Entries := N_Entries + 1;
+               Entries (N_Entries) := TmpE (E);
+               Entries (N_Entries).Size := S;
+               Worst_LH := U64'Max (Worst_LH, U64 (S) + 4);
+            end loop;
+         else
+            N_Entries := N_Entries + 1;
+            Entries (N_Entries) := TmpE (E);
+            Worst_LH := U64'Max (Worst_LH, U64 (TmpE (E).Size) + 4);
+         end if;
+      end loop;
+   end Expand_TTF_Sizes;
+
    procedure Build_Families is
       Found : Boolean;
    begin
@@ -276,19 +348,35 @@ package body Font_App is
 
    procedure Queue_Font (E : Natural) is
       Pv_W  : Preview renames Preview (Pv.all);
-      Ignore : constant Boolean :=
-        Trinket.Window.Post (Win, Step1, 0, 0, 0);
+      Ignore : Boolean;
       pragma Unreferenced (Ignore);
    begin
-      Pending_E := E;
+      --  Same path + size as the font already on screen: nothing
+      --  to do (the list already re-selected it).
+      if Pv_W.F /= Fonts.Null_Handle
+        and then Cur /= 0
+        and then Cur_Len = Entries (E).Path_Len
+        and then Cur_Size = Entries (E).Size
+        and then Cur_Path (1 .. Cur_Len) =
+          Entries (E).Path (1 .. Entries (E).Path_Len)
+      then
+         return;
+      end if;
       --  Empty the preview while the new font loads: showing the
-      --  previously selected font for the load's ~1-2 s reads as
-      --  the wrong font being live.
+      --  previously selected font for the load's second or two
+      --  reads as the wrong font being live.
       if Pv_W.F /= Fonts.Null_Handle then
          Fonts.Unload (Pv_W.F);
          Pv_W.F := Fonts.Null_Handle;
       end if;
       Pv.Dirty := True;
+      --  This pick is what Okay will save (it may not have loaded
+      --  yet when the user hits Okay).
+      Last_Len := Entries (E).Path_Len;
+      Last_Path (1 .. Last_Len) := Entries (E).Path (1 .. Last_Len);
+      Last_Size := Entries (E).Size;
+      Pending_E := E;
+      Ignore := Trinket.Window.Post (Win, Step1, 0, 0, 0);
    end Queue_Font;
 
    procedure On_App (Code, A0, A1, A2 : U64) is
@@ -317,11 +405,9 @@ package body Font_App is
    procedure Show_Font (E : Natural) is
       Pv_W : Preview renames Preview (Pv.all);
    begin
-      --  Selecting the font already previewed (list re-selection,
-      --  tab back) must not reload — a .TTF load re-reads the
-      --  whole file, which made switching feel laggy.
       if Cur /= 0
         and then Cur_Len = Entries (E).Path_Len
+        and then Cur_Size = Entries (E).Size
         and then Cur_Path (1 .. Cur_Len) =
           Entries (E).Path (1 .. Entries (E).Path_Len)
         and then Pv_W.F /= Fonts.Null_Handle
@@ -332,22 +418,36 @@ package body Font_App is
       Cur := E;
       Cur_Len := Entries (E).Path_Len;
       Cur_Path (1 .. Cur_Len) := Entries (E).Path (1 .. Cur_Len);
+      Cur_Size := Entries (E).Size;
+      Last_Len := Cur_Len;
+      Last_Path (1 .. Last_Len) := Cur_Path (1 .. Cur_Len);
+      Last_Size := Cur_Size;
       Fonts.Unload (Pv_W.F);
-      Pv_W.F := Fonts.Load (Cur_Path (1 .. Cur_Len));
+      Pv_W.F := Fonts.Load (Cur_Path (1 .. Cur_Len), Cur_Size);
       Pv.Dirty := True;
    end Show_Font;
 
    procedure Okay_Clicked is
    begin
-      if Cur_Len > 0 then
+      if Last_Len > 0 then
          declare
             St : constant U64 :=
-              CLI.Set_Env ("Font", Cur_Path (1 .. Cur_Len));
+              CLI.Set_Env ("Font", Last_Path (1 .. Last_Len));
             pragma Unreferenced (St);
          begin
             Debug_Put_Line
-              ("prefs/font: font = " & Cur_Path (1 .. Cur_Len));
+              ("prefs/font: font = " & Last_Path (1 .. Last_Len)
+               & " @" & Trim_Image (Last_Size));
          end;
+         if Is_TTF (Last_Path (1 .. Last_Len)) then
+            declare
+               St : constant U64 :=
+                 CLI.Set_Env ("Font.Size", Trim_Image (Last_Size));
+               pragma Unreferenced (St);
+            begin
+               null;
+            end;
+         end if;
       end if;
       Trinket.Window.Request_Quit (Win);
    end Okay_Clicked;
@@ -367,6 +467,7 @@ package body Font_App is
       Env     : constant String := CLI.Get_Env ("Font");
       Current : constant String :=
         (if Env'Length > 0 then Env else "Sys:Fonts/font8x8p.bdf");
+      Want_Sz : constant Natural := Env_Size (16);
       Fam_Row : Natural := 0;
    begin
       Fonts.Init;
@@ -374,19 +475,33 @@ package body Font_App is
         ("prefs/font: global from disk = "
          & Boolean'Image (Fonts.Loaded_From_Disk));
       Scan_Fonts;
+      Expand_TTF_Sizes;
 
-      --  Preselect the currently configured font.
+      --  Preselect the currently configured font: for a .TTF path
+      --  prefer the entry whose size matches ENV:Font.Size.
       Cur := 0;
       for E in 1 .. N_Entries loop
          if Eq_IC (Entries (E).Path (1 .. Entries (E).Path_Len),
                    Current)
          then
-            Cur := E;
-            exit;
+            if Cur = 0 then
+               Cur := E;
+            end if;
+            if Is_TTF (Current) then
+               if Entries (E).Size = Want_Sz then
+                  Cur := E;
+                  exit;
+               end if;
+            else
+               exit;   --  BDF: this path is the font
+            end if;
          end if;
       end loop;
       if Cur = 0 and then N_Entries > 0 then
          Cur := 1;
+      end if;
+      if Cur /= 0 then
+         Cur_Size := Entries (Cur).Size;
       end if;
 
       Widgets.Group (Top_Row.all).Add

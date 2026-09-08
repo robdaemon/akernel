@@ -25,10 +25,13 @@
 --  properties (FAMILY_NAME/PIXEL_SIZE) for grouping listings.
 package Trinket.Fonts is
 
-   procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf");
+   procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf";
+                   Pixel_Size : Natural := 16);
    --  Tries ENV:Font first, then the BDF at Path; on any
    --  failure installs the Font8x8 fallback. Idempotent (the
-   --  first call latches the global font).
+   --  first call latches the global font). For a .TTF/.OTF
+   --  choice, ENV:Font.Size (pixels) overrides Pixel_Size;
+   --  BDFs ignore the size (their metrics are fixed per file).
 
    function Loaded_From_Disk return Boolean;
 
@@ -57,9 +60,11 @@ package Trinket.Fonts is
    type Handle is private;
    Null_Handle : constant Handle;
 
-   function Load (Path : String) return Handle;
-   --  Parses the BDF at Path into a heap instance; returns
-   --  Null_Handle on any failure.
+   function Load (Path : String; Pixel_Size : Natural := 16)
+     return Handle;
+   --  Loads the font at Path into a heap instance; returns
+   --  Null_Handle on any failure. .TTF/.OTF faces are opened at
+   --  Pixel_Size (8..72, clamped); BDFs ignore it.
    procedure Unload (H : in out Handle);
 
    function Line_Height (H : Handle) return U64;

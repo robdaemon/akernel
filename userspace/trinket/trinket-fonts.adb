@@ -135,7 +135,7 @@ package body Trinket.Fonts is
       Bits : access System.Address) return CInt
    with Import, Convention => C, External_Name => "aegir_ft_glyph";
    --  Fixed pixel size for TTF faces this milestone.
-   TTF_Px : constant := 16;
+   TTF_Px : constant Natural := 16;  --  default face pixel size
 
    Global      : Font_Rec;         --  the UI font (latched)
    Mono        : Font_Rec;         --  compiled-in 8x8, advance 8
@@ -433,9 +433,10 @@ package body Trinket.Fonts is
    --  Open the font bytes as a FreeType face at the fixed pixel
    --  size; F.Ascent/Descent take the face metrics.
    procedure Try_Load_TTF (Path : String; F : out Font_Rec;
-                           OK : out Boolean) is
+                           OK : out Boolean; Px : Natural) is
       Buf : Str_Access;
-      Px  : constant Unsigned_32 := Unsigned_32 (TTF_Px);
+      Sz  : constant Natural :=
+        (if Px < 8 then 8 elsif Px > 72 then 72 else Px);
    begin
       OK := False;
       F.Ttf := null;
@@ -446,7 +447,8 @@ package body Trinket.Fonts is
       declare
          Face : constant System.Address :=
            FT_Open (Buf.all'Address,
-                    Unsigned_64 (Buf.all'Length), Px);
+                    Unsigned_64 (Buf.all'Length),
+                    Unsigned_32 (Sz));
       begin
          if Face = System.Null_Address then
             Free (Buf);
@@ -468,14 +470,15 @@ package body Trinket.Fonts is
 
    --  Shared open/read/parse for Init (global font) and Load
    --  (private instances); a transient heap read. .TTF/.OTF
-   --  routes to the FreeType path, everything else is BDF.
+   --  routes to the FreeType path at Px pixels, everything else
+   --  is BDF.
    procedure Try_Load (Path : String; F : out Font_Rec;
-                       OK : out Boolean) is
+                       OK : out Boolean; Px : Natural := TTF_Px) is
       Buf : Str_Access;
    begin
       OK := False;
       if Has_TTF_Suffix (Path) then
-         Try_Load_TTF (Path, F, OK);
+         Try_Load_TTF (Path, F, OK, Px);
          return;
       end if;
       Buf := Read_All (Path);
@@ -490,7 +493,29 @@ package body Trinket.Fonts is
       Free (Buf);
    end Try_Load;
 
-   procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf") is
+   --  ENV:Font.Size (pixels) for a .TTF/.OTF global font; any
+   --  malformed value falls back to Default.
+   function Env_Size (Default : Natural) return Natural is
+      V : constant String := Aegir_User.CLI.Get_Env ("Font.Size");
+      N : Natural := 0;
+   begin
+      if V'Length = 0 then
+         return Default;
+      end if;
+      for C of V loop
+         if C not in '0' .. '9' or else N > 1000 then
+            return Default;
+         end if;
+         N := N * 10 + (Character'Pos (C) - Character'Pos ('0'));
+      end loop;
+      if N = 0 then
+         return Default;
+      end if;
+      return N;
+   end Env_Size;
+
+   procedure Init (Path : String := "Sys:Fonts/font8x8p.bdf";
+                   Pixel_Size : Natural := 16) is
       OK : Boolean;
    begin
       --  Idempotent (milestone 68): the glyph cache is
@@ -505,12 +530,13 @@ package body Trinket.Fonts is
       Mono.Descent := 2;
       --  M89: the prefs pick overrides the compiled-in default.
       declare
-         Env : constant String := Aegir_User.CLI.Get_Env ("Font");
+         Env  : constant String := Aegir_User.CLI.Get_Env ("Font");
+         Size : constant Natural := Env_Size (Pixel_Size);
       begin
          if Env'Length > 0 then
-            Try_Load (Env, Global, OK);
+            Try_Load (Env, Global, OK, Size);
          else
-            Try_Load (Path, Global, OK);
+            Try_Load (Path, Global, OK, Pixel_Size);
          end if;
       end;
       if not OK then
@@ -847,11 +873,12 @@ package body Trinket.Fonts is
 
    --  M89: private instances.
 
-   function Load (Path : String) return Handle is
+   function Load (Path : String; Pixel_Size : Natural := 16)
+     return Handle is
       H  : Handle := new Font_Rec;
       OK : Boolean;
    begin
-      Try_Load (Path, H.all, OK);
+      Try_Load (Path, H.all, OK, Pixel_Size);
       if not OK then
          Free_Font (H);
          return null;
