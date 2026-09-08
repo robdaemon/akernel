@@ -16,6 +16,11 @@ with Trinket.Widgets;
 --  the last selection.
 package Terminal_Clip is
 
+   procedure Init (CW, RH : Natural);
+   --  Grid metrics: pixels per column (a mono face's advance) and
+   --  per row (line height). The terminal calls this after its
+   --  font decision; the defaults match the BDF 8px grid.
+
    procedure Set_Service (Svc_In : Trinket.U64);
    --  Clipboard service handle used by release/menu copies
    --  (0 = none: copies become no-ops).

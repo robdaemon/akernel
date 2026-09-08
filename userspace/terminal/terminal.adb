@@ -3,6 +3,7 @@ with System;
 with System.Storage_Elements;
 with Ada.Streams;
 with Aegir_User.Syscalls;
+with Aegir_User.CLI;
 with Aegir_User.IPC;
 with Aegir_User.Streams;
 with Aegir_User.Files;
@@ -41,6 +42,7 @@ procedure Terminal is
    use type U64;
    use type Interfaces.Unsigned_8;
    use type Trinket.Widgets.Pointer_Kind;
+   use type Trinket.Fonts.Handle;
 
    Console_EP : constant U64 := 1;
    --  Uniform program ABI (milestone 31b): 2 = file server Send
@@ -153,6 +155,44 @@ procedure Terminal is
    --  Opened-once clipboard service handle (M9x); the terminal
    --  keeps it for its lifetime.
    Clipboard_Svc : U64 := 0;
+
+   --  M9A terminal grid font: ENV:Term.Font (+ ENV:Term.Font.Size,
+   --  pixels) selects a .TTF/.OTF for the grid; without it the
+   --  compiled-in mono 8x8 set renders on 8 px cells with
+   --  Fonts.Line_Height rows (the classic BDF look). Cell_W is the
+   --  mono advance, Row_H the line height — every grid geometry
+   --  decision (wrap width, selection/cursor/band mapping) derives
+   --  from these.
+   Term_H  : Trinket.Fonts.Handle := Trinket.Fonts.Null_Handle;
+   Cell_W  : Natural := 8;
+   Row_H   : Natural := 16;
+
+   function Has_TTF_Ending (P : String) return Boolean is
+     (P'Length > 4
+      and then (P (P'Last - 3 .. P'Last) = ".TTF"
+                or else P (P'Last - 3 .. P'Last) = ".ttf"
+                or else P (P'Last - 3 .. P'Last) = ".OTF"
+                or else P (P'Last - 3 .. P'Last) = ".otf"));
+
+   --  ENV:Term.Font.Size (pixels); malformed/absent -> Default.
+   function Term_Env_Size (Default : Natural) return Natural is
+      V : constant String := Aegir_User.CLI.Get_Env ("Term.Font.Size");
+      N : Natural := 0;
+   begin
+      if V'Length = 0 then
+         return Default;
+      end if;
+      for C of V loop
+         if C not in '0' .. '9' or else N > 1000 then
+            return Default;
+         end if;
+         N := N * 10 + (Character'Pos (C) - Character'Pos ('0'));
+      end loop;
+      if N = 0 then
+         return Default;
+      end if;
+      return N;
+   end Term_Env_Size;
 
    Result : U64;
 
@@ -421,7 +461,8 @@ procedure Terminal is
       Text_W : constant U64 := Surf_W - Terminal_Scroll.Scrollbar_W;
       Rows   : constant Natural := Terminal_Buffer.Rows;
       Cols   : constant Natural := Terminal_Buffer.Cols;
-      LH     : constant U64 := Trinket.Fonts.Line_Height;
+      CW     : constant U64 := U64 (Cell_W);
+      RH     : constant U64 := U64 (Row_H);
       Line   : String (1 .. Cols);
       Len    : Natural;
    begin
@@ -431,7 +472,7 @@ procedure Terminal is
       for R in 0 .. Rows - 1 loop
          declare
             Line_I : constant Natural := Terminal_Buffer.View_Top + R;
-            Y      : constant U64 := U64 (R) * LH;
+            Y      : constant U64 := U64 (R) * RH;
          begin
             exit when Line_I >= Terminal_Buffer.Line_Count;
             Terminal_Buffer.Get_Line (Line_I, Line, Len);
@@ -445,27 +486,41 @@ procedure Terminal is
                   SA, SB : Natural;
                begin
                   Terminal_Clip.Row_Extent (Line_I, SA, SB);
-                  if SA <= SB and then SA < Len then
-                     if SA > 0 then
-                        Trinket.Fonts.Draw_Text_Mono
-                          (Canvas, 0, Y, Line (1 .. SA),
-                           Trinket.Text_Dark);
-                     end if;
-                     Trinket.Fonts.Draw_Text_Mono
-                       (Canvas, U64 (SA) * 8, Y,
-                        Line (SA + 1
-                              .. Natural'Min (SB, Len - 1) + 1),
-                        Trinket.Pane);
-                     if SB + 1 < Len then
-                        Trinket.Fonts.Draw_Text_Mono
-                          (Canvas, U64 (SB + 1) * 8, Y,
-                           Line (SB + 2 .. Len), Trinket.Text_Dark);
-                     end if;
-                  else
-                     Trinket.Fonts.Draw_Text_Mono
-                       (Canvas, 0, Y, Line (1 .. Len),
-                        Trinket.Text_Dark);
-                  end if;
+                  --  M9A grid font: draw cell by cell so the band
+                  --  and the cursor can recolor individual glyphs
+                  --  with one code path for the BDF mono set and a
+                  --  .TTF grid face (mono advance = Cell_W).
+                  for C in 0 .. Len - 1 loop
+                     declare
+                        X : constant U64 := U64 (C) * CW;
+                     begin
+                        if Term_H /= Trinket.Fonts.Null_Handle then
+                           if SA <= C and then C <= SB then
+                              Trinket.Fonts.Draw_Text
+                                (Canvas, Term_H, X, Y,
+                                 Line (C + 1 .. C + 1),
+                                 Trinket.Pane);
+                           else
+                              Trinket.Fonts.Draw_Text
+                                (Canvas, Term_H, X, Y,
+                                 Line (C + 1 .. C + 1),
+                                 Trinket.Text_Dark);
+                           end if;
+                        else
+                           if SA <= C and then C <= SB then
+                              Trinket.Fonts.Draw_Text_Mono
+                                (Canvas, X, Y,
+                                 Line (C + 1 .. C + 1),
+                                 Trinket.Pane);
+                           else
+                              Trinket.Fonts.Draw_Text_Mono
+                                (Canvas, X, Y,
+                                 Line (C + 1 .. C + 1),
+                                 Trinket.Text_Dark);
+                           end if;
+                        end if;
+                     end;
+                  end loop;
                end;
             end if;
          end;
@@ -481,7 +536,6 @@ procedure Terminal is
          Cur_Line : constant Natural := Terminal_Buffer.Current_Line;
          Top      : constant Natural := Terminal_Buffer.View_Top;
          Rows     : constant Natural := Terminal_Buffer.Rows;
-         Char_W   : constant U64 := 8;
          --  M9y: with the caret left of the line's end the block
          --  cursor draws at the caret instead of the tail: the
          --  echoed line holds prompt + typed text, so the prompt
@@ -495,10 +549,10 @@ procedure Terminal is
          if Cur_Line >= Top and then Cur_Line < Top + Rows then
             declare
                R : constant U64 := U64 (Cur_Line - Top);
-               X : constant U64 := U64 (Cur_Col) * Char_W;
-               Y : constant U64 := R * LH;
+               X : constant U64 := U64 (Cur_Col) * CW;
+               Y : constant U64 := R * RH;
             begin
-               if X + Char_W <= Surf_W - Terminal_Scroll.Scrollbar_W then
+               if X + CW <= Surf_W - Terminal_Scroll.Scrollbar_W then
                   declare
                      --  M9y: the block cursor covers one cell; the
                      --  glyph under it is redrawn in the inverse
@@ -511,16 +565,24 @@ procedure Terminal is
                      Len     : Natural;
                   begin
                      Trinket.Paint.Fill_Rect
-                       (Canvas, X, Y, X + Char_W, Y + LH,
+                       (Canvas, X, Y, X + CW, Y + RH,
                         (if On_Band then Trinket.Pane
                          else Trinket.Sel_Blue));
                      Terminal_Buffer.Get_Line (Cur_Line, Line, Len);
                      if Cur_Col < Len then
-                        Trinket.Fonts.Draw_Text_Mono
-                          (Canvas, X, Y,
-                           Line (Cur_Col + 1 .. Cur_Col + 1),
-                           (if On_Band then Trinket.Text_Dark
-                            else Trinket.Pane));
+                        if Term_H /= Trinket.Fonts.Null_Handle then
+                           Trinket.Fonts.Draw_Text
+                             (Canvas, Term_H, X, Y,
+                              Line (Cur_Col + 1 .. Cur_Col + 1),
+                              (if On_Band then Trinket.Text_Dark
+                               else Trinket.Pane));
+                        else
+                           Trinket.Fonts.Draw_Text_Mono
+                             (Canvas, X, Y,
+                              Line (Cur_Col + 1 .. Cur_Col + 1),
+                              (if On_Band then Trinket.Text_Dark
+                               else Trinket.Pane));
+                        end if;
                      end if;
                   end;
                end if;
@@ -1009,10 +1071,35 @@ begin
 
    declare
       Text_W : constant U64 := Surf_W - Terminal_Scroll.Scrollbar_W;
+      Env_F  : constant String := Aegir_User.CLI.Get_Env ("Term.Font");
    begin
+      --  M9A grid font: ENV:Term.Font (+ .Size) selects a TTF/OTF
+      --  mono face (Cell_W = its digit advance, Row_H = line
+      --  height); otherwise the compiled-in 8x8 mono on 8 px cells
+      --  at the BDF line height.
+      Cell_W := 8;
+      Row_H := Natural (Trinket.Fonts.Line_Height);
+      if Env_F'Length > 0 and then Has_TTF_Ending (Env_F) then
+         Term_H := Trinket.Fonts.Load
+           (Env_F, Term_Env_Size (16));
+         if Term_H /= Trinket.Fonts.Null_Handle then
+            Cell_W := Natural (Trinket.Fonts.Text_Width (Term_H, "0"));
+            Row_H := Natural (Trinket.Fonts.Line_Height (Term_H));
+            if Cell_W < 4 or else Row_H < 6 then
+               Trinket.Fonts.Unload (Term_H);
+               Term_H := Trinket.Fonts.Null_Handle;
+               Cell_W := 8;
+               Row_H := Natural (Trinket.Fonts.Line_Height);
+            end if;
+         else
+            Debug_Put_Line
+              ("terminal: grid font load failed, using BDF mono");
+         end if;
+      end if;
+      Terminal_Clip.Init (Cell_W, Row_H);
       Terminal_Buffer.Init
-        (Natural (Text_W / 8),
-         Natural (Surf_H / Trinket.Fonts.Line_Height));
+        (Natural (Text_W / U64 (Cell_W)),
+         Natural (Surf_H / U64 (Row_H)));
       Terminal_Scroll.Init (Natural (Surf_W), Natural (Surf_H));
    end;
 

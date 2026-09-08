@@ -1,15 +1,23 @@
 with Aegir_User.Clipboard;
 with Terminal_Buffer;
-with Trinket.Fonts;
 with Trinket.Paint;
 
 package body Terminal_Clip is
 
    use type Trinket.U64;
 
-   --  Fixed grid device: 8 px cells, Fonts.Line_Height per row
-   --  (mirrors the Render loop in terminal.adb).
-   Char_W : constant := 8;
+   --  Grid metrics (set by the terminal after its font decision):
+   --  Cell_W px per column (a mono face's advance), Row_H px per
+   --  row (the line height). Defaults match the BDF 8px grid's
+   --  un-initialized font metrics for the fuzz harness.
+   Cell_W : Natural := 8;
+   Row_H  : Natural := 8;
+
+   procedure Init (CW, RH : Natural) is
+   begin
+      Cell_W := CW;
+      Row_H := RH;
+   end Init;
 
    Svc        : Trinket.U64 := 0;
    Active_Sel : Boolean := False;
@@ -50,7 +58,7 @@ package body Terminal_Clip is
    procedure To_Cell (X, Y : Natural; P : out Cell) is
       Row : Natural;
    begin
-      Row := Y / Natural (Trinket.Fonts.Line_Height);
+      Row := Y / Row_H;
       if Row >= Terminal_Buffer.Rows then
          Row := Terminal_Buffer.Rows - 1;
       end if;
@@ -58,7 +66,7 @@ package body Terminal_Clip is
       if P.L >= Terminal_Buffer.Line_Count then
          P.L := Terminal_Buffer.Line_Count - 1;
       end if;
-      P.C := X / Char_W;
+      P.C := X / Cell_W;
       if P.C >= Terminal_Buffer.Cols then
          P.C := Terminal_Buffer.Cols - 1;
       end if;
@@ -103,17 +111,16 @@ package body Terminal_Clip is
    procedure Draw_Row_Band
      (C : Trinket.Canvas; Line_I : Natural; Row_Y : Natural)
    is
-      A, B    : Natural;
-      LH      : constant Trinket.U64 := Trinket.Fonts.Line_Height;
+      A, B : Natural;
    begin
       Row_Extent (Line_I, A, B);
       if A <= B then
          Trinket.Paint.Fill_Rect
            (C,
-            Trinket.U64 (A) * Char_W,
+            Trinket.U64 (A) * Trinket.U64 (Cell_W),
             Trinket.U64 (Row_Y),
-            Trinket.U64 (B + 1) * Char_W,
-            Trinket.U64 (Row_Y) + LH,
+            Trinket.U64 (B + 1) * Trinket.U64 (Cell_W),
+            Trinket.U64 (Row_Y) + Trinket.U64 (Row_H),
             Trinket.Sel_Blue);
       end if;
    end Draw_Row_Band;
