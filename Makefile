@@ -474,6 +474,13 @@ ifeq ($(INITRD_MODE),test)
 	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console' >> $(INITRD_ROOT)/System/Manifest,)
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
 endif
+#  Quiet mode for the o2c regression: base servers only plus the
+#  staged o2c/hello programs - no fuzz flood, so console capture of
+#  the emitted source is not byte-torn by concurrent chatter.
+ifeq ($(INITRD_MODE),min)
+	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console' >> $(INITRD_ROOT)/System/Manifest,)
+endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part1 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 17 System/Bfs console part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest
