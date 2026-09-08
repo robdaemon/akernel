@@ -488,7 +488,9 @@ gprbuild -P prog.gpr \
 `-aP`), restates the runtime directory (GNAT resolves project
 attribute paths relative to the *main* project's directory, so the
 base project's `../gnat-rts` only works for in-tree crates), and may
-point its object/exec dirs anywhere:
+point its object/exec dirs anywhere.  `AEGIR_ROOT` is **required**:
+the `external` has no default, so an unset variable is a hard
+gprbuild error instead of a machine-specific fallback path:
 
 ```gpr
 project Prog extends "aegir_program.gpr" is
@@ -496,8 +498,7 @@ project Prog extends "aegir_program.gpr" is
    for Object_Dir use "obj";
    for Exec_Dir use "bin";
    for Main use ("prog.adb");
-   for Runtime ("Ada") use external ("AEGIR_ROOT", "/home/user/src/aegir")
-     & "/userspace/gnat-rts";
+   for Runtime ("Ada") use external ("AEGIR_ROOT") & "/userspace/gnat-rts";
 
    package Builder is
       for Executable ("prog.adb") use "prog.elf";
