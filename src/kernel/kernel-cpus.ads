@@ -50,6 +50,15 @@ package Kernel.CPUs is
    Trap_Stack_Pages : constant := 4;
    Main_Stack_Pages : constant := 2;
 
+   --  Boot-hart (CPU 0) idle stacks are the linker's 64 KiB blocks
+   --  (linker.ld: __stack_top / __trap_stack_top).  The size
+   --  accessors return each hart's idle stack sizes in bytes so the
+   --  stack-guard canaries can be planted and checked per stack.
+   Boot_Stack_Bytes : constant U64 := 16#1_0000#;
+
+   function Idle_Trap_Stack_Size (CPU : CPU_Index) return U64;
+   function Idle_Main_Stack_Size (CPU : CPU_Index) return U64;
+
    --  Register the discovered topology.  Raw_Ids (0) must be the
    --  boot hart's raw id.  Count is the number of usable harts
    --  (1 .. Max_CPUs).

@@ -1,4 +1,5 @@
 with Arch;
+with Kernel.Physical_Memory;
 with System.Storage_Elements;
 
 package body Kernel.CPUs is
@@ -58,6 +59,14 @@ package body Kernel.CPUs is
 
    function Idle_Main_Stack_Top (CPU : CPU_Index) return U64 is
      (Arch.Phys_To_Virt (Infos (CPU).Main_Stack_Top));
+
+   function Idle_Trap_Stack_Size (CPU : CPU_Index) return U64 is
+     (if CPU = CPU_Index'First then Boot_Stack_Bytes
+      else U64 (Trap_Stack_Pages) * Kernel.Physical_Memory.Page_Size);
+
+   function Idle_Main_Stack_Size (CPU : CPU_Index) return U64 is
+     (if CPU = CPU_Index'First then Boot_Stack_Bytes
+      else U64 (Main_Stack_Pages) * Kernel.Physical_Memory.Page_Size);
 
    procedure Mark_Started (CPU : CPU_Index) is
    begin

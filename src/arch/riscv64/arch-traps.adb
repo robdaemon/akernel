@@ -299,6 +299,20 @@ package body Arch.Traps is
       Result : Kernel.Scheduler.Status;
    begin
       loop
+         --  Per-CPU stack canaries: this loop runs on the per-hart
+         --  main stack; verify both idle stacks each pass so deep
+         --  nesting on a hart's own stacks is caught.
+         declare
+            Self : constant Kernel.CPUs.CPU_Index := Kernel.CPUs.Current;
+         begin
+            Kernel.Stack_Guard.Check
+              (Kernel.CPUs.Idle_Main_Stack_Top (Self),
+               Kernel.CPUs.Idle_Main_Stack_Size (Self));
+            Kernel.Stack_Guard.Check
+              (Kernel.CPUs.Idle_Trap_Stack_Top (Self),
+               Kernel.CPUs.Idle_Trap_Stack_Size (Self));
+         end;
+
          --  The idle loop runs on the per-hart main stack, so it
          --  is safe to free any thread kernel stacks that were
          --  deferred while their owning hart was still on them.

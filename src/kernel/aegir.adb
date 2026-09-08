@@ -535,6 +535,14 @@ begin
       PMM_Self_Test;
    end if;
 
+   --  Plant the boot hart's idle stack canaries now that the kernel
+   --  address space (physmap) is live; secondary harts are planted
+   --  as their stacks are recorded below.
+   Kernel.Stack_Guard.Plant
+     (Kernel.CPUs.Idle_Trap_Stack_Top (0), Kernel.CPUs.Idle_Trap_Stack_Size (0));
+   Kernel.Stack_Guard.Plant
+     (Kernel.CPUs.Idle_Main_Stack_Top (0), Kernel.CPUs.Idle_Main_Stack_Size (0));
+
    Kernel.Tasks.Initialize_Process (Bootstrap_Process, 1);
    Kernel.Tasks.Set_Process_State
      (PCB       => Bootstrap_Process,
@@ -910,6 +918,12 @@ begin
                   Main_Top => Main_Base
                     + Interfaces.Unsigned_64 (Kernel.CPUs.Main_Stack_Pages)
                       * Kernel.Physical_Memory.Page_Size);
+               Kernel.Stack_Guard.Plant
+                 (Kernel.CPUs.Idle_Trap_Stack_Top (Idx),
+                  Kernel.CPUs.Idle_Trap_Stack_Size (Idx));
+               Kernel.Stack_Guard.Plant
+                 (Kernel.CPUs.Idle_Main_Stack_Top (Idx),
+                  Kernel.CPUs.Idle_Main_Stack_Size (Idx));
                Hart_Start_RC := Arch.SBI.Hart_Start
                  (Raw_Hart_Id => Kernel.CPUs.Raw_Id (Idx),
                   Entry_PA    => Arch.Kernel_Virt_To_Phys
