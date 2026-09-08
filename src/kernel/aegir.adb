@@ -13,6 +13,7 @@ with Board.RTC;
 with Board.PLIC;
 with Board.UART;
 with Kernel.Boot_Files;
+with Kernel.Bootstrap;
 with Kernel.Bootinfo;
 with Kernel.Capabilities;
 with Kernel.CPUs;
@@ -28,6 +29,7 @@ with Kernel.Scheduler;
 with Kernel.Tasks;
 
 procedure Aegir is
+   use Kernel.Bootstrap;
    use type Interfaces.Unsigned_64;
    use type Kernel.Capabilities.Status;
    use type Kernel.Boot_Files.Status;
@@ -42,12 +44,6 @@ procedure Aegir is
    use type Kernel.Tasks.Thread_Access;
    use type Kernel.Tasks.Thread_State;
 
-   Bootstrap_Process : aliased Kernel.Tasks.Process_Control_Block;
-   Driver_Process    : aliased Kernel.Tasks.Process_Control_Block;
-   Init_Process      : aliased Kernel.Tasks.Process_Control_Block;
-   Bootstrap_Task    : aliased Kernel.Tasks.Thread_Control_Block;
-   Driver_Task       : aliased Kernel.Tasks.Thread_Control_Block;
-   Init_Task         : aliased Kernel.Tasks.Thread_Control_Block;
    Result           : Kernel.Capabilities.Status;
    IPC_Result       : Kernel.IPC.Status;
    Initrd_Result    : Kernel.Initrd.Status;
