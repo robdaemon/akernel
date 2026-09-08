@@ -129,6 +129,9 @@ package body Trinket.Fonts is
    function FT_Advance (V : System.Address; CP : Unsigned_64)
      return CInt
    with Import, Convention => C, External_Name => "aegir_ft_advance_x";
+   function FT_Kern (V : System.Address; L, R : Unsigned_64)
+     return CInt
+   with Import, Convention => C, External_Name => "aegir_ft_kerning";
    function FT_Glyph
      (V : System.Address; CP : Unsigned_64;
       Left, Top, W, H, Pitch : CInt_Ptr;
@@ -691,33 +694,55 @@ package body Trinket.Fonts is
      (C : Canvas; X, Y : U64; S : String; FG : Pixel;
       F : in out Font_Rec)
    is
-      Pen : Integer := Integer (X);
+      Pen  : Integer := Integer (X);
+      Prev : Integer := -1;
    begin
       if F.Ttf /= null then
          for Ch of S loop
             declare
                CP : constant Natural := Character'Pos (Ch);
             begin
+               --  Pair kerning with the previous glyph tightens
+               --  the gap (e.g. "AV") before this one draws.
+               if Prev >= 0 then
+                  Pen := Pen
+                    + Integer (FT_Kern (F.Ttf.Face,
+                                        Unsigned_64 (Prev),
+                                        Unsigned_64 (CP)));
+               end if;
                Draw_TTF_CP (C, F, CP, U64 (Pen), Y, FG);
                Pen := Pen
                  + Integer (FT_Advance (F.Ttf.Face,
                                         Unsigned_64 (CP)));
+               Prev := CP;
             end;
          end loop;
       end if;
    end Draw_TTF_From;
 
    function Width_TTF (S : String; F : Font_Rec) return U64 is
-      W : U64 := 0;
+      Tot  : Integer := 0;
+      Prev : Integer := -1;
    begin
       if F.Ttf /= null then
          for Ch of S loop
-            W := W + U64
-              (FT_Advance (F.Ttf.Face, Unsigned_64
-                 (Character'Pos (Ch))));
+            declare
+               CP : constant Natural := Character'Pos (Ch);
+            begin
+               if Prev >= 0 then
+                  Tot := Tot
+                    + Integer (FT_Kern (F.Ttf.Face,
+                                        Unsigned_64 (Prev),
+                                        Unsigned_64 (CP)));
+               end if;
+               Tot := Tot
+                 + Integer (FT_Advance (F.Ttf.Face,
+                                        Unsigned_64 (CP)));
+               Prev := CP;
+            end;
          end loop;
       end if;
-      return W;
+      return (if Tot > 0 then U64 (Tot) else 0);
    end Width_TTF;
 
    function Present_TTF (F : Font_Rec; CP : Natural) return Boolean is

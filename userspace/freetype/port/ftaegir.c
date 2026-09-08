@@ -151,4 +151,19 @@ int aegir_ft_glyph(void *v, unsigned long cp,
   return 0;
 }
 
+/* Pair kerning between two codepoints in pixels (0 when the face
+ * has no kerning or either glyph is missing). FT_KERNING_DEFAULT
+ * scales to the current char size. */
+int aegir_ft_kerning(void *v, unsigned long l, unsigned long r)
+{
+  struct aegir_ft_face *f = (struct aegir_ft_face *)v;
+  FT_Vector k;
+  if (!f)
+    return 0;
+  if (FT_Get_Kerning(f->face, (FT_UInt)l, (FT_UInt)r,
+                     FT_KERNING_DEFAULT, &k))
+    return 0;
+  return (int)((k.x + 32) >> 6);
+}
+
 /* EOF */
