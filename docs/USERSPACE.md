@@ -470,6 +470,47 @@ Standalone Alire projects building to `bin/userspace/*.elf`:
   busy-loops forever; boot continuing afterwards proves timer
   preemption.
 
+## Building a program outside the tree
+
+Programs whose sources live outside this repository (a separate
+toolchain repo, generated code, an experiment) can build against the
+same runtime chain without copying anything into the monorepo.  Set
+`AEGIR_ROOT` to this checkout and run gprbuild with the runtime
+project directory on the project search path:
+
+```sh
+gprbuild -P prog.gpr \
+  -aP "$AEGIR_ROOT/userspace/rts" \
+  -XAEGIR_ROOT="$AEGIR_ROOT"
+```
+
+`prog.gpr` extends the shared program project by name (found through
+`-aP`), restates the runtime directory (GNAT resolves project
+attribute paths relative to the *main* project's directory, so the
+base project's `../gnat-rts` only works for in-tree crates), and may
+point its object/exec dirs anywhere:
+
+```gpr
+project Prog extends "aegir_program.gpr" is
+   for Source_Dirs use (".");
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Main use ("prog.adb");
+   for Runtime ("Ada") use external ("AEGIR_ROOT", "/home/user/src/aegir")
+     & "/userspace/gnat-rts";
+
+   package Builder is
+      for Executable ("prog.adb") use "prog.elf";
+   end Builder;
+end Prog;
+```
+
+Everything else — `libaegir_user.a` (the syscall/glue/service layers),
+the linker script, the start/glue asm, and the newlib `-u _sbrk`
+shim — is inherited unchanged from `aegir_program.gpr`.  This is the
+supported shape for the separate Oberon-2 toolchain repo
+(`AEGIR_ROOT` + sibling `~/src/o2c`).
+
 ## Manifest
 
 `System/Manifest` line format:
