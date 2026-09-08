@@ -27,9 +27,16 @@ repository.
   build regression" (a clean full-debug build reproduced it). Fix: new
   `Kernel.Bootstrap` package homes the six records in static BSS,
   unreachable by any stack. Repeated boots reach `shell online` with
-  zero underflow/exception events. Note: `__gnat_last_chance_handler`
-  is still a silent WFI loop (kernel exceptions print nothing) — a
-  follow-up should dump msg+line+hart there.
+  zero underflow/exception events.
+
+- **Kernel last-chance handler reports instead of silently halting**
+  (`Kernel.Last_Chance`): `__gnat_last_chance_handler` used to be a
+  bare assembly WFI loop, so every kernel Ada exception died with no
+  output (this bug cost hours to find via gdb). It is now an Ada
+  handler that prints the hart, the exception message address and
+  line, and the message text over the UART (lock-free `Put_Unsafe`
+  path, per-hart re-entry guard) before halting the hart. Kernel
+  exceptions are now visible on the console.
   (+ ENV:Term.Font.Size) selects a .TTF/.OTF mono face for the
   terminal — Cell_W is the digit advance, Row_H the line height, and
   every grid geometry (column/row counts, wrap width, mouse

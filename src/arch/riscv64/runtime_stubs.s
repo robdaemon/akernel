@@ -59,11 +59,3 @@ __gnat_exit:
     wfi
     j 1b
 .size __gnat_exit, . - __gnat_exit
-
-.global __gnat_last_chance_handler
-.type __gnat_last_chance_handler, @function
-__gnat_last_chance_handler:
-1:
-    wfi
-    j 1b
-.size __gnat_last_chance_handler, . - __gnat_last_chance_handler

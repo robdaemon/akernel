@@ -22,6 +22,7 @@ with Kernel.ELF;
 with Kernel.Initrd;
 with Kernel.IPC;
 with Kernel.Interrupts;
+with Kernel.Last_Chance;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Processes;
