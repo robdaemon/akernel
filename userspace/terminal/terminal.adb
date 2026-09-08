@@ -488,23 +488,27 @@ procedure Terminal is
                   Terminal_Clip.Row_Extent (Line_I, SA, SB);
                   --  M9A grid font: draw cell by cell so the band
                   --  and the cursor can recolor individual glyphs
-                  --  with one code path for the BDF mono set and a
-                  --  .TTF grid face (mono advance = Cell_W).
+                  --  with one code path. TTF cells draw advance-
+                  --  free (Draw_Glyph): the terminal positions by
+                  --  Cell_W itself, so per-glyph FT advance/load
+                  --  calls — the old per-char Draw_Text did an
+                  --  FT_Load_Glyph on every repaint — would be pure
+                  --  waste and made TTF typing sluggish.
                   for C in 0 .. Len - 1 loop
                      declare
                         X : constant U64 := U64 (C) * CW;
                      begin
                         if Term_H /= Trinket.Fonts.Null_Handle then
                            if SA <= C and then C <= SB then
-                              Trinket.Fonts.Draw_Text
-                                (Canvas, Term_H, X, Y,
-                                 Line (C + 1 .. C + 1),
-                                 Trinket.Pane);
+                              Trinket.Fonts.Draw_Glyph
+                                (Canvas, Term_H,
+                                 Character'Pos (Line (C + 1)),
+                                 X, Y, Trinket.Pane);
                            else
-                              Trinket.Fonts.Draw_Text
-                                (Canvas, Term_H, X, Y,
-                                 Line (C + 1 .. C + 1),
-                                 Trinket.Text_Dark);
+                              Trinket.Fonts.Draw_Glyph
+                                (Canvas, Term_H,
+                                 Character'Pos (Line (C + 1)),
+                                 X, Y, Trinket.Text_Dark);
                            end if;
                         else
                            if SA <= C and then C <= SB then
@@ -571,9 +575,10 @@ procedure Terminal is
                      Terminal_Buffer.Get_Line (Cur_Line, Line, Len);
                      if Cur_Col < Len then
                         if Term_H /= Trinket.Fonts.Null_Handle then
-                           Trinket.Fonts.Draw_Text
-                             (Canvas, Term_H, X, Y,
-                              Line (Cur_Col + 1 .. Cur_Col + 1),
+                           Trinket.Fonts.Draw_Glyph
+                             (Canvas, Term_H,
+                              Character'Pos (Line (Cur_Col + 1)),
+                              X, Y,
                               (if On_Band then Trinket.Text_Dark
                                else Trinket.Pane));
                         else
