@@ -80,10 +80,21 @@ package body Font_App is
                     Raised => False);
       if W.F /= Fonts.Null_Handle then
          LH := Fonts.Line_Height (W.F);
-         Fonts.Draw_Text
-           (C, W.F, W.X + 6, W.Y + 5, Sample_1, Text_Dark);
-         Fonts.Draw_Text
-           (C, W.F, W.X + 6, W.Y + 5 + LH, Sample_2, Text_Dark);
+         --  Clip the samples to the sunken panel: a wide font (the
+         --  16 px TTFs) is wider than the pane, and unclipped text
+         --  overran the frame to the right.
+         declare
+            C2 : Trinket.Canvas := C;
+         begin
+            C2.CX0 := Trinket.U64'Max (C2.CX0, W.X + 4);
+            C2.CX1 := Trinket.U64'Min (C2.CX1, W.X + W.W - 4);
+            C2.CY0 := Trinket.U64'Max (C2.CY0, W.Y + 3);
+            C2.CY1 := Trinket.U64'Min (C2.CY1, W.Y + W.H - 3);
+            Fonts.Draw_Text
+              (C2, W.F, W.X + 6, W.Y + 5, Sample_1, Text_Dark);
+            Fonts.Draw_Text
+              (C2, W.F, W.X + 6, W.Y + 5 + LH, Sample_2, Text_Dark);
+         end;
       end if;
    end Draw;
 
@@ -254,6 +265,18 @@ package body Font_App is
    procedure Show_Font (E : Natural) is
       Pv_W : Preview renames Preview (Pv.all);
    begin
+      --  Selecting the font already previewed (list re-selection,
+      --  tab back) must not reload — a .TTF load re-reads the
+      --  whole file, which made switching feel laggy.
+      if Cur /= 0
+        and then Cur_Len = Entries (E).Path_Len
+        and then Cur_Path (1 .. Cur_Len) =
+          Entries (E).Path (1 .. Entries (E).Path_Len)
+        and then Pv_W.F /= Fonts.Null_Handle
+      then
+         Pv.Dirty := True;
+         return;
+      end if;
       Cur := E;
       Cur_Len := Entries (E).Path_Len;
       Cur_Path (1 .. Cur_Len) := Entries (E).Path (1 .. Cur_Len);

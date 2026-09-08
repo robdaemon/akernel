@@ -54,9 +54,36 @@ package body Trinket.Fonts is
    --  FreeType face. Data (the font file bytes) must outlive the
    --  face, which references it.
    type Str_Access is access String;
+
+   type Bmp_Arr is array (Natural range <>) of Unsigned_8;
+   type Bmp_Ptr is access Bmp_Arr;
+   procedure Free_Bmp is new Ada.Unchecked_Deallocation
+     (Bmp_Arr, Bmp_Ptr);
+
+   --  Per-face glyph raster cache. FreeType's slot bitmap is only
+   --  valid until the next FT call, so a cached glyph is a heap
+   --  copy; without the cache every repaint of a .TTF string
+   --  re-rasterizes each glyph (the font-picker preview lag). A
+   --  preview/repaint reuses the same handful of codepoints, so a
+   --  round-robin buffer is plenty.
+   TTF_Cache_N : constant := 96;
+   type TTF_Glyph_Cache is record
+      CP           : Integer := -1;
+      W, H         : Natural := 0;
+      Left, Top    : Integer := 0;
+      Pitch        : Natural := 0;
+      B            : Bmp_Ptr := null;
+   end record;
+   type TTF_Cache_Arr is array (0 .. TTF_Cache_N - 1)
+     of TTF_Glyph_Cache;
+
    type TTF_Rec is record
       Face : System.Address := System.Null_Address;
       Data : Str_Access := null;
+      Cache : TTF_Cache_Arr := (others => (CP => -1, W => 0, H => 0,
+                                           Left => 0, Top => 0,
+                                           Pitch => 0, B => null));
+      Next  : Natural := 0;   --  round-robin eviction slot
    end record;
    type Ttf_Access is access TTF_Rec;
 
@@ -425,7 +452,13 @@ package body Trinket.Fonts is
             Free (Buf);
             return;
          end if;
-         F.Ttf := new TTF_Rec'(Face => Face, Data => Buf);
+         F.Ttf := new TTF_Rec'
+           (Face  => Face,
+            Data  => Buf,
+            Cache => (others => (CP => -1, W => 0, H => 0,
+                                 Left => 0, Top => 0,
+                                 Pitch => 0, B => null)),
+            Next  => 0);
          F.Ascent := U64 (FT_Ascent (Face));
          F.Descent := U64 (FT_Descent (Face));
          F.From_Disk := True;
@@ -513,42 +546,33 @@ package body Trinket.Fonts is
         or Pixel (R) * 2**16 or Pixel (G) * 2**8 or Pixel (B);
    end Blend_Pixel;
 
-   --  Rasterize CP from the face and blend it at pen (X, Y) with
-   --  the line top at Y. No-op when the face is null / the
-   --  codepoint has no glyph.
-   procedure Draw_TTF_CP
-     (C : Canvas; F : Font_Rec; CP : Natural; X, Y : U64; FG : Pixel)
+   --  Blend one grayscale bitmap at pen (X, Y); F.Ascent places
+   --  the baseline. No-op for a null/short bitmap.
+   procedure Blend_Bmp
+     (C : Canvas; F : Font_Rec; X, Y : U64; FG : Pixel;
+      Left, Top, W, H, Pitch : Integer; Bits : System.Address)
    is
       Pix : Pixel_Array (0 .. C.W * C.H - 1)
         with Address => C.Base;
-      Left, Top, W, H, Pitch : aliased CInt := 0;
-      Bits : aliased System.Address := System.Null_Address;
    begin
-      if F.Ttf = null
-        or else FT_Glyph (F.Ttf.Face, Unsigned_64 (CP),
-                          Left'Unrestricted_Access,
-                          Top'Unrestricted_Access,
-                          W'Unrestricted_Access,
-                          H'Unrestricted_Access,
-                          Pitch'Unrestricted_Access,
-                          Bits'Unrestricted_Access) /= 0
-        or else Pitch <= 0 or else Bits = System.Null_Address
+      if Bits = System.Null_Address or else Pitch <= 0
+        or else W <= 0 or else H <= 0
       then
          return;
       end if;
       declare
-         Bytes : Byte_Array (0 .. Natural (Pitch) * Natural (H) - 1)
+         Bytes : Byte_Array (0 .. Pitch * H - 1)
            with Address => Bits;
-         GX : constant Integer := Integer (X) + Integer (Left);
+         GX : constant Integer := Integer (X) + Left;
          GY : constant Integer := Integer (Y) + Integer (F.Ascent)
-           - Integer (Top);
+           - Top;
       begin
-         for R in 0 .. Integer (H) - 1 loop
-            for Col in 0 .. Integer (W) - 1 loop
-               if Col < Natural (Pitch) then
+         for R in 0 .. H - 1 loop
+            for Col in 0 .. W - 1 loop
+               if Col < Pitch then
                   declare
                      A  : constant Natural :=
-                       Natural (Bytes (R * Natural (Pitch) + Col));
+                       Natural (Bytes (R * Pitch + Col));
                      PX : constant Integer := GX + Col;
                      PY : constant Integer := GY + R;
                   begin
@@ -568,10 +592,78 @@ package body Trinket.Fonts is
             end loop;
          end loop;
       end;
+   end Blend_Bmp;
+
+   --  Draw codepoint CP at pen (X, Y), line top Y. The per-face
+   --  raster cache serves repeat draws (repaints) without
+   --  re-rasterizing; a miss renders, stores a bitmap copy, and
+   --  draws it.
+   procedure Draw_TTF_CP
+     (C : Canvas; F : in out Font_Rec; CP : Natural;
+      X, Y : U64; FG : Pixel)
+   is
+      Left, Top, W, H, Pitch : aliased CInt := 0;
+      Bits : aliased System.Address := System.Null_Address;
+   begin
+      if F.Ttf = null then
+         return;
+      end if;
+      for I in F.Ttf.Cache'Range loop
+         if F.Ttf.Cache (I).CP = CP then
+            declare
+               E : TTF_Glyph_Cache renames F.Ttf.Cache (I);
+            begin
+               Blend_Bmp
+                 (C, F, X, Y, FG, E.Left, E.Top, Integer (E.W),
+                  Integer (E.H), Integer (E.Pitch),
+                  (if E.B = null then System.Null_Address
+                   else E.B.all'Address));
+            end;
+            return;
+         end if;
+      end loop;
+      if FT_Glyph (F.Ttf.Face, Unsigned_64 (CP),
+                   Left'Unrestricted_Access, Top'Unrestricted_Access,
+                   W'Unrestricted_Access, H'Unrestricted_Access,
+                   Pitch'Unrestricted_Access,
+                   Bits'Unrestricted_Access) /= 0
+      then
+         return;   --  no glyph for this codepoint
+      end if;
+      if Pitch > 0 and then Bits /= System.Null_Address
+        and then Natural (Pitch) * Natural (H) <= 32 * 1024
+      then
+         declare
+            E : TTF_Glyph_Cache renames F.Ttf.Cache (F.Ttf.Next);
+            N : constant Natural := Natural (Pitch) * Natural (H);
+            Bytes : Byte_Array (0 .. N - 1)
+              with Address => Bits;
+         begin
+            F.Ttf.Next := (F.Ttf.Next + 1) mod TTF_Cache_N;
+            Free_Bmp (E.B);
+            E.B := new Bmp_Arr (0 .. N - 1);
+            E.B.all := Bmp_Arr (Bytes);
+            E.CP := CP;
+            E.W := Natural (W);
+            E.H := Natural (H);
+            E.Left := Integer (Left);
+            E.Top := Integer (Top);
+            E.Pitch := Natural (Pitch);
+            Blend_Bmp
+              (C, F, X, Y, FG, E.Left, E.Top, Integer (E.W),
+               Integer (E.H), Integer (E.Pitch), E.B.all'Address);
+         end;
+         return;
+      end if;
+      --  Oversized bitmap: draw straight from the transient slot.
+      Blend_Bmp
+        (C, F, X, Y, FG, Integer (Left), Integer (Top),
+         Integer (W), Integer (H), Integer (Pitch), Bits);
    end Draw_TTF_CP;
 
    procedure Draw_TTF_From
-     (C : Canvas; X, Y : U64; S : String; FG : Pixel; F : Font_Rec)
+     (C : Canvas; X, Y : U64; S : String; FG : Pixel;
+      F : in out Font_Rec)
    is
       Pen : Integer := Integer (X);
    begin
@@ -639,7 +731,8 @@ package body Trinket.Fonts is
    end Draw_One;
 
    procedure Draw_From
-     (C : Canvas; X, Y : U64; S : String; FG : Pixel; F : Font_Rec)
+     (C : Canvas; X, Y : U64; S : String; FG : Pixel;
+      F : in out Font_Rec)
    is
       Baseline : constant Integer := Integer (Y) + Integer (F.Ascent);
       Pen      : Integer := Integer (X);
@@ -697,7 +790,7 @@ package body Trinket.Fonts is
 
    procedure Draw_CP
      (C : Canvas; CP : Natural; X, Y : U64; FG : Pixel;
-      F : Font_Rec)
+      F : in out Font_Rec)
    is
       Baseline : constant Integer := Integer (Y) + Integer (F.Ascent);
       E        : Natural;
@@ -769,6 +862,9 @@ package body Trinket.Fonts is
    procedure Unload (H : in out Handle) is
    begin
       if H /= null and then H.Ttf /= null then
+         for I in H.Ttf.Cache'Range loop
+            Free_Bmp (H.Ttf.Cache (I).B);
+         end loop;
          FT_Close (H.Ttf.Face);
          Free (H.Ttf.Data);
          Free_Ttf (H.Ttf);
