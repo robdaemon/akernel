@@ -13,6 +13,7 @@ with Kernel.Notifications;
 with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Scheduler;
+with Kernel.Stack_Guard;
 
 package body Kernel.Processes is
    use type Interfaces.Unsigned_64;
@@ -316,6 +317,8 @@ package body Kernel.Processes is
       Cap_Result : Kernel.Capabilities.Status;
    begin
       if Stack_Top /= 0 then
+         Kernel.Stack_Guard.Check
+           (Arch.Phys_To_Virt (Stack_Top), Kernel.Physical_Memory.Page_Size);
          Kernel.Physical_Memory.Deallocate_Frame
            (Frame  => Stack_Top - Kernel.Physical_Memory.Page_Size,
             Result => PMM_Result);
@@ -548,6 +551,10 @@ package body Kernel.Processes is
       Kernel.Tasks.Set_Kernel_Stack_Top
         (TCB       => Threads (Thread_Slot),
          Stack_Top => Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size);
+      Kernel.Stack_Guard.Plant
+        (Arch.Phys_To_Virt
+           (Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size),
+         Kernel.Physical_Memory.Page_Size);
       Kernel.Tasks.Set_IPC_Buffer
         (TCB      => Threads (Thread_Slot),
          Phys_PA  => IPC_Buffer_Frame);
@@ -835,6 +842,9 @@ package body Kernel.Processes is
                      if Running then
                         Defer_Stack_On (On_CPU, Top);
                      else
+                        Kernel.Stack_Guard.Check
+                          (Arch.Phys_To_Virt (Top),
+                           Kernel.Physical_Memory.Page_Size);
                         Kernel.Physical_Memory.Deallocate_Frame
                           (Frame  => Top - Kernel.Physical_Memory.Page_Size,
                            Result => PMM_Result);
@@ -1138,6 +1148,10 @@ package body Kernel.Processes is
       Kernel.Tasks.Set_Kernel_Stack_Top
         (TCB       => Threads (T_Slot),
          Stack_Top => KStack_Frame + Kernel.Physical_Memory.Page_Size);
+      Kernel.Stack_Guard.Plant
+        (Arch.Phys_To_Virt
+           (KStack_Frame + Kernel.Physical_Memory.Page_Size),
+         Kernel.Physical_Memory.Page_Size);
       Kernel.Tasks.Set_IPC_Buffer
         (TCB     => Threads (T_Slot),
          Phys_PA => Kernel.Memory.Frame_At (IPC_Info.Object, 0));
@@ -1471,6 +1485,9 @@ package body Kernel.Processes is
       for I in 0 .. Deferred_Count (CPU) - 1 loop
          if Epoch - Deferred_Stacks (CPU, I).Epoch >= 2 then
             if Deferred_Stacks (CPU, I).Stack_Top /= 0 then
+               Kernel.Stack_Guard.Check
+                 (Arch.Phys_To_Virt (Deferred_Stacks (CPU, I).Stack_Top),
+                 Kernel.Physical_Memory.Page_Size);
                Kernel.Physical_Memory.Deallocate_Frame
                  (Frame  => Deferred_Stacks (CPU, I).Stack_Top -
                             Kernel.Physical_Memory.Page_Size,

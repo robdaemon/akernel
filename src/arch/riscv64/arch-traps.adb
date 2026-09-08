@@ -21,6 +21,7 @@ with Kernel.Physical_Memory;
 with Kernel.Notifications;
 with Kernel.Processes;
 with Kernel.Scheduler;
+with Kernel.Stack_Guard;
 with Kernel.Tasks;
 
 package body Arch.Traps is
@@ -2894,6 +2895,23 @@ package body Arch.Traps is
    procedure Riscv_Trap_Handler (Frame : System.Address) is
    begin
       Kernel.Lock.Acquire;
+      --  Canary beat: this trap runs on the interrupted task's own
+      --  kernel stack (single page).  If it overflowed since that
+      --  task last trapped, the bottom marker is gone — report now,
+      --  before anything touches the stack further.
+      if Kernel.Scheduler.Current /= null then
+         declare
+            Cur : constant Kernel.Tasks.Thread_Access :=
+              Kernel.Scheduler.Current;
+            Top : constant U64 :=
+              Kernel.Tasks.Kernel_Stack_Top (Cur.all);
+         begin
+            if Top /= 0 then
+               Kernel.Stack_Guard.Check
+                 (Arch.Phys_To_Virt (Top), Kernel.Physical_Memory.Page_Size);
+            end if;
+         end;
+      end if;
       --  Bump this hart's trap epoch BEFORE draining deferred
       --  kernel stacks: a stack recorded by Mark_Exited for a
       --  sibling killed while running here in user mode is still

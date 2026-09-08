@@ -27,6 +27,7 @@ with Kernel.Objects;
 with Kernel.Physical_Memory;
 with Kernel.Processes;
 with Kernel.Scheduler;
+with Kernel.Stack_Guard;
 with Kernel.Tasks;
 
 procedure Aegir is
@@ -739,6 +740,10 @@ begin
         (TCB       => Init_Task,
          Stack_Top => Init_Kernel_Stack_Frame
            + Kernel.Physical_Memory.Page_Size);
+      Kernel.Stack_Guard.Plant
+        (Arch.Phys_To_Virt
+           (Init_Kernel_Stack_Frame + Kernel.Physical_Memory.Page_Size),
+         Kernel.Physical_Memory.Page_Size);
    end if;
 
    if Init_IPC_Buffer_Frame /= 0 then
