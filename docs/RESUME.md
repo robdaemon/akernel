@@ -13,6 +13,18 @@ repository.
 
 ## Recently shipped
 
+- **Terminal on a scalable mono TTF grid** (`04aca0a`): ENV:Term.Font
+  (+ ENV:Term.Font.Size) selects a .TTF/.OTF mono face for the
+  terminal — Cell_W is the digit advance, Row_H the line height, and
+  every grid geometry (column/row counts, wrap width, mouse
+  selection mapping, band fill, block cursor/caret) derives from
+  those metrics via Terminal_Clip.Init. Render draws cell-by-cell
+  through one path (the compiled-in 8x8 mono or the TTF handle) so
+  the selection band and cursor recolor individual glyphs in both
+  modes. Without the env vars the terminal keeps the BDF look
+  (8px cells at the BDF line height), pixel-identical; load failures
+  fall back to BDF. Gates: make test 1900 PASS / 0 FAIL at SMP4.
+
 - **FreeType follow-ups: sizes, autofit, kerning, fallback** (M9A,
   `e737876` + `a87449e` + `80897c4` + `a28c9e7`): TTF/OTF faces are
   no longer stuck at 16 px — `Fonts.Load`/`Init` take a pixel size
