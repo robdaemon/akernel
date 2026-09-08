@@ -81,6 +81,14 @@ INITRD_IMG := $(INITRD_OUT)/aegir-initrd.img
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
 INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
+
+#  o2c (separate repo, e.g. sibling ~/src/o2c) dogfood staging: set
+#  O2C_ROOT to the o2c checkout (absolute or relative to the aegir
+#  tree) to additionally stage and spawn Tests/O2c in INITRD_MODE=test
+#  boots.  Unset by default, so nothing is staged and no
+#  machine-specific path is baked into this Makefile.
+O2C_ROOT ?=
+O2C_ELF := $(if $(O2C_ROOT),$(O2C_ROOT)/crate/bin/o2c.elf,)
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer desktop
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib clipboard
@@ -442,6 +450,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Tcp_Test $(TCP_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Gsock_Test $(GSOCK_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Dhcp_Test $(DHCP_TEST_ELF)
+	$(if $(O2C_ELF),alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/O2c $(O2C_ELF),)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -457,6 +466,7 @@ endif
 ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
+	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console' >> $(INITRD_ROOT)/System/Manifest,)
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
 endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
