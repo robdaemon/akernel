@@ -458,6 +458,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	$(if $(O2C_ROOT),mkdir -p $(INITRD_ROOT)/Tests/O2cLib,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/hello.ob2 $(INITRD_ROOT)/Tests/O2cLib/Hello.ob2,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/math.ob2 $(INITRD_ROOT)/Tests/O2cLib/Math.ob2,)
+	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/geo.ob2 $(INITRD_ROOT)/Tests/O2cLib/Geo.ob2,)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
