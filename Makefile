@@ -455,6 +455,9 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Dhcp_Test $(DHCP_TEST_ELF)
 	$(if $(O2C_ELF),alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/O2c $(O2C_ELF),)
 	$(if $(O2C_HELLO_ELF),alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Hello $(O2C_HELLO_ELF),)
+	$(if $(O2C_ROOT),mkdir -p $(INITRD_ROOT)/Tests/O2cLib,)
+	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/hello.ob2 $(INITRD_ROOT)/Tests/O2cLib/Hello.ob2,)
+	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/math.ob2 $(INITRD_ROOT)/Tests/O2cLib/Math.ob2,)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -470,7 +473,7 @@ endif
 ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
-	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
 	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console' >> $(INITRD_ROOT)/System/Manifest,)
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
 endif
@@ -478,7 +481,7 @@ endif
 #  staged o2c/hello programs - no fuzz flood, so console capture of
 #  the emitted source is not byte-torn by concurrent chatter.
 ifeq ($(INITRD_MODE),min)
-	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
 	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console' >> $(INITRD_ROOT)/System/Manifest,)
 endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
