@@ -93,6 +93,13 @@ INITRD_CRATES := init serial fuzz fpchk spin thread_test task_test memstage echo
 O2C_ROOT ?=
 O2C_ELF := $(if $(O2C_ROOT),$(O2C_ROOT)/crate/bin/o2c.elf,)
 O2C_HELLO_ELF ?=
+#  The o2c bytecode VM (M53): vm.elf plus the fixture image the host front
+#  end produces (make -C $(O2C_ROOT) vm-aegir vm-fixture).  Staged as
+#  Tests/Vm (program 42) with Tests/O2cBC/VmGreet.obc, so a min-mode boot
+#  proves the VM *executes an image in the guest* - the payload is emitted
+#  on the host because the in-guest compiler path is not wired yet.
+O2C_VM_ELF := $(if $(O2C_ROOT),$(O2C_ROOT)/vm/bin-aegir/vm.elf,)
+O2C_VM_IMAGE := $(if $(O2C_ROOT),$(O2C_ROOT)/vm/fixture/VmGreet.obc,)
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer desktop
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib clipboard
@@ -462,6 +469,9 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/geom.ob2 $(INITRD_ROOT)/Tests/O2cLib/Geom.ob2,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/geo.ob2 $(INITRD_ROOT)/Tests/O2cLib/Geo.ob2,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/sample.txt $(INITRD_ROOT)/Tests/O2cLib/Sample.txt,)
+	$(if $(O2C_VM_ELF),alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Vm $(O2C_VM_ELF),)
+	$(if $(O2C_VM_IMAGE),mkdir -p $(INITRD_ROOT)/Tests/O2cBC,)
+	$(if $(O2C_VM_IMAGE),cp $(O2C_VM_IMAGE) $(INITRD_ROOT)/Tests/O2cBC/VmGreet.obc,)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
 	mkdir -p $(INITRD_ROOT)/Tests/Gen
 	for i in $$(seq -w 0 63); do \
@@ -494,6 +504,7 @@ endif
 ifeq ($(INITRD_MODE),min)
 	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
 	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_VM_ELF),printf '%s\n' 'program 42 Tests/Vm console fs' >> $(INITRD_ROOT)/System/Manifest,)
 endif
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 10 System/Netserv console fs netdev net_server net_register' >> $(INITRD_ROOT)/System/Manifest
