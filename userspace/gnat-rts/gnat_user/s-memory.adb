@@ -64,13 +64,19 @@ package body System.Memory is
 
    Page_Bytes : constant U64 := 4096;
 
-   --  Heap VA range: 0x4000_0000 .. 0x4020_0000 (below the text at
-   --  0x4600_0000; stack/IPC/bootinfo pages sit at 0x6FFx_xxxx).
+   --  Heap VA window: 0x4000_0000 .. 0x4140_0000 (20 MiB), below the
+   --  text at 0x4600_0000 and the Files client buffer at 0x4400_8000,
+   --  above the loader's user base; stack/IPC/bootinfo pages sit at
+   --  0x6FFx_xxxx.  Chunks are requested from the kernel on demand, so
+   --  a program pays only for the heap it touches and the ceiling is
+   --  the window itself — the previous 8-chunk (2 MiB) cap ran the
+   --  o2c compiler out of heap as its builtin module set grew.
    Heap_Base : constant U64 := 16#4000_0000#;
 
+   Heap_Limit  : constant U64 := 16#4140_0000#;
    Chunk_Pages : constant U64 := 64;
-   Max_Chunks  : constant := 8;
-   --  8 chunks x 256 KiB = 2 MiB of heap.
+   Max_Chunks  : constant :=
+     Natural ((Heap_Limit - Heap_Base) / (Chunk_Pages * Page_Bytes));
 
    Header_Bytes : constant := 8;
    Min_Payload  : constant := 16;
