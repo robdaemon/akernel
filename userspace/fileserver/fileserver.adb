@@ -1096,7 +1096,23 @@ procedure Fileserver is
          return False;
       end if;
 
-      Ok := Syscalls.IPC_Call (FS_EP) = Syscalls.IPC_Ok;
+      declare
+         Cap0 : constant U64 := Syscalls.Message.Caps (0);
+         W0   : constant U64 := Syscalls.Message.Words (0);
+         W1   : constant U64 := Syscalls.Message.Words (1);
+         Lbl  : constant U64 := Syscalls.Message.Label;
+         RC   : U64;
+      begin
+         RC := Syscalls.IPC_Call (FS_EP);
+         Syscalls.Debug_Put_Line
+           ("fs: fwd rc" & U64'Image (RC)
+            & " ep" & U64'Image (FS_EP)
+            & " cap" & U64'Image (Cap0)
+            & " lbl" & U64'Image (Lbl)
+            & " off" & U64'Image (W0)
+            & " len" & U64'Image (W1));
+         Ok := RC = Syscalls.IPC_Ok;
+      end;
       return Ok;
    end Forward_To_FS;
 

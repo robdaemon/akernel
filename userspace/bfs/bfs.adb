@@ -936,9 +936,7 @@ begin
          Fail ("bfs recv failed");
       end if;
 
-      if Syscalls.Message.Label /= Op_Stat
-        and then Syscalls.Message.Label /= Op_Open
-        and then Syscalls.Message.Label /= Op_Read
+      if Syscalls.Message.Label /= Op_Read
         and then Syscalls.Message.Label /= Op_ReadDir
       then
          Syscalls.Debug_Put_Line ("bfs: op" & U64'Image (Syscalls.Message.Label));
