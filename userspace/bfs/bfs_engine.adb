@@ -155,6 +155,10 @@ package body Bfs_Engine is
    --  invisible (which is why the cache/transaction messages below were
    --  never seen).  The driver's own "bfs starting" line is visible, and
    --  that is the debug channel.
+   --  One-shot banner: proves the boot is running THIS engine code (and that
+   --  op tracing below reaches the log).  Printed once, on the first Stat.
+   Banner_Done : Boolean := False;
+
    Cache_Slots : constant := 64;
     Cache_Num   : array (0 .. Cache_Slots - 1) of U64 :=
       (others => U64'Last);
@@ -2986,13 +2990,14 @@ package body Bfs_Engine is
    begin
       Size := 0;
       Is_Dir := False;
-      if not Is_Mounted or else not Lookup (Path, Info, Root) then
-         --  M53 diagnostic: what the driver was handed and what it resolved.
+      if not Banner_Done then
+         Banner_Done := True;
          Aegir_User.Syscalls.Debug_Put_Line
-           ("bfs: S '" & Path & "' -> Not_Found");
+           ("bfs: engine trace v1 (m53 debug)");
+      end if;
+      if not Is_Mounted or else not Lookup (Path, Info, Root) then
          return Status_Not_Found;
       end if;
-      Aegir_User.Syscalls.Debug_Put_Line ("bfs: S '" & Path & "' -> Ok");
       Is_Dir := (Info.Mode and S_IFMT) = S_IFDIR;
       if not Is_Dir then
          Size := Info.Size;
@@ -3117,18 +3122,10 @@ package body Bfs_Engine is
     begin
        if not Is_Mounted then
           Len := 0;
-          Aegir_User.Syscalls.Debug_Put_Line ("bfs: W not mounted");
           return Status_Not_Found;
        end if;
        Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
-       --  M53 diagnostic: the write's own view of the name - the path the
-       --  driver was handed, how it split, and whether the file and its
-       --  parent resolve (a failing parent lookup is reported as Not_Found).
-       Aegir_User.Syscalls.Debug_Put_Line
-         ("bfs: W '" & Path & "' parent '" & P_Path (1 .. P_Len)
-          & "' name '" & P_Name (1 .. N_Len) & "'");
        if Lookup (Path, Info, Root) then
-          Aegir_User.Syscalls.Debug_Put_Line ("bfs: W 'found'");
           if Root then
              Len := 0;
              return Status_Bad_Args;
