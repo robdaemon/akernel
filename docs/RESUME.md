@@ -1602,24 +1602,37 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
-3. **Spawn ordering on declared caps** — init spawns manifest
-   programs in order and never waits, so a program can race the
-   mount of a volume its own manifest line names.  Observed while
-   dogfooding the o2c bytecode pipeline: program 40 (o2c) writes
-   `BD0:VmGreet.obc` and gets status 1 (Not_Found) whenever it
-   starts before bfs_server has mounted BD0:; the Files demo has
-   the same race and papers over it with `Files.Wait("BD0:")` (a
-   userspace poll), and the o2c driver briefly had one too.
-   Proposal: the manifest line already declares the dependencies -
-   the trailing tokens are the caps - so **init should defer
-   spawning a program until the caps its line names are
-   registered**, which removes the need for any client-side wait
-   (and makes `Files.Wait` vestigial).  Clients still need the
-   `Status_Not_Found` / `Status_Not_Ready` distinction for volumes
-   mounted after all spawning (hotplug), which is why gloss must
-   not collapse statuses into one errno (fixed for `_write`; see
-   the create path in aegir_user-gloss.adb, which now reports its
-   write/truncate/open statuses).
+3. **Create on first Write does not hold** — the fs protocol
+   documents that `Op_Write` creates a file that does not exist
+   (gloss's `_open` relies on it, and so did the o2c driver): o2c
+   writes a *new* name to the mounted BD0: and the server answers
+   status 1 (Not_Found).  So a client cannot publish a file with a
+   plain `Files.Write` on this server, and gloss's one-byte-write
+   create path has the same assumption.  Find what Oberon's
+   `Files.New` actually emits (the demo creates files every boot
+   and works) and either give clients that op or make the server
+   create on write as documented.  This is what still blocks o2c
+   publishing its bytecode image for the standalone VM, and why
+   `run_m1` does not yet assert that half.
+
+Resolved: **spawn ordering vs. mount readiness**.  init spawned
+   manifest programs in order and never waited, so a program could
+   race the mount of a volume its line names (o2c writing BD0:,
+   and the Files demo papered over it with `Files.Wait("BD0:")`).
+   The manifest now carries an **`await <path>`** directive
+   (`await BD0:README.TXT`, between System/Bfs and the programs
+   that need the volume): init polls the file server - through
+   `Aegir_User.Files.Bind`/`Stat`, not a hand-rolled message, and
+   bounded so a missing volume cannot wedge the boot - and logs
+   the timeout with its status.  Two findings from doing it: a
+   volume NAME is not answerable (`Stat("BD0:")` never resolves,
+   so the probe names a file, the same idiom the census uses for
+   Sys:), and `Files.Wait` is vestigial for this purpose.  run_m1
+   asserts the timeout line is ABSENT, which is the fix's proof.
+   Clients still need `Status_Not_Found` vs `Status_Not_Ready` for
+   volumes mounted after all spawning (hotplug) - which is why
+   gloss must not collapse statuses into one errno (fixed for
+   `_write`, and `_open` now reports its create steps).
 
 Deferred (not candidates): socket servers (finger etc.), external
 ICMP (slirp does not forward it — tests target the gateway by

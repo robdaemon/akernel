@@ -502,6 +502,12 @@ endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part1 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 17 System/Bfs console part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest
+#  Bfs mounts BD0: *after* it is spawned, so anything that needs the volume
+#  would race the mount.  `await BD0:` makes init hold the manifest here
+#  until the file server can resolve the volume - the launcher already knows
+#  the order, so no program needs to poll for it (the demo's Files.Wait and
+#  a poll in the o2c driver were both workarounds for exactly this race).
+	printf '%s\n' 'await BD0:README.TXT' >> $(INITRD_ROOT)/System/Manifest
 #  M42: the o2c demo programs run after Bfs so the BD0: volume
 #  (used by the Files write demo) is mounted when they start.
 ifeq ($(INITRD_MODE),min)
