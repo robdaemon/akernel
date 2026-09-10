@@ -2999,13 +2999,27 @@ package body Bfs_Engine is
          Aegir_User.Syscalls.Debug_Put_Line
            ("bfs: engine trace v1 (m53 debug)");
       end if;
-      if not Is_Mounted or else not Lookup (Path, Info, Root) then
+      if not Is_Mounted then
+         if Trace_Left > 0 then
+            Trace_Left := Trace_Left - 1;
+            Aegir_User.Syscalls.Debug_Put_Line ("bfs: S '" & Path & "' nofs");
+         end if;
          return Status_Not_Found;
       end if;
-      if Trace_Left > 0 then
-         Trace_Left := Trace_Left - 1;
-         Aegir_User.Syscalls.Debug_Put_Line ("bfs: S '" & Path & "' found");
-      end if;
+      --  Trace BOTH outcomes: the failing lookup is the case that matters,
+      --  and the first version of this trace only reported successes.
+      declare
+         Found : constant Boolean := Lookup (Path, Info, Root);
+      begin
+         if Trace_Left > 0 then
+            Trace_Left := Trace_Left - 1;
+            Aegir_User.Syscalls.Debug_Put_Line
+              ("bfs: S '" & Path & "' lookup" & Boolean'Image (Found));
+         end if;
+         if not Found then
+            return Status_Not_Found;
+         end if;
+      end;
       Is_Dir := (Info.Mode and S_IFMT) = S_IFDIR;
       if not Is_Dir then
          Size := Info.Size;
