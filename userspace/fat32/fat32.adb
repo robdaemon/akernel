@@ -27,6 +27,9 @@ with System.Storage_Elements;
 
 procedure Fat32 is
    package Syscalls renames Aegir_User.Syscalls;
+
+   --  M53 diagnostic counter (see the dispatch trace).
+   Dispatch_Traced : Natural := 0;
    subtype U64 is Syscalls.U64;
    use type U64;
    use type Interfaces.Unsigned_8;
@@ -2566,6 +2569,22 @@ begin
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          Fail ("fat32 recv failed");
+      end if;
+
+      --  M53 diagnostic: is this driver reached at all, and with which
+      --  labels?  Rate-limited (the first 40 requests) so it cannot flood
+      --  the console - a flood already cost this pipeline once.
+      if Dispatch_Traced < 40
+        and then (Syscalls.Message.Label = Op_Stat
+                  or else Syscalls.Message.Label = Op_Open
+                  or else Syscalls.Message.Label = Op_Write
+                  or else Syscalls.Message.Label = Op_Delete
+                  or else Syscalls.Message.Label = Op_Truncate)
+      then
+         Dispatch_Traced := Dispatch_Traced + 1;
+         Syscalls.Debug_Put_Line
+           ("fat32: op" & Interfaces.Unsigned_64'Image
+              (Syscalls.Message.Label));
       end if;
 
       if Syscalls.Message.Label = Op_Stat
