@@ -1602,7 +1602,24 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
-3. **gloss cannot read from an fs-driver volume** — `_open`
+3. **Volume names come from the filesystem driver, not the
+   device layer** — `BD<n>` is handed out at mount time (each fs
+   driver pushes `Op_Add_FS` and the VFS takes the next free
+   number; `fat32.adb` documents itself as "device BD0"), so the
+   name of the BOOT volume depends on which fs driver is spawned
+   first.  The Manifest's `BD0:` therefore means "whichever fs
+   driver won the race" and nothing pins it: reordering two
+   `program` lines silently renames a volume, and a diagnostic
+   saying "BD0 is broken" really says "the first fs driver is
+   broken" - which is exactly how a session got spent inside the
+   BeFS engine, whose ops never ran, while the volume in question
+   was elsewhere.  Proposal (M53 dogfooding): the DEVICE layer
+   (partmgr, which knows partition order and the boot partition)
+   should assign device names/numbers, fs drivers mount their
+   device, and volumes derive their name from the device - so
+   `BD0` is deterministic and meaningful.  `PD<n>` blocks already
+   exist, so the pieces are there.
+4. **gloss cannot read from an fs-driver volume** — `_open`
    (through libc: `Ada.Sequential_IO`/`Stream_IO`) answers status 1
    (Not_Found) for a file that EXISTS on BD0:, while o2c's write of
    that same file through `Aegir_User.Files` succeeds and the same
