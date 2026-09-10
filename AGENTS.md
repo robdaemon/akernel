@@ -5,6 +5,17 @@
   gprlib runs crash (`CONSTRAINT_ERROR : gprlib.adb index check
   failed`) and corrupt `libaegir_user.a` mid-archive. Plain
   `make all` / `make test` only.
+- **`alr` needs a writable temp dir.** In this sandbox
+  `/run/user/1000` is read-only, so `alr build` dies with
+  "Could not create temporary file at /run/user/1000/alr-*.tmp"
+  (and then "Cannot continue without a workspace"). Point it at a
+  writable path, e.g.
+
+      XDG_RUNTIME_DIR=/tmp/alrrt TMPDIR=/tmp make -C userspace/<crate>
+
+  (also set `XDG_CONFIG_HOME`/`XDG_DATA_HOME` when a toolchain has to
+  be located). Kernel-only iterations are much faster than `make all`:
+  `make kernel`, then boot.
 - **Capability/syscall/ABI numbers are append-only.** Never
   renumber or rearrange existing assignments (syscall numbers,
   grant/uniform-ABI handles, message labels); allocate new ones
