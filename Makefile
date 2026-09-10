@@ -457,7 +457,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	$(if $(O2C_HELLO_ELF),alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Hello $(O2C_HELLO_ELF),)
 	$(if $(O2C_ROOT),mkdir -p $(INITRD_ROOT)/Tests/O2cLib,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/hello.ob2 $(INITRD_ROOT)/Tests/O2cLib/Hello.ob2,)
-	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/math.ob2 $(INITRD_ROOT)/Tests/O2cLib/Math.ob2,)
+	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/geom.ob2 $(INITRD_ROOT)/Tests/O2cLib/Geom.ob2,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/geo.ob2 $(INITRD_ROOT)/Tests/O2cLib/Geo.ob2,)
 	$(if $(O2C_ROOT),cp $(O2C_ROOT)/samples/sample.txt $(INITRD_ROOT)/Tests/O2cLib/Sample.txt,)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/System/Libman $(LIBMAN_ELF)
