@@ -1,5 +1,0 @@
-[permissions]
-allow = []
-
-[sandbox]
-allow_write = ["${HOME}/src/o2c", "/tmp/o2c-test", "/tmp/o2c-stub", "/tmp"]
