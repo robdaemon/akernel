@@ -102,7 +102,12 @@ O2C_HELLO_ELF ?=
 #  o2c and the VM are separate manifest programs and the spawner does not
 #  serialize them, so the VM waits for the image (VM_Platform.
 #  Max_Input_Attempts) and o2c retries its create.
-O2C_VM_ELF := $(if $(O2C_ROOT),$(O2C_ROOT)/vm/bin-aegir/vm.elf,)
+#  Set O2C_BYTECODE=1 to stage the bytecode half (the VM program, the
+#  Oberon source o2c compiles to bytecode, and the manifest entry).  Off by
+#  default: the pass is a full compiler run whose output would interleave
+#  with o2c's Ada capture in the boots that only assert that.
+O2C_BYTECODE ?=
+O2C_VM_ELF := $(if $(O2C_BYTECODE),$(if $(O2C_ROOT),$(O2C_ROOT)/vm/bin-aegir/vm.elf,),)
 DISK_CRATES_SYSTEM := bureau terminal demo tdemo edit shell elevated shutdown reboot fileman drawer desktop
 DISK_CRATES_C := dir type copy delete rename makedir info set get unset assign echo which version fault join search sort list cd path elevate testlib_client date wait execute ping query
 DISK_CRATES_LIBS := testlib clipboard

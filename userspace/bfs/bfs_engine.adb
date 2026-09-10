@@ -136,7 +136,21 @@ package body Bfs_Engine is
     --  Block cache: slots of one block each. Writes always go
     --  through the journal transaction below: modify the slot,
     --  Trans_Add snapshots it, Trans_Commit does the WAL dance.
-    Cache_Slots : constant := 24;
+    --  Block cache capacity, in 1 KiB blocks.
+   --
+   --  Sizing argument (the rule asks for one when a ceiling survives): the
+   --  driver serialises requests, so the peak is ONE operation's working set
+   --  - a btree path (root to leaf), the inode, the block being edited, plus
+   --  whatever the transaction overlay pins.  A deep path plus a split is
+   --  the worst case; 64 leaves comfortable headroom for that and costs
+   --  64 KiB of driver BSS, which is nothing next to the alternative.
+   --
+   --  Exhaustion is NOT fatal: Get_Block's error convention is returning
+   --  Cache_Slots, which every caller already checks, so a client sees a
+   --  failed operation.  It used to print and then spin in a bare loop,
+   --  which hung the driver - and with it the volume - forever.  A resource
+   --  limit must never become a hang.
+   Cache_Slots : constant := 64;
     Cache_Num   : array (0 .. Cache_Slots - 1) of U64 :=
       (others => U64'Last);
     Cache_Refs  : array (0 .. Cache_Slots - 1) of Natural :=
@@ -149,6 +163,11 @@ package body Bfs_Engine is
     --  uncommitted state stays readable inside the transaction.
     Max_Trans_Blocks : constant := 40;
     Trans_Count : Natural := 0;
+    --  Set when the overlay cannot take another block.  The operation must
+    --  FAIL (Trans_Commit answers False) - it must never hang the driver,
+    --  which would take the volume down for every other client.  Same
+    --  discipline as the block cache.
+    Trans_Overflowed : Boolean := False;
     Trans_Num   : array (0 .. Max_Trans_Blocks - 1) of U64;
     Trans_Data  : array (0 .. Max_Trans_Blocks - 1,
                          0 .. Block_Size - 1) of U8;
@@ -220,12 +239,13 @@ package body Bfs_Engine is
          end if;
       end loop;
       if Free = Cache_Slots then
-         Fail : begin
-            Aegir_User.Console.Put_Line ("bfs: block cache exhausted");
-            loop
-               null;
-            end loop;
-         end Fail;
+         --  Every slot is pinned: fail the OPERATION rather than the driver.
+         --  The caller answers an error status and the client can react;
+         --  spinning here hung the volume for every other client too.
+         Aegir_User.Console.Put_Line
+           ("bfs: block cache exhausted (all" & Natural'Image (Cache_Slots)
+            & " slots pinned); operation failed, not hung");
+         return Cache_Slots;
       end if;
       --  One block through the bounce buffer (Sec_Per_Block
       --  sectors at the block endpoint).
@@ -362,13 +382,15 @@ package body Bfs_Engine is
              return;
           end if;
        end loop;
-       if Trans_Count = Max_Trans_Blocks then
-          Fail : begin
-             Aegir_User.Console.Put_Line ("bfs: transaction too big");
-             loop
-                null;
-             end loop;
-          end Fail;
+       if Trans_Count >= Max_Trans_Blocks then
+          --  Refuse the block and remember it: the caller's commit answers
+          --  False, so the operation fails and the client is told.  This
+          --  used to spin forever, hanging the driver and the volume.
+          Aegir_User.Console.Put_Line
+            ("bfs: transaction over" & Natural'Image (Max_Trans_Blocks)
+             & " blocks; operation will fail, not hang");
+          Trans_Overflowed := True;
+          return;
        end if;
        Trans_Num (Trans_Count) := Num;
        for B in 0 .. Block_Size - 1 loop
@@ -393,6 +415,7 @@ package body Bfs_Engine is
           Invalidate (Trans_Num (I));
        end loop;
        Trans_Count := 0;
+       Trans_Overflowed := False;
        Used_Pending := 0;
        Live_Clear;
     end Trans_Abort;
@@ -435,6 +458,12 @@ package body Bfs_Engine is
        Run_Count : U64;
        Arr   : Byte_Array (0 .. Block_Size - 1);
     begin
+       if Trans_Overflowed then
+          --  Something could not be journaled: drop the whole overlay and
+          --  report failure, so no half-applied state reaches the disk.
+          Trans_Abort;
+          return False;
+       end if;
        if Trans_Count = 0 then
           Live_Deliver;  --  no-op unless events are pending
           return True;
