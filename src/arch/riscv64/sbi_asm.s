@@ -95,7 +95,7 @@ trap_frame_for_stack:
     /* a0 = kernel stack top; returns frame base below it.  The word
        at top - 8 (just above the frame) is the hart slot and is not
        part of the frame. */
-    addi a0, a0, -280
+    addi a0, a0, -552
     ret
 .size trap_frame_for_stack, . - trap_frame_for_stack
 
@@ -197,6 +197,8 @@ riscv_enter_via_frame:
     and t0, t0, t1
     li t1, (1 << 5)      /* SPIE: interrupts enabled after sret */
     or t0, t0, t1
+    li t1, (3 << 13)     /* FS = Dirty: FP stays enabled */
+    or t0, t0, t1
     csrw sstatus, t0
     j trap_return
 .size riscv_enter_via_frame, . - riscv_enter_via_frame
@@ -288,7 +290,7 @@ trap_frame_set_a2:
 .global trap_frame_save_context
 .type trap_frame_save_context, @function
 trap_frame_save_context:
-    li t0, 34
+    li t0, 68
 1:
     ld t1, 0(a0)
     sd t1, 0(a1)
@@ -303,7 +305,7 @@ trap_frame_save_context:
 .type trap_frame_load_context, @function
 trap_frame_load_context:
     mv t3, a1
-    li t0, 34
+    li t0, 68
 1:
     ld t1, 0(t3)
     sd t1, 0(a0)

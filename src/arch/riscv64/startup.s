@@ -34,6 +34,11 @@ _start:
     mv s0, a0
     mv s1, a1
 
+    /* Enable the FP unit: sstatus.FS = Dirty.  Kernel code saves and
+       restores f0..f31 across traps, and user code needs FP too. */
+    li t0, (3 << 13)
+    csrs sstatus, t0
+
     /* No interrupts until Ada has real handlers. */
     csrw sie, zero
 
@@ -180,6 +185,11 @@ secondary_boot:
     lla t0, trap_vector
     add t0, t0, t2
     csrw stvec, t0
+
+    /* Enable the FP unit on this hart too (sstatus is per hart). */
+    li t0, (3 << 13)
+    csrs sstatus, t0
+
     lla t0, secondary_main
     add t0, t0, t2
     jalr ra, 0(t0)
@@ -190,7 +200,8 @@ secondary_boot:
 
 /* Trap trampoline.  This page is mapped at its kernel VMA in every
    user address space (supervisor RX, global), so satp switching keeps
-   execution valid.  Frame layout (280 bytes), built on the per-thread
+   execution valid.  Frame layout (68 words / 544 bytes, plus the
+   per-hart slot word above it), built on the per-thread
    kernel stack:
      word 0..30  x1..x31 at (reg - 1) * 8   (word 1 = interrupted sp)
      word 31     sepc (offset 248), frame-authoritative
@@ -217,11 +228,11 @@ kernel_satp_slot:
 .type trap_vector, @function
 trap_vector:
     csrrw t0, sscratch, t0   /* t0 = kernel stack top, sscratch = user t0 */
-    addi  t0, t0, -280
+    addi  t0, t0, -552
     sd    t1, 40(t0)         /* user t1 (x6) */
     csrr  t1, sscratch       /* user t0 */
     sd    t1, 32(t0)         /* user t0 (x5) */
-    addi  t1, t0, 280
+    addi  t1, t0, 552
     csrw  sscratch, t1       /* sscratch = kernel stack top again */
 
     sd    x1,   0(t0)
@@ -259,6 +270,44 @@ trap_vector:
     csrr  t1, satp
     sd    t1, 256(t0)
 
+    /* Save the floating-point state (f0..f31, fcsr).  Without this a
+       preempted thread loses whatever lives in the FP registers. */
+    fsd   f0,  272(t0)
+    fsd   f1,  280(t0)
+    fsd   f2,  288(t0)
+    fsd   f3,  296(t0)
+    fsd   f4,  304(t0)
+    fsd   f5,  312(t0)
+    fsd   f6,  320(t0)
+    fsd   f7,  328(t0)
+    fsd   f8,  336(t0)
+    fsd   f9,  344(t0)
+    fsd   f10, 352(t0)
+    fsd   f11, 360(t0)
+    fsd   f12, 368(t0)
+    fsd   f13, 376(t0)
+    fsd   f14, 384(t0)
+    fsd   f15, 392(t0)
+    fsd   f16, 400(t0)
+    fsd   f17, 408(t0)
+    fsd   f18, 416(t0)
+    fsd   f19, 424(t0)
+    fsd   f20, 432(t0)
+    fsd   f21, 440(t0)
+    fsd   f22, 448(t0)
+    fsd   f23, 456(t0)
+    fsd   f24, 464(t0)
+    fsd   f25, 472(t0)
+    fsd   f26, 480(t0)
+    fsd   f27, 488(t0)
+    fsd   f28, 496(t0)
+    fsd   f29, 504(t0)
+    fsd   f30, 512(t0)
+    fsd   f31, 520(t0)
+    csrr  t1, fcsr
+    sd    t1, 528(t0)
+
+
     /* Switch to kernel address space.  Frame and slot both live at
        kernel VAs reachable from the current root. */
 .Lkernel_satp_hi:
@@ -292,12 +341,49 @@ trap_vector:
 .global trap_return
 trap_return:
     csrr  t0, sscratch
-    addi  t0, t0, -280
+    addi  t0, t0, -552
     ld    t1, 256(t0)
     csrw  satp, t1
     sfence.vma zero, zero
     ld    t1, 248(t0)
     csrw  sepc, t1
+
+    /* Restore the floating-point state first: the fcsr value needs a
+       scratch GPR, and t1/x6 is reloaded from the frame just below. */
+    ld    t1, 528(t0)
+    csrw  fcsr, t1
+    fld   f0,  272(t0)
+    fld   f1,  280(t0)
+    fld   f2,  288(t0)
+    fld   f3,  296(t0)
+    fld   f4,  304(t0)
+    fld   f5,  312(t0)
+    fld   f6,  320(t0)
+    fld   f7,  328(t0)
+    fld   f8,  336(t0)
+    fld   f9,  344(t0)
+    fld   f10, 352(t0)
+    fld   f11, 360(t0)
+    fld   f12, 368(t0)
+    fld   f13, 376(t0)
+    fld   f14, 384(t0)
+    fld   f15, 392(t0)
+    fld   f16, 400(t0)
+    fld   f17, 408(t0)
+    fld   f18, 416(t0)
+    fld   f19, 424(t0)
+    fld   f20, 432(t0)
+    fld   f21, 440(t0)
+    fld   f22, 448(t0)
+    fld   f23, 456(t0)
+    fld   f24, 464(t0)
+    fld   f25, 472(t0)
+    fld   f26, 480(t0)
+    fld   f27, 488(t0)
+    fld   f28, 496(t0)
+    fld   f29, 504(t0)
+    fld   f30, 512(t0)
+    fld   f31, 520(t0)
 
     ld    x1,   0(t0)
     ld    x3,  16(t0)
@@ -328,6 +414,8 @@ trap_return:
     ld    x29, 224(t0)
     ld    x30, 232(t0)
     ld    x31, 240(t0)
+
+
     ld    sp,   8(t0)        /* interrupted sp; no sp use after this */
     ld    t0,  32(t0)        /* t0 (x5) last; self-clobbering load */
     sret
@@ -344,6 +432,8 @@ riscv_enter_user_mode:
     li    t1, ~(1 << 8)      /* clear SPP: return to U-mode */
     and   t0, t0, t1
     li    t1, (1 << 5)       /* SPIE: interrupts enabled after sret */
+    or    t0, t0, t1
+    li    t1, (3 << 13)      /* FS = Dirty: keep the FP unit enabled */
     or    t0, t0, t1
     csrw  sstatus, t0
     csrw  satp, a2

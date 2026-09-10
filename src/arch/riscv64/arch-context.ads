@@ -6,10 +6,10 @@ package Arch.Context is
 
    type Thread_Context is private;
 
-   --  Snapshot of a blocked thread's saved frame (milestone 39
-   --  introspection): words 0..30 = x1..x31, 31 = sepc,
-   --  32 = satp, 33 = pad.
-   Context_Word_Count : constant := 34;
+   --  Snapshot of a blocked thread's saved frame: words 0..30 =
+   --  x1..x31, 31 = sepc, 32 = satp, 33 = pad, 34..65 = f0..f31,
+   --  66 = fcsr, 67 = pad (16-byte frame alignment).
+   Context_Word_Count : constant := 68;
    type Context_Word_Array is array
      (Natural range 0 .. Context_Word_Count - 1) of U64;
 
@@ -49,11 +49,16 @@ package Arch.Context is
 
 private
    --  Frame words 0..30 hold x1..x31, word 31 sepc, word 32 satp,
-   --  word 33 pad.  Matches the trampoline frame in startup.s.
-   Trap_Frame_Word_Count : constant := 34;
+   --  word 33 pad, words 34..65 the floating-point registers f0..f31
+   --  and word 66 fcsr.  Matches the trampoline frame in startup.s
+   --  (544 bytes).  The FP block is essential: without it a thread
+   --  that is preempted loses any value living in f0..f31.
+   Trap_Frame_Word_Count : constant := 68;
    Trap_Frame_PC_Index   : constant := 31;
    Trap_Frame_Satp_Index : constant := 32;
    Trap_Frame_Last_Index : constant := Trap_Frame_Word_Count - 1;
+   Trap_Frame_FP_Index   : constant := 34; --  f0
+   Trap_Frame_FCSR_Index : constant := 66; --  fcsr
    Trap_Frame_A0_Index   : constant := 9;  --  x10
    Trap_Frame_A1_Index   : constant := 10; --  x11
    Trap_Frame_TP_Index   : constant := 3;  --  x4

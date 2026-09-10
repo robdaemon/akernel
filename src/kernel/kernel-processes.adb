@@ -1768,7 +1768,9 @@ package body Kernel.Processes is
       end if;
       Kernel.Tasks.Read_Context_Words
         (Threads (Initial_Thread_Slot (Process_Index (Slot))), Frame);
-      for I in Frame'Range loop
+      --  The reply layout is fixed (x1..x31, sepc, satp): copy only
+      --  those words — the frame also carries the FP block now.
+      for I in 0 .. 32 loop
          Words (I) := Frame (I);
       end loop;
       Words (33) := U64 (Kernel.Tasks.Thread_State'Pos (State));
