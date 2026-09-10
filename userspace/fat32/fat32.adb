@@ -1607,6 +1607,15 @@ procedure Fat32 is
             return;
          end if;
 
+         declare
+            R : constant Boolean :=
+              Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                            Dir_Sector, Dir_Off, Parent, Parent_Last,
+                            Comp_First, F1, F2, F3, F4);
+         begin
+            Syscalls.Debug_Put_Line
+              ("fat32: S '" & Path & "' resolved" & Boolean'Image (R));
+         end;
          if Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
                           Dir_Sector, Dir_Off, Parent, Parent_Last,
                           Comp_First, F1, F2, F3, F4)
@@ -1887,6 +1896,19 @@ procedure Fat32 is
                return;
             end if;
 
+            --  M53 diagnostic: what the write resolves, and what it does
+            --  when resolution fails (the fallback create refuses an
+            --  existing name, which surfaces as Not_Found).
+            declare
+               R : constant Boolean :=
+                 Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
+                               Dir_Sector, Dir_Off, Parent, Parent_Last,
+                               Comp_First, F1, F2, F3, F4);
+            begin
+               Syscalls.Debug_Put_Line
+                 ("fat32: W '" & Path & "' resolved" & Boolean'Image (R)
+                  & " parent" & Interfaces.Unsigned_64'Image (Parent));
+            end;
             if Resolve_Path (Path, Entry_Clus, Entry_Size, Is_Dir,
                              Dir_Sector, Dir_Off, Parent, Parent_Last,
                              Comp_First, F1, F2, F3, F4)
