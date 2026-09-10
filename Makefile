@@ -41,6 +41,7 @@ INIT_ELF := bin/userspace/init.elf
 SERIAL_ELF := bin/userspace/serial.elf
 FUZZ_ELF := bin/userspace/fuzz.elf
 SPIN_ELF := bin/userspace/spin.elf
+FPCHK_ELF := bin/userspace/fpchk.elf
 THREAD_TEST_ELF := bin/userspace/thread_test.elf
 TASK_TEST_ELF := bin/userspace/task_test.elf
 MEMSTAGE_ELF := bin/userspace/memstage.elf
@@ -80,7 +81,7 @@ INITRD_IMG := $(INITRD_OUT)/aegir-initrd.img
 #  through the generic $(CRATES) rule; disk-resident crates are
 #  installed by capitalized name into Sys:System/ or Sys:C/.
 #  `make new-crate NAME=foo DEST=c|system` appends here.
-INITRD_CRATES := init serial fuzz spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
+INITRD_CRATES := init serial fuzz fpchk spin thread_test task_test memstage echo_server teardown fileserver fat32 bfs partmgr procfs netserv net_test udp_test tcp_test gsock_test dhcp_test virtio_rng virtio_blk virtio_net virtio_9p virtio_input virtio_gpu libman
 
 #  o2c (separate repo, e.g. sibling ~/src/o2c) dogfood staging: set
 #  O2C_ROOT to the o2c checkout (absolute or relative to the aegir
@@ -443,6 +444,7 @@ $(INITRD_IMG): $(INITRD_CRATES) tools/mkinitrd.py FORCE
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Drivers/Serial $(SERIAL_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Fuzz $(FUZZ_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Spin $(SPIN_ELF)
+	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Fpchk $(FPCHK_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Thread_Test $(THREAD_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Task_Test $(TASK_TEST_ELF)
 	alr exec -- riscv64-elf-strip -o $(INITRD_ROOT)/Tests/Memstage $(MEMSTAGE_ELF)
@@ -475,6 +477,8 @@ endif
 ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 44 Tests/Fpchk console' >> $(INITRD_ROOT)/System/Manifest
+	printf '%s\n' 'program 45 Tests/Fpchk console' >> $(INITRD_ROOT)/System/Manifest
 	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
 	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest,)
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
@@ -556,7 +560,9 @@ test:
 	@python3 tools/tcp_echo.py 10007 >/tmp/ak_tcp_echo.log 2>&1 & \
 	PID=$$!; \
 	if [ -n "$(QEMU_9P_FLAGS)" ]; then mkdir -p $(SHARE_DIR) && printf 'hello from the host\n' > $(SHARE_DIR)/host_seed.txt && printf 'delete me\n' > $(SHARE_DIR)/host_delete_me.txt; fi; \
-	$(MAKE) run INITRD_MODE=test QEMU_ARGS="$(QEMU_ARGS) $(QEMU_9P_FLAGS)"; ST=$$?; \
+	$(MAKE) run INITRD_MODE=test QEMU_ARGS="$(QEMU_ARGS) $(QEMU_9P_FLAGS)" > $(INITRD_OUT)/test_boot.log 2>&1; ST=$$?; \
+	grep -q "fp context FAIL" $(INITRD_OUT)/test_boot.log && { echo "FAIL fp context lost across preemption"; ST=1; }; \
+	test $$(grep -c "fp context ok" $(INITRD_OUT)/test_boot.log) -ge 2 || { echo "FAIL fp context check did not run (both instances)"; ST=1; }; \
 	if [ -n "$(QEMU_9P_FLAGS)" ]; then \
 	  grep -q "guest was here" $(SHARE_DIR)/FZHOST.TXT || { echo "FAIL host share guest write missing on host"; ST=1; }; \
 	  test ! -e $(SHARE_DIR)/host_delete_me.txt || { echo "FAIL host share guest delete not visible on host"; ST=1; }; \
