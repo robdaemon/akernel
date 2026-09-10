@@ -23,6 +23,9 @@ package body Aegir_User.Gloss is
    function C_Errno return access C_Int
      with Import, Convention => C, External_Name => "__errno";
 
+   EIO     : constant C_Int := 5;
+   EAGAIN  : constant C_Int := 11;
+   EFBIG   : constant C_Int := 27;
    EPERM   : constant C_Int := 1;
    ENOENT  : constant C_Int := 2;
    EBADF   : constant C_Int := 9;
@@ -515,6 +518,8 @@ package body Aegir_User.Gloss is
       St      : U64;
       Existed : Boolean;
       Written : U64;
+      WSt     : U64;
+      TSt     : U64;
       Dummy   : aliased Interfaces.C.char := Interfaces.C.nul;
    begin
       if P'Length = 0 or else P'Length > 256 then
@@ -552,16 +557,34 @@ package body Aegir_User.Gloss is
          --  The fs protocol creates files on Op_Write; a zero-
          --  length Write is Bad_Args client-side, so create with
          --  one byte and truncate back to empty.
-         if Files.Write
-              (P, 0, Dummy'Address, 1, Written) = Files.Status_Ok
-           and then Files.Truncate (P) = Files.Status_Ok
-         then
-            St := Files.Open (P, Size);
+         --
+         --  Both steps are checked *and reported*: this path used to throw
+         --  the status away and answer ENOENT for any failure, so a broken
+         --  create was indistinguishable from a missing file.  That is the
+         --  same mistake _write made with ENOSPC.
+         WSt := Files.Write (P, 0, Dummy'Address, 1, Written);
+         TSt := (if WSt = Files.Status_Ok
+                 then Files.Truncate (P)
+                 else WSt);
+         if WSt /= Files.Status_Ok or else TSt /= Files.Status_Ok then
+            Aegir_User.Syscalls.Debug_Put_Line
+              ("gloss: create '" & P & "' write status" & U64'Image (WSt)
+               & " truncate status" & U64'Image (TSt));
+            Fail (case (if WSt /= Files.Status_Ok then WSt else TSt) is
+                    when Files.Status_Bad_Args     => EINVAL,
+                    when Files.Status_Out_Of_Range => EFBIG,
+                    when Files.Status_Not_Ready    => EAGAIN,
+                    when others                    => EIO);
+            return -1;
          end if;
+         St := Files.Open (P, Size);
       end if;
 
       if St /= Files.Status_Ok then
-         Fail (ENOENT);
+         --  Report which status actually came back (see above).
+         Aegir_User.Syscalls.Debug_Put_Line
+           ("gloss: open '" & P & "' status" & U64'Image (St));
+         Fail (if Existed then EIO else ENOENT);
          return -1;
       end if;
 
@@ -702,7 +725,22 @@ package body Aegir_User.Gloss is
                  (F.Path (1 .. F.Path_Len), F.Offset,
                   Buf + System.Storage_Elements.Storage_Offset (Done), Chunk, Count);
                if St /= Files.Status_Ok or else Count = 0 then
-                  Fail (ENOSPC);
+                  --  Honour the protocol status.  This used to answer
+                  --  ENOSPC for *every* failure, which sent a debugging
+                  --  session after the volume's free space when the real
+                  --  status was something else entirely - and the raw
+                  --  status is printed here for exactly that reason (a
+                  --  hard write failure is rare, so it is worth a line).
+                  Fail (case St is
+                          when Files.Status_Not_Found    => ENOENT,
+                          when Files.Status_Bad_Args     => EINVAL,
+                          when Files.Status_Not_Ready    => EAGAIN,
+                          when Files.Status_Out_Of_Range => EFBIG,
+                          when others                    => EIO);
+                  Aegir_User.Syscalls.Debug_Put_Line
+                    ("gloss: write '" & F.Path (1 .. F.Path_Len)
+                     & "' status" & U64'Image (St)
+                     & " count" & U64'Image (Count));
                   return (if Done = 0 then -1 else C_Int (Done));
                end if;
                F.Offset := F.Offset + Count;

@@ -1602,6 +1602,24 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
+3. **Spawn ordering on declared caps** — init spawns manifest
+   programs in order and never waits, so a program can race the
+   mount of a volume its own manifest line names.  Observed while
+   dogfooding the o2c bytecode pipeline: program 40 (o2c) writes
+   `BD0:VmGreet.obc` and gets status 1 (Not_Found) whenever it
+   starts before bfs_server has mounted BD0:; the Files demo has
+   the same race and papers over it with `Files.Wait("BD0:")` (a
+   userspace poll), and the o2c driver briefly had one too.
+   Proposal: the manifest line already declares the dependencies -
+   the trailing tokens are the caps - so **init should defer
+   spawning a program until the caps its line names are
+   registered**, which removes the need for any client-side wait
+   (and makes `Files.Wait` vestigial).  Clients still need the
+   `Status_Not_Found` / `Status_Not_Ready` distinction for volumes
+   mounted after all spawning (hotplug), which is why gloss must
+   not collapse statuses into one errno (fixed for `_write`; see
+   the create path in aegir_user-gloss.adb, which now reports its
+   write/truncate/open statuses).
 
 Deferred (not candidates): socket servers (finger etc.), external
 ICMP (slirp does not forward it — tests target the gateway by
