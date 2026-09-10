@@ -150,6 +150,11 @@ package body Bfs_Engine is
    --  failed operation.  It used to print and then spin in a bare loop,
    --  which hung the driver - and with it the volume - forever.  A resource
    --  limit must never become a hang.
+   --  Diagnostics go through Debug_Put_Line, NOT Console.Put_Line: this
+   --  driver never sets a console endpoint, so its Console output is
+   --  invisible (which is why the cache/transaction messages below were
+   --  never seen).  The driver's own "bfs starting" line is visible, and
+   --  that is the debug channel.
    Cache_Slots : constant := 64;
     Cache_Num   : array (0 .. Cache_Slots - 1) of U64 :=
       (others => U64'Last);
@@ -242,7 +247,7 @@ package body Bfs_Engine is
          --  Every slot is pinned: fail the OPERATION rather than the driver.
          --  The caller answers an error status and the client can react;
          --  spinning here hung the volume for every other client too.
-         Aegir_User.Console.Put_Line
+         Aegir_User.Syscalls.Debug_Put_Line
            ("bfs: block cache exhausted (all" & Natural'Image (Cache_Slots)
             & " slots pinned); operation failed, not hung");
          return Cache_Slots;
@@ -256,7 +261,7 @@ package body Bfs_Engine is
       if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
         or else Syscalls.Message.Words (0) /= 0
       then
-         Aegir_User.Console.Put_Line ("bfs: block read io error");
+         Aegir_User.Syscalls.Debug_Put_Line ("bfs: block read io error");
          return Cache_Slots;
       end if;
        declare
@@ -337,7 +342,7 @@ package body Bfs_Engine is
        if Syscalls.IPC_Call (Blk_EP) /= Syscalls.IPC_Ok
          or else Syscalls.Message.Words (0) /= 0
        then
-          Aegir_User.Console.Put_Line ("bfs: block write io error");
+          Aegir_User.Syscalls.Debug_Put_Line ("bfs: block write io error");
           return False;
        end if;
        return True;
@@ -386,7 +391,7 @@ package body Bfs_Engine is
           --  Refuse the block and remember it: the caller's commit answers
           --  False, so the operation fails and the client is told.  This
           --  used to spin forever, hanging the driver and the volume.
-          Aegir_User.Console.Put_Line
+          Aegir_User.Syscalls.Debug_Put_Line
             ("bfs: transaction over" & Natural'Image (Max_Trans_Blocks)
              & " blocks; operation will fail, not hang");
           Trans_Overflowed := True;
@@ -1245,7 +1250,7 @@ package body Bfs_Engine is
             --  most depth 4; 8 is a generous bound).
             Depth := Depth + 1;
             if Depth > 8 then
-               Aegir_User.Console.Put_Line
+               Aegir_User.Syscalls.Debug_Put_Line
                  ("bfs: btree descent corrupt (child cycle)");
                return;
             end if;
@@ -1292,7 +1297,7 @@ package body Bfs_Engine is
             --  far past any depth-3 tree here (~3k leaves max).
             It.Hops := It.Hops + 1;
             if It.Hops > 10_000 then
-               Aegir_User.Console.Put_Line
+               Aegir_User.Syscalls.Debug_Put_Line
                  ("bfs: btree leaf chain corrupt (right-link loop)");
                It.Valid := False;
                return False;
@@ -1310,7 +1315,7 @@ package body Bfs_Engine is
          --  scan grind through garbage entries (per-entry block
          --  reads) instead of terminating. Far past any legitimate
          --  tree here (depth-3, ~3k leaves x 64 entries max).
-         Aegir_User.Console.Put_Line
+         Aegir_User.Syscalls.Debug_Put_Line
            ("bfs: btree scan excessive (corrupt node?)");
          It.Valid := False;
          return False;
@@ -1875,7 +1880,7 @@ package body Bfs_Engine is
              Ctx.Dir.Direct (Free_Idx) := Run_At_Block (St, 1);
           else
              Free (St, 1);
-             Aegir_User.Console.Put_Line
+             Aegir_User.Syscalls.Debug_Put_Line
                ("bfs: tree stream out of runs (dir inode "
                 & Aegir_User.Syscalls.U64'Image (Ctx.Dir.Block)
                 & " total " & Aegir_User.Syscalls.U64'Image (Ctx.Total)
@@ -2055,11 +2060,11 @@ package body Bfs_Engine is
           Entry_Insert_At (C, Pos, Push, Push_V);
           M := Split_Point (C);
           if M = 0 then
-             Aegir_User.Console.Put_Line ("bfs: no legal tree split");
+             Aegir_User.Syscalls.Debug_Put_Line ("bfs: no legal tree split");
              return False;
           end if;
           if Level = 0 and then Ctx.Depth >= 3 then
-             Aegir_User.Console.Put_Line ("bfs: tree depth cap hit");
+             Aegir_User.Syscalls.Debug_Put_Line ("bfs: tree depth cap hit");
              return False;
           end if;
           if not Tree_Alloc_Node (Ctx, New_Off, New_Blk) then
@@ -2518,7 +2523,7 @@ package body Bfs_Engine is
          and then Read_Inode (Name_Index, NI)
          and then not Tree_Insert_Str (NI, Name, Inode_Block)
        then
-          Aegir_User.Console.Put_Line ("bfs: name index add failed");
+          Aegir_User.Syscalls.Debug_Put_Line ("bfs: name index add failed");
        end if;
     end Index_Add;
 
@@ -2569,7 +2574,7 @@ package body Bfs_Engine is
          and then Read_Inode (Index_Blk, II)
          and then not Tree_Insert_Int (II, Key, Inode_Block)
        then
-          Aegir_User.Console.Put_Line ("bfs: numeric index add failed");
+          Aegir_User.Syscalls.Debug_Put_Line ("bfs: numeric index add failed");
        end if;
     end Index_Add_Num;
 
@@ -2755,7 +2760,7 @@ package body Bfs_Engine is
           end loop;
           if Free_Idx = U64'Last then
              Put_Block (Slot);
-             Aegir_User.Console.Put_Line ("bfs: indirect full");
+             Aegir_User.Syscalls.Debug_Put_Line ("bfs: indirect full");
              return False;
           end if;
           if Free_Idx > 0
@@ -2927,7 +2932,7 @@ package body Bfs_Engine is
       if Is_Mounted and then Log_Pos_Start /= Log_Pos_End then
          Is_Mounted := Replay_Log;
          if Is_Mounted then
-            Aegir_User.Console.Put_Line ("bfs: journal replayed");
+            Aegir_User.Syscalls.Debug_Put_Line ("bfs: journal replayed");
          end if;
       end if;
 
@@ -2982,8 +2987,12 @@ package body Bfs_Engine is
       Size := 0;
       Is_Dir := False;
       if not Is_Mounted or else not Lookup (Path, Info, Root) then
+         --  M53 diagnostic: what the driver was handed and what it resolved.
+         Aegir_User.Syscalls.Debug_Put_Line
+           ("bfs: S '" & Path & "' -> Not_Found");
          return Status_Not_Found;
       end if;
+      Aegir_User.Syscalls.Debug_Put_Line ("bfs: S '" & Path & "' -> Ok");
       Is_Dir := (Info.Mode and S_IFMT) = S_IFDIR;
       if not Is_Dir then
          Size := Info.Size;
@@ -3108,10 +3117,18 @@ package body Bfs_Engine is
     begin
        if not Is_Mounted then
           Len := 0;
+          Aegir_User.Syscalls.Debug_Put_Line ("bfs: W not mounted");
           return Status_Not_Found;
        end if;
        Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
+       --  M53 diagnostic: the write's own view of the name - the path the
+       --  driver was handed, how it split, and whether the file and its
+       --  parent resolve (a failing parent lookup is reported as Not_Found).
+       Aegir_User.Syscalls.Debug_Put_Line
+         ("bfs: W '" & Path & "' parent '" & P_Path (1 .. P_Len)
+          & "' name '" & P_Name (1 .. N_Len) & "'");
        if Lookup (Path, Info, Root) then
+          Aegir_User.Syscalls.Debug_Put_Line ("bfs: W 'found'");
           if Root then
              Len := 0;
              return Status_Bad_Args;
