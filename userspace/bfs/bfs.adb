@@ -78,6 +78,11 @@ procedure Bfs is
 
    Reply_H : U64 := 0;
 
+   --  Consecutive receive failures.  A caller that exits mid-rendezvous
+   --  fails the receive; that must not take the volume down, but a
+   --  persistent failure must not spin forever either.
+   Recv_Fails : Natural := 0;
+
    procedure Fail (Msg : String) is
    begin
       Aegir_User.Console.Put_Line (Msg);
@@ -933,8 +938,18 @@ begin
 
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
-         Fail ("bfs recv failed");
-      end if;
+         --  A caller that vanished mid-rendezvous fails the receive.  Keep
+         --  serving: dying here takes the whole volume down with us, and
+         --  every later forward then answers Result_Endpoint_Gone.
+         Recv_Fails := Recv_Fails + 1;
+         Syscalls.Debug_Put_Line
+           ("bfs: recv failed, continuing ("
+            & Natural'Image (Recv_Fails) & ")");
+         if Recv_Fails > 256 then
+            Fail ("bfs recv failed repeatedly");
+         end if;
+      else
+         Recv_Fails := 0;
 
       if Syscalls.Message.Label /= Op_Read
         and then Syscalls.Message.Label /= Op_ReadDir
@@ -988,6 +1003,7 @@ begin
           Handle_Query_Close;
       else
          Reply2 (Status_Bad_Args, 0);
+      end if;
       end if;
    end loop;
 end Bfs;
