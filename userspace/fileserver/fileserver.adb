@@ -2038,6 +2038,7 @@ procedure Fileserver is
 
       procedure Process is
       begin
+         Syscalls.Debug_Put_Line ("fs: pw enter buf" & U64'Image (Buf) & " len" & U64'Image (Length));
          if not Names_Done then
             Status := Files.Status_Not_Ready;
             return;
@@ -2047,11 +2048,13 @@ procedure Fileserver is
            or else Length = 0
            or else not Fetch_Path (2, 5, 1, Name, Len)
          then
+            Syscalls.Debug_Put_Line ("fs: pw fetch-fail buf" & U64'Image (Buf) & " len" & U64'Image (Length));
             Status := Files.Status_Bad_Args;
             return;
          end if;
 
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
+         Syscalls.Debug_Put_Line ("fs: pw resolve v" & Natural'Image (V) & " len" & Natural'Image (Len));
          if V = 0 then
             Status := Files.Status_Not_Found;
             return;
@@ -2063,13 +2066,16 @@ procedure Fileserver is
             Syscalls.Message.Label := Files.Op_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
             if not Stage_Forward_Path (Exp, Pos, E_Len, 2, 5, 1) then
+               Syscalls.Debug_Put_Line ("fs: pw stage-fail");
                Status := Files.Status_Bad_Args;
                return;
             end if;
             if Forward_To_FS (V, Syscalls.Message.Badge) then
+               Syscalls.Debug_Put_Line ("fs: pw fwd-ok st" & U64'Image (Syscalls.Message.Words (0)) & " v" & Natural'Image (V));
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
             else
+               Syscalls.Debug_Put_Line ("fs: pw fwd-fail v" & Natural'Image (V) & " buf" & U64'Image (Buf) & " len" & U64'Image (Length));
                Status := Files.Status_Not_Found;
             end if;
             return;
