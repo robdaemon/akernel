@@ -1607,19 +1607,25 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
    (Not_Found) for a file that EXISTS on BD0:, while o2c's write of
    that same file through `Aegir_User.Files` succeeds and the same
    gloss code reads RD0: (a boot-file volume) fine.
-   `Qualify` was the first suspect and is EXONERATED: it and the
-   RTS's `Qualified` both pass a colon-qualified path through
-   unchanged.  So is `Rename`: writing the image straight to the
-   final name (no temp+rename) still leaves `Open` answering
-   Not_Found for a name the write reported Ok for.
-   The discriminator is a read-back test nobody has run yet: have a
-   program read the file it just wrote through BOTH client paths
-   (`Aegir_User.Files.Open` and `Ada.Sequential_IO`) and print both
-   statuses.  RTS reads it and libc does not -> gloss is the client
-   at fault; neither reads it -> the create-on-write path in the
-   server/driver produces a name that lookup cannot find (the demo
-   reads a BD0 file back successfully in the same program, so
-   lookup can work).
+   The read-back probe was run and it clears every client: in the
+   SAME boot, o2c opens `BD0:VmGreet.obc` through the RTS and gets
+   status 0 with size 352, and through libc and succeeds - while
+   the VM process (program 42), at the same time, gets status 1 for
+   that identical name.  (The temp name correctly answers 1 after
+   the rename, so the atomic publish is right and the image is
+   complete.)
+   Two processes, one name, one moment, different answers: the
+   server is holding PER-CLIENT state - the VM opened the name
+   before the volume mounted (it is spawned first), and the server
+   appears to cache that negative result for that client and never
+   invalidates it on mount, so its retries can never succeed.  So
+   `Qualify`, `Rename`, the file server's name table and the driver
+   are all fine; the suspect is a per-client negative cache (or the
+   per-client volume view) in the file server, which must be
+   invalidated when a volume is mounted.
+   That is why the standalone VM cannot read an image o2c publishes
+   - and why `await BD0:` in the launcher (which fixes the *first*
+   open) does not help a client that already opened too early.
 
    (An earlier entry here blamed 'create on first Write'; that was
    wrong - the publish works.  The failures were the mount race
