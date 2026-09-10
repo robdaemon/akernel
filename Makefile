@@ -476,19 +476,21 @@ ifeq ($(INITRD_MODE),test)
 	printf '%s\n' 'program 3 Tests/Fuzz ipc_test console Tests/Echo_Server fs System/Manifest libman part0 device_resource admin elevated_svc net' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 4 Tests/Spin console' >> $(INITRD_ROOT)/System/Manifest
 	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
-	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest,)
 	printf '%s\n' 'program 9 Tests/Thread_Test' >> $(INITRD_ROOT)/System/Manifest
 endif
 #  Quiet mode for the o2c regression: base servers only plus the
 #  staged o2c/hello programs - no fuzz flood, so console capture of
 #  the emitted source is not byte-torn by concurrent chatter.
-ifeq ($(INITRD_MODE),min)
-	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
-	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs' >> $(INITRD_ROOT)/System/Manifest,)
-endif
 	printf '%s\n' 'program 5 System/Partmgr console blk part_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 6 System/Fat32 console part1 fat32_server' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 17 System/Bfs console part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest
+#  M42: the o2c demo programs run after Bfs so the BD0: volume
+#  (used by the Files write demo) is mounted when they start.
+ifeq ($(INITRD_MODE),min)
+	$(if $(O2C_ELF),printf '%s\n' 'program 40 Tests/O2c console fs' >> $(INITRD_ROOT)/System/Manifest,)
+	$(if $(O2C_HELLO_ELF),printf '%s\n' 'program 41 Tests/Hello console fs part0 bfs_server' >> $(INITRD_ROOT)/System/Manifest,)
+endif
 	printf '%s\n' 'program 7 System/Procfs console procfs_server device_resource admin' >> $(INITRD_ROOT)/System/Manifest
 	printf '%s\n' 'program 10 System/Netserv console fs netdev net_server net_register' >> $(INITRD_ROOT)/System/Manifest
 ifeq ($(INITRD_MODE),test)
