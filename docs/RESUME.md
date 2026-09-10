@@ -1606,18 +1606,20 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
    (through libc: `Ada.Sequential_IO`/`Stream_IO`) answers status 1
    (Not_Found) for a file that EXISTS on BD0:, while o2c's write of
    that same file through `Aegir_User.Files` succeeds and the same
-   gloss code reads RD0: (a boot-file volume) fine.  So the
-   protocol, the volume and the file are all healthy and the bug is
-   in gloss: most likely `Qualify`, which builds the wire name
-   itself instead of going through the RTS's qualification.  This
-   is what still blocks the standalone VM from reading the image
-   o2c publishes.  Two consequences: fix `Qualify`/`_open` for
-   fs-driver volumes, and note the general rule this keeps
-   teaching - a guest program should use `Aegir_User.Files`, which
-   is the interface the protocol defines and the one the Oberon
-   Files module (exercised every boot) uses; the libc path is a
-   second, separately-maintained implementation of the same
-   client.
+   gloss code reads RD0: (a boot-file volume) fine.
+   `Qualify` was the first suspect and is EXONERATED: it and the
+   RTS's `Qualified` both pass a colon-qualified path through
+   unchanged.  So is `Rename`: writing the image straight to the
+   final name (no temp+rename) still leaves `Open` answering
+   Not_Found for a name the write reported Ok for.
+   The discriminator is a read-back test nobody has run yet: have a
+   program read the file it just wrote through BOTH client paths
+   (`Aegir_User.Files.Open` and `Ada.Sequential_IO`) and print both
+   statuses.  RTS reads it and libc does not -> gloss is the client
+   at fault; neither reads it -> the create-on-write path in the
+   server/driver produces a name that lookup cannot find (the demo
+   reads a BD0 file back successfully in the same program, so
+   lookup can work).
 
    (An earlier entry here blamed 'create on first Write'; that was
    wrong - the publish works.  The failures were the mount race
