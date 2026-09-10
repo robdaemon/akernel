@@ -427,6 +427,7 @@ procedure Bfs is
        Status : U64 := Status_Ok;
        Mapped : Boolean := False;
     begin
+       Syscalls.Debug_Put_Line ("bfs: w enter buf" & U64'Image (Buf) & " len" & U64'Image (Length) & " off" & U64'Image (Offset));
        if Buf = 0 or else Length = 0 then
           Status := Status_Bad_Args;
        else
@@ -435,6 +436,7 @@ procedure Bfs is
              Len  : U64;
           begin
              if Path'Length = 0 then
+                Syscalls.Debug_Put_Line ("bfs: w empty-path");
                 Status := Status_Bad_Args;
              elsif Syscalls.Mem_Map
                (Address_Space => Syscalls.Address_Space_Cap,
@@ -444,6 +446,7 @@ procedure Bfs is
                 Length        => Buf_Bytes,
                 Flags         => 3) /= 0
              then
+                Syscalls.Debug_Put_Line ("bfs: w map-fail buf" & U64'Image (Buf) & " len" & U64'Image (Length));
                 Status := Status_Not_Found;
              else
                 Mapped := True;
@@ -471,6 +474,7 @@ procedure Bfs is
              Aegir_User.Console.Put_Line ("bfs: buffer cap delete failed");
           end if;
        end if;
+       Syscalls.Debug_Put_Line ("bfs: w reply st" & U64'Image (Status) & " cnt" & U64'Image (Count));
        Reply2 (Status, Count);
     end Handle_Write;
 
@@ -930,6 +934,14 @@ begin
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          Fail ("bfs recv failed");
+      end if;
+
+      if Syscalls.Message.Label /= Op_Stat
+        and then Syscalls.Message.Label /= Op_Open
+        and then Syscalls.Message.Label /= Op_Read
+        and then Syscalls.Message.Label /= Op_ReadDir
+      then
+         Syscalls.Debug_Put_Line ("bfs: op" & U64'Image (Syscalls.Message.Label));
       end if;
 
       if Syscalls.Message.Label = Op_Stat
