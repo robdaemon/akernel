@@ -581,9 +581,15 @@ package body Aegir_User.Gloss is
       end if;
 
       if St /= Files.Status_Ok then
-         --  Report which status actually came back (see above).
-         Aegir_User.Syscalls.Debug_Put_Line
-           ("gloss: open '" & P & "' status" & U64'Image (St));
+         --  Report the status - but not for Not_Found, which is a normal
+         --  answer (existence checks, and a client waiting for a file that
+         --  another program is writing: a VM retrying every 100 ms printed
+         --  thousands of lines and tore the boot's console capture apart).
+         --  Unexpected statuses are exactly the ones worth a line.
+         if St /= Files.Status_Not_Found then
+            Aegir_User.Syscalls.Debug_Put_Line
+              ("gloss: open '" & P & "' status" & U64'Image (St));
+         end if;
          Fail (if Existed then EIO else ENOENT);
          return -1;
       end if;
