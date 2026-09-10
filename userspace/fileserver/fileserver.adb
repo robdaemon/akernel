@@ -1053,6 +1053,16 @@ procedure Fileserver is
       Stored : Boolean := False;
       Ok     : Boolean := False;
    begin
+
+      --  M53 diagnostic: which endpoint does a forward go to, and what
+      --  comes back?  This names the driver that actually serves a volume.
+      if Trace_Left > 0 then
+         Trace_Left := Trace_Left - 1;
+         Syscalls.Debug_Put_Line
+           ("fs: forward vol" & Natural'Image (Volume)
+            & " ep" & U64'Image (Volumes (Volume).FS_EP)
+            & " label " & Volumes (Volume).Label (1 .. Volumes (Volume).Lab_Len));
+      end if;
       --  Milestone 41b/Proc:self: caller identity is needed only
       --  for the Proc: introspection volume. For all other fs-driver
       --  volumes (Sys:, BD0:, etc.) use the unminted endpoint cap
