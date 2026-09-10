@@ -228,37 +228,39 @@ procedure Init is
       end if;
    end Push_FS_Mount;
 
-   --  `await <path>`: hold the manifest here until the file server resolves
-   --  that path.  A volume NAME is not answerable ("BD0:" is not a path the
-   --  engine answers), so the manifest names a file that the volume is known
-   --  to carry - the same idiom the capacity-census checks use when they
-   --  probe Sys: via README.TXT.  Drivers mount their volumes asynchronously —
-   --  System/Bfs mounts BD0: after init has spawned it — so a program that
-   --  needs a volume otherwise races that mount.
+   --  `await <volume>`: hold the manifest here until the file server knows
+   --  that volume.  Drivers mount their volumes asynchronously — System/Bfs
+   --  mounts BD0: after init has spawned it — so a program that needs a
+   --  volume otherwise races that mount.
    --
    --  The race is a property of the launch ORDER, so the wait belongs in the
    --  launcher: a client should not have to know which resource might be
    --  late, or gamble on how long to wait.  The Oberon Files.Wait and a
    --  stray poll in the o2c dogfood driver were both workarounds for this.
    --
+   --  The probe is the volume itself (Op_Volume_Info): asking about a FILE
+   --  would be a dependency on content a user is free to delete, and a
+   --  volume name is not a path Op_Stat can answer.
+   --
    --  Bounded on purpose: a volume that never appears must not wedge the
    --  boot, so this logs and continues after the timeout.
    procedure Wait_For_Volume (Name : String) is
       use Aegir_User.Syscalls;
-      Size : U64;
-      St   : U64;
+      Total   : U64;
+      Free    : U64;
+      Cluster : U64;
+      St      : U64;
    begin
       if FS_EP = 0 or else Name'Length = 0 then
          return;
       end if;
       --  Bind the RTS's Files layer to the file-server endpoint init already
-      --  holds and let it build the request: the protocol packs the name
-      --  through a helper (Stage_Path/Pack_Name) with an arm for long names
-      --  that goes through a mapped path buffer, and hand-rolling that
-      --  message here simply timed out.
+      --  holds and let it build the request: the protocol packs names through
+      --  a helper (Stage_Path/Pack_Name) with a mapped-buffer arm for long
+      --  names, and hand-rolling that message here simply timed out.
       Aegir_User.Files.Bind (FS_EP);
       for I in 1 .. 1500 loop            --  1500 x 20 ms = 30 s
-         St := Aegir_User.Files.Stat (Name, Size);
+         St := Aegir_User.Files.Volume_Info (Name, Total, Free, Cluster);
          if St = Aegir_User.Files.Status_Ok then
             return;
          end if;

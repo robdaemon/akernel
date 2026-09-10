@@ -1602,26 +1602,36 @@ pass) — spec `docs/LIMIT_FIXES.md`. Slices land one commit each:
 1. **Register fast path** — measure IPC call/recv cost, then decide
    whether a kernel-level register read/write primitive is worthwhile.
 2. **ILBM image decoder** — add a `Trinket.Images.ILBM` decoder child.
-3. **Create on first Write does not hold** — the fs protocol
-   documents that `Op_Write` creates a file that does not exist
-   (gloss's `_open` relies on it, and so did the o2c driver): o2c
-   writes a *new* name to the mounted BD0: and the server answers
-   status 1 (Not_Found).  So a client cannot publish a file with a
-   plain `Files.Write` on this server, and gloss's one-byte-write
-   create path has the same assumption.  Find what Oberon's
-   `Files.New` actually emits (the demo creates files every boot
-   and works) and either give clients that op or make the server
-   create on write as documented.  This is what still blocks o2c
-   publishing its bytecode image for the standalone VM, and why
-   `run_m1` does not yet assert that half.
+3. **gloss cannot read from an fs-driver volume** — `_open`
+   (through libc: `Ada.Sequential_IO`/`Stream_IO`) answers status 1
+   (Not_Found) for a file that EXISTS on BD0:, while o2c's write of
+   that same file through `Aegir_User.Files` succeeds and the same
+   gloss code reads RD0: (a boot-file volume) fine.  So the
+   protocol, the volume and the file are all healthy and the bug is
+   in gloss: most likely `Qualify`, which builds the wire name
+   itself instead of going through the RTS's qualification.  This
+   is what still blocks the standalone VM from reading the image
+   o2c publishes.  Two consequences: fix `Qualify`/`_open` for
+   fs-driver volumes, and note the general rule this keeps
+   teaching - a guest program should use `Aegir_User.Files`, which
+   is the interface the protocol defines and the one the Oberon
+   Files module (exercised every boot) uses; the libc path is a
+   second, separately-maintained implementation of the same
+   client.
+
+   (An earlier entry here blamed 'create on first Write'; that was
+   wrong - the publish works.  The failures were the mount race
+   below, and this read path.)
 
 Resolved: **spawn ordering vs. mount readiness**.  init spawned
    manifest programs in order and never waited, so a program could
    race the mount of a volume its line names (o2c writing BD0:,
    and the Files demo papered over it with `Files.Wait("BD0:")`).
-   The manifest now carries an **`await <path>`** directive
-   (`await BD0:README.TXT`, between System/Bfs and the programs
-   that need the volume): init polls the file server - through
+   The manifest now carries an **`await <volume>`** directive
+   (`await BD0:`, between System/Bfs and the programs that need the
+   volume): init asks the file server about the VOLUME itself
+   (`Op_Volume_Info`; probing a file would depend on content a user
+   is free to delete), through
    `Aegir_User.Files.Bind`/`Stat`, not a hand-rolled message, and
    bounded so a missing volume cannot wedge the boot - and logs
    the timeout with its status.  Two findings from doing it: a
