@@ -331,6 +331,11 @@ procedure Fileserver is
    --  expands Sys:C/Dir) and resolution repeats, depth-capped.
    --  Expanded/Exp_Len carry the final wire name for the caller's
    --  path packing; Volume = 0 means unknown/unqualified.
+   --  Rate-limited resolution tracing (M53): which volume does a name
+   --  resolve to, and is it forwarded or served locally?  A flood cost this
+   --  pipeline once, so this stops after 80 lines.
+   Trace_Left : Natural := 300;
+
    procedure Resolve_Full
      (Name     : String;
       Len      : Natural;
@@ -359,6 +364,15 @@ procedure Fileserver is
       for Depth in 1 .. 4 loop
          Volume := Resolve_Volume (Expanded, Exp_Len, Path_Pos);
          if Volume /= 0 then
+            --  Only the volumes that matter: RD0 (boot files) is traced
+            --  so heavily by the demo's read loop that it consumed the whole
+            --  budget before the interesting ops.
+            if Trace_Left > 0 and then Volumes (Volume).Is_FS then
+               Trace_Left := Trace_Left - 1;
+               Syscalls.Debug_Put_Line
+                 ("fs: '" & Expanded (Expanded'First .. Expanded'First + Exp_Len - 1)
+                  & "' vol" & Natural'Image (Volume));
+            end if;
             return;
          end if;
 
@@ -405,6 +419,12 @@ procedure Fileserver is
             Expanded := New_Name;
          end;
       end loop;
+      if Trace_Left > 0 then
+         Trace_Left := Trace_Left - 1;
+         Syscalls.Debug_Put_Line
+           ("fs: '" & Name (Name'First .. Name'First + Len - 1)
+            & "' UNRESOLVED");
+      end if;
       Volume := 0;
    end Resolve_Full;
 
