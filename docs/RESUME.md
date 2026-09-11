@@ -1677,6 +1677,17 @@ design).
 
 - `make all && make run` — interactive GUI.
 - `make test` — suite (QEMU_SMP=4 default, also gated at SMP1).
+- **`ipc_test` still grants `Receive` to client programs** (init's manifest
+  parser).  The token hands out Send+Receive+Transfer+Manage so a client can
+  receive the test reply, but the kernel fails an endpoint outright when a
+  thread holding a Receive cap on it dies (kernel-objects.adb).  Harmless
+  today - the endpoint is used only by init's early self-test - but it is the
+  same shape as the bug that let a client manifest line take the whole BD0:
+  volume down: a server token is now first-claim-wins per endpoint
+  (`4d2aa29`), and `ipc_test` is the one deliberate exception.  If the test
+  endpoint ever outlives the self-test, give clients a Send-only cap and a
+  reply route that does not need Receive.
+
 - `make disk.img` — rebuild the GPT/FAT32 data partition.
 - Host share (Host: volume) is runtime opt-in via qemu args:
   `make run QEMU_ARGS="-nographic $(QEMU_9P_FLAGS)"` exports
