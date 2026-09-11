@@ -795,7 +795,6 @@ package body Aegir_User.Files is
       end if;
 
       if not Ensure_Buffer then
-         Syscalls.Debug_Put_Line ("rts: w no-buffer");
          return Status_Not_Found;
       end if;
 
@@ -816,23 +815,15 @@ package body Aegir_User.Files is
       Syscalls.Message.Words (1) := N;
       Syscalls.Message.Caps := (0 => Buf_Cap, others => 0);
       if not Stage_Path (Q, Len, 2, 5, 1) then
-         Syscalls.Debug_Put_Line
-           ("rts: w stage-fail len" & Natural'Image (Len)
-            & " name'" & Q (1 .. Len) & "'");
          return Status_Not_Found;
       end if;
 
       if Syscalls.IPC_Call (FS_Cap) /= Syscalls.IPC_Ok then
-         Syscalls.Debug_Put_Line ("rts: w ipc-fail ep" & Syscalls.U64'Image (FS_Cap));
          return Status_Not_Found;
       end if;
 
       Status := Syscalls.Message.Words (0);
       if Status /= Status_Ok then
-         Syscalls.Debug_Put_Line
-           ("rts: w status" & Syscalls.U64'Image (Status)
-            & " len" & Natural'Image (Len)
-            & " name'" & Q (1 .. Len) & "'");
          return Status;
       end if;
 

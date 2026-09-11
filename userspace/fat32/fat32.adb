@@ -2568,8 +2568,6 @@ begin
 
    --  M53 diagnostic: announce the service endpoint so the file server's
    --  forward trace can be matched to a driver.
-   Syscalls.Debug_Put_Line
-     ("fat32: service ep" & Syscalls.U64'Image (Svc_EP));
 
    loop
       if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then

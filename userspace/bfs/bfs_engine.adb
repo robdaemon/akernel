@@ -157,11 +157,9 @@ package body Bfs_Engine is
    --  that is the debug channel.
    --  One-shot banner: proves the boot is running THIS engine code (and that
    --  op tracing below reaches the log).  Printed once, on the first Stat.
-   Banner_Done : Boolean := False;
 
    --  Rate-limited op tracing (see Stat/Write): enough to see what the
    --  engine is asked for and what it resolves, without flooding.
-   Trace_Left : Natural := 300;
 
    Cache_Slots : constant := 64;
     Cache_Num   : array (0 .. Cache_Slots - 1) of U64 :=
@@ -2994,16 +2992,7 @@ package body Bfs_Engine is
    begin
       Size := 0;
       Is_Dir := False;
-      if not Banner_Done then
-         Banner_Done := True;
-         Aegir_User.Syscalls.Debug_Put_Line
-           ("bfs: engine trace v1 (m53 debug)");
-      end if;
       if not Is_Mounted then
-         if Trace_Left > 0 then
-            Trace_Left := Trace_Left - 1;
-            Aegir_User.Syscalls.Debug_Put_Line ("bfs: S '" & Path & "' nofs");
-         end if;
          return Status_Not_Found;
       end if;
       --  Trace BOTH outcomes: the failing lookup is the case that matters,
@@ -3011,11 +3000,6 @@ package body Bfs_Engine is
       declare
          Found : constant Boolean := Lookup (Path, Info, Root);
       begin
-         if Trace_Left > 0 then
-            Trace_Left := Trace_Left - 1;
-            Aegir_User.Syscalls.Debug_Put_Line
-              ("bfs: S '" & Path & "' lookup" & Boolean'Image (Found));
-         end if;
          if not Found then
             return Status_Not_Found;
          end if;
@@ -3147,12 +3131,6 @@ package body Bfs_Engine is
           return Status_Not_Found;
        end if;
        Split_Path (Path, P_Path, P_Len, P_Name, N_Len);
-       if Trace_Left > 0 then
-          Trace_Left := Trace_Left - 1;
-          Aegir_User.Syscalls.Debug_Put_Line
-            ("bfs: W '" & Path & "' parent '" & P_Path (1 .. P_Len)
-             & "' lookup" & Boolean'Image (Lookup (Path, Info, Root)));
-       end if;
        if Lookup (Path, Info, Root) then
           if Root then
              Len := 0;

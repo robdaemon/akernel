@@ -334,7 +334,6 @@ procedure Fileserver is
    --  Rate-limited resolution tracing (M53): which volume does a name
    --  resolve to, and is it forwarded or served locally?  A flood cost this
    --  pipeline once, so this stops after 80 lines.
-   Trace_Left : Natural := 300;
 
    procedure Resolve_Full
      (Name     : String;
@@ -367,12 +366,6 @@ procedure Fileserver is
             --  Only the volumes that matter: RD0 (boot files) is traced
             --  so heavily by the demo's read loop that it consumed the whole
             --  budget before the interesting ops.
-            if Trace_Left > 0 and then Volumes (Volume).Is_FS then
-               Trace_Left := Trace_Left - 1;
-               Syscalls.Debug_Put_Line
-                 ("fs: '" & Expanded (Expanded'First .. Expanded'First + Exp_Len - 1)
-                  & "' vol" & Natural'Image (Volume));
-            end if;
             return;
          end if;
 
@@ -419,12 +412,6 @@ procedure Fileserver is
             Expanded := New_Name;
          end;
       end loop;
-      if Trace_Left > 0 then
-         Trace_Left := Trace_Left - 1;
-         Syscalls.Debug_Put_Line
-           ("fs: '" & Name (Name'First .. Name'First + Len - 1)
-            & "' UNRESOLVED");
-      end if;
       Volume := 0;
    end Resolve_Full;
 
@@ -1056,13 +1043,6 @@ procedure Fileserver is
 
       --  M53 diagnostic: which endpoint does a forward go to, and what
       --  comes back?  This names the driver that actually serves a volume.
-      if Trace_Left > 0 then
-         Trace_Left := Trace_Left - 1;
-         Syscalls.Debug_Put_Line
-           ("fs: forward vol" & Natural'Image (Volume)
-            & " ep" & U64'Image (Volumes (Volume).FS_EP)
-            & " label " & Volumes (Volume).Label (1 .. Volumes (Volume).Lab_Len));
-      end if;
       --  Milestone 41b/Proc:self: caller identity is needed only
       --  for the Proc: introspection volume. For all other fs-driver
       --  volumes (Sys:, BD0:, etc.) use the unminted endpoint cap
@@ -1096,23 +1076,7 @@ procedure Fileserver is
          return False;
       end if;
 
-      declare
-         Cap0 : constant U64 := Syscalls.Message.Caps (0);
-         W0   : constant U64 := Syscalls.Message.Words (0);
-         W1   : constant U64 := Syscalls.Message.Words (1);
-         Lbl  : constant U64 := Syscalls.Message.Label;
-         RC   : U64;
-      begin
-         RC := Syscalls.IPC_Call (FS_EP);
-         Syscalls.Debug_Put_Line
-           ("fs: fwd rc" & U64'Image (RC)
-            & " ep" & U64'Image (FS_EP)
-            & " cap" & U64'Image (Cap0)
-            & " lbl" & U64'Image (Lbl)
-            & " off" & U64'Image (W0)
-            & " len" & U64'Image (W1));
-         Ok := RC = Syscalls.IPC_Ok;
-      end;
+      Ok := Syscalls.IPC_Call (FS_EP) = Syscalls.IPC_Ok;
       return Ok;
    end Forward_To_FS;
 
@@ -2054,7 +2018,6 @@ procedure Fileserver is
 
       procedure Process is
       begin
-         Syscalls.Debug_Put_Line ("fs: pw enter buf" & U64'Image (Buf) & " len" & U64'Image (Length));
          if not Names_Done then
             Status := Files.Status_Not_Ready;
             return;
@@ -2064,13 +2027,11 @@ procedure Fileserver is
            or else Length = 0
            or else not Fetch_Path (2, 5, 1, Name, Len)
          then
-            Syscalls.Debug_Put_Line ("fs: pw fetch-fail buf" & U64'Image (Buf) & " len" & U64'Image (Length));
             Status := Files.Status_Bad_Args;
             return;
          end if;
 
          Resolve_Full (Name, Len, Exp, E_Len, V, Pos);
-         Syscalls.Debug_Put_Line ("fs: pw resolve v" & Natural'Image (V) & " len" & Natural'Image (Len));
          if V = 0 then
             Status := Files.Status_Not_Found;
             return;
@@ -2082,16 +2043,13 @@ procedure Fileserver is
             Syscalls.Message.Label := Files.Op_Write;
             Syscalls.Message.Caps := (0 => Buf, others => 0);
             if not Stage_Forward_Path (Exp, Pos, E_Len, 2, 5, 1) then
-               Syscalls.Debug_Put_Line ("fs: pw stage-fail");
                Status := Files.Status_Bad_Args;
                return;
             end if;
             if Forward_To_FS (V, Syscalls.Message.Badge) then
-               Syscalls.Debug_Put_Line ("fs: pw fwd-ok st" & U64'Image (Syscalls.Message.Words (0)) & " v" & Natural'Image (V));
                Status := Syscalls.Message.Words (0);
                Count := Syscalls.Message.Words (1);
             else
-               Syscalls.Debug_Put_Line ("fs: pw fwd-fail v" & Natural'Image (V) & " buf" & U64'Image (Buf) & " len" & U64'Image (Length));
                Status := Files.Status_Not_Found;
             end if;
             return;

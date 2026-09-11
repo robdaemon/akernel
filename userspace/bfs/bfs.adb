@@ -82,7 +82,6 @@ procedure Bfs is
    --  fails the receive; that must not take the volume down, but a
    --  persistent failure must not spin forever either.
    Recv_Fails : Natural := 0;
-   Last_Recv  : U64 := 0;
 
    procedure Fail (Msg : String) is
    begin
@@ -433,7 +432,6 @@ procedure Bfs is
        Status : U64 := Status_Ok;
        Mapped : Boolean := False;
     begin
-       Syscalls.Debug_Put_Line ("bfs: w enter buf" & U64'Image (Buf) & " len" & U64'Image (Length) & " off" & U64'Image (Offset));
        if Buf = 0 or else Length = 0 then
           Status := Status_Bad_Args;
        else
@@ -442,7 +440,6 @@ procedure Bfs is
              Len  : U64;
           begin
              if Path'Length = 0 then
-                Syscalls.Debug_Put_Line ("bfs: w empty-path");
                 Status := Status_Bad_Args;
              elsif Syscalls.Mem_Map
                (Address_Space => Syscalls.Address_Space_Cap,
@@ -452,7 +449,6 @@ procedure Bfs is
                 Length        => Buf_Bytes,
                 Flags         => 3) /= 0
              then
-                Syscalls.Debug_Put_Line ("bfs: w map-fail buf" & U64'Image (Buf) & " len" & U64'Image (Length));
                 Status := Status_Not_Found;
              else
                 Mapped := True;
@@ -480,7 +476,6 @@ procedure Bfs is
              Aegir_User.Console.Put_Line ("bfs: buffer cap delete failed");
           end if;
        end if;
-       Syscalls.Debug_Put_Line ("bfs: w reply st" & U64'Image (Status) & " cnt" & U64'Image (Count));
        Reply2 (Status, Count);
     end Handle_Write;
 
@@ -934,30 +929,18 @@ begin
 
    --  M53 diagnostic: announce the service endpoint so the file server's
    --  forward trace can be matched to a driver.
-   Syscalls.Debug_Put_Line
-     ("bfs: service ep" & Syscalls.U64'Image (Svc_EP));
 
    loop
-      Last_Recv := Syscalls.IPC_Recv (Svc_EP, Reply_H);
-      if Last_Recv /= Syscalls.IPC_Ok then
+      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
          --  A caller that vanished mid-rendezvous fails the receive.  Keep
          --  serving: dying here takes the whole volume down with us, and
          --  every later forward then answers Result_Endpoint_Gone.
          Recv_Fails := Recv_Fails + 1;
-         Syscalls.Debug_Put_Line
-           ("bfs: recv failed rc" & U64'Image (Last_Recv)
-            & " continuing (" & Natural'Image (Recv_Fails) & ")");
          if Recv_Fails > 256 then
             Fail ("bfs recv failed repeatedly");
          end if;
       else
          Recv_Fails := 0;
-
-      if Syscalls.Message.Label /= Op_Read
-        and then Syscalls.Message.Label /= Op_ReadDir
-      then
-         Syscalls.Debug_Put_Line ("bfs: op" & U64'Image (Syscalls.Message.Label));
-      end if;
 
       if Syscalls.Message.Label = Op_Stat
         or else Syscalls.Message.Label = Op_Open
