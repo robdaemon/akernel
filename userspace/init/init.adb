@@ -90,6 +90,12 @@ procedure Init is
    --  True once the manifest granted the part_server token, i.e. a
    --  partition manager will serve the partition endpoint.
    Partmgr_Seen : Boolean := False;
+   FS_Server_Seen     : Boolean := False;
+   Fat32_Server_Seen  : Boolean := False;
+   Bfs_Server_Seen    : Boolean := False;
+   Procfs_Server_Seen : Boolean := False;
+   Net_Server_Seen    : Boolean := False;
+   Libman_Server_Seen : Boolean := False;
 
    --  Volume directive state (manifest: "volume RD0 Initrd ci"):
    --  sent to the file server as Op_Mount right after spawn,
@@ -609,6 +615,7 @@ procedure Init is
        Is_Bfs      : Boolean := False;
        Is_Procfs   : Boolean := False;
        Is_Netserv  : Boolean := False;
+       Is_Libman   : Boolean := False;
        Wants_Names : Boolean := False;
 
       procedure Grant
@@ -626,6 +633,30 @@ procedure Init is
             Grant_Count := Grant_Count + 1;
          end if;
       end Grant;
+
+      function Claim_Server
+        (Seen     : in out Boolean;
+         Endpoint : Aegir_User.Syscalls.U64;
+         Token    : String) return Boolean
+      is
+      begin
+         if Seen then
+            --  Only one program is a given server.  A later claim is a
+            --  client naming the server it uses, and it must not be
+            --  handed Receive: the kernel permanently fails an endpoint
+            --  when a thread holding a Receive cap on it dies
+            --  (kernel-objects.adb), so a client exiting that way takes
+            --  the whole service down - exactly how BD0: died mid-boot.
+            Aegir_User.Syscalls.Debug_Put_Line
+              ("init: manifest: " & Token
+               & " claimed again; granting Send only to the later program");
+            Grant (Endpoint, Aegir_User.Syscalls.Right_Send, 0);
+            return False;
+         end if;
+         Seen := True;
+         Grant (Endpoint, Aegir_User.Syscalls.Right_Receive, 0);
+         return True;
+      end Claim_Server;
    begin
       Next_Token (Line_End, Pos, Token, Length, Have_Token);
       if not Have_Token or else Token (1) = '#' then
@@ -726,17 +757,13 @@ procedure Init is
             Grant (Device_Manager.Block_Service,
                    Aegir_User.Syscalls.Right_Send, 0);
          elsif Token_Equals (Token, Length, "fat32_server") then
-            Is_Fat32 := True;
-            Grant (FAT32_EP, Aegir_User.Syscalls.Right_Receive, 0);
+            Is_Fat32 := Claim_Server (Fat32_Server_Seen, FAT32_EP, "fat32_server");
          elsif Token_Equals (Token, Length, "bfs_server") then
-            Is_Bfs := True;
-            Grant (BFS_EP, Aegir_User.Syscalls.Right_Receive, 0);
+            Is_Bfs := Claim_Server (Bfs_Server_Seen, BFS_EP, "bfs_server");
          elsif Token_Equals (Token, Length, "part_server") then
-            Partmgr_Seen := True;
-            Grant (PARTMGR_EP, Aegir_User.Syscalls.Right_Receive, 0);
+            Partmgr_Seen := Claim_Server (Partmgr_Seen, PARTMGR_EP, "part_server");
           elsif Token_Equals (Token, Length, "procfs_server") then
-             Is_Procfs := True;
-             Grant (PROCFS_EP, Aegir_User.Syscalls.Right_Receive, 0);
+             Is_Procfs := Claim_Server (Procfs_Server_Seen, PROCFS_EP, "procfs_server");
           elsif Token_Equals (Token, Length, "netdev") then
              --  The virtio-net frame service endpoint (Send), kept
              --  by the device manager; netserv speaks the frame
@@ -744,8 +771,7 @@ procedure Init is
              Grant (Device_Manager.Net_Service,
                     Aegir_User.Syscalls.Right_Send, 0);
           elsif Token_Equals (Token, Length, "net_server") then
-             Is_Netserv := True;
-             Grant (NETSRV_EP, Aegir_User.Syscalls.Right_Receive, 0);
+             Is_Netserv := Claim_Server (Net_Server_Seen, NETSRV_EP, "net_server");
           elsif Token_Equals (Token, Length, "net_register") then
              --  Netserv self-registers its Net: volume at the end
              --  of bring-up (the fs<->netserv deadlock fix, m72a);
@@ -774,7 +800,7 @@ procedure Init is
                    + Aegir_User.Syscalls.Right_Transfer, 0);
          elsif Token_Equals (Token, Length, "libman_server") then
             --  Library manager server: Receive side.
-            Grant (LIBMAN_EP, Aegir_User.Syscalls.Right_Receive, 0);
+            Is_Libman := Claim_Server (Libman_Server_Seen, LIBMAN_EP, "libman_server");
          elsif Length = 5
            and then Token (1 .. 4) = "part"
            and then Token (5) in '0' .. '7'
@@ -787,8 +813,7 @@ procedure Init is
                        (Character'Pos (Token (5))
                           - Character'Pos ('0')));
          elsif Token_Equals (Token, Length, "fs_server") then
-            Is_FS := True;
-            Grant (FS_EP, Aegir_User.Syscalls.Right_Receive, 0);
+            Is_FS := Claim_Server (FS_Server_Seen, FS_EP, "fs_server");
          elsif Token_Equals (Token, Length, "boot_files") then
             --  Boot-file caps are no longer spawn-granted (the
             --  grant list caps at 32); Push_FS_Names transfers a
