@@ -82,6 +82,7 @@ procedure Bfs is
    --  fails the receive; that must not take the volume down, but a
    --  persistent failure must not spin forever either.
    Recv_Fails : Natural := 0;
+   Last_Recv  : U64 := 0;
 
    procedure Fail (Msg : String) is
    begin
@@ -937,14 +938,15 @@ begin
      ("bfs: service ep" & Syscalls.U64'Image (Svc_EP));
 
    loop
-      if Syscalls.IPC_Recv (Svc_EP, Reply_H) /= Syscalls.IPC_Ok then
+      Last_Recv := Syscalls.IPC_Recv (Svc_EP, Reply_H);
+      if Last_Recv /= Syscalls.IPC_Ok then
          --  A caller that vanished mid-rendezvous fails the receive.  Keep
          --  serving: dying here takes the whole volume down with us, and
          --  every later forward then answers Result_Endpoint_Gone.
          Recv_Fails := Recv_Fails + 1;
          Syscalls.Debug_Put_Line
-           ("bfs: recv failed, continuing ("
-            & Natural'Image (Recv_Fails) & ")");
+           ("bfs: recv failed rc" & U64'Image (Last_Recv)
+            & " continuing (" & Natural'Image (Recv_Fails) & ")");
          if Recv_Fails > 256 then
             Fail ("bfs recv failed repeatedly");
          end if;
