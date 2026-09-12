@@ -316,6 +316,10 @@ scan-host:
 	@if command -v bandit >/dev/null 2>&1; then \
 	  bandit -q -ll -r tools; \
 	else echo "note: bandit not on PATH (host lint runs in CI)"; fi
+	@if command -v shellcheck >/dev/null 2>&1; then \
+	  git ls-files -z -- '*.sh' '*.bash' \
+	    | xargs -0 -r shellcheck -S warning; \
+	else echo "note: shellcheck not on PATH (host lint runs in CI)"; fi
 
 scan-ada:
 	@if command -v gnatprove >/dev/null 2>&1; then \

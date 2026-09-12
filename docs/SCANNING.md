@@ -17,7 +17,7 @@ the gate; the local targets are the same checks without a push.
 | Toolchain | `gnat_riscv64_elf` 15.3.1 | Alire, pinned in root + every crate `alire.toml` / `alire.lock` | pin drift check + CVE watch |
 | Own code — kernel | Ada/SPARK kernel (`src/`) | in-repo | GNATprove flow/proof on capability/IPC core |
 | Own code — userspace | Ada/SPARK apps + custom RTS | in-repo | (proof scope: see below) |
-| Own code — host tooling | `tools/*.py`, `Makefile` recipes | in-repo | bandit; shellcheck where feasible |
+| Own code — host tooling | `tools/*.py`, host shell scripts, `Makefile` recipes | in-repo | bandit; shellcheck `-S warning` over the tracked `*.sh`/`*.bash` set |
 | Repository secrets | git history + future pushes | in-repo | gitleaks |
 
 ### Fetch inventory (pins live in the Makefile — nothing vendored in git)
@@ -204,11 +204,21 @@ rootless sandbox has a read-only `~/.local`, so here it is
   *reports* any finding, so the `-ll` threshold is what keeps the job
   green for the accepted Lows; the full `-r tools` report is the
   recorded baseline above.
-- **shellcheck 0.10.0**: probed; the repo tracks **zero** `*.sh`/`*.bash`
-  files, so a shell-script pass is N/A. Non-trivial Makefile recipe
-  verification is enforced structurally instead: `tools/check_pins.py`
-  fails any fetch recipe that stops gating extract on `sha256sum -c`.
-  Revisit shellcheck if real shell scripts ever enter the repo.
+- **shellcheck 0.11.0** (`-S warning`; the same pass runs in the CI
+  `host` job and in `make scan-host`): lints the **tracked**
+  `*.sh`/`*.bash` set —
+  `git ls-files -z -- '*.sh' '*.bash' | xargs -0 -r shellcheck -S
+  warning` — so a new script is gated with no workflow edit, and an
+  empty set (or no shellcheck on PATH locally) passes with a note.
+  Baseline (2026-09-12): 1 file (`run.sh`), **0 findings**; the file is
+  also clean under `-o all -S style` (every check, every severity), so
+  no carve-outs are recorded. The gate is warning, not style:
+  style/info suggestions get triaged here instead of blocking CI.
+  Non-trivial Makefile recipe verification stays structural, not
+  shell-level: `tools/check_pins.py` fails any fetch recipe that stops
+  gating extract on `sha256sum -c`. The binary is not vendored — CI
+  fetches the pinned v0.11.0 `linux.x86_64` tarball, sha256-checked
+  like every other artifact in this repo.
 
 ## How findings get remediated
 
@@ -232,14 +242,15 @@ rootless sandbox has a read-only `~/.local`, so here it is
 make scan-deps      # fetch pins, enforce sha256 pins, SBOM freshness
                     # (+ osv-scanner CVE gate when on PATH)
 make scan-secrets   # gitleaks full history + working tree (when on PATH)
-make scan-host      # py_compile tools/*.py (+ bandit when on PATH)
+make scan-host      # py_compile tools/*.py (bandit + shellcheck when on PATH)
 make scan-ada       # prints the GNATprove invocation (see below)
 ```
 
 The heavy scanners are not vendored; CI fetches pinned releases
-(osv-scanner 2.5.1, gitleaks 8.30.1, bandit via pip — all recorded in
-`.github/workflows/security.yml`). To run them locally, install the
-same pins and put them on `PATH` (the scan-* targets then use them).
+(osv-scanner 2.5.1, gitleaks 8.30.1, shellcheck 0.11.0, bandit via pip
+— all recorded in `.github/workflows/security.yml`). To run them
+locally, install the same pins and put them on `PATH` (the scan-*
+targets then use them).
 
 GNATprove (proof baseline): **prerequisite — Alire 2.1.1** (GitHub
 runners don't ship it; CI installs the pinned release binary

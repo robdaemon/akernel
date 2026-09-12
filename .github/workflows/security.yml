@@ -5,7 +5,7 @@
 #              osv-scanner CVE watch over the committed SBOM.
 #   secrets  — gitleaks over full history + the working tree.
 #   ada-sast — GNATprove flow/proof on the capability/IPC core (Phase 3).
-#   host     — bandit on tools/*.py, shellcheck on shell recipes (Phase 4).
+#   host     — bandit on tools/*.py, shellcheck on tracked *.sh/*.bash.
 #
 # Run on every push / pull request, plus a weekly scheduled run so the
 # CVE watch and the GNATprove baselines refresh on their own.
@@ -155,7 +155,7 @@ jobs:
           tail -40 obj/development/riscv64/qemu_virt_riscv64/gnatprove/gnatprove.out
 
   host:
-    name: Host tooling lint (bandit + py_compile)
+    name: Host tooling lint (bandit + py_compile + shellcheck)
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -169,13 +169,29 @@ jobs:
           python3 -m pip install --quiet bandit
           python3 -m bandit -q -ll -r tools
 
-      # shellcheck: no *.sh / *.bash files are tracked today, so the
-      # pass is conditional. Makefile recipe verification is structural
-      # (tools/check_pins.py). Re-enable when real shell scripts land.
-      - name: shellcheck (conditional)
+      # shellcheck 0.11.0: pinned release binary, sha256-checked like
+      # every other fetched artifact here. `git ls-files` is the source
+      # of truth for the covered set, so a new tracked script is gated
+      # with no workflow edit. Gated at warning severity; style/info
+      # findings are recorded in docs/SCANNING.md, not blocking.
+      - name: Install shellcheck (pinned v0.11.0)
         run: |
-          if git ls-files '*.sh' '*.bash' | grep -q .; then
-            echo "shell scripts found — add a pinned shellcheck step here"
-            exit 1
+          curl -sL --fail --max-time 120 -o /tmp/sc.tar.xz \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  /tmp/sc.tar.xz" | sha256sum -c -
+          tar xf /tmp/sc.tar.xz -C /tmp
+          sudo install -m 0755 /tmp/shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+          shellcheck --version
+
+      # Makefile recipe verification stays structural, not shell-level
+      # (tools/check_pins.py enforces the sha256 gate on fetch recipes).
+      - name: shellcheck over tracked shell scripts
+        run: |
+          git ls-files -z -- '*.sh' '*.bash' > /tmp/sc_files
+          mapfile -d '' scripts < /tmp/sc_files
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "no tracked shell scripts — shellcheck pass N/A"
+            exit 0
           fi
-          echo "no tracked shell scripts — shellcheck pass N/A"
+          printf 'linting: %s\n' "${scripts[@]}"
+          shellcheck -S warning "${scripts[@]}"
